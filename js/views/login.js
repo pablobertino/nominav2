@@ -6,6 +6,8 @@
    ===================================================================== */
 import { CONFIG } from '../config.js';
 import { $, mount } from '../core/dom.js';
+import { setSession } from '../core/session.js';
+import { go } from '../core/router.js';
 
 /** Detecta qué tipo de identificador escribió el usuario */
 function detectId(value) {
@@ -133,17 +135,44 @@ function wire() {
     loginView.style.display = 'block';
   });
 
-  // Botón Entrar — POR AHORA solo visual (sin validación real)
-  $('#loginBtn').addEventListener('click', () => {
+  // Botón Entrar — valida server-side contra /api/login
+  const btn = $('#loginBtn');
+  async function doLogin() {
     const id = idInput.value.trim();
-    if (!id || !pwdInput.value) {
+    const pwd = pwdInput.value;
+    if (!id || !pwd) {
       msg.textContent = 'Ingresa tu usuario y contraseña.';
       msg.className = 'login-msg err show';
       return;
     }
-    msg.textContent = 'Demo visual: la validación se conectará en el siguiente paso.';
-    msg.className = 'login-msg ok show';
-  });
+    btn.disabled = true;
+    const original = btn.textContent;
+    btn.textContent = 'Entrando…';
+    msg.className = 'login-msg';
+    try {
+      const res = await fetch('/api/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: id, password: pwd }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        msg.textContent = data.error || 'Credenciales incorrectas.';
+        msg.className = 'login-msg err show';
+        return;
+      }
+      setSession(data.user);
+      go('/panel');
+    } catch (err) {
+      msg.textContent = 'No se pudo conectar. Intenta de nuevo.';
+      msg.className = 'login-msg err show';
+    } finally {
+      btn.disabled = false;
+      btn.textContent = original;
+    }
+  }
+  btn.addEventListener('click', doLogin);
+  pwdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
 }
 
 /** Punto de entrada de la vista */

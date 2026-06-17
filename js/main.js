@@ -5,11 +5,14 @@
    ===================================================================== */
 import { on, start } from './core/router.js';
 import { renderLogin } from './views/login.js';
+import { renderPanel } from './views/panel.js';
+import { getSession } from './core/session.js';
 
 // Rutas registradas
-on('/', renderLogin);
+on('/', () => { getSession() ? renderPanel() : renderLogin(); });
 on('/login', renderLogin);
-on('*', renderLogin); // fallback: cualquier ruta desconocida → login
+on('/panel', renderPanel);
+on('*', renderLogin); // fallback
 
-// Arranca en /login
-start('/login');
+// Arranca: si ya hay sesión, al panel; si no, al login
+start(getSession() ? '/panel' : '/login');

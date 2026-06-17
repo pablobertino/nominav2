@@ -1,0 +1,83 @@
+/* =====================================================================
+   panel.css — Estilos de la vista interna (panel + auditor)
+   ===================================================================== */
+.panel-wrap {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: var(--sp-6) var(--sp-5);
+}
+
+.panel-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--sp-6);
+  padding-bottom: var(--sp-4);
+  border-bottom: 1px solid var(--border);
+}
+.panel-title { font-size: var(--fs-xl); font-weight: 600; margin: 0; color: var(--ink); }
+.panel-sub { font-size: var(--fs-sm); color: var(--muted); margin: 4px 0 0; }
+
+.btn-ghost {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--ink-soft);
+  padding: 8px 16px;
+  border-radius: var(--radius-md);
+  font-size: var(--fs-sm);
+}
+.btn-ghost:hover { background: var(--border-soft); }
+
+.btn-sm { padding: 8px 16px; font-size: var(--fs-sm); width: auto; }
+
+.panel-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: var(--sp-5);
+  box-shadow: var(--shadow-sm);
+}
+.panel-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--sp-4);
+}
+.panel-card-head h2 { font-size: var(--fs-md); margin: 0; color: var(--ink); }
+
+.audit-status { font-size: var(--fs-sm); color: var(--muted); padding: var(--sp-2) 0; }
+.audit-status.ok { color: var(--success); }
+.audit-status.err { color: var(--danger); }
+
+.audit-stats { display: flex; gap: var(--sp-6); margin: var(--sp-3) 0; }
+.audit-stats div { font-size: var(--fs-sm); color: var(--muted); }
+.audit-stats b { display: block; font-size: var(--fs-xl); color: var(--ink); }
+
+.audit-filters { display: flex; gap: var(--sp-3); margin: var(--sp-4) 0; flex-wrap: wrap; }
+.audit-filters input { flex: 2; min-width: 200px; }
+.audit-filters select {
+  flex: 1; min-width: 150px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface);
+}
+
+.audit-scroll { max-height: 55vh; overflow: auto; border: 1px solid var(--border); border-radius: var(--radius-md); }
+.audit-table { width: 100%; border-collapse: collapse; font-size: var(--fs-sm); }
+.audit-table th, .audit-table td {
+  padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--border-soft);
+  white-space: nowrap;
+}
+.audit-table th {
+  background: var(--border-soft); font-weight: 600; position: sticky; top: 0;
+  color: var(--ink-soft);
+}
+.audit-table tr:hover td { background: var(--bg); }
+
+.badge { padding: 3px 9px; border-radius: 999px; font-size: var(--fs-xs); font-weight: 600; }
+.b-open { background: var(--success-bg); color: #065f46; }
+.b-closed { background: var(--danger-bg); color: #991b1b; }
+.b-temp { background: var(--warn-bg); color: #92400e; }
+.b-proj { background: var(--brand-bg); color: #1e40af; }
+.b-unk { background: var(--border); color: var(--ink-soft); }
