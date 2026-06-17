@@ -5,7 +5,7 @@
    se conecta en el siguiente hito (auth.js).
    ===================================================================== */
 import { CONFIG } from '../config.js';
-import { $, el, mount } from '../core/dom.js';
+import { $, mount } from '../core/dom.js';
 
 /** Detecta qué tipo de identificador escribió el usuario */
 function detectId(value) {
@@ -20,13 +20,24 @@ function detectId(value) {
   return { text: 'Detectado: usuario del equipo', cls: 'ok' };
 }
 
+/* Íconos SVG monocromos (heredan color vía currentColor) */
+const ICONS = {
+  users: '<svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  user: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>',
+  lock: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>',
+  eye: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>',
+  eyeOff: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-7-11-7a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 7 11 7a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
+  info: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>',
+  clock: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>',
+};
+
 /** HTML de la vista de login */
 function template() {
   return `
   <div class="login-wrap">
     <div class="login-card">
       <div class="login-head">
-        <div class="login-logo">👥</div>
+        <div class="login-logo">${ICONS.users}</div>
         <p class="login-title">${CONFIG.appName}</p>
         <p class="login-sub">${CONFIG.org}</p>
       </div>
@@ -36,11 +47,11 @@ function template() {
         <div id="loginMsg" class="login-msg"></div>
 
         <div class="field">
-          <label for="loginId">Usuario, código de tienda o correo</label>
+          <label for="loginId">Usuario o e-mail</label>
           <div class="field-icon">
-            <span class="ico">👤</span>
+            <span class="ico">${ICONS.user}</span>
             <input id="loginId" type="text" autocomplete="username"
-                   placeholder="AA01 · superadmin · correo@…" />
+                   placeholder="Usuario o e-mail" />
           </div>
         </div>
         <div id="roleHint" class="role-hint"></div>
@@ -48,11 +59,11 @@ function template() {
         <div class="field">
           <label for="loginPwd">Contraseña</label>
           <div class="field-icon">
-            <span class="ico">🔒</span>
+            <span class="ico">${ICONS.lock}</span>
             <input id="loginPwd" type="password" autocomplete="current-password"
-                   class="has-toggle" placeholder="••••••••" />
+                   class="has-toggle" placeholder="Contraseña" />
             <button id="togglePwd" type="button" class="toggle-pwd"
-                    aria-label="Mostrar u ocultar contraseña">👁</button>
+                    aria-label="Mostrar u ocultar contraseña">${ICONS.eye}</button>
           </div>
         </div>
 
@@ -71,14 +82,14 @@ function template() {
         <p class="recover-title">Recuperar acceso</p>
 
         <div class="notice notice-info">
-          <span class="ico">ℹ️</span>
+          <span class="ico">${ICONS.info}</span>
           <div>Por ahora el restablecimiento lo realiza Capital Humano.
             Escribe a <strong>${CONFIG.supportEmail}</strong> indicando tu
             código de tienda o usuario, y te asignarán una clave temporal.</div>
         </div>
 
         <div class="notice notice-soon">
-          <span class="ico">🕒</span>
+          <span class="ico">${ICONS.clock}</span>
           <div>Próximamente: autoservicio por correo electrónico.</div>
         </div>
       </div>
@@ -108,7 +119,7 @@ function wire() {
   toggle.addEventListener('click', () => {
     const show = pwdInput.type === 'password';
     pwdInput.type = show ? 'text' : 'password';
-    toggle.textContent = show ? '🙈' : '👁';
+    toggle.innerHTML = show ? ICONS.eyeOff : ICONS.eye;
   });
 
   // Ir a recuperación
