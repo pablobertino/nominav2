@@ -12,6 +12,7 @@ function template(user) {
   const who = user.kind === 'admin'
     ? `${user.name || user.username} · <strong>${user.role}</strong>`
     : `Tienda <strong>${user.companyCode}</strong>`;
+  const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   return `
   <div class="panel-wrap">
     <header class="panel-head">
@@ -21,6 +22,15 @@ function template(user) {
       </div>
       <button id="logoutBtn" class="btn-ghost">Cerrar sesión</button>
     </header>
+
+    ${isSuper ? `
+    <section class="panel-card" style="margin-bottom:var(--sp-5)">
+      <div class="panel-card-head">
+        <h2>Sincronización de catálogo (AX → Supabase)</h2>
+        <button id="syncBtn" class="btn-primary btn-sm">Sincronizar ahora</button>
+      </div>
+      <div id="syncStatus" class="audit-status">Vuelca empresas, zonas, subzonas y conceptos desde la API a la base.</div>
+    </section>` : ''}
 
     <section class="panel-card">
       <div class="panel-card-head">
@@ -111,6 +121,31 @@ async function loadEmpresas() {
   }
 }
 
+async function syncCatalog(user) {
+  const st = $('#syncStatus');
+  const btn = $('#syncBtn');
+  st.textContent = '⏳ Sincronizando con la API…';
+  st.className = 'audit-status';
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/sync-companies', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminId: user.id }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'Error desconocido');
+    const s = data.synced;
+    st.textContent = `✅ Sincronizado: ${s.companies} empresas, ${s.zones} zonas, ${s.subzones} subzonas, ${s.concepts} conceptos.`;
+    st.className = 'audit-status ok';
+  } catch (err) {
+    st.textContent = '❌ ' + err.message;
+    st.className = 'audit-status err';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
 export function renderPanel() {
   const user = getSession();
   if (!user) { go('/login'); return; }
@@ -118,6 +153,8 @@ export function renderPanel() {
 
   $('#logoutBtn').addEventListener('click', () => { clearSession(); go('/login'); });
   $('#reloadBtn').addEventListener('click', loadEmpresas);
+  const syncBtn = $('#syncBtn');
+  if (syncBtn) syncBtn.addEventListener('click', () => syncCatalog(user));
   ['fName','fType','fStatus'].forEach(id => {
     const e = $('#' + id);
     if (e) e.addEventListener('input', renderTable);
