@@ -76,6 +76,7 @@ function template() {
         <button id="loginBtn" class="btn-primary">Entrar</button>
 
         <p class="login-foot">El sistema detecta tu rol automáticamente</p>
+        <p id="versionTag" class="version-tag">v${CONFIG.version}</p>
       </div>
 
       <!-- Vista: recuperación de contraseña -->
@@ -173,6 +174,32 @@ function wire() {
   }
   btn.addEventListener('click', doLogin);
   pwdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+
+  // Comparar versión del código con la registrada en la tabla
+  checkVersion();
+}
+
+/** Compara CONFIG.version (código) con la última de la tabla y avisa si difieren */
+async function checkVersion() {
+  const tag = $('#versionTag');
+  if (!tag) return;
+  try {
+    const res = await fetch('/api/version');
+    const data = await res.json();
+    const registered = data.ok && data.latest ? data.latest.version : null;
+    if (!registered) { tag.textContent = `v${CONFIG.version}`; return; }
+    if (registered === CONFIG.version) {
+      tag.textContent = `v${CONFIG.version}`;
+      tag.className = 'version-tag ok';
+      tag.title = data.latest.summary || '';
+    } else {
+      tag.textContent = `código v${CONFIG.version} ≠ registrada v${registered}`;
+      tag.className = 'version-tag warn';
+      tag.title = 'El código desplegado no coincide con la última versión registrada. Puede ser caché o un deploy pendiente.';
+    }
+  } catch {
+    tag.textContent = `v${CONFIG.version}`;
+  }
 }
 
 /** Punto de entrada de la vista */

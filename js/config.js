@@ -6,6 +6,11 @@ export const CONFIG = {
   appName: 'Portal de Nómina',
   org: 'Grupo Canaima · Capital Humano',
 
+  // Versión del CÓDIGO desplegado. Subir en cada push y registrar la
+  // misma versión en la tabla nomina_v2.app_versions. El login compara
+  // ambas y avisa si no coinciden (señal de deploy/caché desactualizado).
+  version: '1.00',
+
   // Salt del hash de contraseña (debe coincidir con el portal anterior
   // para no invalidar las claves migradas). Regla de negocio 1.1.
   pwdSalt: 'nm_salt_2025',

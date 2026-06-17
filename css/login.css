@@ -116,6 +116,19 @@
   line-height: 1.6;
 }
 
+.version-tag {
+  font-size: 11px;
+  text-align: center;
+  margin: 8px 0 0;
+  color: var(--faint);
+  cursor: default;
+}
+.version-tag.ok { color: var(--faint); }
+.version-tag.warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+
 /* Vista de recuperación */
 .recover-back {
   background: transparent;
