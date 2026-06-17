@@ -27,7 +27,7 @@ function slug(text) {
     .replace(/^_+|_+$/g, '');                          // limpia extremos
 }
 
-/** Llama a la API REST de Supabase con service_role */
+/** Llama a la API REST de Supabase con service_role (para GET con JSON) */
 async function sbFetch(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
     ...opts,
@@ -41,17 +41,28 @@ async function sbFetch(env, path, opts = {}) {
     },
   });
   if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
-  return res.status === 204 ? null : res.json();
+  const text = await res.text();
+  return text ? JSON.parse(text) : null;   // tolera cuerpo vacío
 }
 
-/** Upsert en lote vía PostgREST (Prefer: resolution=merge-duplicates) */
+/** Upsert en lote vía PostgREST. NO parsea respuesta (return=minimal). */
 async function upsert(env, table, rows) {
   if (!rows.length) return;
-  await sbFetch(env, table, {
+  const res = await fetch(`${env.supabase_url}/rest/v1/${table}`, {
     method: 'POST',
-    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    headers: {
+      apikey: env.supabase_service_role,
+      Authorization: `Bearer ${env.supabase_service_role}`,
+      'Content-Profile': 'nomina_v2',
+      'Content-Type': 'application/json',
+      Prefer: 'resolution=merge-duplicates,return=minimal',
+    },
     body: JSON.stringify(rows),
   });
+  if (!res.ok) {
+    const detail = await res.text();
+    throw new Error(`upsert ${table} ${res.status}: ${detail}`);
+  }
 }
 
 export async function onRequestPost({ request, env }) {
