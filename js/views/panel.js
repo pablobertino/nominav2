@@ -57,7 +57,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.15</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.16</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -351,15 +351,13 @@ function viewCatalogos() {
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Catálogos</h1>
       <p>${CATALOG.zones.length} zonas · ${CATALOG.subzones.length} subzonas · ${CATALOG.concepts.length} conceptos</p></div></div>
-    <div class="cards-row">
-      <div class="card" style="flex:1.3">
-        <h3>Zonas y subzonas</h3>
-        <div id="treeBox"></div>
-      </div>
-      <div class="card">
-        <h3>Conceptos <span class="muted">(${CATALOG.concepts.length})</span></h3>
-        <div class="concepts">${CATALOG.concepts.map(c => `<span class="concept-tag">${c.name}</span>`).join('')}</div>
-      </div>
+    <div class="card">
+      <h3>Zonas y subzonas</h3>
+      <div id="treeBox"></div>
+    </div>
+    <div class="card">
+      <h3>Conceptos <span class="muted">(${CATALOG.concepts.length})</span></h3>
+      <div class="concepts">${CATALOG.concepts.map(c => `<span class="concept-tag">${c.name}</span>`).join('')}</div>
     </div>`;
 
   const tree = $('#treeBox');

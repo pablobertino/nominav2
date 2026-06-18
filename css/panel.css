@@ -64,6 +64,8 @@
 .btn-primary:hover { background:var(--brand-dark); }
 .btn-primary:disabled { opacity:.6; cursor:default; }
 .btn svg { flex-shrink:0; width:15px; height:15px; }
+/* Botón de acción en encabezado: tamaño contenido, no desproporcionado */
+.pnl-head .btn { padding:9px 16px; font-size:13px; }
 
 /* Filtros */
 .pnl-filters { display:flex; gap:10px; margin-bottom:18px; flex-wrap:wrap; }
@@ -153,9 +155,10 @@
 
 .sync-row { display:flex; justify-content:space-between; align-items:center; gap:16px; }
 
-/* Botones mini (acciones de tabla) */
-.btn-mini { padding:6px 11px; font-size:12px; margin-left:5px; border-radius:var(--radius-sm); }
-.btn-mini svg { vertical-align:-2px; margin-right:2px; width:13px; height:13px; }
+/* Botones mini (acciones de tabla) — compactos y uniformes */
+.btn-mini { padding:7px 12px; font-size:12.5px; margin-left:6px; border-radius:var(--radius-sm);
+  font-weight:550; height:auto; line-height:1.1; }
+.btn-mini svg { vertical-align:-2px; margin-right:3px; width:13px; height:13px; }
 
 /* Modal */
 .modal-ov { position:fixed; inset:0; background:rgba(15,23,42,.45); backdrop-filter:blur(2px);
@@ -180,12 +183,13 @@
 .radio-row input { width:18px; height:18px; flex-shrink:0; margin:0; accent-color:var(--brand); cursor:pointer; }
 
 /* Editor de alcance (Permisos) */
-.sc-add { display:flex; gap:8px; margin-bottom:12px; }
-.sc-add select { padding:9px 12px; border:1px solid var(--border); border-radius:var(--radius-md);
-  font-size:13px; font-family:inherit; background:var(--surface); flex:0 0 130px; }
-.sc-results { max-height:200px; overflow-y:auto; border:1px solid var(--border-soft); border-radius:var(--radius-md); }
-.sc-res-row { display:flex; justify-content:space-between; align-items:center; padding:7px 12px;
-  font-size:13px; border-bottom:0.5px solid var(--border-soft); }
+.sc-add { display:flex; gap:10px; margin-bottom:14px; align-items:stretch; }
+.sc-add select { flex:0 0 150px; }
+.sc-add .search { flex:1; }
+.sc-add .search input { height:44px; }
+.sc-results { max-height:240px; overflow-y:auto; border:1px solid var(--border); border-radius:var(--radius-md); }
+.sc-res-row { display:flex; justify-content:space-between; align-items:center; padding:9px 14px;
+  font-size:13px; border-bottom:1px solid var(--border-soft); }
 .sc-res-row:last-child { border-bottom:0; }
 .sc-res-btns { display:flex; gap:6px; flex-shrink:0; }
 .sc-res-btns button { border:1px solid var(--border); background:var(--surface); border-radius:6px;
