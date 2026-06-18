@@ -44,7 +44,8 @@ async function canTouch(env, admin, code) {
 }
 
 // Prefijos móviles válidos en Venezuela
-const VE_PREFIXES = ['0412', '0414', '0416', '0424', '0426'];
+// Movistar 0414/0424 · Movilnet 0416/0426 · Digitel 0412/0422 (0422 nuevo)
+const VE_PREFIXES = ['0412', '0414', '0416', '0422', '0424', '0426'];
 
 /** Normaliza un móvil VE a E.164 (+58...). Devuelve {e164} o {error}. */
 function normalizePhone(raw) {

@@ -51,7 +51,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.10</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.11</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${NAV.filter(n => n[3] !== 'superonly' || isSuper).map(([id, ic, label]) =>
