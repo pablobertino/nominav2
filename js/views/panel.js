@@ -40,31 +40,40 @@ const NAV = [
 
 /* ---------- shell ---------- */
 function shell(user) {
-  const initials = (user.kind === 'admin' ? (user.name || user.username) : user.companyCode)
-    .split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-  const roleLabel = user.kind === 'admin' ? user.role : 'tienda';
-  const nameLabel = user.kind === 'admin' ? (user.name || user.username) : user.companyCode;
-
+  const isCompany = user.kind === 'company';
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
+  const nameLabel = isCompany ? user.companyCode : (user.name || user.username);
+  const roleLabel = isCompany ? 'tienda' : user.role;
+  const initials = (nameLabel || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+
+  // Navegación según rol: la tienda solo ve "Mi empresa".
+  const navItems = isCompany
+    ? [['miempresa', I.store, 'Mi empresa']]
+    : NAV.filter(n => n[3] !== 'superonly' || isSuper);
+
   return `
   <div class="pnl-layout">
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.13</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.14</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
-        ${NAV.filter(n => n[3] !== 'superonly' || isSuper).map(([id, ic, label]) =>
+        ${navItems.map(([id, ic, label]) =>
           `<button data-view="${id}" class="${id === currentView ? 'active' : ''}">${ic}<span>${label}</span></button>`
         ).join('')}
       </nav>
-      <div class="pnl-user">
-        <div class="pnl-avatar">${initials}</div>
-        <div class="pnl-uinfo"><div class="pnl-uname">${nameLabel}</div><div class="pnl-urole">${roleLabel}</div></div>
-        <button id="logoutBtn" class="pnl-logout" title="Cerrar sesión" aria-label="Cerrar sesión">⎋</button>
-      </div>
     </aside>
-    <main class="pnl-main" id="pnlMain"></main>
+    <div class="pnl-content">
+      <header class="pnl-topbar">
+        <div class="pnl-user">
+          <div class="pnl-avatar">${initials}</div>
+          <div class="pnl-uinfo"><div class="pnl-uname">${nameLabel}</div><div class="pnl-urole">${roleLabel}</div></div>
+        </div>
+        <button id="logoutBtn" class="pnl-logout" title="Cerrar sesión">Salir</button>
+      </header>
+      <main class="pnl-main" id="pnlMain"></main>
+    </div>
   </div>`;
 }
 
@@ -780,10 +789,14 @@ function viewSync(user) {
 }
 
 /* ---------- navegación ---------- */
-async function ensureCatalog() {
+async function ensureCatalog(user) {
   if (CATALOG) return;
   $('#pnlMain').innerHTML = '<div class="pnl-loading">Cargando catálogo…</div>';
-  const res = await fetch('/api/catalog');
+  // POST con la sesión: el servidor filtra las empresas según rol/alcance
+  const res = await fetch('/api/catalog', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user }),
+  });
   const d = await res.json();
   if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
   CATALOG = d;
@@ -794,7 +807,7 @@ async function navigate(view, user) {
   document.querySelectorAll('#pnlNav button').forEach(b =>
     b.classList.toggle('active', b.dataset.view === view));
   if (view === 'tiendas' || view === 'catalogos') {
-    await ensureCatalog();
+    await ensureCatalog(user);
     if (!CATALOG) return;
   }
   if (view === 'tiendas') viewTiendas(user);
@@ -803,6 +816,40 @@ async function navigate(view, user) {
   else if (view === 'equipo') viewEquipo(user);
   else if (view === 'permisos') viewPermisos(user);
   else if (view === 'sync') viewSync(user);
+  else if (view === 'miempresa') viewMiEmpresa(user);
+}
+
+/* ---------- VISTA: MI EMPRESA (solo rol tienda) ---------- */
+async function viewMiEmpresa(user) {
+  $('#pnlMain').innerHTML = `<div class="pnl-loading">Cargando…</div>`;
+  // El catálogo (filtrado) trae solo la propia empresa de la tienda
+  await ensureCatalog(user);
+  const c = (CATALOG && CATALOG.companies && CATALOG.companies[0]) || null;
+  if (!c) {
+    $('#pnlMain').innerHTML = `<div class="card"><p class="muted" style="margin:0">No se encontraron los datos de tu empresa. Contacta a Capital Humano.</p></div>`;
+    return;
+  }
+  const tel = phoneDisplay(c.phone);
+  const tel2 = phoneDisplay(c.phone2);
+  const telLine = [tel, tel2].filter(Boolean).join(' / ') || '—';
+  $('#pnlMain').innerHTML = `
+    <div class="pnl-head"><div><h1>Mi empresa</h1><p>Datos registrados de tu tienda</p></div></div>
+    <div class="card miemp-card">
+      <div class="miemp-code">${c.code}</div>
+      <h2 class="miemp-name">${c.name || ''}</h2>
+      <div class="miemp-grid">
+        <div><span class="miemp-lbl">Concepto</span><span>${c.concept || '—'}</span></div>
+        <div><span class="miemp-lbl">Zona</span><span>${c.zone || '—'}</span></div>
+        <div><span class="miemp-lbl">Subzona</span><span>${c.subzone || '—'}</span></div>
+        <div><span class="miemp-lbl">Estado</span><span>${statusPill(c.status)}</span></div>
+        <div><span class="miemp-lbl">Correo</span><span>${c.email || '—'}</span></div>
+        <div><span class="miemp-lbl">Teléfono</span><span>${telLine}</span></div>
+      </div>
+    </div>
+    <div class="card" style="display:flex;gap:10px;align-items:center">
+      <span class="badge-soon">Próximamente</span>
+      <p class="muted" style="margin:0">El envío de reportes de nómina estará disponible aquí muy pronto.</p>
+    </div>`;
 }
 
 export function renderPanel() {
@@ -812,5 +859,7 @@ export function renderPanel() {
   $('#logoutBtn').addEventListener('click', () => { clearSession(); go('/login'); });
   document.querySelectorAll('#pnlNav button').forEach(b =>
     b.addEventListener('click', () => navigate(b.dataset.view, user)));
-  navigate('tiendas', user);
+  // Rol tienda: solo su propia empresa. Admin/superadmin: arranca en Empresas.
+  if (user.kind === 'company') navigate('miempresa', user);
+  else navigate('tiendas', user);
 }
