@@ -18,6 +18,9 @@ const I = {
   catalog: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>',
   users: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>',
   shield: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>',
+  team: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  key: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3"/></svg>',
+  plus: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
   sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>',
   chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
@@ -29,7 +32,8 @@ const NAV = [
   ['tiendas', I.store, 'Tiendas'],
   ['catalogos', I.catalog, 'Catálogos'],
   ['usuarios', I.users, 'Usuarios'],
-  ['permisos', I.shield, 'Permisos'],
+  ['equipo', I.team, 'Equipo', 'superonly'],
+  ['permisos', I.shield, 'Permisos', 'superonly'],
   ['sync', I.sync, 'Sincronización'],
 ];
 
@@ -40,15 +44,16 @@ function shell(user) {
   const roleLabel = user.kind === 'admin' ? user.role : 'tienda';
   const nameLabel = user.kind === 'admin' ? (user.name || user.username) : user.companyCode;
 
+  const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   return `
   <div class="pnl-layout">
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.03</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.04</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
-        ${NAV.map(([id, ic, label]) =>
+        ${NAV.filter(n => n[3] !== 'superonly' || isSuper).map(([id, ic, label]) =>
           `<button data-view="${id}" class="${id === currentView ? 'active' : ''}">${ic}<span>${label}</span></button>`
         ).join('')}
       </nav>
@@ -177,6 +182,222 @@ function viewCatalogos() {
   });
 }
 
+/* ---------- helper: modal ---------- */
+function openModal(html) {
+  closeModal();
+  const ov = document.createElement('div');
+  ov.className = 'modal-ov';
+  ov.id = 'modalOv';
+  ov.innerHTML = `<div class="modal-box">${html}</div>`;
+  ov.addEventListener('click', e => { if (e.target === ov) closeModal(); });
+  document.body.appendChild(ov);
+}
+function closeModal() {
+  const ex = document.getElementById('modalOv');
+  if (ex) ex.remove();
+}
+
+/* ---------- bloque de contraseña reutilizable (modal) ---------- */
+function pwdBlockHtml() {
+  return `
+    <p style="font-size:12px;color:var(--muted);margin:0 0 8px">Contraseña inicial</p>
+    <label class="radio-row"><input type="radio" name="pwmode" value="temp" checked> Generar temporal <span class="muted" style="font-size:11px">(la cambia al entrar)</span></label>
+    <label class="radio-row"><input type="radio" name="pwmode" value="manual"> Escribir yo la clave</label>
+    <div id="pwManual" style="display:none;margin-top:8px">
+      <input type="text" id="pwInput" placeholder="Mínimo 6 caracteres">
+    </div>`;
+}
+function readPwd() {
+  const mode = document.querySelector('input[name=pwmode]:checked').value;
+  if (mode === 'temp') return { useTemp: true };
+  return { useTemp: false, password: document.getElementById('pwInput').value };
+}
+function wirePwdBlock() {
+  document.querySelectorAll('input[name=pwmode]').forEach(r =>
+    r.addEventListener('change', () => {
+      document.getElementById('pwManual').style.display =
+        document.querySelector('input[name=pwmode]:checked').value === 'manual' ? 'block' : 'none';
+    }));
+}
+
+/* ---------- VISTA: USUARIOS (de compañía) ---------- */
+let CU_ROWS = null;
+async function viewUsuarios(user) {
+  $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Usuarios</h1><p>Accesos de compañía al portal</p></div></div><div class="pnl-loading">Cargando…</div>`;
+  const res = await fetch('/api/company-users', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'list', adminId: user.id }),
+  });
+  const d = await res.json();
+  if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
+  CU_ROWS = d.rows;
+  const types = [...new Set(CU_ROWS.map(r => r.type).filter(Boolean))].sort();
+
+  $('#pnlMain').innerHTML = `
+    <div class="pnl-head"><div><h1>Usuarios</h1><p id="cuCount"></p></div></div>
+    <div class="pnl-filters">
+      <div class="search">${I.search}<input id="cuName" placeholder="Buscar compañía o código…"></div>
+      <select id="cuType"><option value="Tienda">Tipo: Tienda</option>${types.filter(t=>t!=='Tienda').map(t=>`<option>${t}</option>`).join('')}<option value="ALL">Todos los tipos</option></select>
+      <select id="cuAccess"><option value="ALL">Todas</option><option value="yes">Con acceso</option><option value="no">Sin acceso</option></select>
+    </div>
+    <div class="tablebox"><table><thead><tr>
+      <th>Código</th><th>Compañía</th><th>Tipo</th><th>Usuario / Correo</th><th>Estado</th><th style="text-align:right">Acciones</th>
+    </tr></thead><tbody id="cuBody"></tbody></table></div>`;
+
+  const fName = $('#cuName'), fType = $('#cuType'), fAccess = $('#cuAccess');
+  function render() {
+    const n = fName.value.toLowerCase();
+    const rows = CU_ROWS.filter(r =>
+      (`${r.code} ${r.name || ''}`.toLowerCase().includes(n))
+      && (fType.value === 'ALL' || r.type === fType.value)
+      && (fAccess.value === 'ALL' || (fAccess.value === 'yes' ? !!r.user : !r.user)));
+    $('#cuCount').textContent = `${rows.length} de ${CU_ROWS.length} compañías`;
+    $('#cuBody').innerHTML = rows.map(r => {
+      const u = r.user;
+      const userCell = u
+        ? `${r.code}<br><span class="muted" style="font-size:12px">${u.email || 'sin correo'}</span>`
+        : `<span class="muted" style="font-size:12px">— sin usuario —</span>`;
+      const stateCell = u
+        ? (u.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>')
+        : '<span class="pill pill-gray">Sin acceso</span>';
+      const actions = u
+        ? `<button class="btn btn-mini" data-act="reset" data-code="${r.code}">${I.key} Resetear</button>
+           <button class="btn btn-mini" data-act="toggle" data-code="${r.code}" data-active="${u.is_active}">${u.is_active ? 'Desactivar' : 'Activar'}</button>`
+        : `<button class="btn btn-mini btn-primary" data-act="create" data-code="${r.code}" data-name="${(r.name||'').replace(/"/g,'')}" data-type="${r.type||''}">${I.plus} Crear acceso</button>`;
+      return `<tr><td class="code">${r.code}</td><td>${r.name || '—'}</td>
+        <td><span class="pill pill-gray">${r.type || '—'}</span></td>
+        <td style="font-size:13px">${userCell}</td><td>${stateCell}</td>
+        <td style="text-align:right;white-space:nowrap">${actions}</td></tr>`;
+    }).join('') || '<tr><td colspan="6" class="empty">Sin resultados.</td></tr>';
+
+    $('#cuBody').querySelectorAll('button[data-act]').forEach(b =>
+      b.addEventListener('click', () => cuAction(b.dataset, user)));
+  }
+  [fName].forEach(e => e.addEventListener('input', render));
+  [fType, fAccess].forEach(e => e.addEventListener('change', render));
+  render();
+}
+
+function cuAction(ds, user) {
+  if (ds.act === 'toggle') {
+    cuApi({ action: 'toggle', adminId: user.id, companyCode: ds.code, isActive: !(ds.active === 'true') })
+      .then(() => viewUsuarios(user));
+    return;
+  }
+  const isCreate = ds.act === 'create';
+  openModal(`
+    <div class="modal-head"><span>${isCreate ? 'Crear acceso' : 'Resetear contraseña'}</span><button class="modal-x" id="mX">✕</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 16px">${ds.code}${ds.name ? ' · ' + ds.name : ''}${ds.type ? ' · ' + ds.type : ''}</p>
+    ${isCreate ? `
+      <label class="flabel">Usuario</label>
+      <input type="text" id="cuUser" value="${ds.code}" style="margin-bottom:12px">
+      <label class="flabel">Correo <span class="muted">(opcional)</span></label>
+      <input type="text" id="cuEmail" placeholder="compañia@grupocanaima.com" style="margin-bottom:14px">` : ''}
+    ${pwdBlockHtml()}
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">${isCreate ? 'Crear acceso' : 'Resetear'}</button>
+    </div>`);
+  wirePwdBlock();
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const pw = readPwd();
+    const payload = { adminId: user.id, companyCode: ds.code, ...pw,
+      action: isCreate ? 'create' : 'reset',
+      email: isCreate ? ($('#cuEmail').value || null) : undefined };
+    const d = await cuApi(payload);
+    if (!d.ok) { alert(d.error); return; }
+    closeModal();
+    if (d.tempPassword) alert('Contraseña temporal: ' + d.tempPassword + '\n(Cópiala y entrégala a la tienda.)');
+    viewUsuarios(user);
+  });
+}
+async function cuApi(payload) {
+  const res = await fetch('/api/company-users', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+/* ---------- VISTA: EQUIPO (admins) ---------- */
+async function viewEquipo(user) {
+  $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Equipo</h1><p>Administradores del portal</p></div></div><div class="pnl-loading">Cargando…</div>`;
+  const d = await auApi({ action: 'list', adminId: user.id });
+  if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
+  const rows = d.rows;
+  $('#pnlMain').innerHTML = `
+    <div class="pnl-head"><div><h1>Equipo</h1><p>${rows.length} miembros</p></div>
+      <button class="btn btn-primary" id="auNew">${I.plus} Nuevo miembro</button></div>
+    <div class="tablebox"><table><thead><tr>
+      <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Rol</th><th>Estado</th><th style="text-align:right">Acciones</th>
+    </tr></thead><tbody>
+      ${rows.map(a => `<tr>
+        <td class="code">${a.username}</td><td>${a.name || '—'}</td><td style="font-size:12px" class="muted">${a.email || '—'}</td>
+        <td><span class="pill ${a.role === 'superadmin' ? 'pill-proj' : 'pill-gray'}">${a.role}</span></td>
+        <td>${a.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>'}</td>
+        <td style="text-align:right;white-space:nowrap">
+          <button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>
+          <button class="btn btn-mini" data-act="toggle" data-id="${a.id}" data-active="${a.is_active}">${a.is_active ? 'Desactivar' : 'Activar'}</button>
+        </td></tr>`).join('')}
+    </tbody></table></div>`;
+  $('#auNew').addEventListener('click', () => auCreateModal(user));
+  $('#pnlMain').querySelectorAll('button[data-act]').forEach(b =>
+    b.addEventListener('click', () => auAction(b.dataset, user)));
+}
+function auCreateModal(user) {
+  openModal(`
+    <div class="modal-head"><span>Nuevo miembro</span><button class="modal-x" id="mX">✕</button></div>
+    <label class="flabel">Usuario</label><input id="auU" placeholder="ej. yanmira.salazar" style="margin-bottom:12px">
+    <label class="flabel">Nombre</label><input id="auN" placeholder="Nombre completo" style="margin-bottom:12px">
+    <label class="flabel">Correo <span class="muted">(opcional)</span></label><input id="auE" placeholder="correo@grupocanaima.com" style="margin-bottom:12px">
+    <label class="flabel">Rol</label>
+    <select id="auR" style="margin-bottom:14px;width:100%"><option value="admin">admin</option><option value="superadmin">superadmin</option></select>
+    ${pwdBlockHtml()}
+    <div class="modal-actions"><button class="btn" id="mCancel">Cancelar</button><button class="btn btn-primary" id="mOk">Crear</button></div>`);
+  wirePwdBlock();
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const pw = readPwd();
+    const d = await auApi({ action: 'create', adminId: user.id,
+      username: $('#auU').value, name: $('#auN').value, email: $('#auE').value || null,
+      role: $('#auR').value, ...pw });
+    if (!d.ok) { alert(d.error); return; }
+    closeModal();
+    if (d.tempPassword) alert('Contraseña temporal: ' + d.tempPassword);
+    viewEquipo(user);
+  });
+}
+function auAction(ds, user) {
+  if (ds.act === 'toggle') {
+    auApi({ action: 'toggle', adminId: user.id, id: ds.id, isActive: !(ds.active === 'true') }).then(() => viewEquipo(user));
+    return;
+  }
+  openModal(`
+    <div class="modal-head"><span>Resetear contraseña</span><button class="modal-x" id="mX">✕</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 16px">${ds.u}</p>
+    ${pwdBlockHtml()}
+    <div class="modal-actions"><button class="btn" id="mCancel">Cancelar</button><button class="btn btn-primary" id="mOk">Resetear</button></div>`);
+  wirePwdBlock();
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const pw = readPwd();
+    const d = await auApi({ action: 'reset', adminId: user.id, id: ds.id, ...pw });
+    if (!d.ok) { alert(d.error); return; }
+    closeModal();
+    if (d.tempPassword) alert('Contraseña temporal: ' + d.tempPassword);
+    viewEquipo(user);
+  });
+}
+async function auApi(payload) {
+  const res = await fetch('/api/admin-users', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
 /* ---------- VISTA: placeholders ---------- */
 function viewSoon(title, msg) {
   $('#pnlMain').innerHTML = `
@@ -234,7 +455,8 @@ async function navigate(view, user) {
   }
   if (view === 'tiendas') viewTiendas();
   else if (view === 'catalogos') viewCatalogos();
-  else if (view === 'usuarios') viewSoon('Usuarios', 'Sección en construcción: creación de usuarios y reseteo de contraseñas.');
+  else if (view === 'usuarios') viewUsuarios(user);
+  else if (view === 'equipo') viewEquipo(user);
   else if (view === 'permisos') viewSoon('Permisos', 'Sección en construcción: asignación de alcance por zona, subzona o tienda.');
   else if (view === 'sync') viewSync(user);
 }
