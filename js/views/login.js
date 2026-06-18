@@ -193,9 +193,15 @@ async function checkVersion() {
       tag.className = 'version-tag ok';
       tag.title = data.latest.summary || '';
     } else {
-      tag.textContent = `código v${CONFIG.version} ≠ registrada v${registered}`;
+      tag.innerHTML = `código v${CONFIG.version} ≠ v${registered} · <a href="#" id="reloadLink">Actualizar ahora</a>`;
       tag.className = 'version-tag warn';
-      tag.title = 'El código desplegado no coincide con la última versión registrada. Puede ser caché o un deploy pendiente.';
+      tag.title = 'Tu navegador tiene una versión en caché. Presiona Ctrl+F5 (o Ctrl+Shift+R) para cargar la más reciente.';
+      const link = document.getElementById('reloadLink');
+      if (link) link.addEventListener('click', (e) => {
+        e.preventDefault();
+        // Recarga forzada saltando caché
+        location.reload(true);
+      });
     }
   } catch {
     tag.textContent = `v${CONFIG.version}`;
