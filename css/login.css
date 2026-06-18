@@ -7,16 +7,19 @@
   align-items: center;
   justify-content: center;
   padding: var(--sp-6) var(--sp-4);
+  background-image:
+    radial-gradient(circle at 15% 20%, rgba(37,99,235,.05), transparent 40%),
+    radial-gradient(circle at 85% 75%, rgba(37,99,235,.04), transparent 40%);
 }
 
 .login-card {
   width: 100%;
-  max-width: 360px;
+  max-width: 400px;
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
-  padding: 32px 28px;
+  padding: 40px 36px 32px;
 }
 
 .login-head {
@@ -24,16 +27,18 @@
   margin-bottom: 28px;
 }
 .login-logo {
-  width: 54px; height: 54px;
-  border-radius: var(--radius-md);
+  width: 56px; height: 56px;
+  border-radius: 16px;
   background: var(--brand-bg);
   display: flex; align-items: center; justify-content: center;
   margin: 0 auto 14px;
   font-size: 26px;
 }
+.login-logo svg { width: 30px; height: 30px; stroke: var(--brand); }
 .login-title {
-  font-size: var(--fs-lg);
-  font-weight: 600;
+  font-size: 19px;
+  font-weight: 650;
+  letter-spacing: -.01em;
   margin: 0;
   color: var(--ink);
 }
@@ -43,23 +48,24 @@
   margin: 4px 0 0;
 }
 
-.field { margin-bottom: 14px; }
+.field { margin-bottom: 16px; }
 .field label {
   display: block;
-  font-size: var(--fs-sm);
+  font-size: 12.5px;
+  font-weight: 550;
   color: var(--ink-soft);
-  margin-bottom: 6px;
+  margin-bottom: 7px;
 }
 .field-icon { position: relative; }
 .field-icon .ico {
   position: absolute;
-  left: 11px; top: 50%;
+  left: 13px; top: 50%;
   transform: translateY(-50%);
   font-size: 16px;
   color: var(--faint);
   pointer-events: none;
 }
-.field-icon input { padding-left: 36px; }
+.field-icon input { padding-left: 40px; }
 .field-icon input.has-toggle { padding-right: 40px; }
 
 .toggle-pwd {
@@ -97,15 +103,17 @@
 
 .btn-primary {
   width: 100%;
+  height: 46px;
   background: var(--brand);
   color: #fff;
-  padding: 11px;
-  font-size: var(--fs-base);
-  font-weight: 500;
+  padding: 0 11px;
+  font-size: 14.5px;
+  font-weight: 600;
   border-radius: var(--radius-md);
-  transition: background .15s;
+  transition: background .15s, transform .05s;
 }
 .btn-primary:hover { background: var(--brand-dark); }
+.btn-primary:active { transform: translateY(1px); }
 .btn-primary:disabled { opacity: .6; cursor: default; }
 
 .login-foot {

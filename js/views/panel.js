@@ -45,6 +45,7 @@ function shell(user) {
   const nameLabel = isCompany ? user.companyCode : (user.name || user.username);
   const roleLabel = isCompany ? 'tienda' : user.role;
   const initials = (nameLabel || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+  const email = (user.email || '').trim().toLowerCase();
 
   // Navegación según rol: la tienda solo ve "Mi empresa".
   const navItems = isCompany
@@ -56,7 +57,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.14</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.15</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -67,14 +68,36 @@ function shell(user) {
     <div class="pnl-content">
       <header class="pnl-topbar">
         <div class="pnl-user">
-          <div class="pnl-avatar">${initials}</div>
+          <div class="pnl-avatar" id="pnlAvatar">${initials}</div>
           <div class="pnl-uinfo"><div class="pnl-uname">${nameLabel}</div><div class="pnl-urole">${roleLabel}</div></div>
         </div>
-        <button id="logoutBtn" class="pnl-logout" title="Cerrar sesión">Salir</button>
+        <button id="logoutBtn" class="pnl-logout" title="Cerrar sesión">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+          Salir
+        </button>
       </header>
       <main class="pnl-main" id="pnlMain"></main>
     </div>
   </div>`;
+}
+
+/* Carga el avatar vía Gravatar (SHA-256 del correo). Si no hay foto,
+   Gravatar responde 404 (d=404) y conservamos las iniciales. */
+async function loadAvatar(email) {
+  if (!email) return;
+  try {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(email));
+    const hash = [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+    const url = `https://www.gravatar.com/avatar/${hash}?s=72&d=404`;
+    const img = new Image();
+    img.onload = () => {
+      const el = document.getElementById('pnlAvatar');
+      if (el) { el.textContent = ''; el.appendChild(img); }
+    };
+    img.onerror = () => {}; // sin Gravatar: quedan las iniciales
+    img.src = url;
+    img.alt = '';
+  } catch { /* navegador sin crypto.subtle: iniciales */ }
 }
 
 /* ---------- helpers de render ---------- */
@@ -377,10 +400,12 @@ function closeModal() {
 /* ---------- bloque de contraseña reutilizable (modal) ---------- */
 function pwdBlockHtml() {
   return `
-    <p style="font-size:12px;color:var(--muted);margin:0 0 8px">Contraseña inicial</p>
-    <label class="radio-row"><input type="radio" name="pwmode" value="temp" checked> Generar temporal <span class="muted" style="font-size:11px">(la cambia al entrar)</span></label>
-    <label class="radio-row"><input type="radio" name="pwmode" value="manual"> Escribir yo la clave</label>
-    <div id="pwManual" style="display:none;margin-top:8px">
+    <p class="flabel" style="margin-bottom:9px">Contraseña inicial</p>
+    <label class="radio-row"><input type="radio" name="pwmode" value="temp" checked>
+      <span>Generar temporal<br><span class="muted" style="font-size:12px">La cambia al entrar por primera vez</span></span></label>
+    <label class="radio-row"><input type="radio" name="pwmode" value="manual">
+      <span>Escribir yo la clave<br><span class="muted" style="font-size:12px">Tú defines la contraseña ahora</span></span></label>
+    <div id="pwManual" style="display:none;margin-top:4px">
       <input type="text" id="pwInput" placeholder="Mínimo 6 caracteres">
     </div>`;
 }
@@ -856,6 +881,7 @@ export function renderPanel() {
   const user = getSession();
   if (!user) { go('/login'); return; }
   mount(shell(user));
+  loadAvatar((user.email || '').trim().toLowerCase());
   $('#logoutBtn').addEventListener('click', () => { clearSession(); go('/login'); });
   document.querySelectorAll('#pnlNav button').forEach(b =>
     b.addEventListener('click', () => navigate(b.dataset.view, user)));

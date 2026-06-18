@@ -69,7 +69,7 @@ export async function onRequestPost({ request, env }) {
       return json({
         ok: true,
         user: { kind: 'admin', id: u.id, username: u.username, name: u.name, role: u.role,
-                mustChangePassword: u.must_change_password },
+                email: u.email || null, mustChangePassword: u.must_change_password },
       });
     }
 
@@ -85,7 +85,7 @@ export async function onRequestPost({ request, env }) {
       return json({
         ok: true,
         user: { kind: 'company', id: u.id, companyCode: u.company_code,
-                mustChangePassword: u.must_change_password },
+                email: u.email || null, mustChangePassword: u.must_change_password },
       });
     }
 

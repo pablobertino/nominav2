@@ -32,8 +32,10 @@ input[type="text"],
 input[type="password"],
 input[type="email"] {
   width: 100%;
-  padding: 10px 12px;
-  border: 1px solid var(--border);
+  height: 44px;
+  padding: 0 14px;
+  font-size: 14px;
+  border: 1.5px solid var(--border);
   border-radius: var(--radius-md);
   color: var(--ink);
   background: var(--surface);
@@ -42,9 +44,32 @@ input[type="email"] {
 }
 input:focus {
   border-color: var(--brand);
-  box-shadow: 0 0 0 3px var(--brand-bg);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
 }
 input::placeholder { color: var(--faint); }
+
+/* Selects: flecha personalizada, misma altura y foco que inputs */
+select {
+  height: 44px;
+  padding: 0 38px 0 14px;
+  font-size: 14px;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1.5px solid var(--border);
+  border-radius: var(--radius-md);
+  outline: none;
+  cursor: pointer;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: border-color .15s, box-shadow .15s;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='16' height='16' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round' viewBox='0 0 24 24'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 13px center;
+}
+select:focus {
+  border-color: var(--brand);
+  box-shadow: 0 0 0 3px rgba(37,99,235,.12);
+}
 
 button { cursor: pointer; border: 0; }
 
