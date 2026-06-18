@@ -51,7 +51,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.07</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.08</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${NAV.filter(n => n[3] !== 'superonly' || isSuper).map(([id, ic, label]) =>
@@ -69,6 +69,24 @@ function shell(user) {
 }
 
 /* ---------- helpers de render ---------- */
+/* Teléfono: en BD se guarda E.164 (+58...). Mostrar en nacional 0412-XXXXXXX */
+function phoneDisplay(e164) {
+  if (!e164) return null;
+  let s = e164.replace(/[^\d+]/g, '');
+  if (s.startsWith('+58')) s = '0' + s.slice(3);
+  else if (s.startsWith('58') && s.length === 12) s = '0' + s.slice(2);
+  if (/^\d{11}$/.test(s)) return s.slice(0, 4) + '-' + s.slice(4); // 0412-1234567
+  return e164;
+}
+/* Para capturar: de E.164 a nacional sin guion (para el input) */
+function phoneNational(e164) {
+  if (!e164) return '';
+  let s = e164.replace(/[^\d+]/g, '');
+  if (s.startsWith('+58')) s = '0' + s.slice(3);
+  else if (s.startsWith('58') && s.length === 12) s = '0' + s.slice(2);
+  return s;
+}
+
 function statusPill(s) {
   const x = (s || '').toLowerCase();
   if (x.includes('abier')) return '<span class="pill pill-open">Abierta</span>';
@@ -88,7 +106,14 @@ function viewTiendas(user) {
   $('#pnlMain').innerHTML = `
     <div class="pnl-head">
       <div><h1>Tiendas</h1><p id="tCount"></p></div>
-      <button class="btn" id="exportBtn">Exportar</button>
+      <div class="export-wrap">
+        <button class="btn" id="exportBtn">Exportar ▾</button>
+        <div class="export-menu" id="exportMenu" hidden>
+          <button data-fmt="xlsx">Excel (.xlsx)</button>
+          <button data-fmt="csv">CSV (.csv)</button>
+          <button data-fmt="txt">Texto (.txt)</button>
+        </div>
+      </div>
     </div>
     <div class="pnl-filters">
       <div class="search">${I.search}<input id="fName" type="text" placeholder="Buscar nombre o código…"></div>
@@ -100,7 +125,7 @@ function viewTiendas(user) {
     </div>
     <div class="tablebox">
       <table><thead><tr>
-        <th>Código</th><th>Razón social</th><th>Zona / Subzona</th><th>Concepto</th><th>Correo</th><th>Estado</th><th>Acceso</th>
+        <th>Código</th><th>Razón social</th><th>Zona / Subzona</th><th>Concepto</th><th>Contacto</th><th>Estado</th><th>Acceso</th>
       </tr></thead><tbody id="tBody"></tbody></table>
     </div>
     <div class="legend">
@@ -110,6 +135,8 @@ function viewTiendas(user) {
 
   const fName = $('#fName'), fType = $('#fType'), fStatus = $('#fStatus'),
         fZone = $('#fZone'), fSub = $('#fSub'), fConcept = $('#fConcept');
+
+  let visibleRows = []; // filas actualmente filtradas (para exportar)
 
   function fillSubs() {
     fSub.innerHTML = '<option value="ALL">Todas las subzonas</option>';
@@ -130,38 +157,137 @@ function viewTiendas(user) {
         && (fConcept.value === 'ALL' || c.concept === fConcept.value);
     });
     $('#tCount').textContent = `${rows.length} de ${CATALOG.companies.length} entidades`;
-    $('#tBody').innerHTML = rows.map(c => `
+    visibleRows = rows;
+    $('#tBody').innerHTML = rows.map(c => {
+      const tel = phoneDisplay(c.phone);
+      const contacto = `
+        <div class="contact-cell">
+          <div class="contact-lines">
+            <span class="${c.email ? '' : 'muted'}">${c.email || 'sin correo'}</span>
+            <span class="${tel ? 'muted' : 'muted'}" style="font-size:12px">${tel || 'sin teléfono'}</span>
+          </div>
+          <button class="email-edit" data-code="${c.code}" data-name="${(c.name||'').replace(/"/g,'')}" data-email="${c.email||''}" data-phone="${c.phone||''}" title="Editar contacto">${I.pencil}</button>
+        </div>`;
+      return `
       <tr>
         <td class="code">${c.code}</td>
         <td>${c.name || '—'}</td>
         <td>${c.zone || '—'}${c.subzone ? ' · ' + c.subzone : ''}</td>
         <td>${c.concept || '—'}</td>
-        <td class="email-cell">
-          <span class="${c.email ? '' : 'muted'}">${c.email || 'sin correo'}</span>
-          <button class="email-edit" data-code="${c.code}" data-name="${(c.name||'').replace(/"/g,'')}" data-email="${c.email||''}" title="Editar correo">${I.pencil}</button>
-        </td>
+        <td>${contacto}</td>
         <td>${statusPill(c.status)}</td>
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
-      </tr>`).join('') || '<tr><td colspan="7" class="empty">Sin resultados.</td></tr>';
+      </tr>`;
+    }).join('') || '<tr><td colspan="7" class="empty">Sin resultados.</td></tr>';
 
     $('#tBody').querySelectorAll('.email-edit').forEach(b =>
-      b.addEventListener('click', () => emailEditModal(user, b.dataset)));
+      b.addEventListener('click', () => contactEditModal(user, b.dataset)));
   }
 
   fZone.addEventListener('change', () => { fillSubs(); render(); });
   [fName, fType, fStatus, fSub, fConcept].forEach(e => e.addEventListener('input', render));
   fType.addEventListener('change', render);
   render();
+
+  // Exportación (menú desplegable)
+  const exportBtn = $('#exportBtn'), exportMenu = $('#exportMenu');
+  exportBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    exportMenu.hidden = !exportMenu.hidden;
+  });
+  document.addEventListener('click', () => { exportMenu.hidden = true; }, { once: false });
+  exportMenu.querySelectorAll('button').forEach(b =>
+    b.addEventListener('click', () => { exportMenu.hidden = true; exportTiendas(b.dataset.fmt, visibleRows); }));
 }
 
-/* Modal para editar el correo de una compañía desde la grilla de Tiendas */
-function emailEditModal(user, ds) {
+/* ---------- Exportación de Tiendas (xlsx / csv / txt) ---------- */
+function exportRows(rows) {
+  // Estructura tabular común a los tres formatos
+  return rows.map(c => ({
+    'Código': c.code,
+    'Razón social': c.name || '',
+    'Zona': c.zone || '',
+    'Subzona': c.subzone || '',
+    'Concepto': c.concept || '',
+    'Correo': c.email || '',
+    'Teléfono nacional': phoneDisplay(c.phone) || '',
+    'Teléfono internacional': c.phone || '',
+    'Estado': c.status || '',
+    'Tiene acceso': c.hasAccess ? 'Sí' : 'No',
+  }));
+}
+function downloadBlob(content, filename, mime) {
+  const blob = (content instanceof Blob) ? content : new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function tstamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth()+1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+}
+async function exportTiendas(fmt, rows) {
+  const data = exportRows(rows);
+  if (!data.length) { alert('No hay filas para exportar con los filtros actuales.'); return; }
+  const headers = Object.keys(data[0]);
+  const fname = `tiendas_${tstamp()}`;
+
+  if (fmt === 'csv') {
+    const esc = (v) => {
+      const s = String(v ?? '');
+      return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lines = [headers.join(';')].concat(data.map(r => headers.map(h => esc(r[h])).join(';')));
+    // BOM para que Excel abra UTF-8 correctamente
+    downloadBlob('\uFEFF' + lines.join('\r\n'), `${fname}.csv`, 'text/csv;charset=utf-8');
+    return;
+  }
+
+  if (fmt === 'txt') {
+    // Texto tabular alineado por columnas
+    const widths = headers.map(h => Math.max(h.length, ...data.map(r => String(r[h] ?? '').length)));
+    const fmtRow = (cells) => cells.map((c, i) => String(c ?? '').padEnd(widths[i])).join('  ');
+    const lines = [fmtRow(headers), widths.map(w => '-'.repeat(w)).join('  ')]
+      .concat(data.map(r => fmtRow(headers.map(h => r[h]))));
+    downloadBlob(lines.join('\r\n'), `${fname}.txt`, 'text/plain;charset=utf-8');
+    return;
+  }
+
+  if (fmt === 'xlsx') {
+    // Cargar SheetJS dinámicamente desde CDN solo cuando se necesita
+    try {
+      if (!window.XLSX) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          s.onload = resolve; s.onerror = () => reject(new Error('No se pudo cargar la librería Excel.'));
+          document.head.appendChild(s);
+        });
+      }
+      const ws = window.XLSX.utils.json_to_sheet(data, { header: headers });
+      const wb = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(wb, ws, 'Tiendas');
+      window.XLSX.writeFile(wb, `${fname}.xlsx`);
+    } catch (e) {
+      alert(e.message + ' Revisa tu conexión e inténtalo de nuevo.');
+    }
+    return;
+  }
+}
+
+/* Modal para editar datos de contacto (correo + teléfono) de una compañía */
+function contactEditModal(user, ds) {
   openModal(`
-    <div class="modal-head"><span>Correo de la compañía</span><button class="modal-x" id="mX">✕</button></div>
+    <div class="modal-head"><span>Datos de contacto</span><button class="modal-x" id="mX">✕</button></div>
     <p class="muted" style="font-size:12.5px;margin:0 0 16px">${ds.code}${ds.name ? ' · ' + ds.name : ''}</p>
     <label class="flabel">Correo</label>
-    <input type="text" id="emInput" value="${ds.email || ''}" placeholder="compania@grupocanaima.com" style="margin-bottom:6px">
-    <p class="muted" style="font-size:11.5px;margin:0">Déjalo vacío para quitar el correo.</p>
+    <input type="text" id="emInput" value="${ds.email || ''}" placeholder="compania@grupocanaima.com" style="margin-bottom:14px">
+    <label class="flabel">Teléfono móvil <span class="muted">(04XX-XXXXXXX)</span></label>
+    <input type="text" id="phInput" value="${phoneNational(ds.phone)}" placeholder="04121234567" style="margin-bottom:6px">
+    <p class="muted" style="font-size:11.5px;margin:0">Deja los campos vacíos para quitarlos. Se guarda en formato internacional (+58).</p>
     <div class="modal-actions">
       <button class="btn" id="mCancel">Cancelar</button>
       <button class="btn btn-primary" id="mOk">Guardar</button>
@@ -169,16 +295,15 @@ function emailEditModal(user, ds) {
   $('#mX').addEventListener('click', closeModal);
   $('#mCancel').addEventListener('click', closeModal);
   $('#mOk').addEventListener('click', async () => {
-    const email = $('#emInput').value;
-    const d = await fetch('/api/company-email', {
+    const d = await fetch('/api/company-contact', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ adminId: user.id, companyCode: ds.code, email }),
+      body: JSON.stringify({ adminId: user.id, companyCode: ds.code,
+        email: $('#emInput').value, phone: $('#phInput').value }),
     }).then(r => r.json());
     if (!d.ok) { alert(d.error); return; }
     closeModal();
-    // Actualiza el dato en memoria y refresca la vista
     const c = CATALOG.companies.find(x => x.code === ds.code);
-    if (c) c.email = d.email;
+    if (c) { c.email = d.email; c.phone = d.phone; }
     viewTiendas(user);
   });
 }
