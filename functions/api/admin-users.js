@@ -68,7 +68,7 @@ export async function onRequestPost({ request, env }) {
       await sb(env, 'admin_users', {
         method: 'POST', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({
-          username, name: name || null, email: email || null, password_hash: hash,
+          username, name: name || null, email: email ? email.trim().toLowerCase() : null, password_hash: hash,
           role: r, must_change_password: !!useTemp, is_active: true,
         }),
       });

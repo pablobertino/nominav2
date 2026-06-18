@@ -77,7 +77,7 @@ export async function onRequestPost({ request, env }) {
 
     // Correo (si viene la clave en el body)
     if (email !== undefined) {
-      const clean = (email && email.trim()) ? email.trim() : null;
+      const clean = (email && email.trim()) ? email.trim().toLowerCase() : null;
       if (clean && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(clean)) {
         return json({ ok: false, error: 'Correo con formato inválido.' }, 400);
       }

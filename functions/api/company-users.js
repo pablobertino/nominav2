@@ -97,7 +97,7 @@ export async function onRequestPost({ request, env }) {
         method: 'POST',
         headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({
-          company_code: companyCode, email: email || null, password_hash: hash,
+          company_code: companyCode, email: email ? email.trim().toLowerCase() : null, password_hash: hash,
           must_change_password: !!useTemp, is_active: true,
         }),
       });
