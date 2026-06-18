@@ -44,6 +44,9 @@
   --sp-5: 20px;
   --sp-6: 24px;
 
+  /* Altura de controles (inputs, selects, botones) — consistencia global */
+  --control-h: 42px;
+
   /* Bordes y sombras */
   --radius-sm: 8px;
   --radius-md: 10px;
