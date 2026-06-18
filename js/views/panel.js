@@ -21,6 +21,7 @@ const I = {
   team: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   key: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3"/></svg>',
   plus: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
+  pencil: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>',
   chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
@@ -50,7 +51,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.06</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.07</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${NAV.filter(n => n[3] !== 'superonly' || isSuper).map(([id, ic, label]) =>
@@ -79,7 +80,7 @@ function statusPill(s) {
 }
 
 /* ---------- VISTA: TIENDAS ---------- */
-function viewTiendas() {
+function viewTiendas(user) {
   const types = [...new Set(CATALOG.companies.map(c => c.type).filter(Boolean))].sort();
   const statuses = [...new Set(CATALOG.companies.map(c => c.status).filter(Boolean))].sort();
   const concepts = CATALOG.concepts.map(c => c.name);
@@ -99,7 +100,7 @@ function viewTiendas() {
     </div>
     <div class="tablebox">
       <table><thead><tr>
-        <th>Código</th><th>Razón social</th><th>Zona / Subzona</th><th>Concepto</th><th>Estado</th><th>Acceso</th>
+        <th>Código</th><th>Razón social</th><th>Zona / Subzona</th><th>Concepto</th><th>Correo</th><th>Estado</th><th>Acceso</th>
       </tr></thead><tbody id="tBody"></tbody></table>
     </div>
     <div class="legend">
@@ -135,15 +136,51 @@ function viewTiendas() {
         <td>${c.name || '—'}</td>
         <td>${c.zone || '—'}${c.subzone ? ' · ' + c.subzone : ''}</td>
         <td>${c.concept || '—'}</td>
+        <td class="email-cell">
+          <span class="${c.email ? '' : 'muted'}">${c.email || 'sin correo'}</span>
+          <button class="email-edit" data-code="${c.code}" data-name="${(c.name||'').replace(/"/g,'')}" data-email="${c.email||''}" title="Editar correo">${I.pencil}</button>
+        </td>
         <td>${statusPill(c.status)}</td>
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
-      </tr>`).join('') || '<tr><td colspan="6" class="empty">Sin resultados.</td></tr>';
+      </tr>`).join('') || '<tr><td colspan="7" class="empty">Sin resultados.</td></tr>';
+
+    $('#tBody').querySelectorAll('.email-edit').forEach(b =>
+      b.addEventListener('click', () => emailEditModal(user, b.dataset)));
   }
 
   fZone.addEventListener('change', () => { fillSubs(); render(); });
   [fName, fType, fStatus, fSub, fConcept].forEach(e => e.addEventListener('input', render));
   fType.addEventListener('change', render);
   render();
+}
+
+/* Modal para editar el correo de una compañía desde la grilla de Tiendas */
+function emailEditModal(user, ds) {
+  openModal(`
+    <div class="modal-head"><span>Correo de la compañía</span><button class="modal-x" id="mX">✕</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 16px">${ds.code}${ds.name ? ' · ' + ds.name : ''}</p>
+    <label class="flabel">Correo</label>
+    <input type="text" id="emInput" value="${ds.email || ''}" placeholder="compania@grupocanaima.com" style="margin-bottom:6px">
+    <p class="muted" style="font-size:11.5px;margin:0">Déjalo vacío para quitar el correo.</p>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Guardar</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const email = $('#emInput').value;
+    const d = await fetch('/api/company-email', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminId: user.id, companyCode: ds.code, email }),
+    }).then(r => r.json());
+    if (!d.ok) { alert(d.error); return; }
+    closeModal();
+    // Actualiza el dato en memoria y refresca la vista
+    const c = CATALOG.companies.find(x => x.code === ds.code);
+    if (c) c.email = d.email;
+    viewTiendas(user);
+  });
 }
 
 /* ---------- VISTA: CATÁLOGOS ---------- */
@@ -629,7 +666,7 @@ async function navigate(view, user) {
     await ensureCatalog();
     if (!CATALOG) return;
   }
-  if (view === 'tiendas') viewTiendas();
+  if (view === 'tiendas') viewTiendas(user);
   else if (view === 'catalogos') viewCatalogos();
   else if (view === 'usuarios') viewUsuarios(user);
   else if (view === 'equipo') viewEquipo(user);

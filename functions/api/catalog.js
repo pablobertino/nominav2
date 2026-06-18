@@ -29,7 +29,7 @@ async function sb(env, path) {
 export async function onRequestGet({ env }) {
   try {
     const [companies, zones, subzones, concepts, users] = await Promise.all([
-      sb(env, 'companies?select=company_code,business_name,tax_id,zone_id,subzone_id,concept_id,company_type,status,is_active&order=company_code'),
+      sb(env, 'companies?select=company_code,business_name,tax_id,zone_id,subzone_id,concept_id,company_type,status,is_active,email&order=company_code'),
       sb(env, 'zones?select=id,name,letter&order=name'),
       sb(env, 'subzones?select=id,name,letter,zone_id&order=name'),
       sb(env, 'concepts?select=id,name&order=name'),
@@ -56,6 +56,7 @@ export async function onRequestGet({ env }) {
       type: c.company_type,
       status: c.status,
       isActive: c.is_active,
+      email: c.email || null,
       hasAccess: withAccess.has(c.company_code),
     }));
 
