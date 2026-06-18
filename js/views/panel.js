@@ -51,7 +51,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.08</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.09</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${NAV.filter(n => n[3] !== 'superonly' || isSuper).map(([id, ic, label]) =>
@@ -160,13 +160,15 @@ function viewTiendas(user) {
     visibleRows = rows;
     $('#tBody').innerHTML = rows.map(c => {
       const tel = phoneDisplay(c.phone);
+      const tel2 = phoneDisplay(c.phone2);
+      const telLine = [tel, tel2].filter(Boolean).join(' / ') || 'sin teléfono';
       const contacto = `
         <div class="contact-cell">
           <div class="contact-lines">
             <span class="${c.email ? '' : 'muted'}">${c.email || 'sin correo'}</span>
-            <span class="${tel ? 'muted' : 'muted'}" style="font-size:12px">${tel || 'sin teléfono'}</span>
+            <span class="muted" style="font-size:12px">${telLine}</span>
           </div>
-          <button class="email-edit" data-code="${c.code}" data-name="${(c.name||'').replace(/"/g,'')}" data-email="${c.email||''}" data-phone="${c.phone||''}" title="Editar contacto">${I.pencil}</button>
+          <button class="email-edit" data-code="${c.code}" data-name="${(c.name||'').replace(/"/g,'')}" data-email="${c.email||''}" data-phone="${c.phone||''}" data-phone2="${c.phone2||''}" title="Editar contacto">${I.pencil}</button>
         </div>`;
       return `
       <tr>
@@ -210,8 +212,10 @@ function exportRows(rows) {
     'Subzona': c.subzone || '',
     'Concepto': c.concept || '',
     'Correo': c.email || '',
-    'Teléfono nacional': phoneDisplay(c.phone) || '',
-    'Teléfono internacional': c.phone || '',
+    'Teléfono 1 nacional': phoneDisplay(c.phone) || '',
+    'Teléfono 1 internacional': c.phone || '',
+    'Teléfono 2 nacional': phoneDisplay(c.phone2) || '',
+    'Teléfono 2 internacional': c.phone2 || '',
     'Estado': c.status || '',
     'Tiene acceso': c.hasAccess ? 'Sí' : 'No',
   }));
@@ -285,8 +289,10 @@ function contactEditModal(user, ds) {
     <p class="muted" style="font-size:12.5px;margin:0 0 16px">${ds.code}${ds.name ? ' · ' + ds.name : ''}</p>
     <label class="flabel">Correo</label>
     <input type="text" id="emInput" value="${ds.email || ''}" placeholder="compania@grupocanaima.com" style="margin-bottom:14px">
-    <label class="flabel">Teléfono móvil <span class="muted">(04XX-XXXXXXX)</span></label>
-    <input type="text" id="phInput" value="${phoneNational(ds.phone)}" placeholder="04121234567" style="margin-bottom:6px">
+    <label class="flabel">Teléfono móvil 1 <span class="muted">(04XX-XXXXXXX)</span></label>
+    <input type="text" id="phInput" value="${phoneNational(ds.phone)}" placeholder="04121234567" style="margin-bottom:12px">
+    <label class="flabel">Teléfono móvil 2 <span class="muted">(opcional)</span></label>
+    <input type="text" id="phInput2" value="${phoneNational(ds.phone2)}" placeholder="04241234567" style="margin-bottom:6px">
     <p class="muted" style="font-size:11.5px;margin:0">Deja los campos vacíos para quitarlos. Se guarda en formato internacional (+58).</p>
     <div class="modal-actions">
       <button class="btn" id="mCancel">Cancelar</button>
@@ -298,12 +304,12 @@ function contactEditModal(user, ds) {
     const d = await fetch('/api/company-contact', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ adminId: user.id, companyCode: ds.code,
-        email: $('#emInput').value, phone: $('#phInput').value }),
+        email: $('#emInput').value, phone: $('#phInput').value, phone2: $('#phInput2').value }),
     }).then(r => r.json());
     if (!d.ok) { alert(d.error); return; }
     closeModal();
     const c = CATALOG.companies.find(x => x.code === ds.code);
-    if (c) { c.email = d.email; c.phone = d.phone; }
+    if (c) { c.email = d.email; c.phone = d.phone; c.phone2 = d.phone2; }
     viewTiendas(user);
   });
 }

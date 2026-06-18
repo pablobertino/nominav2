@@ -65,7 +65,7 @@ function normalizePhone(raw) {
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'Solicitud inválida.' }, 400); }
-  const { adminId, companyCode, email, phone } = body;
+  const { adminId, companyCode, email, phone, phone2 } = body;
 
   try {
     const admin = await getAdmin(env, adminId);
@@ -87,8 +87,14 @@ export async function onRequestPost({ request, env }) {
     // Teléfono (si viene la clave en el body)
     if (phone !== undefined) {
       const norm = normalizePhone(phone);
-      if (norm.error) return json({ ok: false, error: norm.error }, 400);
+      if (norm.error) return json({ ok: false, error: 'Tel. 1: ' + norm.error }, 400);
       patch.phone = norm.e164;
+    }
+    // Teléfono 2 (si viene la clave en el body)
+    if (phone2 !== undefined) {
+      const norm2 = normalizePhone(phone2);
+      if (norm2.error) return json({ ok: false, error: 'Tel. 2: ' + norm2.error }, 400);
+      patch.phone2 = norm2.e164;
     }
 
     if (Object.keys(patch).length === 0) {
@@ -99,7 +105,7 @@ export async function onRequestPost({ request, env }) {
       method: 'PATCH', headers: { Prefer: 'return=minimal' },
       body: JSON.stringify(patch),
     });
-    return json({ ok: true, email: patch.email, phone: patch.phone });
+    return json({ ok: true, email: patch.email, phone: patch.phone, phone2: patch.phone2 });
   } catch (err) {
     return json({ ok: false, error: err.message }, 500);
   }
