@@ -50,7 +50,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.05</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.06</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${NAV.filter(n => n[3] !== 'superonly' || isSuper).map(([id, ic, label]) =>
@@ -398,6 +398,182 @@ async function auApi(payload) {
   return res.json();
 }
 
+/* ---------- VISTA: PERMISOS (editor de alcance) ---------- */
+let SCOPE = null; // estado de edición: {include:[], exclude:[], zones, subzones, companies, target}
+
+async function viewPermisos(user) {
+  $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Permisos</h1><p>Alcance de cada admin</p></div></div><div class="pnl-loading">Cargando…</div>`;
+  const d = await auApi({ action: 'list', adminId: user.id });
+  if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
+  const admins = d.rows.filter(a => a.role !== 'superadmin'); // superadmin ve todo
+  $('#pnlMain').innerHTML = `
+    <div class="pnl-head"><div><h1>Permisos</h1><p>Alcance de cada admin · el superadmin ve todo</p></div></div>
+    ${admins.length === 0 ? '<div class="card"><p class="muted" style="margin:0">No hay admins (no superadmin) aún. Crea uno en la sección Equipo.</p></div>' : `
+    <div class="tablebox"><table><thead><tr>
+      <th>Usuario</th><th>Nombre</th><th>Estado</th><th style="text-align:right">Alcance</th>
+    </tr></thead><tbody>
+      ${admins.map(a => `<tr>
+        <td class="code">${a.username}</td><td>${a.name || '—'}</td>
+        <td>${a.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>'}</td>
+        <td style="text-align:right"><button class="btn btn-mini btn-primary" data-id="${a.id}" data-u="${a.username}">Editar alcance</button></td>
+      </tr>`).join('')}
+    </tbody></table></div>`}`;
+  $('#pnlMain').querySelectorAll('button[data-id]').forEach(b =>
+    b.addEventListener('click', () => openScopeEditor(user, b.dataset.id, b.dataset.u)));
+}
+
+async function openScopeEditor(user, targetId, targetUser) {
+  $('#pnlMain').innerHTML = `<div class="pnl-loading">Cargando alcance…</div>`;
+  const d = await fetch('/api/admin-scope', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'get', adminId: user.id, targetId }),
+  }).then(r => r.json());
+  if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
+
+  SCOPE = {
+    target: targetId, targetUser,
+    include: d.include.map(x => ({ ...x })),
+    exclude: d.exclude.map(x => ({ ...x })),
+    zones: d.zones, subzones: d.subzones, companies: d.companies,
+  };
+
+  $('#pnlMain').innerHTML = `
+    <div class="pnl-head"><div><h1>Alcance de ${targetUser}</h1>
+      <p>Define qué tiendas puede gestionar. Alcance final = incluidos − excluidos.</p></div>
+      <button class="btn" id="scBack">← Volver</button></div>
+    <div class="card">
+      <div class="sc-add">
+        <select id="scLevel">
+          <option value="zone">Zona</option>
+          <option value="subzone">Subzona</option>
+          <option value="company">Tienda</option>
+        </select>
+        <div class="search" style="flex:1">${I.search}<input id="scSearch" placeholder="Buscar…" autocomplete="off"></div>
+      </div>
+      <div id="scResults" class="sc-results"></div>
+    </div>
+    <div class="cards-row">
+      <div class="card" style="flex:1">
+        <h3 style="color:var(--success)">Incluidos (<span id="scIncN">0</span>)</h3>
+        <div id="scIncList" class="sc-list"></div>
+      </div>
+      <div class="card" style="flex:1">
+        <h3 style="color:var(--danger)">Excluidos (<span id="scExcN">0</span>)</h3>
+        <div id="scExcList" class="sc-list"></div>
+      </div>
+    </div>
+    <div class="card" id="scSummary" style="font-size:13px;color:var(--ink-soft)"></div>
+    <div class="modal-actions">
+      <button class="btn" id="scCancel">Cancelar</button>
+      <button class="btn btn-primary" id="scSave">Guardar alcance</button>
+    </div>`;
+
+  $('#scBack').addEventListener('click', () => viewPermisos(user));
+  $('#scCancel').addEventListener('click', () => viewPermisos(user));
+  $('#scSave').addEventListener('click', () => saveScope(user));
+
+  const lvl = $('#scLevel'), search = $('#scSearch');
+  lvl.addEventListener('change', () => { search.value = ''; renderScResults(); });
+  search.addEventListener('input', renderScResults);
+  renderScopeLists();
+  renderScResults();
+}
+
+// Etiqueta legible de un item de alcance
+function scopeLabel(type, value) {
+  if (type === 'zone') {
+    const z = SCOPE.zones.find(z => String(z.id) === String(value));
+    return `Zona: ${z ? z.name : value}`;
+  }
+  if (type === 'subzone') {
+    const s = SCOPE.subzones.find(s => String(s.id) === String(value));
+    return `Subzona: ${s ? s.name : value}`;
+  }
+  const c = SCOPE.companies.find(c => c.company_code === value);
+  return `Tienda: ${value}${c ? ' · ' + c.business_name : ''}`;
+}
+
+function renderScResults() {
+  const level = $('#scLevel').value;
+  const q = $('#scSearch').value.toLowerCase();
+  let opts = [];
+  if (level === 'zone') opts = SCOPE.zones.map(z => ({ value: String(z.id), label: z.name }));
+  else if (level === 'subzone') opts = SCOPE.subzones.map(s => ({ value: String(s.id), label: s.name }));
+  else opts = SCOPE.companies.map(c => ({ value: c.company_code, label: `${c.company_code} · ${c.business_name}` }));
+  if (q) opts = opts.filter(o => o.label.toLowerCase().includes(q));
+  opts = opts.slice(0, 30);
+
+  $('#scResults').innerHTML = opts.map(o =>
+    `<div class="sc-res-row">
+       <span>${o.label}</span>
+       <span class="sc-res-btns">
+         <button class="sc-inc" data-v="${o.value}" title="Incluir">+ incluir</button>
+         <button class="sc-exc" data-v="${o.value}" title="Excluir">− excluir</button>
+       </span>
+     </div>`).join('') || '<div class="muted" style="padding:8px">Sin coincidencias.</div>';
+
+  $('#scResults').querySelectorAll('.sc-inc').forEach(b =>
+    b.addEventListener('click', () => addScope('include', level, b.dataset.v)));
+  $('#scResults').querySelectorAll('.sc-exc').forEach(b =>
+    b.addEventListener('click', () => addScope('exclude', level, b.dataset.v)));
+}
+
+function addScope(bucket, type, value) {
+  const list = SCOPE[bucket];
+  if (list.some(x => x.scope_type === type && String(x.scope_value) === String(value))) return; // ya está
+  list.push({ scope_type: type, scope_value: String(value) });
+  renderScopeLists();
+}
+function removeScope(bucket, type, value) {
+  SCOPE[bucket] = SCOPE[bucket].filter(x => !(x.scope_type === type && String(x.scope_value) === String(value)));
+  renderScopeLists();
+}
+
+function renderScopeLists() {
+  const mk = (bucket) => SCOPE[bucket].map(x =>
+    `<div class="sc-item"><span>${scopeLabel(x.scope_type, x.scope_value)}</span>
+      <button data-b="${bucket}" data-t="${x.scope_type}" data-v="${x.scope_value}" title="Quitar">✕</button></div>`
+  ).join('') || '<div class="muted" style="padding:8px">Vacío.</div>';
+  $('#scIncList').innerHTML = mk('include');
+  $('#scExcList').innerHTML = mk('exclude');
+  $('#scIncN').textContent = SCOPE.include.length;
+  $('#scExcN').textContent = SCOPE.exclude.length;
+  document.querySelectorAll('.sc-item button').forEach(b =>
+    b.addEventListener('click', () => removeScope(b.dataset.b, b.dataset.t, b.dataset.v)));
+
+  // Resumen estimado de tiendas
+  const est = estimateScope();
+  $('#scSummary').innerHTML = `<span class="muted">Resultado estimado:</span> <strong>${est}</strong> tiendas gestionables.`;
+}
+
+// Estima cuántas tiendas quedan en el alcance (include − exclude)
+function estimateScope() {
+  const tiendas = SCOPE.companies; // solo tipo Tienda
+  const inSet = new Set();
+  SCOPE.include.forEach(x => {
+    if (x.scope_type === 'zone') tiendas.filter(c => String(c.zone_id) === String(x.scope_value)).forEach(c => inSet.add(c.company_code));
+    else if (x.scope_type === 'subzone') tiendas.filter(c => String(c.subzone_id) === String(x.scope_value)).forEach(c => inSet.add(c.company_code));
+    else inSet.add(x.scope_value);
+  });
+  SCOPE.exclude.forEach(x => {
+    if (x.scope_type === 'zone') tiendas.filter(c => String(c.zone_id) === String(x.scope_value)).forEach(c => inSet.delete(c.company_code));
+    else if (x.scope_type === 'subzone') tiendas.filter(c => String(c.subzone_id) === String(x.scope_value)).forEach(c => inSet.delete(c.company_code));
+    else inSet.delete(x.scope_value);
+  });
+  return inSet.size;
+}
+
+async function saveScope(user) {
+  const btn = $('#scSave'); btn.disabled = true; btn.textContent = 'Guardando…';
+  const d = await fetch('/api/admin-scope', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'save', adminId: user.id, targetId: SCOPE.target,
+      include: SCOPE.include, exclude: SCOPE.exclude }),
+  }).then(r => r.json());
+  if (!d.ok) { alert(d.error); btn.disabled = false; btn.textContent = 'Guardar alcance'; return; }
+  viewPermisos(user);
+}
+
 /* ---------- VISTA: placeholders ---------- */
 function viewSoon(title, msg) {
   $('#pnlMain').innerHTML = `
@@ -457,7 +633,7 @@ async function navigate(view, user) {
   else if (view === 'catalogos') viewCatalogos();
   else if (view === 'usuarios') viewUsuarios(user);
   else if (view === 'equipo') viewEquipo(user);
-  else if (view === 'permisos') viewSoon('Permisos', 'Sección en construcción: asignación de alcance por zona, subzona o tienda.');
+  else if (view === 'permisos') viewPermisos(user);
   else if (view === 'sync') viewSync(user);
 }
 

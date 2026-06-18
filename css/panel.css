@@ -127,6 +127,26 @@
 .radio-row { display:flex; align-items:center; gap:7px; font-size:13px; cursor:pointer; margin-bottom:6px; }
 .radio-row input { width:auto; }
 
+/* Editor de alcance (Permisos) */
+.sc-add { display:flex; gap:8px; margin-bottom:12px; }
+.sc-add select { padding:9px 12px; border:1px solid var(--border); border-radius:var(--radius-md);
+  font-size:13px; font-family:inherit; background:var(--surface); flex:0 0 130px; }
+.sc-results { max-height:200px; overflow-y:auto; border:1px solid var(--border-soft); border-radius:var(--radius-md); }
+.sc-res-row { display:flex; justify-content:space-between; align-items:center; padding:7px 12px;
+  font-size:13px; border-bottom:0.5px solid var(--border-soft); }
+.sc-res-row:last-child { border-bottom:0; }
+.sc-res-btns { display:flex; gap:6px; flex-shrink:0; }
+.sc-res-btns button { border:1px solid var(--border); background:var(--surface); border-radius:6px;
+  font-size:11.5px; padding:3px 9px; cursor:pointer; font-family:inherit; white-space:nowrap; }
+.sc-inc:hover { background:var(--success-bg); color:#065f46; border-color:var(--success); }
+.sc-exc:hover { background:var(--danger-bg); color:#991b1b; border-color:var(--danger); }
+.sc-list { min-height:40px; }
+.sc-item { display:flex; justify-content:space-between; align-items:center; padding:6px 10px;
+  font-size:13px; border-radius:6px; }
+.sc-item:hover { background:var(--border-soft); }
+.sc-item button { background:none; border:0; color:var(--faint); font-size:14px; cursor:pointer; }
+.sc-item button:hover { color:var(--danger); }
+
 @media (max-width:720px) {
   .pnl-side { width:64px; }
   .pnl-bname, .pnl-bver, .pnl-nav span, .pnl-uinfo { display:none; }
