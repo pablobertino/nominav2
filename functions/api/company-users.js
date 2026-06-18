@@ -74,11 +74,12 @@ export async function onRequestPost({ request, env }) {
     const canTouch = (code) => allowed === null || allowed.has(code);
 
     if (action === 'list') {
-      const companies = await sb(env, 'companies?select=company_code,business_name,company_type,status&order=company_code');
+      const companies = await sb(env, 'companies?select=company_code,business_name,company_type,status,email&order=company_code');
       const users = await sb(env, 'company_users?select=company_code,email,is_active');
       const byCode = Object.fromEntries((users || []).map(u => [u.company_code, u]));
       let rows = companies.map(c => ({
         code: c.company_code, name: c.business_name, type: c.company_type, status: c.status,
+        companyEmail: c.email || null,
         user: byCode[c.company_code] || null,
       }));
       if (allowed !== null) rows = rows.filter(r => allowed.has(r.code));

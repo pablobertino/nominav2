@@ -50,7 +50,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.04</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.05</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${NAV.filter(n => n[3] !== 'superonly' || isSuper).map(([id, ic, label]) =>
@@ -263,7 +263,7 @@ async function viewUsuarios(user) {
       const actions = u
         ? `<button class="btn btn-mini" data-act="reset" data-code="${r.code}">${I.key} Resetear</button>
            <button class="btn btn-mini" data-act="toggle" data-code="${r.code}" data-active="${u.is_active}">${u.is_active ? 'Desactivar' : 'Activar'}</button>`
-        : `<button class="btn btn-mini btn-primary" data-act="create" data-code="${r.code}" data-name="${(r.name||'').replace(/"/g,'')}" data-type="${r.type||''}">${I.plus} Crear acceso</button>`;
+        : `<button class="btn btn-mini btn-primary" data-act="create" data-code="${r.code}" data-name="${(r.name||'').replace(/"/g,'')}" data-type="${r.type||''}" data-email="${r.companyEmail||''}">${I.plus} Crear acceso</button>`;
       return `<tr><td class="code">${r.code}</td><td>${r.name || '—'}</td>
         <td><span class="pill pill-gray">${r.type || '—'}</span></td>
         <td style="font-size:13px">${userCell}</td><td>${stateCell}</td>
@@ -291,8 +291,8 @@ function cuAction(ds, user) {
     ${isCreate ? `
       <label class="flabel">Usuario</label>
       <input type="text" id="cuUser" value="${ds.code}" style="margin-bottom:12px">
-      <label class="flabel">Correo <span class="muted">(opcional)</span></label>
-      <input type="text" id="cuEmail" placeholder="compañia@grupocanaima.com" style="margin-bottom:14px">` : ''}
+      <label class="flabel">Correo <span class="muted">(heredado de la compañía, editable)</span></label>
+      <input type="text" id="cuEmail" value="${ds.email || ''}" placeholder="compañia@grupocanaima.com" style="margin-bottom:14px">` : ''}
     ${pwdBlockHtml()}
     <div class="modal-actions">
       <button class="btn" id="mCancel">Cancelar</button>
