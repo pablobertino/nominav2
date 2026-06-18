@@ -23,14 +23,14 @@ const I = {
   plus: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg>',
   pencil: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg>',
   sync: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
-  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>',
+  search: '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>',
   chevron: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>',
   check: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>',
   circle: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/></svg>',
 };
 
 const NAV = [
-  ['tiendas', I.store, 'Tiendas'],
+  ['tiendas', I.store, 'Empresas'],
   ['catalogos', I.catalog, 'Catálogos'],
   ['usuarios', I.users, 'Usuarios'],
   ['equipo', I.team, 'Equipo', 'superonly'],
@@ -51,7 +51,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.11</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.12</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${NAV.filter(n => n[3] !== 'superonly' || isSuper).map(([id, ic, label]) =>
@@ -105,7 +105,7 @@ function viewTiendas(user) {
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head">
-      <div><h1>Tiendas</h1><p id="tCount"></p></div>
+      <div><h1>Empresas</h1><p id="tCount"></p></div>
       <div class="export-wrap">
         <button class="btn" id="exportBtn">Exportar ▾</button>
         <div class="export-menu" id="exportMenu" hidden>
@@ -118,7 +118,7 @@ function viewTiendas(user) {
     <div class="pnl-filters">
       <div class="search">${I.search}<input id="fName" type="text" placeholder="Buscar nombre o código…"></div>
       <select id="fType">${types.map(t => `<option ${t === 'Tienda' ? 'selected' : ''}>${t}</option>`).join('')}<option value="ALL">Todos los tipos</option></select>
-      <select id="fStatus"><option value="ALL">Todos los estados</option>${statuses.map(s => `<option>${s}</option>`).join('')}</select>
+      <select id="fStatus"><option value="ALL">Todos los estados</option>${statuses.map(s => `<option ${/abier/i.test(s) ? 'selected' : ''}>${s}</option>`).join('')}</select>
       <select id="fZone"><option value="ALL">Todas las zonas</option>${CATALOG.zones.map(z => `<option value="${z.id}">${z.name}</option>`).join('')}</select>
       <select id="fSub"><option value="ALL">Todas las subzonas</option></select>
       <select id="fConcept"><option value="ALL">Todos los conceptos</option>${concepts.map(c => `<option>${c}</option>`).join('')}</select>
