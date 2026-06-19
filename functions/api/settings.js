@@ -70,11 +70,12 @@ export async function onRequestPost({ request, env }) {
     if (!(await isSuperadmin(env, adminId))) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
 
     if (action === 'list') {
-      const rows = await sb(env, 'app_settings?select=key,value,label,description,kind,is_secret,updated_at&order=key');
+      const rows = await sb(env, 'app_settings?select=key,value,label,description,kind,is_secret,grupo,sort_order,updated_at&order=sort_order');
       // Enmascarar secretos: nunca enviar el value real al navegador
       const safe = (rows || []).map(r => {
         if (r.is_secret) {
           return { key: r.key, label: r.label, description: r.description, kind: r.kind,
+                   grupo: r.grupo, sort_order: r.sort_order,
                    is_secret: true, configured: !!(r.value && r.value.length), updated_at: r.updated_at };
         }
         return r;

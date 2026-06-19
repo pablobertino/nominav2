@@ -60,7 +60,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.22</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.23</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -823,9 +823,8 @@ async function viewConfig(user) {
   }).then(r => r.json());
   if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
 
-  const fields = d.settings.map(s => {
+  const fieldHtml = (s) => {
     if (s.is_secret) {
-      // Los secretos no se editan aquí: solo se informa su estado
       const estado = s.configured
         ? '<span class="pill pill-open">Configurado</span>'
         : '<span class="pill pill-closed">No configurado</span>';
@@ -843,12 +842,27 @@ async function viewConfig(user) {
         <button class="btn btn-mini btn-primary" data-key="${s.key}">Guardar</button>
       </div>
     </div>`;
-  }).join('');
+  };
+
+  // Agrupar settings por su campo 'grupo', respetando el orden recibido
+  const grupos = [];
+  const byGrupo = {};
+  d.settings.forEach(s => {
+    const g = s.grupo || 'General';
+    if (!byGrupo[g]) { byGrupo[g] = []; grupos.push(g); }
+    byGrupo[g].push(s);
+  });
+
+  const cards = grupos.map(g => `
+    <div class="card">
+      <h3>${g}</h3>
+      ${byGrupo[g].map(fieldHtml).join('')}
+    </div>`).join('');
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros del portal</p></div></div>
-    <div class="card">${fields}</div>
-    <p class="muted" style="font-size:12px;margin:14px 2px 0">Los secretos (como claves de API) no se almacenan en el portal por seguridad; se configuran como variables protegidas del servidor.</p>`;
+    ${cards}
+    <p class="muted" style="font-size:12px;margin:14px 2px 0">Los secretos (como claves de API) no se almacenan en el portal por seguridad; se configuran como variables protegidas del servidor (Cloudflare Pages → Settings → Variables and Secrets).</p>`;
 
   $('#pnlMain').querySelectorAll('button[data-key]').forEach(b =>
     b.addEventListener('click', async () => {
