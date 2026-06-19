@@ -215,6 +215,19 @@
 .badge-soon { background:var(--brand-bg); color:var(--brand); font-size:11px; font-weight:600;
   padding:3px 10px; border-radius:20px; text-transform:uppercase; letter-spacing:0.4px; flex-shrink:0; }
 
+/* Configuración (settings) */
+.cfg-row { display:flex; align-items:center; justify-content:space-between; gap:24px;
+  padding:16px 0; border-bottom:1px solid var(--border-soft); }
+.cfg-row:first-child { padding-top:0; }
+.cfg-row:last-child { border-bottom:0; padding-bottom:0; }
+.cfg-meta { flex:1; min-width:0; }
+.cfg-label { font-size:14px; font-weight:600; }
+.cfg-desc { font-size:12.5px; color:var(--faint); margin-top:3px; line-height:1.45; }
+.cfg-input { display:flex; gap:8px; align-items:center; flex:0 0 380px; max-width:380px; }
+.cfg-input input { flex:1; }
+.cfg-secret { display:flex; flex-direction:column; align-items:flex-end; gap:4px; flex:0 0 auto; }
+.cfg-secret-note { font-size:11px; color:var(--faint); }
+
 @media (max-width:720px) {
   .pnl-side { width:64px; }
   .pnl-bname, .pnl-bver, .pnl-nav span, .pnl-uinfo { display:none; }

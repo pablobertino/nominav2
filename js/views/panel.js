@@ -28,6 +28,7 @@ const I = {
   check: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/><path d="m9 12 2 2 4-4"/></svg>',
   circle: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/></svg>',
   sliders: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
+  cog: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
 };
 
 const NAV = [
@@ -37,6 +38,7 @@ const NAV = [
   ['equipo', I.team, 'Equipo', 'superonly'],
   ['permisos', I.shield, 'Permisos', 'superonly'],
   ['sync', I.sync, 'Sincronización', 'superonly'],
+  ['config', I.cog, 'Configuración', 'superonly'],
 ];
 
 /* ---------- shell ---------- */
@@ -58,7 +60,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.21</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.22</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -812,6 +814,60 @@ function viewSync(user) {
   });
 }
 
+/* ---------- VISTA: CONFIGURACIÓN (solo superadmin) ---------- */
+async function viewConfig(user) {
+  $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros del portal</p></div></div><div class="pnl-loading">Cargando…</div>`;
+  const d = await fetch('/api/settings', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'list', adminId: user.id }),
+  }).then(r => r.json());
+  if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
+
+  const fields = d.settings.map(s => {
+    if (s.is_secret) {
+      // Los secretos no se editan aquí: solo se informa su estado
+      const estado = s.configured
+        ? '<span class="pill pill-open">Configurado</span>'
+        : '<span class="pill pill-closed">No configurado</span>';
+      return `<div class="cfg-row">
+        <div class="cfg-meta"><div class="cfg-label">${s.label}</div>
+          <div class="cfg-desc">${s.description || ''}</div></div>
+        <div class="cfg-secret">${estado}<span class="cfg-secret-note">Se gestiona como secreto del servidor</span></div>
+      </div>`;
+    }
+    return `<div class="cfg-row">
+      <div class="cfg-meta"><div class="cfg-label">${s.label}</div>
+        <div class="cfg-desc">${s.description || ''}</div></div>
+      <div class="cfg-input">
+        <input type="text" id="cfg_${s.key}" value="${(s.value || '').replace(/"/g, '&quot;')}" placeholder="${s.kind === 'url' ? 'https://…' : ''}">
+        <button class="btn btn-mini btn-primary" data-key="${s.key}">Guardar</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  $('#pnlMain').innerHTML = `
+    <div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros del portal</p></div></div>
+    <div class="card">${fields}</div>
+    <p class="muted" style="font-size:12px;margin:14px 2px 0">Los secretos (como claves de API) no se almacenan en el portal por seguridad; se configuran como variables protegidas del servidor.</p>`;
+
+  $('#pnlMain').querySelectorAll('button[data-key]').forEach(b =>
+    b.addEventListener('click', async () => {
+      const key = b.dataset.key;
+      const value = $(`#cfg_${key}`).value;
+      const original = b.textContent;
+      b.disabled = true; b.textContent = 'Guardando…';
+      const r = await fetch('/api/settings', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'save', adminId: user.id, key, value }),
+      }).then(r => r.json());
+      b.disabled = false; b.textContent = original;
+      if (!r.ok) { alert(r.error); return; }
+      $(`#cfg_${key}`).value = r.value; // refleja el valor normalizado
+      b.textContent = '✓ Guardado';
+      setTimeout(() => { b.textContent = original; }, 1500);
+    }));
+}
+
 /* ---------- navegación ---------- */
 async function ensureCatalog(user) {
   if (CATALOG) return;
@@ -840,6 +896,7 @@ async function navigate(view, user) {
   else if (view === 'equipo') viewEquipo(user);
   else if (view === 'permisos') viewPermisos(user);
   else if (view === 'sync') viewSync(user);
+  else if (view === 'config') viewConfig(user);
   else if (view === 'miempresa') viewMiEmpresa(user);
 }
 
