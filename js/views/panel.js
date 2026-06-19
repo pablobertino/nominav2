@@ -29,12 +29,14 @@ const I = {
   circle: '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="10"/></svg>',
   sliders: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>',
   cog: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
+  calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
 };
 
 const NAV = [
   ['tiendas', I.store, 'Empresas'],
   ['catalogos', I.catalog, 'Catálogos'],
   ['usuarios', I.users, 'Usuarios'],
+  ['quincenas', I.calendar, 'Quincenas'],
   ['equipo', I.team, 'Equipo', 'superonly'],
   ['permisos', I.shield, 'Permisos', 'superonly'],
   ['sync', I.sync, 'Sincronización', 'superonly'],
@@ -60,7 +62,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.24</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.25</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -814,6 +816,159 @@ function viewSync(user) {
   });
 }
 
+/* ---------- VISTA: QUINCENAS (payroll_periods) ---------- */
+/* Superadmin: ve, genera por año y sobrescribe quincenas puntuales.
+   Admin y tienda: solo lectura. */
+let PERIODS_YEAR = null;
+
+async function periodsApi(payload) {
+  const res = await fetch('/api/periods', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  return res.json();
+}
+
+/* fecha 'YYYY-MM-DD' -> 'DD/MM' o 'DD/MM/AAAA' */
+function fmtDate(iso, withYear) {
+  if (!iso) return '—';
+  const [y, m, d] = iso.slice(0, 10).split('-');
+  return withYear ? `${d}/${m}/${y}` : `${d}/${m}`;
+}
+/* timestamptz ISO -> 'DD/MM HH:MM' en hora Caracas (GMT-4 fijo) */
+function fmtDeadline(iso) {
+  if (!iso) return '—';
+  const dt = new Date(iso);
+  if (isNaN(dt)) return '—';
+  const car = new Date(dt.getTime() - 4 * 3600 * 1000); // a hora local Caracas
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(car.getUTCDate())}/${p(car.getUTCMonth() + 1)} ${p(car.getUTCHours())}:${p(car.getUTCMinutes())}`;
+}
+
+async function viewPeriods(user) {
+  const isSuper = user.kind === 'admin' && user.role === 'superadmin';
+  $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Quincenas</h1><p>Calendario de nómina</p></div></div><div class="pnl-loading">Cargando…</div>`;
+
+  // años disponibles
+  const yd = await periodsApi({ action: 'years' });
+  let years = (yd.ok && yd.years.length) ? yd.years.slice() : [];
+  const thisYear = new Date().getFullYear();
+  if (!years.includes(thisYear)) years.push(thisYear);
+  years.sort();
+  if (!PERIODS_YEAR || !years.includes(PERIODS_YEAR)) {
+    PERIODS_YEAR = years.includes(thisYear) ? thisYear : years[years.length - 1];
+  }
+
+  const genBtn = isSuper
+    ? `<button class="btn btn-primary" id="pGen">${I.calendar} Generar año</button>` : '';
+
+  $('#pnlMain').innerHTML = `
+    <div class="pnl-head">
+      <div><h1>Quincenas</h1><p id="pInfo">Calendario de nómina</p></div>
+      <div class="pnl-filters" style="margin:0">
+        <select id="pYear">${years.map(y => `<option ${y === PERIODS_YEAR ? 'selected' : ''}>${y}</option>`).join('')}</select>
+        ${genBtn}
+      </div>
+    </div>
+    <div class="tablebox"><table><thead><tr>
+      <th>Quincena</th><th>Período</th><th>Corte</th><th>Pago</th><th>Tope de reporte</th><th>Estado</th>${isSuper ? '<th style="text-align:right">Acciones</th>' : ''}
+    </tr></thead><tbody id="pBody"></tbody></table></div>
+    <p class="muted" style="font-size:12px;margin:14px 2px 0">El “tope de reporte” es la fecha y hora límite (hora de Caracas) para reportar incidencias de esa quincena. ${isSuper ? 'Como superadmin puedes ajustar una quincena puntual; el resto solo la consulta.' : 'Esta vista es de solo lectura.'}</p>`;
+
+  async function load() {
+    $('#pBody').innerHTML = `<tr><td colspan="${isSuper ? 7 : 6}" class="pnl-loading">Cargando…</td></tr>`;
+    const d = await periodsApi({ action: 'list', year: PERIODS_YEAR });
+    if (!d.ok) { $('#pBody').innerHTML = `<tr><td colspan="${isSuper ? 7 : 6}" class="empty">Error: ${d.error}</td></tr>`; return; }
+    if (!d.periods.length) {
+      $('#pBody').innerHTML = `<tr><td colspan="${isSuper ? 7 : 6}" class="empty">Este año aún no tiene quincenas generadas.${isSuper ? ' Usa “Generar año”.' : ''}</td></tr>`;
+      $('#pInfo').textContent = `${PERIODS_YEAR} · sin generar`;
+      return;
+    }
+    $('#pInfo').textContent = `${PERIODS_YEAR} · ${d.periods.length} quincenas`;
+    $('#pBody').innerHTML = d.periods.map(p => {
+      const estado = p.is_overridden
+        ? '<span class="pill pill-proj">Modificada</span>'
+        : '<span class="pill pill-gray">Según regla</span>';
+      const acc = isSuper
+        ? `<td style="text-align:right;white-space:nowrap">
+             <button class="btn btn-mini" data-act="edit" data-id="${p.id}">${I.sliders} Ajustar</button>
+             ${p.is_overridden ? `<button class="btn btn-mini" data-act="reset" data-id="${p.id}" data-name="${p.name}">Restablecer</button>` : ''}
+           </td>` : '';
+      return `<tr>
+        <td class="code">${p.name}</td>
+        <td>${fmtDate(p.range_start)} – ${fmtDate(p.range_end)}</td>
+        <td>${fmtDate(p.cutoff_date)}</td>
+        <td>${fmtDate(p.pay_date, true)}</td>
+        <td>${fmtDeadline(p.report_deadline)}</td>
+        <td>${estado}${p.override_note ? ` <span class="muted" style="font-size:11.5px">· ${p.override_note}</span>` : ''}</td>
+        ${acc}
+      </tr>`;
+    }).join('');
+    if (isSuper) {
+      $('#pBody').querySelectorAll('button[data-act]').forEach(b =>
+        b.addEventListener('click', () => {
+          if (b.dataset.act === 'edit') {
+            const p = d.periods.find(x => String(x.id) === b.dataset.id);
+            periodEditModal(user, p, load);
+          } else {
+            if (!confirm(`¿Restablecer ${b.dataset.name} al valor calculado por la regla? Se perderá el ajuste manual.`)) return;
+            periodsApi({ action: 'reset', adminId: user.id, id: b.dataset.id }).then(r => {
+              if (!r.ok) { alert(r.error); return; } load();
+            });
+          }
+        }));
+    }
+  }
+
+  $('#pYear').addEventListener('change', (e) => { PERIODS_YEAR = parseInt(e.target.value, 10); load(); });
+  if (isSuper) {
+    $('#pGen').addEventListener('click', async () => {
+      const b = $('#pGen'); const orig = b.innerHTML;
+      b.disabled = true; b.textContent = 'Generando…';
+      const r = await periodsApi({ action: 'generate', adminId: user.id, year: PERIODS_YEAR });
+      b.disabled = false; b.innerHTML = orig;
+      if (!r.ok) { alert(r.error); return; }
+      load();
+    });
+  }
+  load();
+}
+
+/* Modal de override de una quincena (solo superadmin) */
+function periodEditModal(user, p, onSaved) {
+  openModal(`
+    <div class="modal-head"><span>Ajustar quincena</span><button class="modal-x" id="mX">✕</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 16px">${p.name}</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div><label class="flabel">Desde</label><input type="date" id="pe_rs" value="${p.range_start}"></div>
+      <div><label class="flabel">Hasta</label><input type="date" id="pe_re" value="${p.range_end}"></div>
+      <div><label class="flabel">Corte (cálculo)</label><input type="date" id="pe_co" value="${p.cutoff_date}"></div>
+      <div><label class="flabel">Pago</label><input type="date" id="pe_pay" value="${p.pay_date}"></div>
+      <div><label class="flabel">Margen (días)</label><input type="text" id="pe_mg" value="${p.report_margin_days}" placeholder="2"></div>
+      <div><label class="flabel">Hora tope</label><input type="text" id="pe_ht" value="${(p.report_limit_time||'').slice(0,5)}" placeholder="14:00"></div>
+    </div>
+    <label class="flabel" style="margin-top:12px">Motivo del ajuste <span class="muted">(opcional)</span></label>
+    <input type="text" id="pe_note" value="${(p.override_note||'').replace(/"/g,'&quot;')}" placeholder="ej. corrida por feriado" style="margin-bottom:6px">
+    <p class="muted" style="font-size:11.5px;margin:0">El tope de reporte se recalcula solo a partir del corte, el margen y la hora.</p>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Guardar ajuste</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const d = await periodsApi({
+      action: 'override', adminId: user.id, id: p.id,
+      range_start: $('#pe_rs').value, range_end: $('#pe_re').value,
+      cutoff_date: $('#pe_co').value, pay_date: $('#pe_pay').value,
+      report_margin_days: $('#pe_mg').value, report_limit_time: $('#pe_ht').value,
+      override_note: $('#pe_note').value,
+    });
+    if (!d.ok) { alert(d.error); return; }
+    closeModal();
+    onSaved();
+  });
+}
+
 /* ---------- VISTA: CONFIGURACIÓN (solo superadmin) ---------- */
 async function viewConfig(user) {
   $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros del portal</p></div></div><div class="pnl-loading">Cargando…</div>`;
@@ -912,6 +1067,7 @@ async function navigate(view, user) {
   if (view === 'tiendas') viewTiendas(user);
   else if (view === 'catalogos') viewCatalogos();
   else if (view === 'usuarios') viewUsuarios(user);
+  else if (view === 'quincenas') viewPeriods(user);
   else if (view === 'equipo') viewEquipo(user);
   else if (view === 'permisos') viewPermisos(user);
   else if (view === 'sync') viewSync(user);
