@@ -59,11 +59,11 @@
    redefinir altura/padding vertical en otras reglas.
    ===================================================================== */
 
-/* Botones */
+/* Botones — altura uniforme (--btn-h) en todo el sitio */
 .btn { display:inline-flex; align-items:center; justify-content:center; gap:7px;
-  width:auto; flex:0 0 auto; height:var(--control-h); box-sizing:border-box;
+  width:auto; flex:0 0 auto; height:var(--btn-h); box-sizing:border-box;
   border:1px solid var(--border); background:var(--surface); color:var(--ink-soft);
-  padding:0 16px; border-radius:var(--radius-sm); font-size:13px; cursor:pointer;
+  padding:0 14px; border-radius:var(--radius-sm); font-size:13px; cursor:pointer;
   font-family:inherit; font-weight:550; white-space:nowrap; transition:background .12s; }
 .btn:hover { background:var(--border-soft); }
 .btn-primary { background:var(--brand); color:#fff; border-color:var(--brand); }
@@ -158,9 +158,8 @@
 
 .sync-row { display:flex; justify-content:space-between; align-items:center; gap:16px; }
 
-/* Botones mini (acciones de tabla) — compactos y uniformes */
-.btn-mini { height:34px; padding:0 12px; font-size:12.5px; margin-left:6px; border-radius:var(--radius-sm);
-  font-weight:550; }
+/* Botones mini (acciones de tabla) — MISMA altura que .btn, solo más estrechos */
+.btn-mini { padding:0 11px; font-size:12.5px; margin-left:6px; }
 .btn-mini svg { vertical-align:-2px; margin-right:3px; width:13px; height:13px; }
 
 /* Modal */
