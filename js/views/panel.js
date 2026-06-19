@@ -36,7 +36,7 @@ const NAV = [
   ['usuarios', I.users, 'Usuarios'],
   ['equipo', I.team, 'Equipo', 'superonly'],
   ['permisos', I.shield, 'Permisos', 'superonly'],
-  ['sync', I.sync, 'Sincronización'],
+  ['sync', I.sync, 'Sincronización', 'superonly'],
 ];
 
 /* ---------- shell ---------- */
@@ -58,7 +58,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.20</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.21</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
