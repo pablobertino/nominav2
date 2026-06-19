@@ -58,6 +58,14 @@ function validate(kind, value) {
     if (!/^\d+$/.test(v)) return { ok: false, error: 'Debe ser un número.' };
     return { ok: true, value: v };
   }
+  if (kind === 'time') {
+    // Hora en formato 24h HH:MM (ej. 14:00). Acepta H:MM y normaliza a HH:MM.
+    const m = v.match(/^(\d{1,2}):(\d{2})$/);
+    if (!m) return { ok: false, error: 'Hora inválida. Usa el formato HH:MM (ej. 14:00).' };
+    const h = parseInt(m[1], 10), mi = parseInt(m[2], 10);
+    if (h > 23 || mi > 59) return { ok: false, error: 'Hora fuera de rango (00:00 a 23:59).' };
+    return { ok: true, value: `${String(h).padStart(2, '0')}:${m[2]}` };
+  }
   return { ok: true, value: v };
 }
 

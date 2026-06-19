@@ -60,7 +60,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.23</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.24</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -834,11 +834,16 @@ async function viewConfig(user) {
         <div class="cfg-secret">${estado}<span class="cfg-secret-note">Se gestiona como secreto del servidor</span></div>
       </div>`;
     }
+    const ph = s.kind === 'url' ? 'https://…'
+      : s.kind === 'time' ? 'HH:MM (ej. 14:00)'
+      : s.kind === 'email' ? 'correo@grupocanaima.com'
+      : s.kind === 'number' ? 'solo números'
+      : '';
     return `<div class="cfg-row">
       <div class="cfg-meta"><div class="cfg-label">${s.label}</div>
         <div class="cfg-desc">${s.description || ''}</div></div>
       <div class="cfg-input">
-        <input type="text" id="cfg_${s.key}" value="${(s.value || '').replace(/"/g, '&quot;')}" placeholder="${s.kind === 'url' ? 'https://…' : ''}">
+        <input type="text" id="cfg_${s.key}" value="${(s.value || '').replace(/"/g, '&quot;')}" placeholder="${ph}">
         <button class="btn btn-mini btn-primary" data-key="${s.key}">Guardar</button>
       </div>
     </div>`;
