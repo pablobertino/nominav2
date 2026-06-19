@@ -62,7 +62,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.28</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.29</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -887,6 +887,14 @@ async function periodsApi(payload) {
   return res.json();
 }
 
+const DOW = ['dom', 'lun', 'mar', 'mié', 'jue', 'vie', 'sáb'];
+const MES = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+
+/* fecha 'YYYY-MM-DD' -> Date en UTC (sin corrimiento de zona) */
+function parseYMD(iso) {
+  const [y, m, d] = iso.slice(0, 10).split('-').map(Number);
+  return new Date(Date.UTC(y, m - 1, d));
+}
 /* fecha 'YYYY-MM-DD' -> 'DD/MM' o 'DD/MM/AAAA' */
 function fmtDate(iso, withYear) {
   if (!iso) return '—';
@@ -900,7 +908,7 @@ function fmtDeadline(iso) {
   if (isNaN(dt)) return '—';
   const car = new Date(dt.getTime() - 4 * 3600 * 1000); // a hora local Caracas
   const p = (n) => String(n).padStart(2, '0');
-  return `${p(car.getUTCDate())}/${p(car.getUTCMonth() + 1)} ${p(car.getUTCHours())}:${p(car.getUTCMinutes())}`;
+  return `${p(car.getUTCDate())}/${p(car.getUTCMonth() + 1)}/${car.getUTCFullYear()} ${p(car.getUTCHours())}:${p(car.getUTCMinutes())}`;
 }
 /* Hoy en formato YYYY-MM-DD, hora de Caracas */
 function todayCaracasYMD() {
@@ -910,22 +918,77 @@ function todayCaracasYMD() {
 function isCurrentPeriod(p, today) {
   return p.range_start <= today && today <= p.range_end;
 }
+/* relación temporal de la quincena con hoy: 'past' | 'curr' | 'fut' */
+function periodRel(p, today) {
+  if (p.range_end < today) return 'past';
+  if (p.range_start > today) return 'fut';
+  return 'curr';
+}
+/* días que abarca un rango, inclusivo (16/06–30/06 = 15 días) */
+function rangeDays(a, b) {
+  if (!a || !b) return 0;
+  return Math.round((parseYMD(b) - parseYMD(a)) / 86400000) + 1;
+}
+/* renglón gris bajo Período/Rango: nombre del mes + cantidad de días */
+function subMonth(a, b) {
+  if (!a || !b) return '';
+  const ma = parseYMD(a).getUTCMonth(), mb = parseYMD(b).getUTCMonth();
+  const label = ma === mb ? MES[ma] : `${MES[ma].slice(0, 3)} – ${MES[mb].slice(0, 3)}`;
+  return `<div class="submonth">${label} · <span class="days">${rangeDays(a, b)} días</span></div>`;
+}
+/* chip de cuenta regresiva (solo en la quincena en curso) */
+function countdown(iso, today) {
+  if (!iso) return '';
+  const n = Math.round((parseYMD(iso) - parseYMD(today)) / 86400000);
+  if (n < 0) return '';
+  if (n === 0) return '<div class="countdown today">¡es hoy!</div>';
+  const cls = n <= 2 ? 'soon' : '';
+  return `<div class="countdown ${cls}">faltan ${n} ${n === 1 ? 'día' : 'días'}</div>`;
+}
+/* celda de fecha: número (con badge de finde) + día de la semana + chip opcional */
+function dateCell(iso, opts = {}) {
+  if (!iso) return '—';
+  const i = parseYMD(iso).getUTCDay();
+  const weekend = (i === 0 || i === 6);
+  const badge = i === 0 ? '<span class="dow-badge">Dom</span>'
+              : i === 6 ? '<span class="dow-badge">Sáb</span>' : '';
+  const chip = opts.countdown || '';
+  return `<div class="date-cell ${weekend ? 'weekend' : ''}">`
+    + `<div class="date-num">${fmtDate(iso, true)}${badge}</div>`
+    + `<div class="date-dow">${DOW[i]}</div>${chip}</div>`;
+}
+/* celda de rango (Período / Rango de Pago): rango + mes·días */
+function rangeCell(a, b) {
+  return `<div class="date-cell"><div class="date-num">${fmtDate(a, true)} – ${fmtDate(b, true)}</div>${subMonth(a, b)}</div>`;
+}
+/* etiqueta de estado temporal (+ distintivo Modificada) */
+function periodEstado(p, rel) {
+  const base = rel === 'curr' ? '<span class="pill pill-curr">En curso</span>'
+             : rel === 'fut'  ? '<span class="pill pill-fut">Futuro</span>'
+             :                  '<span class="pill pill-past">Pasado</span>';
+  const mod = p.is_overridden
+    ? ` <span class="pill pill-mod" title="${(p.override_note || '').replace(/"/g, '&quot;')}">Modificada</span>` : '';
+  return `<div class="estado-wrap">${base}${mod}</div>`;
+}
 
 async function viewPeriods(user) {
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Quincenas</h1><p>Calendario de nómina</p></div></div><div class="pnl-loading">Cargando…</div>`;
 
-  // años disponibles: los que ya existen + (anterior, actual, próximo) para poder generarlos
+  // años disponibles: los que ya existen; el botón genera SOLO el próximo año
   const yd = await periodsApi({ action: 'years' });
   const existing = (yd.ok && yd.years.length) ? yd.years.slice() : [];
   const thisYear = new Date().getFullYear();
-  const years = [...new Set([...existing, thisYear - 1, thisYear, thisYear + 1])].sort();
+  const nextYear = thisYear + 1;
+  const years = [...new Set([...existing, thisYear])].sort();
   if (!PERIODS_YEAR || !years.includes(PERIODS_YEAR)) {
     PERIODS_YEAR = existing.includes(thisYear) ? thisYear : (existing.length ? existing[existing.length - 1] : thisYear);
   }
+  // ¿ya existe el próximo año? entonces no hace falta el botón de generar
+  const nextExists = existing.includes(nextYear);
 
-  const genBtn = isSuper
-    ? `<button class="btn btn-primary" id="pGen">${I.calendar} Generar ${PERIODS_YEAR}</button>` : '';
+  const genBtn = isSuper && !nextExists
+    ? `<button class="btn btn-primary" id="pGen">${I.plus} Generar ${nextYear}</button>` : '';
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head">
@@ -944,18 +1007,22 @@ async function viewPeriods(user) {
         ${genBtn}
       </div>
     </div>
-    <div class="tablebox"><table><thead><tr>
-      <th>Quincena</th><th>Período</th><th>Día hito</th><th>Corte</th><th>Pago</th><th>Tope de reporte</th><th>Estado</th>${isSuper ? '<th style="text-align:right">Acciones</th>' : ''}
+    <div class="tablebox scroll-x"><table><thead><tr>
+      <th>Quincena</th><th>Período</th>
+      <th class="grp grp-first">Código Pago</th><th class="grp grp-last">Rango de Pago</th>
+      <th>Último día de cálculo</th><th>Día de Cálculo</th><th>Día de Pago</th>
+      <th>Tope de reporte</th><th>Estado</th>${isSuper ? '<th style="text-align:right">Acciones</th>' : ''}
     </tr></thead><tbody id="pBody"></tbody></table></div>
-    <p class="muted" style="font-size:12px;margin:14px 2px 0">El “día hito” es el último día que entra en el cálculo de la quincena (un día antes del corte): la última oportunidad para cargar novedades, ese día hasta la hora tope. El “tope de reporte” es la fecha y hora límite (hora de Caracas) para reportar incidencias. ${isSuper ? 'Como superadmin puedes ajustar una quincena puntual; el resto solo la consulta.' : 'Esta vista es de solo lectura.'}</p>`;
+    <p class="muted" style="font-size:12px;margin:14px 2px 0;line-height:1.6">El “último día de cálculo” es la última fecha que entra en el cálculo de la quincena (un día antes del día de cálculo): última oportunidad para cargar novedades, ese día hasta la hora tope. Las dos columnas con fondo azul son el <strong>período de pago</strong>; su rango termina justo en el último día de cálculo. Sábados y domingos se resaltan en ámbar. El estado es temporal (Pasado / En curso / Futuro) y, si la quincena fue ajustada a mano, lleva además el distintivo <span class="pill pill-mod" style="font-size:10px">Modificada</span>. ${isSuper ? 'Como superadmin puedes ajustar una quincena puntual; el resto solo la consulta.' : 'Esta vista es de solo lectura.'}</p>`;
+
+  const NCOLS = isSuper ? 10 : 9;
 
   async function load() {
-    const cols = isSuper ? 8 : 7;
-    $('#pBody').innerHTML = `<tr><td colspan="${cols}" class="pnl-loading">Cargando…</td></tr>`;
+    $('#pBody').innerHTML = `<tr><td colspan="${NCOLS}" class="pnl-loading">Cargando…</td></tr>`;
     const d = await periodsApi({ action: 'list', year: PERIODS_YEAR });
-    if (!d.ok) { $('#pBody').innerHTML = `<tr><td colspan="${cols}" class="empty">Error: ${d.error}</td></tr>`; return; }
+    if (!d.ok) { $('#pBody').innerHTML = `<tr><td colspan="${NCOLS}" class="empty">Error: ${d.error}</td></tr>`; return; }
     if (!d.periods.length) {
-      $('#pBody').innerHTML = `<tr><td colspan="${cols}" class="empty">Este año aún no tiene quincenas generadas.${isSuper ? ` Usa “Generar ${PERIODS_YEAR}”.` : ''}</td></tr>`;
+      $('#pBody').innerHTML = `<tr><td colspan="${NCOLS}" class="empty">Este año aún no tiene quincenas generadas.</td></tr>`;
       $('#pInfo').textContent = `${PERIODS_YEAR} · sin generar`;
       PERIODS_VISIBLE = [];
       return;
@@ -964,7 +1031,6 @@ async function viewPeriods(user) {
     const today = todayCaracasYMD();
     // Orden: más reciente primero (period_no descendente)
     let rows = d.periods.slice().sort((a, b) => b.period_no - a.period_no);
-    // Ocultar futuras: las que aún no han comenzado (range_start > hoy)
     const totalFuturas = rows.filter(p => p.range_start > today).length;
     if (PERIODS_HIDE_FUTURE) rows = rows.filter(p => p.range_start <= today);
     PERIODS_VISIBLE = rows; // para exportar exactamente lo que se ve
@@ -973,28 +1039,28 @@ async function viewPeriods(user) {
       + (PERIODS_HIDE_FUTURE && totalFuturas ? ` · ${totalFuturas} futuras ocultas` : '');
 
     if (!rows.length) {
-      $('#pBody').innerHTML = `<tr><td colspan="${cols}" class="empty">No hay quincenas para mostrar con el filtro actual.</td></tr>`;
+      $('#pBody').innerHTML = `<tr><td colspan="${NCOLS}" class="empty">No hay quincenas para mostrar con el filtro actual.</td></tr>`;
       return;
     }
 
     $('#pBody').innerHTML = rows.map(p => {
-      const current = isCurrentPeriod(p, today);
-      const estado = current
-        ? '<span class="pill pill-open">En curso</span>'
-        : (p.is_overridden ? '<span class="pill pill-proj">Modificada</span>' : '<span class="pill pill-gray">Según regla</span>');
+      const rel = periodRel(p, today);
+      const isCurr = rel === 'curr';
       const acc = isSuper
         ? `<td style="text-align:right;white-space:nowrap">
              <button class="btn btn-mini" data-act="edit" data-id="${p.id}">${I.sliders} Ajustar</button>
              ${p.is_overridden ? `<button class="btn btn-mini" data-act="reset" data-id="${p.id}" data-name="${p.name}">Restablecer</button>` : ''}
            </td>` : '';
-      return `<tr class="${current ? 'row-current' : ''}">
+      return `<tr class="${isCurr ? 'row-current' : ''}">
         <td class="code">${p.name}</td>
-        <td>${fmtDate(p.range_start)} – ${fmtDate(p.range_end)}</td>
-        <td class="hito-cell">${fmtDate(p.milestone_date)}</td>
-        <td>${fmtDate(p.cutoff_date)}</td>
-        <td>${fmtDate(p.pay_date, true)}</td>
+        <td>${rangeCell(p.range_start, p.range_end)}</td>
+        <td class="grp grp-first"><span class="pp-code">${p.pay_code || '—'}</span></td>
+        <td class="grp grp-last">${rangeCell(p.pay_from, p.pay_to)}</td>
+        <td class="hito-cell">${dateCell(p.milestone_date)}</td>
+        <td>${dateCell(p.cutoff_date, { countdown: isCurr ? countdown(p.cutoff_date, today) : '' })}</td>
+        <td>${dateCell(p.pay_date, { countdown: isCurr ? countdown(p.pay_date, today) : '' })}</td>
         <td>${fmtDeadline(p.report_deadline)}</td>
-        <td>${estado}${p.is_overridden && p.override_note ? ` <span class="muted" style="font-size:11.5px">· ${p.override_note}</span>` : ''}</td>
+        <td>${periodEstado(p, rel)}</td>
         ${acc}
       </tr>`;
     }).join('');
@@ -1016,7 +1082,6 @@ async function viewPeriods(user) {
 
   $('#pYear').addEventListener('change', (e) => {
     PERIODS_YEAR = parseInt(e.target.value, 10);
-    if (isSuper) $('#pGen').innerHTML = `${I.calendar} Generar ${PERIODS_YEAR}`;
     load();
   });
   $('#pHideFut').addEventListener('change', (e) => { PERIODS_HIDE_FUTURE = e.target.checked; load(); });
@@ -1026,14 +1091,16 @@ async function viewPeriods(user) {
   document.addEventListener('click', () => { pExpMenu.hidden = true; });
   pExpMenu.querySelectorAll('button').forEach(b =>
     b.addEventListener('click', () => { pExpMenu.hidden = true; exportPeriods(b.dataset.fmt); }));
-  if (isSuper) {
+  if (isSuper && !nextExists) {
     $('#pGen').addEventListener('click', async () => {
       const b = $('#pGen'); const orig = b.innerHTML;
+      if (!confirm(`¿Generar las 24 quincenas de ${nextYear}? Esto no modifica años ya existentes.`)) return;
       b.disabled = true; b.textContent = 'Generando…';
-      const r = await periodsApi({ action: 'generate', adminId: user.id, year: PERIODS_YEAR });
+      const r = await periodsApi({ action: 'generate', adminId: user.id, year: nextYear });
       b.disabled = false; b.innerHTML = orig;
       if (!r.ok) { alert(r.error); return; }
-      load();
+      PERIODS_YEAR = nextYear;
+      viewPeriods(user); // recarga la vista (selector incluye el nuevo año)
     });
   }
   load();
@@ -1041,17 +1108,27 @@ async function viewPeriods(user) {
 
 /* Exportación de la grilla de Quincenas (xlsx / csv / txt) */
 async function exportPeriods(fmt) {
-  const data = (PERIODS_VISIBLE || []).map(p => ({
-    'Quincena': p.name,
-    'Desde': fmtDate(p.range_start, true),
-    'Hasta': fmtDate(p.range_end, true),
-    'Día hito': fmtDate(p.milestone_date, true),
-    'Corte': fmtDate(p.cutoff_date, true),
-    'Pago': fmtDate(p.pay_date, true),
-    'Tope de reporte': fmtDeadline(p.report_deadline),
-    'Estado': p.is_overridden ? 'Modificada' : 'Según regla',
-    'Motivo del ajuste': p.override_note || '',
-  }));
+  const today = todayCaracasYMD();
+  const relLabel = { past: 'Pasado', curr: 'En curso', fut: 'Futuro' };
+  const data = (PERIODS_VISIBLE || []).map(p => {
+    const rel = periodRel(p, today);
+    return {
+      'Quincena': p.name,
+      'Periodo desde': fmtDate(p.range_start, true),
+      'Periodo hasta': fmtDate(p.range_end, true),
+      'Dias del periodo': rangeDays(p.range_start, p.range_end),
+      'Codigo Pago': p.pay_code || '',
+      'Rango de Pago desde': fmtDate(p.pay_from, true),
+      'Rango de Pago hasta': fmtDate(p.pay_to, true),
+      'Dias del rango de pago': rangeDays(p.pay_from, p.pay_to),
+      'Ultimo dia de calculo': fmtDate(p.milestone_date, true),
+      'Dia de Calculo': fmtDate(p.cutoff_date, true),
+      'Dia de Pago': fmtDate(p.pay_date, true),
+      'Tope de reporte': fmtDeadline(p.report_deadline),
+      'Estado': relLabel[rel] + (p.is_overridden ? ' (Modificada)' : ''),
+      'Motivo del ajuste': p.override_note || '',
+    };
+  });
   if (!data.length) { alert('No hay quincenas para exportar con el filtro actual.'); return; }
   const headers = Object.keys(data[0]);
   const fname = `quincenas_${PERIODS_YEAR}_${tstamp()}`;
@@ -1104,14 +1181,14 @@ function periodEditModal(user, p, onSaved) {
     <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
       <div><label class="flabel">Desde</label><input type="date" id="pe_rs" value="${p.range_start}"></div>
       <div><label class="flabel">Hasta</label><input type="date" id="pe_re" value="${p.range_end}"></div>
-      <div><label class="flabel">Corte (cálculo)</label><input type="date" id="pe_co" value="${p.cutoff_date}"></div>
-      <div><label class="flabel">Pago</label><input type="date" id="pe_pay" value="${p.pay_date}"></div>
+      <div><label class="flabel">Día de Cálculo</label><input type="date" id="pe_co" value="${p.cutoff_date}"></div>
+      <div><label class="flabel">Día de Pago</label><input type="date" id="pe_pay" value="${p.pay_date}"></div>
       <div><label class="flabel">Margen (días)</label><input type="text" id="pe_mg" value="${p.report_margin_days}" placeholder="2"></div>
       <div><label class="flabel">Hora tope</label><input type="text" id="pe_ht" value="${(p.report_limit_time||'').slice(0,5)}" placeholder="14:00"></div>
     </div>
     <label class="flabel" style="margin-top:12px">Motivo del ajuste <span class="muted">(opcional)</span></label>
     <input type="text" id="pe_note" value="${(p.override_note||'').replace(/"/g,'&quot;')}" placeholder="ej. corrida por feriado" style="margin-bottom:6px">
-    <p class="muted" style="font-size:11.5px;margin:0">El tope de reporte se recalcula solo a partir del corte, el margen y la hora.</p>
+    <p class="muted" style="font-size:11.5px;margin:0">El último día de cálculo y el tope de reporte se recalculan solos a partir del día de cálculo, el margen y la hora.</p>
     <div class="modal-actions">
       <button class="btn" id="mCancel">Cancelar</button>
       <button class="btn btn-primary" id="mOk">Guardar ajuste</button>

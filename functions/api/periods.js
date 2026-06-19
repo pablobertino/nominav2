@@ -146,6 +146,8 @@ export async function onRequestPost({ request, env }) {
       patch.report_deadline = computeDeadline(cutoff, margin, ltime);
       // Dia hito = corte - 1 dia (ultima fecha que entra en el calculo)
       patch.milestone_date = addDays(cutoff, -1);
+      // pay_to del periodo de pago = dia hito de esta quincena (se mueve con el corte)
+      patch.pay_to = patch.milestone_date;
 
       patch.is_overridden = true;
       patch.override_note = (body.override_note || '').trim() || null;

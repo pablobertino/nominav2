@@ -87,6 +87,8 @@
 /* Tabla (aireada) */
 .tablebox { border:1px solid var(--border); border-radius:var(--radius-lg); overflow:hidden;
   background:var(--surface); box-shadow:var(--shadow-md); }
+.tablebox.scroll-x { overflow-x:auto; overflow-y:hidden; }
+.tablebox.scroll-x th, .tablebox.scroll-x td { padding-left:13px; padding-right:13px; }
 .tablebox table { width:100%; border-collapse:collapse; font-size:13.5px; }
 .tablebox th { background:#fbfcfe; font-weight:600; color:var(--ink-soft); font-size:12px;
   text-transform:uppercase; letter-spacing:.03em; text-align:left;
@@ -111,8 +113,35 @@
 .pchk:hover { background:var(--border-soft); }
 .pchk input { width:16px; height:16px; margin:0; accent-color:var(--brand); cursor:pointer; }
 
-/* Columna "Día hito" (fecha crítica de cierre) destacada sutilmente */
-.tablebox td.hito-cell { font-weight:650; color:var(--warn); }
+/* Columna "Último día de cálculo": tono tranquilo (crema), no rojo */
+.tablebox td.hito-cell { background:#fcfbf7; }
+.tablebox td.hito-cell .date-num { font-weight:650; color:var(--ink); }
+
+/* Grupo de columnas "Período de pago" (fondo azul tenue) */
+.tablebox th.grp, .tablebox td.grp { background:#f7faff; }
+.tablebox th.grp-first, .tablebox td.grp-first { border-left:2px solid #dbe7ff; }
+.tablebox th.grp-last, .tablebox td.grp-last { border-right:2px solid #dbe7ff; }
+.tablebox tbody tr:hover td.grp { background:#eff5ff; }
+.tablebox tr.row-current td.grp { background:var(--brand-bg); }
+.pp-code { font-family:monospace; font-weight:650; color:var(--brand); }
+
+/* Celda de fecha con día de la semana y chips */
+.date-cell { line-height:1.25; }
+.date-cell .date-dow { font-size:11px; color:var(--faint); text-transform:capitalize; margin-top:1px; }
+.date-cell.weekend .date-dow { color:var(--warn); font-weight:600; }
+.date-cell.weekend .date-num { color:var(--warn); }
+.dow-badge { display:inline-block; font-size:10px; font-weight:700; text-transform:uppercase;
+  padding:1px 6px; border-radius:20px; margin-left:6px; background:var(--warn-bg); color:var(--warn); vertical-align:1px; }
+
+/* Renglón gris del mes + días bajo Período/Rango de Pago */
+.submonth { font-size:11px; color:var(--faint); text-transform:capitalize; margin-top:2px; }
+.submonth .days { color:var(--muted); font-weight:600; }
+
+/* Chip de cuenta regresiva (solo quincena en curso) */
+.countdown { display:inline-block; margin-top:5px; font-size:10.5px; font-weight:700; letter-spacing:.02em;
+  padding:2px 8px; border-radius:20px; background:var(--brand); color:#fff; white-space:nowrap; }
+.countdown.today { background:var(--warn); }
+.countdown.soon { background:var(--danger); }
 
 .pill { display:inline-flex; align-items:center; gap:5px; padding:4px 11px; border-radius:999px;
   font-size:11.5px; font-weight:600; }
@@ -123,6 +152,13 @@
 .pill-temp { background:var(--warn-bg); color:#92400e; }
 .pill-proj { background:var(--brand-bg); color:#1e40af; }
 .pill-gray { background:var(--border-soft); color:var(--ink-soft); }
+/* Estados temporales de quincenas */
+.pill-curr { background:var(--success-bg); color:#15803d; }
+.pill-past { background:var(--border-soft); color:var(--muted); }
+.pill-past::before { opacity:.5; }
+.pill-fut  { background:var(--brand-bg); color:#1e40af; }
+.pill-mod  { background:var(--warn-bg); color:var(--warn); }
+.estado-wrap { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 
 .ico-ok { color:var(--success); }
 .ico-no { color:#cbd5e1; }
