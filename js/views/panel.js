@@ -57,7 +57,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.17</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.18</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -878,6 +878,9 @@ async function viewMiEmpresa(user) {
 export function renderPanel() {
   const user = getSession();
   if (!user) { go('/login'); return; }
+  // Limpiar estado en memoria de cualquier sesión previa (evita que datos
+  // de un usuario anterior "se filtren" si se cambia de sesión sin recargar).
+  CATALOG = null; CU_ROWS = null; SCOPE = null; currentView = 'tiendas';
   mount(shell(user));
   loadAvatar((user.email || '').trim().toLowerCase());
   $('#logoutBtn').addEventListener('click', () => { clearSession(); go('/login'); });

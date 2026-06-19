@@ -30,7 +30,11 @@ input, button, select, textarea {
 
 input[type="text"],
 input[type="password"],
-input[type="email"] {
+input[type="email"],
+input[type="search"],
+input[type="tel"],
+input[type="number"],
+input:not([type]) {
   width: 100%;
   height: var(--control-h);
   padding: 0 14px;
