@@ -62,7 +62,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.26</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.27</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -877,6 +877,7 @@ function viewSync(user) {
 /* Superadmin: ve, genera por año y sobrescribe quincenas puntuales.
    Admin y tienda: solo lectura. */
 let PERIODS_YEAR = null;
+let PERIODS_HIDE_FUTURE = true; // por defecto oculta las quincenas futuras
 
 async function periodsApi(payload) {
   const res = await fetch('/api/periods', {
@@ -900,28 +901,36 @@ function fmtDeadline(iso) {
   const p = (n) => String(n).padStart(2, '0');
   return `${p(car.getUTCDate())}/${p(car.getUTCMonth() + 1)} ${p(car.getUTCHours())}:${p(car.getUTCMinutes())}`;
 }
+/* Hoy en formato YYYY-MM-DD, hora de Caracas */
+function todayCaracasYMD() {
+  return new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/Caracas' }).format(new Date());
+}
+/* ¿la quincena p contiene la fecha de hoy? (en curso) */
+function isCurrentPeriod(p, today) {
+  return p.range_start <= today && today <= p.range_end;
+}
 
 async function viewPeriods(user) {
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Quincenas</h1><p>Calendario de nómina</p></div></div><div class="pnl-loading">Cargando…</div>`;
 
-  // años disponibles
+  // años disponibles: los que ya existen + (anterior, actual, próximo) para poder generarlos
   const yd = await periodsApi({ action: 'years' });
-  let years = (yd.ok && yd.years.length) ? yd.years.slice() : [];
+  const existing = (yd.ok && yd.years.length) ? yd.years.slice() : [];
   const thisYear = new Date().getFullYear();
-  if (!years.includes(thisYear)) years.push(thisYear);
-  years.sort();
+  const years = [...new Set([...existing, thisYear - 1, thisYear, thisYear + 1])].sort();
   if (!PERIODS_YEAR || !years.includes(PERIODS_YEAR)) {
-    PERIODS_YEAR = years.includes(thisYear) ? thisYear : years[years.length - 1];
+    PERIODS_YEAR = existing.includes(thisYear) ? thisYear : (existing.length ? existing[existing.length - 1] : thisYear);
   }
 
   const genBtn = isSuper
-    ? `<button class="btn btn-primary" id="pGen">${I.calendar} Generar año</button>` : '';
+    ? `<button class="btn btn-primary" id="pGen">${I.calendar} Generar ${PERIODS_YEAR}</button>` : '';
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head">
       <div><h1>Quincenas</h1><p id="pInfo">Calendario de nómina</p></div>
       <div class="pnl-filters" style="margin:0">
+        <label class="pchk"><input type="checkbox" id="pHideFut" ${PERIODS_HIDE_FUTURE ? 'checked' : ''}> Ocultar futuras</label>
         <select id="pYear">${years.map(y => `<option ${y === PERIODS_YEAR ? 'selected' : ''}>${y}</option>`).join('')}</select>
         ${genBtn}
       </div>
@@ -932,31 +941,48 @@ async function viewPeriods(user) {
     <p class="muted" style="font-size:12px;margin:14px 2px 0">El “tope de reporte” es la fecha y hora límite (hora de Caracas) para reportar incidencias de esa quincena. ${isSuper ? 'Como superadmin puedes ajustar una quincena puntual; el resto solo la consulta.' : 'Esta vista es de solo lectura.'}</p>`;
 
   async function load() {
-    $('#pBody').innerHTML = `<tr><td colspan="${isSuper ? 7 : 6}" class="pnl-loading">Cargando…</td></tr>`;
+    const cols = isSuper ? 7 : 6;
+    $('#pBody').innerHTML = `<tr><td colspan="${cols}" class="pnl-loading">Cargando…</td></tr>`;
     const d = await periodsApi({ action: 'list', year: PERIODS_YEAR });
-    if (!d.ok) { $('#pBody').innerHTML = `<tr><td colspan="${isSuper ? 7 : 6}" class="empty">Error: ${d.error}</td></tr>`; return; }
+    if (!d.ok) { $('#pBody').innerHTML = `<tr><td colspan="${cols}" class="empty">Error: ${d.error}</td></tr>`; return; }
     if (!d.periods.length) {
-      $('#pBody').innerHTML = `<tr><td colspan="${isSuper ? 7 : 6}" class="empty">Este año aún no tiene quincenas generadas.${isSuper ? ' Usa “Generar año”.' : ''}</td></tr>`;
+      $('#pBody').innerHTML = `<tr><td colspan="${cols}" class="empty">Este año aún no tiene quincenas generadas.${isSuper ? ` Usa “Generar ${PERIODS_YEAR}”.` : ''}</td></tr>`;
       $('#pInfo').textContent = `${PERIODS_YEAR} · sin generar`;
       return;
     }
-    $('#pInfo').textContent = `${PERIODS_YEAR} · ${d.periods.length} quincenas`;
-    $('#pBody').innerHTML = d.periods.map(p => {
-      const estado = p.is_overridden
-        ? '<span class="pill pill-proj">Modificada</span>'
-        : '<span class="pill pill-gray">Según regla</span>';
+
+    const today = todayCaracasYMD();
+    // Orden: más reciente primero (period_no descendente)
+    let rows = d.periods.slice().sort((a, b) => b.period_no - a.period_no);
+    // Ocultar futuras: las que aún no han comenzado (range_start > hoy)
+    const totalFuturas = rows.filter(p => p.range_start > today).length;
+    if (PERIODS_HIDE_FUTURE) rows = rows.filter(p => p.range_start <= today);
+
+    $('#pInfo').textContent = `${PERIODS_YEAR} · ${rows.length} de ${d.periods.length} quincenas`
+      + (PERIODS_HIDE_FUTURE && totalFuturas ? ` · ${totalFuturas} futuras ocultas` : '');
+
+    if (!rows.length) {
+      $('#pBody').innerHTML = `<tr><td colspan="${cols}" class="empty">No hay quincenas para mostrar con el filtro actual.</td></tr>`;
+      return;
+    }
+
+    $('#pBody').innerHTML = rows.map(p => {
+      const current = isCurrentPeriod(p, today);
+      const estado = current
+        ? '<span class="pill pill-open">En curso</span>'
+        : (p.is_overridden ? '<span class="pill pill-proj">Modificada</span>' : '<span class="pill pill-gray">Según regla</span>');
       const acc = isSuper
         ? `<td style="text-align:right;white-space:nowrap">
              <button class="btn btn-mini" data-act="edit" data-id="${p.id}">${I.sliders} Ajustar</button>
              ${p.is_overridden ? `<button class="btn btn-mini" data-act="reset" data-id="${p.id}" data-name="${p.name}">Restablecer</button>` : ''}
            </td>` : '';
-      return `<tr>
+      return `<tr class="${current ? 'row-current' : ''}">
         <td class="code">${p.name}</td>
         <td>${fmtDate(p.range_start)} – ${fmtDate(p.range_end)}</td>
         <td>${fmtDate(p.cutoff_date)}</td>
         <td>${fmtDate(p.pay_date, true)}</td>
         <td>${fmtDeadline(p.report_deadline)}</td>
-        <td>${estado}${p.override_note ? ` <span class="muted" style="font-size:11.5px">· ${p.override_note}</span>` : ''}</td>
+        <td>${estado}${p.is_overridden && p.override_note ? ` <span class="muted" style="font-size:11.5px">· ${p.override_note}</span>` : ''}</td>
         ${acc}
       </tr>`;
     }).join('');
@@ -976,7 +1002,12 @@ async function viewPeriods(user) {
     }
   }
 
-  $('#pYear').addEventListener('change', (e) => { PERIODS_YEAR = parseInt(e.target.value, 10); load(); });
+  $('#pYear').addEventListener('change', (e) => {
+    PERIODS_YEAR = parseInt(e.target.value, 10);
+    if (isSuper) $('#pGen').innerHTML = `${I.calendar} Generar ${PERIODS_YEAR}`;
+    load();
+  });
+  $('#pHideFut').addEventListener('change', (e) => { PERIODS_HIDE_FUTURE = e.target.checked; load(); });
   if (isSuper) {
     $('#pGen').addEventListener('click', async () => {
       const b = $('#pGen'); const orig = b.innerHTML;
