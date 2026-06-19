@@ -59,6 +59,14 @@ async function isSuperadmin(env, adminId) {
   return r && r.length > 0;
 }
 
+// Suma (o resta) dias a una fecha 'YYYY-MM-DD' y devuelve 'YYYY-MM-DD'.
+function addDays(ymd, delta) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const base = new Date(Date.UTC(y, m - 1, d));
+  base.setUTCDate(base.getUTCDate() + delta);
+  return base.toISOString().slice(0, 10);
+}
+
 // Recalcula el deadline (corte - margen) a la hora tope, en America/Caracas.
 // Devuelve un ISO timestamptz. Se hace en JS para no depender de otra RPC.
 function computeDeadline(cutoffDate, marginDays, limitTime) {
@@ -136,6 +144,8 @@ export async function onRequestPost({ request, env }) {
       const margin = patch.report_margin_days != null ? patch.report_margin_days : p.report_margin_days;
       const ltime  = patch.report_limit_time || p.report_limit_time;
       patch.report_deadline = computeDeadline(cutoff, margin, ltime);
+      // Dia hito = corte - 1 dia (ultima fecha que entra en el calculo)
+      patch.milestone_date = addDays(cutoff, -1);
 
       patch.is_overridden = true;
       patch.override_note = (body.override_note || '').trim() || null;

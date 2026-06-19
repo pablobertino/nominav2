@@ -62,7 +62,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.27</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.28</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -878,6 +878,7 @@ function viewSync(user) {
    Admin y tienda: solo lectura. */
 let PERIODS_YEAR = null;
 let PERIODS_HIDE_FUTURE = true; // por defecto oculta las quincenas futuras
+let PERIODS_VISIBLE = [];       // filas actualmente visibles (para exportar)
 
 async function periodsApi(payload) {
   const res = await fetch('/api/periods', {
@@ -932,22 +933,31 @@ async function viewPeriods(user) {
       <div class="pnl-filters" style="margin:0">
         <label class="pchk"><input type="checkbox" id="pHideFut" ${PERIODS_HIDE_FUTURE ? 'checked' : ''}> Ocultar futuras</label>
         <select id="pYear">${years.map(y => `<option ${y === PERIODS_YEAR ? 'selected' : ''}>${y}</option>`).join('')}</select>
+        <div class="export-wrap">
+          <button class="btn" id="pExportBtn">Exportar ▾</button>
+          <div class="export-menu" id="pExportMenu" hidden>
+            <button data-fmt="xlsx">Excel (.xlsx)</button>
+            <button data-fmt="csv">CSV (.csv)</button>
+            <button data-fmt="txt">Texto (.txt)</button>
+          </div>
+        </div>
         ${genBtn}
       </div>
     </div>
     <div class="tablebox"><table><thead><tr>
-      <th>Quincena</th><th>Período</th><th>Corte</th><th>Pago</th><th>Tope de reporte</th><th>Estado</th>${isSuper ? '<th style="text-align:right">Acciones</th>' : ''}
+      <th>Quincena</th><th>Período</th><th>Día hito</th><th>Corte</th><th>Pago</th><th>Tope de reporte</th><th>Estado</th>${isSuper ? '<th style="text-align:right">Acciones</th>' : ''}
     </tr></thead><tbody id="pBody"></tbody></table></div>
-    <p class="muted" style="font-size:12px;margin:14px 2px 0">El “tope de reporte” es la fecha y hora límite (hora de Caracas) para reportar incidencias de esa quincena. ${isSuper ? 'Como superadmin puedes ajustar una quincena puntual; el resto solo la consulta.' : 'Esta vista es de solo lectura.'}</p>`;
+    <p class="muted" style="font-size:12px;margin:14px 2px 0">El “día hito” es el último día que entra en el cálculo de la quincena (un día antes del corte): la última oportunidad para cargar novedades, ese día hasta la hora tope. El “tope de reporte” es la fecha y hora límite (hora de Caracas) para reportar incidencias. ${isSuper ? 'Como superadmin puedes ajustar una quincena puntual; el resto solo la consulta.' : 'Esta vista es de solo lectura.'}</p>`;
 
   async function load() {
-    const cols = isSuper ? 7 : 6;
+    const cols = isSuper ? 8 : 7;
     $('#pBody').innerHTML = `<tr><td colspan="${cols}" class="pnl-loading">Cargando…</td></tr>`;
     const d = await periodsApi({ action: 'list', year: PERIODS_YEAR });
     if (!d.ok) { $('#pBody').innerHTML = `<tr><td colspan="${cols}" class="empty">Error: ${d.error}</td></tr>`; return; }
     if (!d.periods.length) {
       $('#pBody').innerHTML = `<tr><td colspan="${cols}" class="empty">Este año aún no tiene quincenas generadas.${isSuper ? ` Usa “Generar ${PERIODS_YEAR}”.` : ''}</td></tr>`;
       $('#pInfo').textContent = `${PERIODS_YEAR} · sin generar`;
+      PERIODS_VISIBLE = [];
       return;
     }
 
@@ -957,6 +967,7 @@ async function viewPeriods(user) {
     // Ocultar futuras: las que aún no han comenzado (range_start > hoy)
     const totalFuturas = rows.filter(p => p.range_start > today).length;
     if (PERIODS_HIDE_FUTURE) rows = rows.filter(p => p.range_start <= today);
+    PERIODS_VISIBLE = rows; // para exportar exactamente lo que se ve
 
     $('#pInfo').textContent = `${PERIODS_YEAR} · ${rows.length} de ${d.periods.length} quincenas`
       + (PERIODS_HIDE_FUTURE && totalFuturas ? ` · ${totalFuturas} futuras ocultas` : '');
@@ -979,6 +990,7 @@ async function viewPeriods(user) {
       return `<tr class="${current ? 'row-current' : ''}">
         <td class="code">${p.name}</td>
         <td>${fmtDate(p.range_start)} – ${fmtDate(p.range_end)}</td>
+        <td class="hito-cell">${fmtDate(p.milestone_date)}</td>
         <td>${fmtDate(p.cutoff_date)}</td>
         <td>${fmtDate(p.pay_date, true)}</td>
         <td>${fmtDeadline(p.report_deadline)}</td>
@@ -1008,6 +1020,12 @@ async function viewPeriods(user) {
     load();
   });
   $('#pHideFut').addEventListener('change', (e) => { PERIODS_HIDE_FUTURE = e.target.checked; load(); });
+  // Exportación de la grilla de quincenas
+  const pExpBtn = $('#pExportBtn'), pExpMenu = $('#pExportMenu');
+  pExpBtn.addEventListener('click', (e) => { e.stopPropagation(); pExpMenu.hidden = !pExpMenu.hidden; });
+  document.addEventListener('click', () => { pExpMenu.hidden = true; });
+  pExpMenu.querySelectorAll('button').forEach(b =>
+    b.addEventListener('click', () => { pExpMenu.hidden = true; exportPeriods(b.dataset.fmt); }));
   if (isSuper) {
     $('#pGen').addEventListener('click', async () => {
       const b = $('#pGen'); const orig = b.innerHTML;
@@ -1019,6 +1037,63 @@ async function viewPeriods(user) {
     });
   }
   load();
+}
+
+/* Exportación de la grilla de Quincenas (xlsx / csv / txt) */
+async function exportPeriods(fmt) {
+  const data = (PERIODS_VISIBLE || []).map(p => ({
+    'Quincena': p.name,
+    'Desde': fmtDate(p.range_start, true),
+    'Hasta': fmtDate(p.range_end, true),
+    'Día hito': fmtDate(p.milestone_date, true),
+    'Corte': fmtDate(p.cutoff_date, true),
+    'Pago': fmtDate(p.pay_date, true),
+    'Tope de reporte': fmtDeadline(p.report_deadline),
+    'Estado': p.is_overridden ? 'Modificada' : 'Según regla',
+    'Motivo del ajuste': p.override_note || '',
+  }));
+  if (!data.length) { alert('No hay quincenas para exportar con el filtro actual.'); return; }
+  const headers = Object.keys(data[0]);
+  const fname = `quincenas_${PERIODS_YEAR}_${tstamp()}`;
+
+  if (fmt === 'csv') {
+    const esc = (v) => {
+      const s = String(v ?? '');
+      return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lines = [headers.join(';')].concat(data.map(r => headers.map(h => esc(r[h])).join(';')));
+    downloadBlob('\uFEFF' + lines.join('\r\n'), `${fname}.csv`, 'text/csv;charset=utf-8');
+    return;
+  }
+
+  if (fmt === 'txt') {
+    const widths = headers.map(h => Math.max(h.length, ...data.map(r => String(r[h] ?? '').length)));
+    const fmtRow = (cells) => cells.map((c, i) => String(c ?? '').padEnd(widths[i])).join('  ');
+    const lines = [fmtRow(headers), widths.map(w => '-'.repeat(w)).join('  ')]
+      .concat(data.map(r => fmtRow(headers.map(h => r[h]))));
+    downloadBlob(lines.join('\r\n'), `${fname}.txt`, 'text/plain;charset=utf-8');
+    return;
+  }
+
+  if (fmt === 'xlsx') {
+    try {
+      if (!window.XLSX) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          s.onload = resolve; s.onerror = () => reject(new Error('No se pudo cargar la librería Excel.'));
+          document.head.appendChild(s);
+        });
+      }
+      const ws = window.XLSX.utils.json_to_sheet(data, { header: headers });
+      const wb = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(wb, ws, 'Quincenas');
+      window.XLSX.writeFile(wb, `${fname}.xlsx`);
+    } catch (e) {
+      alert(e.message + ' Revisa tu conexión e inténtalo de nuevo.');
+    }
+    return;
+  }
 }
 
 /* Modal de override de una quincena (solo superadmin) */
