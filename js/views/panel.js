@@ -62,7 +62,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.25</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.26</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -140,6 +140,11 @@ function viewTiendas(user) {
   const statuses = [...new Set(CATALOG.companies.map(c => c.status).filter(Boolean))].sort();
   const concepts = CATALOG.concepts.map(c => c.name);
 
+  // Estados "activos" por defecto: una tienda activa está Abierta o Cerrada temporal.
+  const ACTIVE_STATES = statuses.filter(s => /abier/i.test(s) || (/cerrad/i.test(s) && /temp/i.test(s)));
+  // Conjunto seleccionado (arranca en los activos; si no hubiera, todos)
+  const selStatus = new Set(ACTIVE_STATES.length ? ACTIVE_STATES : statuses);
+
   $('#pnlMain').innerHTML = `
     <div class="pnl-head">
       <div><h1>Empresas</h1><p id="tCount"></p></div>
@@ -155,7 +160,21 @@ function viewTiendas(user) {
     <div class="pnl-filters">
       <div class="search">${I.search}<input id="fName" type="text" placeholder="Buscar nombre o código…"></div>
       <select id="fType">${types.map(t => `<option ${t === 'Tienda' ? 'selected' : ''}>${t}</option>`).join('')}<option value="ALL">Todos los tipos</option></select>
-      <select id="fStatus"><option value="ALL">Todos los estados</option>${statuses.map(s => `<option ${/abier/i.test(s) ? 'selected' : ''}>${s}</option>`).join('')}</select>
+      <div class="ms-wrap" id="fStatusWrap">
+        <button type="button" class="ms-toggle" id="fStatusBtn">
+          <span class="ms-label" id="fStatusLabel">Estados</span>
+          ${I.chevron.replace('<svg', '<svg class="ms-caret"')}
+        </button>
+        <div class="ms-menu" id="fStatusMenu" hidden>
+          <div class="ms-quick">
+            <button type="button" data-q="active">Activas</button>
+            <button type="button" data-q="all">Todos</button>
+            <button type="button" data-q="none">Ninguno</button>
+          </div>
+          <div class="ms-sep"></div>
+          ${statuses.map(s => `<label class="ms-opt"><input type="checkbox" value="${s}" ${selStatus.has(s) ? 'checked' : ''}><span>${s}</span><span class="ms-count">${CATALOG.companies.filter(c => c.status === s).length}</span></label>`).join('')}
+        </div>
+      </div>
       <select id="fZone"><option value="ALL">Todas las zonas</option>${CATALOG.zones.map(z => `<option value="${z.id}">${z.name}</option>`).join('')}</select>
       <select id="fSub"><option value="ALL">Todas las subzonas</option></select>
       <select id="fConcept"><option value="ALL">Todos los conceptos</option>${concepts.map(c => `<option>${c}</option>`).join('')}</select>
@@ -170,10 +189,43 @@ function viewTiendas(user) {
       <span class="ico-no">${I.circle} sin usuario</span>
     </div>`;
 
-  const fName = $('#fName'), fType = $('#fType'), fStatus = $('#fStatus'),
+  const fName = $('#fName'), fType = $('#fType'),
         fZone = $('#fZone'), fSub = $('#fSub'), fConcept = $('#fConcept');
 
   let visibleRows = []; // filas actualmente filtradas (para exportar)
+
+  // ----- Multi-select de estados -----
+  const msWrap = $('#fStatusWrap'), msBtn = $('#fStatusBtn'), msMenu = $('#fStatusMenu'), msLabel = $('#fStatusLabel');
+  function updateStatusLabel() {
+    const n = selStatus.size;
+    if (n === 0) msLabel.textContent = 'Sin estados';
+    else if (n === statuses.length) msLabel.textContent = 'Todos los estados';
+    else if (ACTIVE_STATES.length && n === ACTIVE_STATES.length && ACTIVE_STATES.every(s => selStatus.has(s)))
+      msLabel.textContent = 'Activas';
+    else if (n === 1) msLabel.textContent = [...selStatus][0];
+    else msLabel.textContent = `${n} estados`;
+  }
+  msBtn.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const open = msMenu.hidden;
+    msMenu.hidden = !open;
+    msWrap.classList.toggle('open', open);
+  });
+  msMenu.addEventListener('click', (e) => e.stopPropagation());
+  msMenu.querySelectorAll('input[type=checkbox]').forEach(cb =>
+    cb.addEventListener('change', () => {
+      if (cb.checked) selStatus.add(cb.value); else selStatus.delete(cb.value);
+      updateStatusLabel(); render();
+    }));
+  msMenu.querySelectorAll('.ms-quick button').forEach(b =>
+    b.addEventListener('click', () => {
+      selStatus.clear();
+      if (b.dataset.q === 'all') statuses.forEach(s => selStatus.add(s));
+      else if (b.dataset.q === 'active') ACTIVE_STATES.forEach(s => selStatus.add(s));
+      // 'none' deja el set vacío
+      msMenu.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = selStatus.has(cb.value); });
+      updateStatusLabel(); render();
+    }));
 
   function fillSubs() {
     fSub.innerHTML = '<option value="ALL">Todas las subzonas</option>';
@@ -188,7 +240,7 @@ function viewTiendas(user) {
     const rows = CATALOG.companies.filter(c => {
       return (`${c.code} ${c.name || ''}`.toLowerCase().includes(n))
         && (fType.value === 'ALL' || c.type === fType.value)
-        && (fStatus.value === 'ALL' || c.status === fStatus.value)
+        && (selStatus.size === 0 || selStatus.has(c.status))
         && (fZone.value === 'ALL' || c.zoneId === fZone.value)
         && (fSub.value === 'ALL' || c.subzoneId === fSub.value)
         && (fConcept.value === 'ALL' || c.concept === fConcept.value);
@@ -224,8 +276,13 @@ function viewTiendas(user) {
   }
 
   fZone.addEventListener('change', () => { fillSubs(); render(); });
-  [fName, fType, fStatus, fSub, fConcept].forEach(e => e.addEventListener('input', render));
+  [fName, fSub, fConcept].forEach(e => e.addEventListener('input', render));
   fType.addEventListener('change', render);
+  // Cerrar el menú de estados al hacer clic fuera
+  document.addEventListener('click', () => {
+    if (!msMenu.hidden) { msMenu.hidden = true; msWrap.classList.remove('open'); }
+  });
+  updateStatusLabel();
   render();
 
   // Exportación (menú desplegable)

@@ -131,6 +131,31 @@
   padding:9px 14px; font-size:13px; cursor:pointer; font-family:inherit; color:var(--ink-soft); }
 .export-menu button:hover { background:var(--border-soft); }
 
+/* Multi-select de estados (dropdown con checkboxes) */
+.ms-wrap { position:relative; flex:1 1 140px; min-width:140px; }
+.ms-toggle { display:flex; align-items:center; justify-content:space-between; gap:8px;
+  width:100%; height:var(--control-h); box-sizing:border-box; border:1px solid var(--border);
+  background:var(--surface); color:var(--ink); padding:0 12px; border-radius:var(--radius-sm);
+  font-size:13px; cursor:pointer; font-family:inherit; text-align:left; }
+.ms-toggle:hover { background:var(--border-soft); }
+.ms-toggle .ms-label { white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.ms-toggle .ms-caret { width:16px; height:16px; stroke:var(--faint); flex-shrink:0; transition:transform .15s; }
+.ms-wrap.open .ms-caret { transform:rotate(90deg); }
+.ms-menu { position:absolute; left:0; top:calc(100% + 4px); background:var(--surface);
+  border:1px solid var(--border); border-radius:var(--radius-md); box-shadow:0 6px 20px rgba(0,0,0,0.12);
+  z-index:50; min-width:220px; padding:6px; }
+.ms-menu[hidden] { display:none; }
+.ms-opt { display:flex; align-items:center; gap:10px; padding:8px 10px; border-radius:6px;
+  font-size:13px; cursor:pointer; color:var(--ink); }
+.ms-opt:hover { background:var(--border-soft); }
+.ms-opt input { width:16px; height:16px; margin:0; accent-color:var(--brand); cursor:pointer; flex-shrink:0; }
+.ms-opt .ms-count { margin-left:auto; color:var(--faint); font-size:12px; }
+.ms-sep { height:1px; background:var(--border-soft); margin:6px 4px; }
+.ms-quick { display:flex; gap:6px; padding:2px 6px 6px; }
+.ms-quick button { flex:1; border:1px solid var(--border); background:var(--surface); border-radius:6px;
+  font-size:11.5px; padding:5px 8px; cursor:pointer; font-family:inherit; color:var(--ink-soft); }
+.ms-quick button:hover { background:var(--brand-bg); color:var(--brand); border-color:var(--brand); }
+
 .legend { font-size:12px; color:var(--muted); margin:12px 2px 0; display:flex; gap:18px; }
 .legend svg { vertical-align:-3px; margin-right:3px; }
 
