@@ -193,9 +193,9 @@ async function checkVersion() {
       tag.className = 'version-tag ok';
       tag.title = data.latest.summary || '';
     } else {
-      tag.innerHTML = `código v${CONFIG.version} ≠ v${registered} · <a href="#" id="reloadLink">Actualizar ahora</a>`;
+      tag.innerHTML = `Su versión v${CONFIG.version} no es la última vigente. <a href="#" id="reloadLink">Haga clic para actualizar a la v${registered}</a>`;
       tag.className = 'version-tag warn';
-      tag.title = 'Tu navegador tiene una versión en caché. Presiona Ctrl+F5 (o Ctrl+Shift+R) para cargar la más reciente.';
+      tag.title = 'Tu navegador tiene una versión en caché. Haz clic en el enlace o presiona Ctrl+F5 (Ctrl+Shift+R) para cargar la más reciente.';
       const link = document.getElementById('reloadLink');
       if (link) link.addEventListener('click', (e) => {
         e.preventDefault();
