@@ -216,35 +216,60 @@ export function launchWizard(user, reportDef, onExit) {
     try {
       const parsed = await Roster.parseReport10(file);
       const v = Roster.validateParsed(parsed);
-      box.innerHTML = `
-        <div class="validation">
+      box.innerHTML = ''; // el resultado se muestra en el modal
+      openRosterConfirm(parsed, v);
+    } catch (err) {
+      box.innerHTML = `<div class="validation"><div class="vrow err">✗ ${err.message || err}</div></div>`;
+    } finally {
+      e.target.value = '';
+    }
+  }
+
+  // Modal de confirmacion al subir un Reporte 10: resume lo leido y
+  // pregunta explicitamente si se quiere reemplazar la lista actual.
+  function openRosterConfirm(parsed, v) {
+    const hasPrev = !!S.meta;
+    const ov = document.createElement('div');
+    ov.className = 'modal-ov';
+    ov.innerHTML = `
+      <div class="modal">
+        <h3>${hasPrev ? '¿Reemplazar la lista de la tienda?' : 'Confirmar carga de la lista'}</h3>
+        <p class="who">Archivo: <b>${parsed.fileName}</b></p>
+        <div class="validation" style="margin-top:0">
           ${parsed.missing.length
             ? `<div class="vrow err">✗ Faltan columnas esenciales: ${parsed.missing.join(', ')}</div>`
             : `<div class="vrow ok">✓ Columnas esenciales: ${parsed.columnsFound.join(', ')}</div>`}
           <div class="vrow ok">✓ ${v.total} trabajadores leídos (${v.active} vigentes · ${v.terminated} egresados)</div>
           <div class="vrow ok">✓ Responsables detectados: ${v.gerentes} Gerente(s), ${v.subgerentes} Sub-Gerente(s)</div>
           ${v.warnings.map(w => `<div class="vrow warn">⚠ ${w}</div>`).join('')}
-          ${v.okToUpload ? `<div style="margin-top:12px"><button class="btn btn-primary btn-sm" id="rConfirm">Reemplazar lista de la tienda</button></div>`
-                         : `<div class="vrow err" style="margin-top:8px">No se puede cargar: revisa el archivo.</div>`}
-        </div>`;
-      if (v.okToUpload) {
-        $('#rConfirm').addEventListener('click', async () => {
-          $('#rConfirm').disabled = true; $('#rConfirm').textContent = 'Subiendo…';
-          const up = await Roster.rosterReplace(companyCode, v.validRows, {
-            uploadedBy: user.kind === 'company' ? user.companyCode : (user.name || user.username),
-            sourceFile: parsed.fileName,
-          });
-          if (!up.ok) { alert(up.error || 'Error al subir.'); $('#rConfirm').disabled = false; $('#rConfirm').textContent = 'Reemplazar lista de la tienda'; return; }
-          await loadRoster();
-          await loadResponsables();
-          renderRosterStep();
-        });
+          ${!v.okToUpload ? `<div class="vrow err" style="margin-top:8px">No se puede cargar: revisa el archivo.</div>` : ''}
+        </div>
+        ${v.okToUpload && hasPrev ? `<div class="warn-banner" style="margin:14px 0 0">⚠ <div>Esto <b>reemplaza por completo</b> la lista actual (${S.meta.total_count} trabajadores cargados el ${fmtDate(S.meta.uploaded_at)}). Los responsables que ya gestionaste se conservan.</div></div>` : ''}
+        <div class="wiz-foot" style="margin-top:18px">
+          <button class="btn" id="rcCancel">Cancelar</button>
+          ${v.okToUpload ? `<button class="btn btn-primary" id="rcOk">${hasPrev ? 'Sí, reemplazar lista' : 'Cargar lista'}</button>` : ''}
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+
+    ov.querySelector('#rcCancel').addEventListener('click', () => ov.remove());
+    const okBtn = ov.querySelector('#rcOk');
+    if (okBtn) okBtn.addEventListener('click', async () => {
+      okBtn.disabled = true; okBtn.textContent = 'Subiendo…';
+      const up = await Roster.rosterReplace(companyCode, v.validRows, {
+        uploadedBy: user.kind === 'company' ? user.companyCode : (user.name || user.username),
+        sourceFile: parsed.fileName,
+      });
+      if (!up.ok) {
+        alert(up.error || 'Error al subir.');
+        okBtn.disabled = false; okBtn.textContent = hasPrev ? 'Sí, reemplazar lista' : 'Cargar lista';
+        return;
       }
-    } catch (err) {
-      box.innerHTML = `<div class="validation"><div class="vrow err">✗ ${err.message || err}</div></div>`;
-    } finally {
-      e.target.value = '';
-    }
+      ov.remove();
+      await loadRoster();
+      await loadResponsables();
+      renderRosterStep();
+    });
   }
 
   /* ---------- PASO 2: responsable ---------- */
