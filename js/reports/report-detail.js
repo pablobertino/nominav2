@@ -68,6 +68,28 @@ function linesHtml(r) {
       </tr>`).join('')}
     </tbody></table>`;
   }
+  if (r.type === 'ausencia') {
+    if (!r.lines || !r.lines.length) return '<p class="hint">Sin líneas de detalle.</p>';
+    const docCell = (l) => {
+      if (l.doc_status == null) return '<span style="color:var(--muted)">No requiere</span>';
+      if (l.doc_status === 'adjunto') return `<span class="pill pill-set">📎 Adjunto</span>`;
+      return `<span class="pill pill-pend">Pendiente${l.doc_name ? ' · ' + l.doc_name : ''}</span>`;
+    };
+    return `<table class="dtl-table"><thead><tr>
+      <th>Trabajador</th><th>Cédula</th><th>Tipo</th><th>Cód. AX</th><th>Desde</th><th>Hasta</th><th>Documento</th><th>Nota</th>
+    </tr></thead><tbody>
+      ${r.lines.map(l => `<tr>
+        <td><b>${l.name}</b></td>
+        <td class="ced">${l.id_number}</td>
+        <td>${l.absence_label}</td>
+        <td><span class="pill pill-ax">${l.ax_code}</span></td>
+        <td>${fmtDate(l.date_from)}</td>
+        <td>${fmtDate(l.date_to)}</td>
+        <td>${docCell(l)}</td>
+        <td>${l.note ? l.note : '<span style="color:var(--muted)">—</span>'}</td>
+      </tr>`).join('')}
+    </tbody></table>`;
+  }
   // otros tipos: aun no construidos
   return `<p class="hint">Este reporte incluye ${r.workers_count} trabajador(es). El detalle específico de “${(TYPES[r.type] || {}).label || r.type}” estará disponible cuando se implemente ese tipo de reporte.</p>`;
 }

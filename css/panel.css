@@ -552,3 +552,37 @@
 .dtl-table .ced { font-family:monospace; }
 .dtl-table .time-badge { display:inline-block; font-size:12px; font-weight:600; padding:2px 8px; border-radius:6px;
   background:var(--brand-bg); color:var(--brand); font-family:monospace; }
+
+/* ===================== WIZARD AUSENCIA (paso 4) ===================== */
+.type-row { display:flex; gap:14px; align-items:flex-end; margin-bottom:8px; }
+.coord-note { display:flex; gap:8px; background:var(--warn-bg); border:1px solid #f3e2bf; border-radius:var(--radius-md);
+  padding:11px 14px; margin-bottom:16px; font-size:12.5px; color:var(--warn); }
+.window-info { display:flex; align-items:flex-start; gap:9px; background:#f9fbff; border:1px solid #e2ecfb;
+  border-radius:var(--radius-md); padding:11px 14px; margin-bottom:18px; font-size:12.5px; color:var(--ink-soft); }
+
+.wcard { border:1px solid var(--border); border-radius:var(--radius-md); padding:16px 18px; margin-bottom:14px; }
+.wcard-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:14px; }
+.wcard-head .wname { font-weight:650; font-size:14px; }
+.wcard-head .wced { font-size:12px; color:var(--muted); font-family:monospace; margin-left:8px; }
+
+.doc-box { margin-top:14px; border:1px dashed var(--border); border-radius:var(--radius-md); padding:14px 16px; background:#fbfcfe; }
+.doc-box.block { border-color:#f3c2c2; background:#fef7f7; }
+.doc-title { font-size:12.5px; font-weight:650; color:var(--ink-soft); margin-bottom:3px; }
+.doc-note { font-size:11.5px; color:var(--muted); margin-bottom:10px; line-height:1.5; }
+.doc-actions { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.file-pill { display:inline-flex; align-items:center; gap:6px; font-size:12px; background:var(--success-bg); color:#15803d;
+  padding:4px 10px; border-radius:8px; font-weight:600; }
+.file-pill .x { cursor:pointer; color:#15803d; }
+.pendwarn { display:flex; align-items:flex-start; gap:8px; background:var(--warn-bg); border:1px solid #f3e2bf;
+  border-radius:var(--radius-md); padding:10px 14px; margin-top:10px; font-size:12px; color:var(--warn); }
+
+.pill-ax { background:#eef2f7; color:var(--ink-soft); font-family:monospace; }
+.pill-ax::before { display:none; }
+.date-badge { display:inline-block; font-size:12px; font-weight:600; padding:2px 8px; border-radius:6px;
+  background:var(--brand-bg); color:var(--brand); font-family:monospace; }
+
+/* barra de seleccion en bloque (reutiliza estilo de selbar de marcaje si existe) */
+.selbar { display:flex; align-items:center; gap:10px; background:var(--brand-bg); border:1px solid #d4e2fb;
+  border-radius:var(--radius-md); padding:9px 14px; font-size:13px; color:var(--brand); margin-bottom:12px; }
+.selbar.hidden { display:none; }
+.selbar .spacer { flex:1; }

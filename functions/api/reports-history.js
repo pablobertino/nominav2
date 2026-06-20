@@ -204,6 +204,28 @@ async function detailReport(env, body, scope) {
         ? (l.cause_other_text || 'Otros')
         : (l.marcaje_causas && l.marcaje_causas.label) || l.cause_code,
     }));
+  } else if (r.topic === 'ausencia') {
+    const raw = await sbJson(env,
+      `absence_report_lines?report_id=eq.${id}`
+      + `&select=id,worker_id_number,worker_name,absence_code,ax_code,date_from,date_to,note,`
+      + `absence_types(label),absence_report_docs(doc_name,status,enforcement)`
+      + `&order=id.asc`);
+    lines = (raw || []).map(l => {
+      const doc = (l.absence_report_docs && l.absence_report_docs.length) ? l.absence_report_docs[0] : null;
+      return {
+        id_number: l.worker_id_number,
+        name: l.worker_name,
+        absence_code: l.absence_code,
+        absence_label: (l.absence_types && l.absence_types.label) || l.absence_code,
+        ax_code: l.ax_code,
+        date_from: l.date_from,
+        date_to: l.date_to,
+        note: l.note || '',
+        doc_name: doc ? doc.doc_name : null,
+        doc_status: doc ? doc.status : null,        // 'adjunto' | 'pendiente' | null (no requiere)
+        doc_enforcement: doc ? doc.enforcement : null,
+      };
+    });
   }
 
   return json({

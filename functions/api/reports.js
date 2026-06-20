@@ -88,6 +88,9 @@ export async function onRequestPost({ request, env }) {
     if (body.action === 'submit_marcaje') {
       return await submitMarcaje(env, body);
     }
+    if (body.action === 'submit_ausencia') {
+      return await submitAusencia(env, body);
+    }
     if (body.action === 'window') {
       return await getWindow(env, body);
     }
@@ -258,5 +261,207 @@ async function submitMarcaje(env, body) {
     report_id: reportId,
     workers_count: clean.length,
     window: { today, now: nowHHMM, report_min: reportMin, report_max: reportMax },
+  });
+}
+
+/* =====================================================================
+   AUSENCIA
+   Registra el encabezado en reports_log (topic 'ausencia') + el detalle
+   por trabajador en absence_report_lines + los documentos esperados en
+   absence_report_docs. Valida TODO server-side.
+
+   El TIPO de ausencia es uno por reporte (body.absence_code).
+   Reglas de fecha (distintas a marcaje, NO usan la ventana de quincena):
+     - Hasta >= Desde.
+     - Fecha futura solo si el tipo lo permite (allows_future).
+     - Nunca posterior al egreso del trabajador.
+   Documento (segun required_docs.enforcement del tipo):
+     - block    -> si falta el archivo, ERROR 422 (no se registra).
+     - warn     -> se registra; status 'adjunto' si vino doc_file_name,
+                   'pendiente' si no.
+     - optional -> igual que warn pero sin connotacion de "debe".
+
+   Body:
+     { action:'submit_ausencia', company_code, responsible, position,
+       absence_code,
+       lines:[{ id_number, name, date_from, date_to, note?, doc_file_name? }],
+       source_kind?, source_admin_id? }
+   ===================================================================== */
+async function submitAusencia(env, body) {
+  const cc = (body.company_code || '').trim();
+  const responsible = (body.responsible || '').trim();
+  const position = (body.position || '').trim();
+  const absenceCode = (body.absence_code || '').trim();
+  const lines = Array.isArray(body.lines) ? body.lines : [];
+
+  // Origen del reporte: 'company' (tienda) | 'admin' (central).
+  let sourceKind = body.source_kind === 'admin' ? 'admin' : 'company';
+  let sourceAdminId = null;
+  if (sourceKind === 'admin') {
+    const aid = parseInt(body.source_admin_id, 10);
+    if (aid) {
+      const a = await sb(env, `admin_users?id=eq.${aid}&is_active=eq.true&select=id`);
+      if (a && a.length) sourceAdminId = aid;
+    }
+    if (!sourceAdminId) sourceKind = 'company';
+  }
+
+  if (!cc) return json({ ok: false, error: 'Falta la tienda.' }, 400);
+  if (!responsible) return json({ ok: false, error: 'Falta el responsable.' }, 400);
+  if (!absenceCode) return json({ ok: false, error: 'Falta el tipo de ausencia.' }, 400);
+  if (!lines.length) return json({ ok: false, error: 'No hay trabajadores en el reporte.' }, 400);
+
+  // --- Tipo de ausencia: debe existir y estar activo ---
+  const types = await sb(env,
+    `absence_types?code=eq.${encodeURIComponent(absenceCode)}&is_active=eq.true&select=code,label,ax_code,allows_future`);
+  if (!types || !types.length) {
+    return json({ ok: false, error: 'El tipo de ausencia no es valido o esta inactivo.' }, 400);
+  }
+  const atype = types[0];
+  const axCode = atype.ax_code || atype.code;   // se copia a cada linea (lo que va a la plantilla AX)
+  const allowsFuture = !!atype.allows_future;
+
+  // --- Documento del tipo (0 o 1) ---
+  const docs = await sb(env,
+    `required_docs?is_active=eq.true&absence_code=eq.${encodeURIComponent(absenceCode)}&select=id,name,enforcement,is_required&order=sort_order`);
+  const doc = (docs && docs.length) ? docs[0] : null;
+  const enforcement = doc ? (doc.enforcement || 'warn') : null;
+
+  // 'hoy' en Venezuela, calculado server-side (para validar futuro).
+  const { ymd: today } = nowCaracas();
+
+  // Trabajadores de la tienda (para validar egreso). Mapa cedula -> end_date.
+  const roster = await sb(env,
+    `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,end_date`);
+  const endDateByCed = {};
+  (roster || []).forEach(w => { endDateByCed[w.id_number] = w.end_date || null; });
+
+  // --- Validacion linea por linea ---
+  const clean = [];
+  const errors = [];
+  lines.forEach((ln, i) => {
+    const ced = String(ln.id_number || '').replace(/[^0-9]/g, '');
+    const name = String(ln.name || '').trim();
+    const from = String(ln.date_from || '').slice(0, 10);
+    const to = String(ln.date_to || '').slice(0, 10);
+    const note = (ln.note || '').toString().trim();
+    const fileName = (ln.doc_file_name || '').toString().trim();
+    const tag = name || ced || `fila ${i + 1}`;
+
+    if (!ced || ced.length < 6 || ced.length > 8) { errors.push(`${tag}: cedula invalida.`); return; }
+    if (!name) { errors.push(`${tag}: falta el nombre.`); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(from)) { errors.push(`${tag}: fecha Desde invalida.`); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(to)) { errors.push(`${tag}: fecha Hasta invalida.`); return; }
+    if (to < from) { errors.push(`${tag}: la fecha Hasta no puede ser anterior a Desde.`); return; }
+
+    // Futuro solo si el tipo lo permite.
+    if (!allowsFuture && (from > today || to > today)) {
+      errors.push(`${tag}: este tipo (${atype.label}) no admite fechas futuras.`); return;
+    }
+    // Egreso del trabajador.
+    const end = endDateByCed[ced];
+    if (end && to > end) { errors.push(`${tag}: la fecha Hasta es posterior a su egreso (${end}).`); return; }
+
+    // Documento bloqueante sin archivo -> error.
+    if (doc && enforcement === 'block' && !fileName) {
+      errors.push(`${tag}: este tipo exige adjuntar ${doc.name} para poder enviar.`); return;
+    }
+
+    clean.push({
+      worker_id_number: ced,
+      worker_name: name,
+      absence_code: absenceCode,
+      ax_code: axCode,
+      date_from: from,
+      date_to: to,
+      note: note || null,
+      _fileName: fileName || null,   // interno, no es columna de la tabla
+    });
+  });
+
+  if (errors.length) {
+    return json({ ok: false, error: 'Hay datos que no cumplen las reglas.', details: errors }, 422);
+  }
+
+  // --- Zona/subzona de la tienda (para el encabezado) ---
+  const comp = await sb(env,
+    `companies?company_code=eq.${encodeURIComponent(cc)}&select=zone_id,subzone_id`);
+  const zone_id = comp && comp[0] ? comp[0].zone_id : null;
+  const subzone_id = comp && comp[0] ? comp[0].subzone_id : null;
+
+  // --- Encabezado en reports_log ---
+  const header = await sb(env, 'reports_log', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify({
+      company_code: cc,
+      zone_id, subzone_id,
+      topic: 'ausencia',
+      responsible,
+      position: position || null,
+      workers_count: clean.length,
+      attention: 'pending',
+      email_sent: false,
+      source_kind: sourceKind,
+      source_admin_id: sourceAdminId,
+    }),
+  });
+  const reportId = header && header[0] && header[0].id;
+  if (!reportId) return json({ ok: false, error: 'No se pudo registrar el reporte.' }, 500);
+
+  // --- Detalle en absence_report_lines (devolviendo ids para enlazar docs) ---
+  const linesPayload = clean.map(l => ({
+    report_id: reportId,
+    worker_id_number: l.worker_id_number,
+    worker_name: l.worker_name,
+    absence_code: l.absence_code,
+    ax_code: l.ax_code,
+    date_from: l.date_from,
+    date_to: l.date_to,
+    note: l.note,
+  }));
+  const insertedLines = await sb(env, 'absence_report_lines', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify(linesPayload),
+  });
+
+  // --- Documentos esperados por linea (solo si el tipo lleva documento) ---
+  // status 'adjunto' si la tienda eligio archivo; 'pendiente' si no.
+  // El archivo en si NO se guarda: ira por osTicket cuando se conecte.
+  if (doc && Array.isArray(insertedLines) && insertedLines.length === clean.length) {
+    const docsPayload = insertedLines.map((row, idx) => ({
+      line_id: row.id,
+      required_doc_id: doc.id,
+      doc_name: doc.name,
+      enforcement: enforcement,
+      status: clean[idx]._fileName ? 'adjunto' : 'pendiente',
+    }));
+    await sb(env, 'absence_report_docs', { method: 'POST', body: JSON.stringify(docsPayload) });
+  }
+
+  // ───────────────────────────────────────────────────────────────────
+  // TODO osTicket: aqui se creara el ticket de Capital Humano (topic 20
+  // = ausencia) y se adjuntaran los archivos que la tienda haya elegido.
+  // El archivo NO viaja todavia: el frontend solo manda doc_file_name.
+  // Cuando se conecte osTicket:
+  //   1. El frontend (report-ausencia.js) leera cada File a base64 y lo
+  //      enviara en lines[].doc_file_b64 + doc_file_name.
+  //   2. Aqui se arma el ticket con esos adjuntos (lotes de 4 si aplica)
+  //      y se actualiza reports_log.osticket_id / email_sent.
+  //   3. Los absence_report_docs con archivo enviado pasan a 'adjunto'
+  //      (ya quedan asi); los sin archivo siguen 'pendiente'.
+  // ───────────────────────────────────────────────────────────────────
+
+  // Cuantos quedaron debiendo documento (para feedback al usuario).
+  const pendingDocs = doc ? clean.filter(l => !l._fileName).length : 0;
+
+  return json({
+    ok: true,
+    report_id: reportId,
+    workers_count: clean.length,
+    absence_code: absenceCode,
+    ax_code: axCode,
+    pending_docs: pendingDocs,
   });
 }

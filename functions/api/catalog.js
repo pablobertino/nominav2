@@ -70,6 +70,27 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, causas: causas || [] });
     }
 
+    // --- Catalogo de tipos de ausencia + documentos requeridos (wizard de ausencia) ---
+    if (body.action === 'absence_types') {
+      const types = await sb(env, 'absence_types?is_active=eq.true&select=code,label,ax_code,allows_future,note&order=sort_order');
+      // Documentos requeridos por tipo (uno por absence_code, normalmente 0 o 1).
+      const docs = await sb(env, 'required_docs?is_active=eq.true&absence_code=not.is.null&select=id,absence_code,name,note,enforcement,is_required&order=sort_order');
+      // Adjuntar a cada tipo su(s) documento(s).
+      const docsByCode = {};
+      (docs || []).forEach(d => {
+        (docsByCode[d.absence_code] = docsByCode[d.absence_code] || []).push({
+          id: d.id, name: d.name, note: d.note || null,
+          enforcement: d.enforcement || 'warn', is_required: d.is_required !== false,
+        });
+      });
+      const out = (types || []).map(t => ({
+        code: t.code, label: t.label, ax_code: t.ax_code || t.code,
+        allows_future: !!t.allows_future, note: t.note || null,
+        docs: docsByCode[t.code] || [],
+      }));
+      return json({ ok: true, types: out });
+    }
+
     const allowed = await allowedSet(env, user); // null=todas | Set
 
     const [companies, zones, subzones, concepts, users] = await Promise.all([
