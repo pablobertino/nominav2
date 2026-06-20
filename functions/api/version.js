@@ -16,8 +16,11 @@ function json(body, status = 200) {
 
 export async function onRequestGet({ env }) {
   try {
+    // Orden por id (siempre incremental y unico) en vez de released_at:
+    // si dos versiones comparten timestamp (mismo INSERT), released_at
+    // empata y el orden queda indefinido. id nunca empata.
     const res = await fetch(
-      `${env.supabase_url}/rest/v1/app_versions?select=version,summary,released_at&order=released_at.desc&limit=1`,
+      `${env.supabase_url}/rest/v1/app_versions?select=version,summary,released_at&order=id.desc&limit=1`,
       {
         headers: {
           apikey: env.supabase_service_role,

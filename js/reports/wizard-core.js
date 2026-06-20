@@ -21,7 +21,7 @@
    Estado interno: roster, meta, responsables, workers, ventana.
    ===================================================================== */
 
-import { $, mount } from '../core/dom.js';
+import { $ } from '../core/dom.js';
 import * as DW from './shared/date-window.js';
 import * as Roster from './shared/roster.js';
 import * as Resp from './shared/responsables.js';
@@ -48,6 +48,8 @@ export function launchWizard(user, reportDef, onExit) {
   };
 
   // ---- shell del wizard ----
+  // Se renderiza DENTRO de #pnlMain para conservar el sidebar/topbar del
+  // panel. Asi "Volver a reportes" solo repinta la vista anterior.
   function render() {
     const steps = [
       [1, 'Lista de la tienda'],
@@ -56,7 +58,8 @@ export function launchWizard(user, reportDef, onExit) {
       [4, reportDef.step4Label || 'Detalle'],
       [5, 'Resumen'],
     ];
-    mount(`
+    const host = document.getElementById('pnlMain') || document.getElementById('app');
+    host.innerHTML = `
       <div class="wiz">
         <div class="wiz-top">
           <button class="btn btn-ghost wiz-exit" id="wzExit">← Volver a reportes</button>
@@ -76,7 +79,7 @@ export function launchWizard(user, reportDef, onExit) {
 
         <div class="card" id="wzPanel"></div>
       </div>
-    `);
+    `;
     $('#wzExit').addEventListener('click', () => {
       if (S.stopClock) S.stopClock();
       onExit && onExit();
@@ -165,6 +168,11 @@ export function launchWizard(user, reportDef, onExit) {
           <span style="font-size:12px">El archivo se procesa en tu navegador</span></div>
         <input type="file" id="rFile" accept=".xlsx,.xls" hidden>
         <div id="rUpResult"></div>
+        ${S.meta ? `<div style="border-top:1px solid var(--border-soft);margin-top:18px;padding-top:16px">
+          <div class="rs-title" style="font-size:13px;margin-bottom:4px">Eliminar la lista guardada</div>
+          <p class="hint" style="margin:0 0 10px">Borra por completo la lista de esta tienda de la base de datos. Úsalo si quieres empezar de cero. Los reportes ya enviados no se ven afectados.</p>
+          <button class="btn" id="rClear" style="color:var(--danger);border-color:#f3c2c2">🗑 Eliminar lista de la tienda</button>
+        </div>` : ''}
       </div>
 
       <div class="wiz-foot"><span></span>
@@ -187,6 +195,7 @@ export function launchWizard(user, reportDef, onExit) {
     // upload
     $('#rDrop').addEventListener('click', () => $('#rFile').click());
     $('#rFile').addEventListener('change', onPickFile);
+    if ($('#rClear')) $('#rClear').addEventListener('click', openRosterClear);
     // next
     $('#rNext').addEventListener('click', () => setStep(2));
 
@@ -266,6 +275,41 @@ export function launchWizard(user, reportDef, onExit) {
         return;
       }
       ov.remove();
+      await loadRoster();
+      await loadResponsables();
+      renderRosterStep();
+    });
+  }
+
+  // Modal para eliminar por completo la lista de la tienda.
+  function openRosterClear() {
+    const ov = document.createElement('div');
+    ov.className = 'modal-ov';
+    ov.innerHTML = `
+      <div class="modal">
+        <h3>Eliminar la lista de la tienda</h3>
+        <p class="who">Tienda ${companyCode}${S.meta ? ` · ${S.meta.total_count} trabajadores cargados el ${fmtDate(S.meta.uploaded_at)}` : ''}</p>
+        <div class="warn-banner" style="margin:0 0 14px">⚠ <div>Esta acción <b>borra por completo</b> la lista de trabajadores de esta tienda de la base de datos. No se puede deshacer. Los reportes ya enviados conservan su información.</div></div>
+        <label class="radio-row" style="font-size:13px"><input type="checkbox" id="rcWipe"> Eliminar también los responsables guardados</label>
+        <div class="wiz-foot" style="margin-top:16px">
+          <button class="btn" id="rxCancel">Cancelar</button>
+          <button class="btn btn-primary" id="rxOk" style="background:var(--danger);border-color:var(--danger)">Sí, eliminar lista</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    ov.querySelector('#rxCancel').addEventListener('click', () => ov.remove());
+    ov.querySelector('#rxOk').addEventListener('click', async () => {
+      const okBtn = ov.querySelector('#rxOk');
+      okBtn.disabled = true; okBtn.textContent = 'Eliminando…';
+      const wipe = ov.querySelector('#rcWipe').checked;
+      const r = await Roster.rosterClear(companyCode, { wipeContacts: wipe });
+      if (!r.ok) {
+        alert(r.error || 'No se pudo eliminar.');
+        okBtn.disabled = false; okBtn.textContent = 'Sí, eliminar lista';
+        return;
+      }
+      ov.remove();
+      S.selResp = null; S.workers = []; S.nextId = 1;
       await loadRoster();
       await loadResponsables();
       renderRosterStep();

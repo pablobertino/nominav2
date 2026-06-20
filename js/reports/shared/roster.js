@@ -161,6 +161,15 @@ export async function rosterReplace(companyCode, rows, { uploadedBy, sourceFile 
   return res.json();
 }
 
+/* Borra COMPLETAMENTE la lista de la tienda (y opcionalmente responsables). */
+export async function rosterClear(companyCode, { wipeContacts = false } = {}) {
+  const res = await fetch('/api/roster', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'clear', company_code: companyCode, wipe_contacts: wipeContacts }),
+  });
+  return res.json();
+}
+
 /* Antiguedad del snapshot en dias (para la advertencia de lista antigua). */
 export function rosterAgeDays(meta) {
   if (!meta || !meta.uploaded_at) return null;

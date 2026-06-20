@@ -15,6 +15,9 @@
                  Devuelve un resumen de validacion (cuantos, egresados,
                  responsables detectados) y precarga store_contacts con los
                  gerentes/subgerentes si la tienda no tiene responsables.
+     - clear   : borra COMPLETAMENTE la lista de la tienda (store_workers +
+                 store_roster_meta). Opcionalmente tambien los responsables.
+                 { action:'clear', company_code, wipe_contacts? }
 
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
@@ -176,6 +179,21 @@ export async function onRequestPost({ request, env }) {
           warnings,
         },
       });
+    }
+
+    if (action === 'clear') {
+      const cc = (body.company_code || '').trim();
+      if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);
+      // Borra la lista y sus metadatos. mark_report_lines NO se toca:
+      // los reportes ya enviados conservan su detalle historico.
+      await sb(env, `store_workers?company_code=eq.${encodeURIComponent(cc)}`, { method: 'DELETE' });
+      await sb(env, `store_roster_meta?company_code=eq.${encodeURIComponent(cc)}`, { method: 'DELETE' });
+      let contactsWiped = false;
+      if (body.wipe_contacts) {
+        await sb(env, `store_contacts?company_code=eq.${encodeURIComponent(cc)}`, { method: 'DELETE' });
+        contactsWiped = true;
+      }
+      return json({ ok: true, cleared: true, contacts_wiped: contactsWiped });
     }
 
     return json({ ok: false, error: 'Accion no reconocida' }, 400);
