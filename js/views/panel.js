@@ -7,6 +7,8 @@
 import { $, mount } from '../core/dom.js';
 import { getSession, clearSession } from '../core/session.js';
 import { go } from '../core/router.js';
+import { launchWizard } from '../reports/wizard-core.js';
+import { marcajeReport } from '../reports/report-marcaje.js';
 
 let CATALOG = null;       // { companies, zones, subzones, concepts }
 let currentView = 'tiendas';
@@ -62,7 +64,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.30</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.31</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1340,10 +1342,33 @@ async function viewMiEmpresa(user) {
         <div><span class="miemp-lbl">Teléfono</span><span>${telLine}</span></div>
       </div>
     </div>
-    <div class="card" style="display:flex;gap:10px;align-items:center">
-      <span class="badge-soon">Próximamente</span>
-      <p class="muted" style="margin:0">El envío de reportes de nómina estará disponible aquí muy pronto.</p>
+
+    <div class="pnl-head" style="margin-top:6px"><div><h2 style="font-size:18px;margin:0">Reportar a Nómina</h2>
+      <p class="muted" style="margin:2px 0 0">Elige el tipo de novedad que quieres reportar.</p></div></div>
+    <div class="report-grid" id="reportGrid">
+      <button class="report-tile" data-report="marcaje">
+        <span class="rt-ico">🕐</span>
+        <span class="rt-body"><span class="rt-title">Marcaje Manual</span>
+          <span class="rt-desc">Registra entradas y salidas que no quedaron en el biométrico.</span></span>
+      </button>
+      <div class="report-tile soon"><span class="rt-ico">📅</span>
+        <span class="rt-body"><span class="rt-title">Ausencia <span class="badge-soon">pronto</span></span>
+          <span class="rt-desc">Reposos, permisos y faltas.</span></span></div>
+      <div class="report-tile soon"><span class="rt-ico">➕</span>
+        <span class="rt-body"><span class="rt-title">Ingreso <span class="badge-soon">pronto</span></span>
+          <span class="rt-desc">Nuevo trabajador en la tienda.</span></span></div>
+      <div class="report-tile soon"><span class="rt-ico">➖</span>
+        <span class="rt-body"><span class="rt-title">Egreso <span class="badge-soon">pronto</span></span>
+          <span class="rt-desc">Trabajador que deja la tienda.</span></span></div>
+      <div class="report-tile soon"><span class="rt-ico">✏️</span>
+        <span class="rt-body"><span class="rt-title">Modificación <span class="badge-soon">pronto</span></span>
+          <span class="rt-desc">Corrección de datos de un trabajador.</span></span></div>
     </div>`;
+
+  const tile = $('#reportGrid').querySelector('[data-report="marcaje"]');
+  if (tile) tile.addEventListener('click', () => {
+    launchWizard(user, marcajeReport, () => viewMiEmpresa(user));
+  });
 }
 
 export function renderPanel() {

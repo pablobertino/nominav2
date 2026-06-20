@@ -64,6 +64,12 @@ export async function onRequestPost({ request, env }) {
   const user = body.user || null;
 
   try {
+    // --- Catalogo de causas de marcaje (para el wizard de marcaje) ---
+    if (body.action === 'marcaje_causas') {
+      const causas = await sb(env, 'marcaje_causas?is_active=eq.true&select=code,label,is_other&order=sort_order');
+      return json({ ok: true, causas: causas || [] });
+    }
+
     const allowed = await allowedSet(env, user); // null=todas | Set
 
     const [companies, zones, subzones, concepts, users] = await Promise.all([
