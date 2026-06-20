@@ -126,6 +126,20 @@ async function submitMarcaje(env, body) {
   const position = (body.position || '').trim();
   const lines = Array.isArray(body.lines) ? body.lines : [];
 
+  // Origen del reporte: 'company' (tienda) | 'admin' (central).
+  let sourceKind = body.source_kind === 'admin' ? 'admin' : 'company';
+  let sourceAdminId = null;
+  if (sourceKind === 'admin') {
+    const aid = parseInt(body.source_admin_id, 10);
+    if (aid) {
+      const a = await sb(env, `admin_users?id=eq.${aid}&is_active=eq.true&select=id`);
+      if (a && a.length) sourceAdminId = aid;
+    }
+    // Si no se pudo validar el admin, degradar a 'company' para no
+    // guardar un origen 'admin' sin respaldo.
+    if (!sourceAdminId) sourceKind = 'company';
+  }
+
   if (!cc) return json({ ok: false, error: 'Falta la tienda.' }, 400);
   if (!responsible) return json({ ok: false, error: 'Falta el responsable.' }, 400);
   if (!lines.length) return json({ ok: false, error: 'No hay trabajadores en el reporte.' }, 400);
@@ -225,6 +239,8 @@ async function submitMarcaje(env, body) {
       workers_count: clean.length,
       attention: 'pending',
       email_sent: false,
+      source_kind: sourceKind,
+      source_admin_id: sourceAdminId,
     }),
   });
   const reportId = header && header[0] && header[0].id;

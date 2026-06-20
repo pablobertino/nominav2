@@ -31,10 +31,15 @@ const { fmtDate } = DW;
 
 export function launchWizard(user, reportDef, onExit) {
   const companyCode = user.kind === 'company' ? user.companyCode : (user.pickedCompany || null);
+  // Cuando reporta un admin/superadmin por una empresa, el responsable es la
+  // propia central (el admin), no un gerente de la tienda. En ese caso se
+  // omite el paso 2 y el reporte se marca con origen 'admin'.
+  const isAdmin = user.kind !== 'company';
 
   // ---- estado ----
   const S = {
     step: 1,
+    companyName: user.pickedCompanyName || null, // nombre de la empresa (admin)
     roster: [],            // [{id_number, full_name, role, end_date, ...}]
     meta: null,            // store_roster_meta
     responsables: [],      // [{id, full_name, role}]
@@ -51,7 +56,12 @@ export function launchWizard(user, reportDef, onExit) {
   // Se renderiza DENTRO de #pnlMain para conservar el sidebar/topbar del
   // panel. Asi "Volver a reportes" solo repinta la vista anterior.
   function render() {
-    const steps = [
+    const steps = isAdmin ? [
+      [1, 'Lista de la tienda'],
+      [3, 'Trabajadores'],
+      [4, reportDef.step4Label || 'Detalle'],
+      [5, 'Resumen'],
+    ] : [
       [1, 'Lista de la tienda'],
       [2, 'Responsable'],
       [3, 'Trabajadores'],
@@ -70,10 +80,10 @@ export function launchWizard(user, reportDef, onExit) {
         <div class="now-clock" id="wzClock">🕓 —</div>
 
         <div class="steps" id="wzSteps">
-          ${steps.map(([n, label]) => `
+          ${steps.map(([n, label], i) => `
             <div class="step" data-s="${n}">
-              <span class="dot">${n}</span><span class="slabel">${label}</span>
-              ${n < 5 ? '<span class="bar"></span>' : ''}
+              <span class="dot">${i + 1}</span><span class="slabel">${label}</span>
+              ${i < steps.length - 1 ? '<span class="bar"></span>' : ''}
             </div>`).join('')}
         </div>
 
@@ -90,9 +100,10 @@ export function launchWizard(user, reportDef, onExit) {
   }
 
   function companyLabel() {
-    if (!companyCode) return 'Selecciona una tienda';
+    if (!companyCode) return 'Selecciona una empresa';
+    const noun = isAdmin ? 'Empresa' : 'Tienda';
     const c = (S.companyName ? `${companyCode} · ${S.companyName}` : companyCode);
-    return `Tienda ${c}`;
+    return `${noun} ${c}`;
   }
 
   function setStep(n) { S.step = n; paintStep(); }
@@ -196,8 +207,8 @@ export function launchWizard(user, reportDef, onExit) {
     $('#rDrop').addEventListener('click', () => $('#rFile').click());
     $('#rFile').addEventListener('change', onPickFile);
     if ($('#rClear')) $('#rClear').addEventListener('click', openRosterClear);
-    // next
-    $('#rNext').addEventListener('click', () => setStep(2));
+    // next: admin salta el paso 2 (Responsable)
+    $('#rNext').addEventListener('click', () => setStep(isAdmin ? 3 : 2));
 
     paintRosterTable();
   }
@@ -492,7 +503,7 @@ export function launchWizard(user, reportDef, onExit) {
       h.textContent = v.msg; h.className = 'ced-hint ' + (v.msg ? (v.ok ? 'ok' : 'err') : '');
     });
     $('#mAdd').addEventListener('click', addManual);
-    $('#wBack').addEventListener('click', () => setStep(2));
+    $('#wBack').addEventListener('click', () => setStep(isAdmin ? 1 : 2));
     $('#wNext').addEventListener('click', () => setStep(4));
 
     paintPick(); paintWorkers();
@@ -594,13 +605,17 @@ export function launchWizard(user, reportDef, onExit) {
   function stepSummary() {
     const panel = $('#wzPanel');
     const resp = S.responsables.find(r => r.id === S.selResp);
+    // Responsable mostrado: admin = la central; tienda = gerente elegido.
+    const respName = isAdmin ? (user.name || user.username) : (resp ? resp.full_name : '—');
+    const respRole = isAdmin ? 'Administrador' : (resp ? resp.role : '');
+    const respLabel = respRole ? `${respName} · ${respRole}` : respName;
     const extraCols = reportDef.summaryColumns || [];
     panel.innerHTML = `
       <h2>Resumen del reporte</h2>
       <p class="hint">Verifica antes de enviar. Se generará un ticket en el sistema de Capital Humano.</p>
       <div class="grid3">
-        <div class="sum-box"><div class="sb-lbl">Tienda</div><div class="sb-val">${companyLabel().replace('Tienda ', '')}</div></div>
-        <div class="sum-box"><div class="sb-lbl">Responsable</div><div class="sb-val">${resp ? `${resp.full_name} · ${resp.role}` : '—'}</div></div>
+        <div class="sum-box"><div class="sb-lbl">${isAdmin ? 'Empresa' : 'Tienda'}</div><div class="sb-val">${companyLabel().replace(/^(Empresa|Tienda) /, '')}</div></div>
+        <div class="sum-box"><div class="sb-lbl">Responsable</div><div class="sb-val">${respLabel}</div></div>
         <div class="sum-box"><div class="sb-lbl">Trabajadores</div><div class="sb-val">${S.workers.length}</div></div>
       </div>
       <table><thead><tr><th>Trabajador</th><th>Cédula</th>${extraCols.map(c => `<th>${c.label}</th>`).join('')}</tr></thead>
@@ -621,11 +636,16 @@ export function launchWizard(user, reportDef, onExit) {
     const btn = $('#sumSend'); btn.disabled = true; btn.textContent = 'Enviando…';
     $('#sumError').textContent = '';
     const resp = S.responsables.find(r => r.id === S.selResp);
+    // Origen y responsable segun rol.
+    const responsible = isAdmin ? (user.name || user.username) : (resp ? resp.full_name : '');
+    const position = isAdmin ? 'Administrador' : (resp ? resp.role : '');
     const res = await reportDef.submit({
       companyCode,
-      responsible: resp ? resp.full_name : '',
-      position: resp ? resp.role : '',
+      responsible,
+      position,
       workers: S.workers,
+      source_kind: isAdmin ? 'admin' : 'company',
+      source_admin_id: isAdmin ? (user.id || null) : null,
     });
     if (!res.ok) {
       btn.disabled = false; btn.textContent = '✓ Enviar reporte';

@@ -40,6 +40,11 @@ function otPill(r) {
     ? `<span class="pill pill-set">#${r.osticket_id}</span>`
     : '<span class="pill pill-out">No enviado</span>';
 }
+function originPill(r) {
+  return r.source_kind === 'admin'
+    ? '<span class="pill pill-origin-admin">Administrador</span>'
+    : '<span class="pill pill-origin-company">Empresa</span>';
+}
 
 export function renderHistory(user) {
   const isCompany = user.kind === 'company';
@@ -90,6 +95,7 @@ export function renderHistory(user) {
         ${showStore ? '<th>Tienda</th>' : ''}
         <th>Fecha de envío</th>
         <th>Responsable</th>
+        <th>Origen</th>
         <th style="text-align:center">Trab.</th>
         <th>Atención</th>
         <th>osTicket</th>
@@ -107,7 +113,7 @@ export function renderHistory(user) {
       <div class="pages" id="hPages"></div>
     </div>`;
 
-  const ncols = showStore ? 8 : 7;
+  const ncols = showStore ? 9 : 8;
 
   // ---- catalogo (admin/super): tiendas + zonas + subzonas + conceptos ----
   async function loadCompanies() {
@@ -184,6 +190,7 @@ export function renderHistory(user) {
         ${storeTd}
         <td>${fmtSent(r.sent_at)}</td>
         <td>${r.responsible || '—'}<div style="font-size:11.5px;color:var(--faint)">${r.position || ''}</div></td>
+        <td>${originPill(r)}</td>
         <td style="text-align:center"><b>${r.workers_count}</b></td>
         <td>${attPill(r.attention)}</td>
         <td>${otPill(r)}</td>

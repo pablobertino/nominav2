@@ -67,7 +67,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.35</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.36</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -186,7 +186,7 @@ function viewTiendas(user) {
     </div>
     <div class="tablebox">
       <table><thead><tr>
-        <th>Código</th><th>Razón social</th><th>Zona / Subzona</th><th>Concepto</th><th>Contacto</th><th>Estado</th><th>Acceso</th>
+        <th>Código</th><th>Razón social</th><th>Zona / Subzona</th><th>Concepto</th><th>Contacto</th><th>Estado</th><th>Acceso</th><th style="text-align:right">Reportar</th>
       </tr></thead><tbody id="tBody"></tbody></table>
     </div>
     <div class="legend">
@@ -273,11 +273,17 @@ function viewTiendas(user) {
         <td>${contacto}</td>
         <td>${statusPill(c.status)}</td>
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
+        <td style="text-align:right"><button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="7" class="empty">Sin resultados.</td></tr>';
+    }).join('') || '<tr><td colspan="8" class="empty">Sin resultados.</td></tr>';
 
     $('#tBody').querySelectorAll('.email-edit').forEach(b =>
       b.addEventListener('click', () => contactEditModal(user, b.dataset)));
+    $('#tBody').querySelectorAll('[data-report-code]').forEach(b =>
+      b.addEventListener('click', () => {
+        const u = { ...user, pickedCompany: b.dataset.reportCode, pickedCompanyName: b.dataset.reportName };
+        openReportPicker(u, () => viewTiendas(user));
+      }));
   }
 
   fZone.addEventListener('change', () => { fillSubs(); render(); });
@@ -1317,6 +1323,40 @@ async function navigate(view, user) {
   else if (view === 'config') viewConfig(user);
   else if (view === 'historial') renderHistory(user);
   else if (view === 'miempresa') viewMiEmpresa(user);
+}
+
+/* ---------- Selector de tipo de reporte (admin desde Empresas) ----------
+   Reusa el wizard existente; el responsable sera la central (el admin).
+   Por ahora solo Marcaje esta activo; los demas quedan "pronto". */
+function openReportPicker(u, onExit) {
+  openModal(`
+    <div class="modal-head"><span>Reportar por ${u.pickedCompany}</span><button class="modal-x" id="mX">✕</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 16px">${u.pickedCompanyName || ''} · el reporte quedará a nombre de la central (Administrador).</p>
+    <div class="report-grid" id="rpGrid" style="grid-template-columns:1fr">
+      <button class="report-tile" data-report="marcaje">
+        <span class="rt-ico">🕐</span>
+        <span class="rt-body"><span class="rt-title">Marcaje Manual</span>
+          <span class="rt-desc">Registra entradas y salidas que no quedaron en el biométrico.</span></span>
+      </button>
+      <div class="report-tile soon"><span class="rt-ico">📅</span>
+        <span class="rt-body"><span class="rt-title">Ausencia <span class="badge-soon">pronto</span></span>
+          <span class="rt-desc">Reposos, permisos y faltas.</span></span></div>
+      <div class="report-tile soon"><span class="rt-ico">➕</span>
+        <span class="rt-body"><span class="rt-title">Ingreso <span class="badge-soon">pronto</span></span>
+          <span class="rt-desc">Nuevo trabajador en la tienda.</span></span></div>
+      <div class="report-tile soon"><span class="rt-ico">➖</span>
+        <span class="rt-body"><span class="rt-title">Egreso <span class="badge-soon">pronto</span></span>
+          <span class="rt-desc">Trabajador que deja la tienda.</span></span></div>
+      <div class="report-tile soon"><span class="rt-ico">✏️</span>
+        <span class="rt-body"><span class="rt-title">Modificación <span class="badge-soon">pronto</span></span>
+          <span class="rt-desc">Corrección de datos de un trabajador.</span></span></div>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  const tile = document.querySelector('#rpGrid [data-report="marcaje"]');
+  if (tile) tile.addEventListener('click', () => {
+    closeModal();
+    launchWizard(u, marcajeReport, onExit);
+  });
 }
 
 /* ---------- VISTA: MI EMPRESA (solo rol tienda) ---------- */

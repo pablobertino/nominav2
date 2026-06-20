@@ -57,7 +57,7 @@ export const marcajeReport = {
     $('#wzPanel').innerHTML = '<div class="pnl-loading">Cargando…</div>';
   },
 
-  async submit({ companyCode, responsible, position, workers }) {
+  async submit({ companyCode, responsible, position, workers, source_kind, source_admin_id }) {
     const lines = workers.map(w => ({
       id_number: w.ced, name: w.name,
       mark_date: w.mark.date, time_in: w.mark.timeIn, time_out: w.mark.timeOut,
@@ -65,7 +65,8 @@ export const marcajeReport = {
     }));
     const res = await fetch('/api/reports', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'submit_marcaje', company_code: companyCode, responsible, position, lines }),
+      body: JSON.stringify({ action: 'submit_marcaje', company_code: companyCode, responsible, position, lines,
+        source_kind, source_admin_id }),
     });
     return res.json();
   },

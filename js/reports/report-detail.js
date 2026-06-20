@@ -45,6 +45,11 @@ function otPill(r) {
   if (r.osticket_id) return `<span class="pill pill-set">Enviado · #${r.osticket_id}</span>`;
   return '<span class="pill pill-out">No enviado</span>';
 }
+function originPill(r) {
+  return r.source_kind === 'admin'
+    ? '<span class="pill pill-origin-admin">Administrador</span>'
+    : '<span class="pill pill-origin-company">Empresa</span>';
+}
 
 /* Lineas especificas por tipo. */
 function linesHtml(r) {
@@ -109,6 +114,7 @@ export async function showReportDetail({ reportId, user, onBack }) {
       <div class="rd-meta">
         <div><span class="rd-lbl">Tienda</span><span class="rd-val">${r.company_code}${r.company_name ? ' · ' + r.company_name : ''}</span></div>
         <div><span class="rd-lbl">Responsable</span><span class="rd-val">${r.responsible || '—'}${r.position ? ' · ' + r.position : ''}</span></div>
+        <div><span class="rd-lbl">Origen</span><span class="rd-val">${originPill(r)}</span></div>
         <div><span class="rd-lbl">Trabajadores</span><span class="rd-val">${r.workers_count}</span></div>
         <div><span class="rd-lbl">Atención</span><span class="rd-val">${attPill(r.attention)}</span></div>
         <div><span class="rd-lbl">osTicket</span><span class="rd-val">${otPill(r)}</span></div>

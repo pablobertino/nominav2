@@ -512,6 +512,10 @@
 .pill-set { background:var(--success-bg); color:#15803d; }
 .pill-out { background:var(--danger-bg); color:#b91c1c; }
 .pill-pend::before, .pill-set::before, .pill-out::before { display:none; }
+/* pills de origen del reporte */
+.pill-origin-admin { background:var(--brand-bg); color:#1e40af; }
+.pill-origin-company { background:var(--border-soft); color:var(--ink-soft); }
+.pill-origin-admin::before, .pill-origin-company::before { display:none; }
 .btn-send { color:var(--brand); border-color:#c7d8f7; }
 .btn-send:hover { background:var(--brand-bg); }
 

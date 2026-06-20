@@ -102,7 +102,7 @@ async function listReports(env, body, scope) {
   const to = from + perPage - 1;
 
   let q = 'reports_log?select=id,company_code,zone_id,subzone_id,topic,sent_at,'
-    + 'responsible,position,workers_count,attention,osticket_id,email_sent';
+    + 'responsible,position,workers_count,attention,osticket_id,email_sent,source_kind';
   q += scopeFilter(scope);
 
   // Filtros
@@ -110,6 +110,7 @@ async function listReports(env, body, scope) {
   if (f.company && f.company !== 'ALL') q += `&company_code=eq.${encodeURIComponent(f.company)}`;
   if (f.zone && f.zone !== 'ALL') q += `&zone_id=eq.${encodeURIComponent(f.zone)}`;
   if (f.subzone && f.subzone !== 'ALL') q += `&subzone_id=eq.${encodeURIComponent(f.subzone)}`;
+  if (f.origin === 'admin' || f.origin === 'company') q += `&source_kind=eq.${f.origin}`;
   // Concepto: reports_log no lo guarda; se resuelve a los company_code de
   // ese concepto y se filtra por ellos. Si no hay ninguno, no habra filas.
   if (f.concept && f.concept !== 'ALL') {
@@ -165,6 +166,7 @@ async function listReports(env, body, scope) {
     attention: r.attention,
     osticket_id: r.osticket_id,
     email_sent: r.email_sent,
+    source_kind: r.source_kind || 'company',
   }));
 
   return json({ ok: true, rows: out, total, page, per_page: perPage });
@@ -175,7 +177,7 @@ async function detailReport(env, body, scope) {
   if (!id) return json({ ok: false, error: 'Falta report_id' }, 400);
 
   let q = `reports_log?id=eq.${id}&select=id,company_code,zone_id,subzone_id,topic,sent_at,`
-    + 'responsible,position,workers_count,attention,osticket_id,email_sent,notes';
+    + 'responsible,position,workers_count,attention,osticket_id,email_sent,notes,source_kind';
   q += scopeFilter(scope);
   const head = await sbJson(env, q);
   if (!head || !head.length) return json({ ok: false, error: 'Reporte no encontrado o sin acceso.' }, 404);
@@ -211,6 +213,7 @@ async function detailReport(env, body, scope) {
       zone_id: r.zone_id, subzone_id: r.subzone_id, sent_at: r.sent_at,
       responsible: r.responsible, position: r.position, workers_count: r.workers_count,
       attention: r.attention, osticket_id: r.osticket_id, email_sent: r.email_sent, notes: r.notes,
+      source_kind: r.source_kind || 'company',
       lines,
     },
   });
