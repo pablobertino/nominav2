@@ -32,12 +32,12 @@ function daysAgoYMD(n) { const d = new Date(); d.setDate(d.getDate() - n); retur
 
 function attPill(a) {
   return a === 'done'
-    ? '<span class="pill pill-set">✓ Atendido</span>'
-    : '<span class="pill pill-pend">● Pendiente</span>';
+    ? '<span class="pill pill-set">Atendido</span>'
+    : '<span class="pill pill-pend">Pendiente</span>';
 }
 function otPill(r) {
   return r.osticket_id
-    ? '<span class="pill pill-set">Enviado</span>'
+    ? `<span class="pill pill-set">#${r.osticket_id}</span>`
     : '<span class="pill pill-out">No enviado</span>';
 }
 
@@ -48,9 +48,11 @@ export function renderHistory(user) {
 
   // estado de la vista
   const ST = {
-    filters: { type: 'ALL', date_from: daysAgoYMD(30), date_to: todayYMD(), company: 'ALL', q: '', attention: 'ALL', osticket: 'ALL' },
+    filters: { type: 'ALL', date_from: daysAgoYMD(30), date_to: todayYMD(),
+               company: 'ALL', zone: 'ALL', subzone: 'ALL', concept: 'ALL',
+               q: '', attention: 'ALL', osticket: 'ALL' },
     page: 1, perPage: 20, total: 0, rows: [],
-    companies: [], // para el filtro de tienda (admin/super)
+    companies: [], zones: [], subzones: [], concepts: [], // catalogo para filtros
   };
 
   $('#pnlMain').innerHTML = `
@@ -65,7 +67,10 @@ export function renderHistory(user) {
         </select></div>
       <div class="fl"><label>Desde</label><input type="date" id="hFrom" value="${ST.filters.date_from}"></div>
       <div class="fl"><label>Hasta</label><input type="date" id="hTo" value="${ST.filters.date_to}"></div>
-      ${showStore ? `<div class="fl"><label>Tienda</label><select id="hCompany"><option value="ALL">Todas</option></select></div>` : ''}
+      ${showStore ? `<div class="fl"><label>Zona</label><select id="hZone"><option value="ALL">Todas</option></select></div>
+      <div class="fl"><label>Subzona</label><select id="hSub"><option value="ALL">Todas</option></select></div>
+      <div class="fl"><label>Concepto</label><select id="hConcept"><option value="ALL">Todos</option></select></div>
+      <div class="fl"><label>Tienda</label><select id="hCompany"><option value="ALL">Todas</option></select></div>` : ''}
       <div class="fl search"><label>Buscar</label>
         <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
           <input id="hQ" placeholder="N° de reporte o responsable…"></div></div>
@@ -104,7 +109,7 @@ export function renderHistory(user) {
 
   const ncols = showStore ? 8 : 7;
 
-  // ---- filtro de tienda (admin/super): cargar del catalogo ----
+  // ---- catalogo (admin/super): tiendas + zonas + subzonas + conceptos ----
   async function loadCompanies() {
     if (!showStore) return;
     const d = await fetch('/api/catalog', {
@@ -113,10 +118,38 @@ export function renderHistory(user) {
     }).then(r => r.json()).catch(() => null);
     if (d && d.ok) {
       ST.companies = d.companies || [];
-      const sel = $('#hCompany');
-      if (sel) sel.innerHTML = '<option value="ALL">Todas</option>'
-        + ST.companies.map(c => `<option value="${c.code}">${c.code} · ${c.name || ''}</option>`).join('');
+      ST.zones = d.zones || [];
+      ST.subzones = d.subzones || [];
+      ST.concepts = d.concepts || [];
+      const zSel = $('#hZone');
+      if (zSel) zSel.innerHTML = '<option value="ALL">Todas</option>'
+        + ST.zones.map(z => `<option value="${z.id}">${z.name}</option>`).join('');
+      const cSel = $('#hConcept');
+      if (cSel) cSel.innerHTML = '<option value="ALL">Todos</option>'
+        + ST.concepts.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
+      fillSubzones();
+      fillCompanies();
     }
+  }
+
+  // Subzonas dependientes de la zona elegida.
+  function fillSubzones() {
+    const sel = $('#hSub'); if (!sel) return;
+    const zone = ST.filters.zone;
+    const subs = zone === 'ALL' ? ST.subzones : ST.subzones.filter(s => s.zone_id === zone);
+    sel.innerHTML = '<option value="ALL">Todas</option>'
+      + subs.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+  }
+
+  // Tiendas dependientes de zona/subzona/concepto elegidos.
+  function fillCompanies() {
+    const sel = $('#hCompany'); if (!sel) return;
+    let list = ST.companies.slice();
+    if (ST.filters.zone !== 'ALL') list = list.filter(c => c.zoneId === ST.filters.zone);
+    if (ST.filters.subzone !== 'ALL') list = list.filter(c => c.subzoneId === ST.filters.subzone);
+    if (ST.filters.concept !== 'ALL') list = list.filter(c => c.concept === ST.filters.concept);
+    sel.innerHTML = '<option value="ALL">Todas</option>'
+      + list.map(c => `<option value="${c.code}">${c.code} · ${c.name || ''}</option>`).join('');
   }
 
   async function load() {
@@ -199,14 +232,36 @@ export function renderHistory(user) {
     ST.filters.type = $('#hType').value;
     ST.filters.date_from = $('#hFrom').value;
     ST.filters.date_to = $('#hTo').value;
-    if (showStore && $('#hCompany')) ST.filters.company = $('#hCompany').value;
+    if (showStore) {
+      if ($('#hZone')) ST.filters.zone = $('#hZone').value;
+      if ($('#hSub')) ST.filters.subzone = $('#hSub').value;
+      if ($('#hConcept')) ST.filters.concept = $('#hConcept').value;
+      if ($('#hCompany')) ST.filters.company = $('#hCompany').value;
+    }
     ST.filters.q = $('#hQ').value;
     ST.page = 1; load();
   }
   $('#hType').addEventListener('change', applyFilters);
   $('#hFrom').addEventListener('change', applyFilters);
   $('#hTo').addEventListener('change', applyFilters);
-  if (showStore && $('#hCompany')) $('#hCompany').addEventListener('change', applyFilters);
+  if (showStore) {
+    // Zona cambia -> recalcula subzonas y tiendas, resetea los dependientes.
+    if ($('#hZone')) $('#hZone').addEventListener('change', () => {
+      ST.filters.zone = $('#hZone').value;
+      ST.filters.subzone = 'ALL'; ST.filters.company = 'ALL';
+      fillSubzones(); fillCompanies();
+      applyFilters();
+    });
+    if ($('#hSub')) $('#hSub').addEventListener('change', () => {
+      ST.filters.subzone = $('#hSub').value; ST.filters.company = 'ALL';
+      fillCompanies(); applyFilters();
+    });
+    if ($('#hConcept')) $('#hConcept').addEventListener('change', () => {
+      ST.filters.concept = $('#hConcept').value; ST.filters.company = 'ALL';
+      fillCompanies(); applyFilters();
+    });
+    if ($('#hCompany')) $('#hCompany').addEventListener('change', applyFilters);
+  }
   let qTimer = null;
   $('#hQ').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(applyFilters, 350); });
   $('#hPer').addEventListener('change', () => { ST.perPage = parseInt($('#hPer').value, 10) || 20; ST.page = 1; load(); });

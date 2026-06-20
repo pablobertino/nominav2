@@ -108,6 +108,20 @@ async function listReports(env, body, scope) {
   // Filtros
   if (f.type && f.type !== 'ALL') q += `&topic=eq.${encodeURIComponent(f.type)}`;
   if (f.company && f.company !== 'ALL') q += `&company_code=eq.${encodeURIComponent(f.company)}`;
+  if (f.zone && f.zone !== 'ALL') q += `&zone_id=eq.${encodeURIComponent(f.zone)}`;
+  if (f.subzone && f.subzone !== 'ALL') q += `&subzone_id=eq.${encodeURIComponent(f.subzone)}`;
+  // Concepto: reports_log no lo guarda; se resuelve a los company_code de
+  // ese concepto y se filtra por ellos. Si no hay ninguno, no habra filas.
+  if (f.concept && f.concept !== 'ALL') {
+    const con = await sbJson(env, `concepts?name=eq.${encodeURIComponent(f.concept)}&select=id`);
+    if (con && con.length) {
+      const cc = await sbJson(env, `companies?concept_id=eq.${encodeURIComponent(con[0].id)}&select=company_code`);
+      const list = (cc || []).map(c => `"${c.company_code}"`).join(',');
+      q += list ? `&company_code=in.(${list})` : `&company_code=in.("__none__")`;
+    } else {
+      q += `&company_code=in.("__none__")`;
+    }
+  }
   if (f.date_from) q += `&sent_at=gte.${encodeURIComponent(f.date_from + 'T00:00:00')}`;
   if (f.date_to) q += `&sent_at=lte.${encodeURIComponent(f.date_to + 'T23:59:59')}`;
   if (f.attention && f.attention !== 'ALL') q += `&attention=eq.${encodeURIComponent(f.attention)}`;

@@ -450,10 +450,11 @@ export function launchWizard(user, reportDef, onExit) {
 
       <div data-tp2="manual" style="display:none">
         <div class="add-row">
-          <div><label class="flabel">Cédula</label><input id="mCed" placeholder="V-12345678">
+          <div class="af-field"><label class="flabel">Cédula</label><input id="mCed" placeholder="V-12345678">
             <div class="ced-hint" id="mCedHint"></div></div>
-          <div><label class="flabel">Nombre y apellido</label><input id="mName" placeholder="Nombre del trabajador"></div>
-          <button class="btn btn-primary" id="mAdd" style="margin-bottom:21px">＋ Agregar</button>
+          <div class="af-field"><label class="flabel">Nombre y apellido</label><input id="mName" placeholder="Nombre del trabajador">
+            <div class="ced-hint" aria-hidden="true"></div></div>
+          <button class="btn btn-primary af-btn" id="mAdd">＋ Agregar</button>
         </div>
       </div>
 

@@ -38,11 +38,11 @@ function fmtSent(iso) {
 
 function attPill(a) {
   return a === 'done'
-    ? '<span class="pill pill-set">✓ Atendido</span>'
-    : '<span class="pill pill-pend">● Pendiente</span>';
+    ? '<span class="pill pill-set">Atendido</span>'
+    : '<span class="pill pill-pend">Pendiente</span>';
 }
 function otPill(r) {
-  if (r.osticket_id) return `<span class="pill pill-set">Enviado (#${r.osticket_id})</span>`;
+  if (r.osticket_id) return `<span class="pill pill-set">Enviado · #${r.osticket_id}</span>`;
   return '<span class="pill pill-out">No enviado</span>';
 }
 

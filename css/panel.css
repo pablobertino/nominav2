@@ -436,8 +436,12 @@
 .wiz .resp-info { flex:1; }
 .wiz .resp-name { font-weight:600; font-size:14px; }
 .wiz .resp-role { font-size:12px; color:var(--muted); }
-.wiz .add-row { display:flex; gap:12px; align-items:flex-end; margin-bottom:8px; }
-.wiz .add-row > div { flex:1; }
+.wiz .add-row { display:flex; gap:12px; align-items:flex-start; margin-bottom:8px; }
+.wiz .add-row .af-field { flex:1; display:flex; flex-direction:column; }
+.wiz .add-row .af-field input { width:100%; box-sizing:border-box; }
+/* el boton se alinea con los inputs (no con la fila completa): baja el alto
+   de la etiqueta + su margen para quedar a la altura del campo de texto */
+.wiz .add-row .af-btn { flex:0 0 auto; margin-top:calc(1.4em + 7px); }
 .wiz .ced-hint { font-size:11.5px; margin-top:5px; min-height:15px; }
 .wiz .ced-hint.ok { color:var(--success); } .wiz .ced-hint.err { color:var(--danger); }
 
@@ -470,17 +474,18 @@
 
 /* =====================================================================
    HISTORIAL de reportes + pantalla de detalle
+   Usa el sistema de controles unificado (--control-h) para que selects,
+   inputs y buscador queden a la MISMA altura y alineados.
    ===================================================================== */
 .hist-filters { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:14px; align-items:flex-end; }
 .hist-filters .fl { display:flex; flex-direction:column; gap:5px; }
 .hist-filters .fl label { font-size:11px; color:var(--faint); text-transform:uppercase; letter-spacing:.04em; font-weight:600; }
-.hist-filters .fl select, .hist-filters .fl input { height:38px; padding:0 12px; border:1px solid var(--border);
-  border-radius:var(--radius-md); font-size:13px; font-family:inherit; background:var(--surface); outline:none; }
-.hist-filters .fl select:focus, .hist-filters .fl input:focus { border-color:var(--brand); }
-.hist-filters .fl.search { flex:1; min-width:200px; }
-.hist-filters .fl.search .search { position:relative; }
-.hist-filters .fl.search .search svg { position:absolute; left:9px; top:50%; transform:translateY(-50%); width:15px; height:15px; stroke:var(--faint); }
-.hist-filters .fl.search input { width:100%; padding-left:32px; }
+.hist-filters .fl select, .hist-filters .fl > input { height:var(--control-h); box-sizing:border-box;
+  padding:0 12px; border:1px solid var(--border); border-radius:var(--radius-sm); font-size:13px;
+  font-family:inherit; background:var(--surface); outline:none; }
+.hist-filters .fl select:focus, .hist-filters .fl > input:focus { border-color:var(--brand); }
+.hist-filters .fl.search { flex:1; min-width:220px; }
+/* el buscador reutiliza .search global (height:--control-h, lupa centrada) */
 
 .chip-row { display:flex; gap:7px; flex-wrap:wrap; margin-bottom:16px; }
 .chip { font-size:12px; padding:5px 12px; border-radius:999px; border:1px solid var(--border);
@@ -494,9 +499,11 @@
 .col-type .fol { font-size:11.5px; color:var(--faint); font-family:monospace; }
 .store-cell { font-weight:600; } .store-cell .sub2 { font-weight:400; color:var(--faint); font-size:12px; }
 .tablebox .ced { font-family:monospace; }
+/* pills del historial SIN viñeta (la palabra + el color bastan) */
 .pill-pend { background:var(--warn-bg); color:var(--warn); }
 .pill-set { background:var(--success-bg); color:#15803d; }
 .pill-out { background:var(--danger-bg); color:#b91c1c; }
+.pill-pend::before, .pill-set::before, .pill-out::before { display:none; }
 .btn-send { color:var(--brand); border-color:#c7d8f7; }
 .btn-send:hover { background:var(--brand-bg); }
 
