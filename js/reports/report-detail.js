@@ -97,7 +97,7 @@ export async function showReportDetail({ reportId, user, onBack }) {
     <div class="rd-head">
       <div class="rd-id">
         <span class="rd-ico">${t.icon}</span>
-        <div><div class="rd-folio">Reporte #${r.id}</div><h1 class="rd-title">${t.label}</h1></div>
+        <div><h1 class="rd-title">Reporte #${r.id}</h1><div class="rd-subtype">${t.label}</div></div>
       </div>
       <div class="rd-actions">
         ${canResend ? `<button class="btn btn-send" id="rdResend">Enviar a osTicket</button>` : ''}

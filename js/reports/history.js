@@ -71,8 +71,8 @@ export function renderHistory(user) {
       <div class="fl"><label>Subzona</label><select id="hSub"><option value="ALL">Todas</option></select></div>
       <div class="fl"><label>Concepto</label><select id="hConcept"><option value="ALL">Todos</option></select></div>
       <div class="fl"><label>Tienda</label><select id="hCompany"><option value="ALL">Todas</option></select></div>` : ''}
-      <div class="fl search"><label>Buscar</label>
-        <div class="search"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+      <div class="fl fl-search"><label>Buscar</label>
+        <div class="hsearch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
           <input id="hQ" placeholder="N° de reporte o responsable…"></div></div>
     </div>
 
@@ -180,7 +180,7 @@ export function renderHistory(user) {
         ? `<button class="btn btn-sm btn-send" data-resend="${r.id}">Enviar a osTicket</button>` : '';
       return `<tr class="main" data-open="${r.id}">
         <td><div class="col-type"><span class="ico">${t.icon}</span>
-          <div><div class="ttl">${t.label}</div><div class="fol">N° ${r.id}</div></div></div></td>
+          <div><div class="fol">N° ${r.id}</div><div class="ttl">${t.label}</div></div></div></td>
         ${storeTd}
         <td>${fmtSent(r.sent_at)}</td>
         <td>${r.responsible || '—'}<div style="font-size:11.5px;color:var(--faint)">${r.position || ''}</div></td>
