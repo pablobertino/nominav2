@@ -176,11 +176,11 @@ function openCfg(mode, ctx) {
           <input type="date" id="cfgDate" min="${win.reportMin}" max="${maxForWorker}">
           <div class="date-err" id="dateErr"></div></div>
         <div><label class="flabel">Causa</label>
-          <select id="cfgCause">${(CAUSES || []).map(c => `<option value="${c.code}">${c.label}</option>`).join('')}</select></div>
+          <select id="cfgCause"><option value="" selected>Selecciona una causa…</option>${(CAUSES || []).map(c => `<option value="${c.code}">${c.label}</option>`).join('')}</select></div>
       </div>
       <div class="grid2" style="margin-bottom:8px">
-        <div><label class="flabel">Hora de entrada</label><input type="time" id="cfgIn" value="08:00"></div>
-        <div><label class="flabel">Hora de salida</label><input type="time" id="cfgOut" value="17:00"></div>
+        <div><label class="flabel">Hora de entrada</label><input type="time" id="cfgIn"></div>
+        <div><label class="flabel">Hora de salida</label><input type="time" id="cfgOut"></div>
       </div>
       <div class="time-err" id="timeErr"></div>
       <div id="otherWrap" style="display:none;margin-bottom:8px">
@@ -196,12 +196,12 @@ function openCfg(mode, ctx) {
         outEl = ov.querySelector('#cfgOut'), causeEl = ov.querySelector('#cfgCause'),
         otherEl = ov.querySelector('#cfgOther'), applyB = ov.querySelector('#cfgApply');
 
-  // valores iniciales
+  // valores iniciales: SOLO si se esta editando un marcaje ya configurado.
+  // Para uno nuevo no se precarga nada (ni fecha, ni causa, ni horas) para
+  // obligar a elegir activamente y evitar reportes "por inercia".
   if (!isBulk && w.mark) {
     dEl.value = w.mark.date; causeEl.value = w.mark.cause; otherEl.value = w.mark.other || '';
     inEl.value = w.mark.timeIn; outEl.value = w.mark.timeOut;
-  } else {
-    dEl.value = (maxForWorker < win.reportMin) ? win.reportMin : maxForWorker;
   }
   toggleOther();
 
@@ -218,16 +218,26 @@ function openCfg(mode, ctx) {
     return v.ok;
   }
   function validateTimes() {
-    const bad = inEl.value && outEl.value && inEl.value >= outEl.value;
+    if (!inEl.value || !outEl.value) { ov.querySelector('#timeErr').textContent = ''; return false; }
+    const bad = inEl.value >= outEl.value;
     ov.querySelector('#timeErr').textContent = bad ? 'La hora de entrada debe ser menor que la de salida.' : '';
     return !bad;
   }
-  function recheck() { applyB.disabled = !(validateDate() & validateTimes()); }
+  // El boton Aplicar exige que TODO este completo: fecha, causa y ambas horas
+  // (y el texto de "Otros" si esa causa lo requiere).
+  function recheck() {
+    const c = (CAUSES || []).find(x => x.code === causeEl.value);
+    const causeOk = !!causeEl.value && (!c || !c.is_other || !!otherEl.value.trim());
+    const dateOk = !!dEl.value && validateDate();
+    const timesOk = validateTimes();
+    applyB.disabled = !(dateOk && causeOk && timesOk);
+  }
 
   dEl.addEventListener('input', recheck);
   inEl.addEventListener('input', recheck);
   outEl.addEventListener('input', recheck);
-  causeEl.addEventListener('change', toggleOther);
+  causeEl.addEventListener('change', () => { toggleOther(); recheck(); });
+  otherEl.addEventListener('input', recheck);
   ov.querySelector('#cfgCancel').addEventListener('click', () => ov.remove());
   recheck();
 
