@@ -62,7 +62,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.29</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.30</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -945,16 +945,14 @@ function countdown(iso, today) {
   const cls = n <= 2 ? 'soon' : '';
   return `<div class="countdown ${cls}">faltan ${n} ${n === 1 ? 'día' : 'días'}</div>`;
 }
-/* celda de fecha: número (con badge de finde) + día de la semana + chip opcional */
+/* celda de fecha: número + día de la semana (ámbar si es finde) + chip opcional */
 function dateCell(iso, opts = {}) {
   if (!iso) return '—';
   const i = parseYMD(iso).getUTCDay();
   const weekend = (i === 0 || i === 6);
-  const badge = i === 0 ? '<span class="dow-badge">Dom</span>'
-              : i === 6 ? '<span class="dow-badge">Sáb</span>' : '';
   const chip = opts.countdown || '';
   return `<div class="date-cell ${weekend ? 'weekend' : ''}">`
-    + `<div class="date-num">${fmtDate(iso, true)}${badge}</div>`
+    + `<div class="date-num">${fmtDate(iso, true)}</div>`
     + `<div class="date-dow">${DOW[i]}</div>${chip}</div>`;
 }
 /* celda de rango (Período / Rango de Pago): rango + mes·días */
