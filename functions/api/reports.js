@@ -271,9 +271,11 @@ async function submitMarcaje(env, body) {
    absence_report_docs. Valida TODO server-side.
 
    El TIPO de ausencia es uno por reporte (body.absence_code).
-   Reglas de fecha (distintas a marcaje, NO usan la ventana de quincena):
+   Reglas de fecha CONFIGURABLES POR TIPO (no usan la ventana de quincena):
      - Hasta >= Desde.
-     - Fecha futura solo si el tipo lo permite (allows_future).
+     - Hacia atras: past_window_days (null = sin limite) y, si
+       past_uses_cutoff, el dia mas antiguo solo cuenta hasta la hora tope.
+     - Hacia el futuro: future_window_days (0 = sin futuro).
      - Nunca posterior al egreso del trabajador.
    Documento (segun required_docs.enforcement del tipo):
      - block    -> si falta el archivo, ERROR 422 (no se registra).
@@ -313,22 +315,53 @@ async function submitAusencia(env, body) {
 
   // --- Tipo de ausencia: debe existir y estar activo ---
   const types = await sb(env,
-    `absence_types?code=eq.${encodeURIComponent(absenceCode)}&is_active=eq.true&select=code,label,ax_code,allows_future`);
+    `absence_types?code=eq.${encodeURIComponent(absenceCode)}&is_active=eq.true&select=code,label,ax_code,past_window_days,past_uses_cutoff,future_window_days`);
   if (!types || !types.length) {
     return json({ ok: false, error: 'El tipo de ausencia no es valido o esta inactivo.' }, 400);
   }
   const atype = types[0];
   const axCode = atype.ax_code || atype.code;   // se copia a cada linea (lo que va a la plantilla AX)
-  const allowsFuture = !!atype.allows_future;
+
+  // --- Ventana de fechas configurable del tipo (calculada server-side) ---
+  // past_window_days = null -> sin limite atras; numero -> tope de dias atras.
+  // past_uses_cutoff = true -> el limite atras LO MANDA el corte global
+  //   (corte_margen_dias + corte_hora_limite), no el numero guardado. Asi el
+  //   reporte nunca entra fuera del corte de calculo de nomina, y cambiar el
+  //   setting global ajusta todos los tipos sin reconfigurar cada uno.
+  // future_window_days = 0 -> sin futuro; numero -> tope de dias adelante.
+  const { ymd: today, hhmm: nowHHMM } = nowCaracas();
+  const cutoffTime = await getSetting(env, 'corte_hora_limite', '14:00');
+  const globalMargin = parseInt(await getSetting(env, 'corte_margen_dias', '2'), 10) || 2;
+  const futureDays = Number(atype.future_window_days || 0);
+  const pastUsesCutoff = !!atype.past_uses_cutoff;
+  // Si el tipo respeta el corte global, el margen lo manda el setting (en vivo).
+  // Si no, usa el numero propio del tipo (o null = sin limite atras).
+  const pastDays = pastUsesCutoff
+    ? globalMargin
+    : ((atype.past_window_days === null || atype.past_window_days === undefined)
+        ? null : Number(atype.past_window_days));
+
+  // Limite inferior (minDate). null = sin limite hacia atras.
+  let minDate = null;
+  let oldestDay = null;
+  let pastCutoffPassed = false;
+  if (pastDays != null) {
+    oldestDay = addDays(today, -pastDays);
+    if (pastUsesCutoff) {
+      pastCutoffPassed = toMin(nowHHMM) >= toMin(cutoffTime);
+      minDate = pastCutoffPassed ? addDays(today, -(pastDays - 1)) : oldestDay;
+    } else {
+      minDate = oldestDay;
+    }
+  }
+  // Limite superior (maxDate).
+  const maxDate = futureDays > 0 ? addDays(today, futureDays) : today;
 
   // --- Documento del tipo (0 o 1) ---
   const docs = await sb(env,
     `required_docs?is_active=eq.true&absence_code=eq.${encodeURIComponent(absenceCode)}&select=id,name,enforcement,is_required&order=sort_order`);
   const doc = (docs && docs.length) ? docs[0] : null;
   const enforcement = doc ? (doc.enforcement || 'warn') : null;
-
-  // 'hoy' en Venezuela, calculado server-side (para validar futuro).
-  const { ymd: today } = nowCaracas();
 
   // Trabajadores de la tienda (para validar egreso). Mapa cedula -> end_date.
   const roster = await sb(env,
@@ -354,9 +387,20 @@ async function submitAusencia(env, body) {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(to)) { errors.push(`${tag}: fecha Hasta invalida.`); return; }
     if (to < from) { errors.push(`${tag}: la fecha Hasta no puede ser anterior a Desde.`); return; }
 
-    // Futuro solo si el tipo lo permite.
-    if (!allowsFuture && (from > today || to > today)) {
-      errors.push(`${tag}: este tipo (${atype.label}) no admite fechas futuras.`); return;
+    // Rango contra la ventana configurable del tipo.
+    if (to > maxDate || from > maxDate) {
+      errors.push(futureDays > 0
+        ? `${tag}: la fecha no puede ser posterior al ${maxDate} (maximo ${futureDays} dias a futuro para ${atype.label}).`
+        : `${tag}: este tipo (${atype.label}) no admite fechas futuras.`);
+      return;
+    }
+    if (minDate && from < minDate) {
+      if (pastUsesCutoff && pastCutoffPassed && oldestDay && from < addDays(oldestDay, 1)) {
+        errors.push(`${tag}: el ${oldestDay} ya no se puede reportar (paso la hora tope ${cutoffTime} de Venezuela).`);
+      } else {
+        errors.push(`${tag}: la fecha Desde (${from}) excede el maximo hacia atras para ${atype.label} (desde ${minDate}).`);
+      }
+      return;
     }
     // Egreso del trabajador.
     const end = endDateByCed[ced];

@@ -140,6 +140,62 @@ export function startClock(elId) {
   return () => clearInterval(h);
 }
 
+/* =====================================================================
+   Ventana de fechas CONFIGURABLE POR TIPO (usada por Ausencia).
+   A diferencia de computeWindow (atada a la quincena del marcaje), aqui
+   cada tipo define cuanto se permite hacia atras y hacia el futuro:
+     - pastWindowDays  : dias hacia atras. null = sin limite atras.
+     - pastUsesCutoff  : si el dia mas antiguo respeta la hora tope.
+     - futureWindowDays: dias hacia el futuro. 0/null = sin futuro.
+     - cutoffTime      : 'HH:MM' hora tope global (para pastUsesCutoff).
+   Devuelve los limites 'YYYY-MM-DD' para acotar los inputs date y
+   validar. El egreso lo aplica quien llame (es por trabajador).
+   ===================================================================== */
+export function typeWindow({ pastWindowDays = null, pastUsesCutoff = false, futureWindowDays = 0, cutoffTime = '14:00' } = {}) {
+  const { ymd: today, hhmm: nowHHMM } = nowVE();
+  // Limite inferior (min) segun dias hacia atras.
+  let minDate = null; // null = sin limite
+  let oldestDay = null;
+  let pastCutoff = false;
+  if (pastWindowDays != null) {
+    oldestDay = addDays(today, -pastWindowDays);
+    if (pastUsesCutoff) {
+      // El dia mas antiguo solo cuenta hasta la hora tope; pasada esa hora sube uno.
+      pastCutoff = toMin(nowHHMM) >= toMin(cutoffTime);
+      minDate = pastCutoff ? addDays(today, -(pastWindowDays - 1)) : oldestDay;
+    } else {
+      minDate = oldestDay;
+    }
+  }
+  // Limite superior (max) segun dias hacia el futuro.
+  const fwd = futureWindowDays || 0;
+  const maxDate = fwd > 0 ? addDays(today, fwd) : today;
+  return { today, nowHHMM, minDate, maxDate, oldestDay, pastCutoff, cutoffTime, futureWindowDays: fwd };
+}
+
+/* Valida un rango [from,to] de ausencia contra la ventana del tipo y el
+   egreso del trabajador. Devuelve un string de error, o null si OK. */
+export function typeRangeError(from, to, win, endDate = null) {
+  if (!from || !to) return null;
+  if (to < from) return 'La fecha Hasta no puede ser anterior a Desde.';
+  // Futuro
+  if (to > win.maxDate || from > win.maxDate) {
+    return win.futureWindowDays > 0
+      ? `No puede ser posterior al ${fmtDate(win.maxDate)} (máx. ${win.futureWindowDays} días a futuro para este tipo).`
+      : 'Este tipo no admite fechas futuras.';
+  }
+  // Pasado
+  if (win.minDate && from < win.minDate) {
+    if (win.pastCutoff && win.oldestDay && from < addDays(win.oldestDay, 1)) {
+      return `El ${fmtDate(win.oldestDay)} ya no se puede reportar: pasó la hora tope (${win.cutoffTime} hora Venezuela).`;
+    }
+    return `No puede ser anterior al ${fmtDate(win.minDate)} (máximo hacia atrás para este tipo).`;
+  }
+  // Egreso (por trabajador)
+  if (endDate && to > endDate) return `No puede ser posterior al egreso (${fmtDate(endDate)}).`;
+  return null;
+}
+
 /* Validacion de cedula venezolana/extranjera (6-8 digitos). */
 export function validateCedula(raw) {
   const ced = String(raw || '').replace(/[^0-9]/g, '');

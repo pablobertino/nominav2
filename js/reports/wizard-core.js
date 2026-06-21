@@ -558,7 +558,10 @@ export function launchWizard(user, reportDef, onExit) {
   }
   function removeWorker(id) {
     S.workers = S.workers.filter(w => w.id !== id);
-    paintWorkers(); paintPick();
+    // Solo repintar la tabla del paso 3 si estamos en ese paso (sus
+    // elementos #wEmpty/#wTbl existen). Desde el paso 4, el modulo del
+    // reporte se encarga de repintar su propia vista.
+    if ($('#wTbl')) { paintWorkers(); paintPick(); }
   }
   function paintWorkers() {
     $('#wEmpty').style.display = S.workers.length ? 'none' : 'block';

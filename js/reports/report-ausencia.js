@@ -18,16 +18,21 @@
    se recuerda su nombre; el envio real a osTicket se conecta despues
    (ver los bloques marcados con  TODO osTicket ).
 
-   Fechas: la ausencia NO usa la ventana reportable de la quincena (un
-   reposo puede empezar antes; matrimonio/mudanza pueden ser futuros).
-   Reglas: Hasta >= Desde, futuro solo si el tipo lo permite
-   (allows_future), y nunca posterior al egreso del trabajador.
+   Fechas: ventana CONFIGURABLE POR TIPO (no es la ventana de quincena del
+   marcaje). Cada tipo define cuanto hacia atras y hacia el futuro:
+     - Hacia atras: si el tipo respeta el corte (past_uses_cutoff), el
+       limite lo manda el corte global (corte_margen_dias + hora tope) en
+       vivo, para no aceptar fechas fuera del corte de calculo de nomina.
+     - Hacia el futuro: future_window_days (0 = sin futuro; ej. prenatal 42).
+     - Hasta >= Desde y nunca posterior al egreso del trabajador.
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
 import * as DW from './shared/date-window.js';
 
-let TYPES = null; // [{code,label,ax_code,allows_future,note,docs:[{id,name,note,enforcement,is_required}]}]
+let TYPES = null; // [{code,label,ax_code,allows_future,note,past_window_days,past_uses_cutoff,future_window_days,docs:[...]}]
+let CUTOFF_TIME = '14:00'; // hora tope global (para tipos con past_uses_cutoff)
+let GLOBAL_MARGIN = 2;     // corte_margen_dias global (para tipos con past_uses_cutoff)
 
 async function loadTypes() {
   if (TYPES) return TYPES;
@@ -36,6 +41,8 @@ async function loadTypes() {
     body: JSON.stringify({ action: 'absence_types' }),
   }).then(r => r.json()).catch(() => null);
   TYPES = (res && res.ok && res.types) ? res.types : [];
+  if (res && res.cutoff_time) CUTOFF_TIME = res.cutoff_time;
+  if (res && res.global_margin) GLOBAL_MARGIN = res.global_margin;
   return TYPES;
 }
 
@@ -48,6 +55,22 @@ function docOfType(t) {
 }
 function typeHasDoc(t) {
   return !!docOfType(t);
+}
+// Ventana de fechas (min/max) del tipo elegido, con la hora de corte global.
+// Si el tipo respeta el corte (past_uses_cutoff), el margen hacia atras lo
+// manda el setting global en vivo (GLOBAL_MARGIN), no el numero guardado:
+// asi nunca se permite reportar fuera del corte de calculo de nomina.
+function windowOf(t) {
+  const usesCutoff = t ? !!t.past_uses_cutoff : false;
+  const pastDays = usesCutoff
+    ? GLOBAL_MARGIN
+    : (t ? t.past_window_days : null);
+  return DW.typeWindow({
+    pastWindowDays: pastDays,
+    pastUsesCutoff: usesCutoff,
+    futureWindowDays: t ? t.future_window_days : 0,
+    cutoffTime: CUTOFF_TIME,
+  });
 }
 
 /* Estado local del paso 4 (vive mientras el wizard este montado).
@@ -207,7 +230,16 @@ function refreshTypeHeader(ctx) {
   $('#azAx').value = t.ax_code;
   const doc = docOfType(t);
   let hint = doc ? `Requiere documento: <b>${doc.name}</b>.` : 'Este tipo no requiere documento.';
-  hint += t.allows_future ? ' Admite fechas futuras.' : ' Solo fechas pasadas o actuales.';
+  // Describir la ventana de fechas configurada para este tipo.
+  // Si respeta el corte global, el limite atras es el margen global en vivo.
+  const effPastDays = t.past_uses_cutoff ? GLOBAL_MARGIN : t.past_window_days;
+  const back = (effPastDays == null)
+    ? 'sin límite hacia atrás'
+    : `hasta ${effPastDays} día(s) atrás${t.past_uses_cutoff ? ` (el más antiguo solo hasta las ${CUTOFF_TIME})` : ''}`;
+  const fwd = (t.future_window_days > 0)
+    ? `hasta ${t.future_window_days} día(s) a futuro`
+    : 'sin fechas futuras';
+  hint += ` Fechas: ${back}, ${fwd}.`;
   $('#azHint').innerHTML = hint;
 
   const coord = $('#azCoord');
@@ -302,14 +334,12 @@ function onSel() {
   if (c) c.textContent = n;
 }
 
-/* Mensaje de error de fechas, o null si esta bien. (Para validar en el modal.) */
+/* Mensaje de error de fechas, o null si esta bien. Usa la ventana
+   configurable del tipo (dias atras/futuro + hora tope) y el egreso. */
 function dateError(t, from, to, endDate) {
   if (!from || !to) return null;
-  if (to < from) return 'La fecha Hasta no puede ser anterior a Desde.';
-  const today = DW.nowVE().ymd;
-  if (!t.allows_future && (from > today || to > today)) return 'Este tipo no admite fechas futuras.';
-  if (endDate && to > endDate) return `No puede ser posterior al egreso (${DW.fmtDate(endDate)}).`;
-  return null;
+  const win = windowOf(t);
+  return DW.typeRangeError(from, to, win, endDate || null);
 }
 
 /* ---------- MODAL: configurar UN trabajador (fechas + nota + documento) ---------- */
@@ -319,9 +349,13 @@ function openConfig(ctx, id) {
   const t = typeByCode(S.typeCode);
   const doc = docOfType(t);
   const a = w.absence || {};
-  const today = DW.nowVE().ymd;
-  const maxAttr = t.allows_future ? '' : `max="${today}"`;
-  const endMax = w.endDate ? `max="${w.endDate}"` : maxAttr;
+  const win = windowOf(t);
+  // Acotar los inputs date a la ventana del tipo y al egreso del trabajador.
+  const minAttr = win.minDate ? `min="${win.minDate}"` : '';
+  const maxBase = win.maxDate;
+  const maxForWorker = (w.endDate && w.endDate < maxBase) ? w.endDate : maxBase;
+  const maxAttr = `max="${maxForWorker}"`;
+  const endMax = maxAttr;
 
   const ov = document.createElement('div');
   ov.className = 'modal-ov';
@@ -330,8 +364,8 @@ function openConfig(ctx, id) {
       <h3>Configurar ausencia</h3>
       <p class="who">${w.name} · ${w.ced}${w.endDate ? ` · egresó ${DW.fmtDate(w.endDate)}` : ''}</p>
       <div class="grid2">
-        <div><label class="flabel">Desde</label><input type="date" id="mFrom" ${maxAttr} value="${a.from || ''}"></div>
-        <div><label class="flabel">Hasta</label><input type="date" id="mTo" ${endMax} value="${a.to || ''}"></div>
+        <div><label class="flabel">Desde</label><input type="date" id="mFrom" ${minAttr} ${maxAttr} value="${a.from || ''}"></div>
+        <div><label class="flabel">Hasta</label><input type="date" id="mTo" ${minAttr} ${endMax} value="${a.to || ''}"></div>
       </div>
       <div class="date-err" id="mErr" style="color:var(--danger);font-size:12px;min-height:16px;margin-top:6px"></div>
       <div><label class="flabel">Nota (opcional)</label>
@@ -436,8 +470,9 @@ function openBulk(ctx) {
   if (!ids.length) { alert('Selecciona al menos un trabajador.'); return; }
   const t = typeByCode(S.typeCode);
   const doc = docOfType(t);
-  const today = DW.nowVE().ymd;
-  const maxAttr = t.allows_future ? '' : `max="${today}"`;
+  const win = windowOf(t);
+  const minAttr = win.minDate ? `min="${win.minDate}"` : '';
+  const maxAttr = `max="${win.maxDate}"`;
 
   const ov = document.createElement('div');
   ov.className = 'modal-ov';
@@ -446,8 +481,8 @@ function openBulk(ctx) {
       <h3>Aplicar fechas a seleccionados</h3>
       <p class="who">${ids.length} trabajador(es) · se valida el egreso de cada uno</p>
       <div class="grid2">
-        <div><label class="flabel">Desde</label><input type="date" id="bFrom" ${maxAttr}></div>
-        <div><label class="flabel">Hasta</label><input type="date" id="bTo" ${maxAttr}></div>
+        <div><label class="flabel">Desde</label><input type="date" id="bFrom" ${minAttr} ${maxAttr}></div>
+        <div><label class="flabel">Hasta</label><input type="date" id="bTo" ${minAttr} ${maxAttr}></div>
       </div>
       <div class="date-err" id="bErr" style="color:var(--danger);font-size:12px;min-height:16px;margin-top:6px"></div>
       <div><label class="flabel">Nota (opcional)</label>
@@ -465,11 +500,7 @@ function openBulk(ctx) {
         errEl = ov.querySelector('#bErr');
 
   function check() {
-    let msg = '';
-    if (fromEl.value && toEl.value) {
-      if (toEl.value < fromEl.value) msg = 'La fecha Hasta no puede ser anterior a Desde.';
-      else if (!t.allows_future && (fromEl.value > today || toEl.value > today)) msg = 'Este tipo no admite fechas futuras.';
-    }
+    const msg = DW.typeRangeError(fromEl.value, toEl.value, win, null) || '';
     errEl.textContent = msg;
     applyB.disabled = !(fromEl.value && toEl.value && !msg);
   }

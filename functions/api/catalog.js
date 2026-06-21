@@ -72,9 +72,15 @@ export async function onRequestPost({ request, env }) {
 
     // --- Catalogo de tipos de ausencia + documentos requeridos (wizard de ausencia) ---
     if (body.action === 'absence_types') {
-      const types = await sb(env, 'absence_types?is_active=eq.true&select=code,label,ax_code,allows_future,note&order=sort_order');
+      const types = await sb(env, 'absence_types?is_active=eq.true&select=code,label,ax_code,allows_future,note,past_window_days,past_uses_cutoff,future_window_days&order=sort_order');
       // Documentos requeridos por tipo (uno por absence_code, normalmente 0 o 1).
       const docs = await sb(env, 'required_docs?is_active=eq.true&absence_code=not.is.null&select=id,absence_code,name,note,enforcement,is_required&order=sort_order');
+      // Hora limite y margen global del corte (para los tipos con past_uses_cutoff).
+      const settings = await sb(env, 'app_settings?key=in.(corte_hora_limite,corte_margen_dias)&select=key,value');
+      const settingsMap = {};
+      (settings || []).forEach(s => { settingsMap[s.key] = s.value; });
+      const cutoffTime = settingsMap.corte_hora_limite || '14:00';
+      const globalMargin = parseInt(settingsMap.corte_margen_dias, 10) || 2;
       // Adjuntar a cada tipo su(s) documento(s).
       const docsByCode = {};
       (docs || []).forEach(d => {
@@ -86,9 +92,13 @@ export async function onRequestPost({ request, env }) {
       const out = (types || []).map(t => ({
         code: t.code, label: t.label, ax_code: t.ax_code || t.code,
         allows_future: !!t.allows_future, note: t.note || null,
+        // Ventanas de fecha configurables por tipo.
+        past_window_days: (t.past_window_days === null || t.past_window_days === undefined) ? null : t.past_window_days,
+        past_uses_cutoff: !!t.past_uses_cutoff,
+        future_window_days: t.future_window_days || 0,
         docs: docsByCode[t.code] || [],
       }));
-      return json({ ok: true, types: out });
+      return json({ ok: true, types: out, cutoff_time: cutoffTime, global_margin: globalMargin });
     }
 
     const allowed = await allowedSet(env, user); // null=todas | Set
