@@ -586,3 +586,15 @@
   border-radius:var(--radius-md); padding:9px 14px; font-size:13px; color:var(--brand); margin-bottom:12px; }
 .selbar.hidden { display:none; }
 .selbar .spacer { flex:1; }
+
+/* progreso "X de N configurados" (escala a muchos trabajadores) */
+.progress-line { display:flex; align-items:center; gap:10px; margin:4px 0 16px; font-size:12.5px; color:var(--muted); }
+.progress-bar { flex:1; height:7px; background:var(--border-soft); border-radius:999px; overflow:hidden; }
+.progress-bar > div { height:100%; background:var(--success); width:0%; border-radius:999px; transition:width .25s; }
+
+/* fila ya configurada (tono verde muy tenue) */
+.wiz tbody tr.done-row { background:#fcfefd; }
+.wiz tbody tr.done-row:hover { background:#f6fbf8; }
+
+/* nombre de archivo recortado dentro del pill (modal de documento) */
+.file-pill .fname { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; max-width:170px; }
