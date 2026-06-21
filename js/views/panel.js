@@ -68,7 +68,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.41</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.42</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1219,77 +1219,312 @@ function periodEditModal(user, p, onSaved) {
   });
 }
 
-/* ---------- VISTA: CONFIGURACIÓN (solo superadmin) ---------- */
-async function viewConfig(user) {
-  $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros del portal</p></div></div><div class="pnl-loading">Cargando…</div>`;
-  const d = await fetch('/api/settings', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'list', adminId: user.id }),
-  }).then(r => r.json());
-  if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
+/* ---------- VISTA: CONFIGURACIÓN (solo superadmin) ----------
+   4 pestanas (mockup 09): Tipos de ausencia | Causas de marcaje |
+   Corte y periodos | Integraciones. Guardado POR SECCION.
+   Settings (corte + integraciones) -> /api/settings.
+   Catalogos (ausencia + causas)    -> /api/config-catalogs. */
+let CFG_DATA = null; // { settings:[], types:[], causas:[] }
+let CFG_TAB = 'aus';
 
-  const fieldHtml = (s) => {
-    if (s.is_secret) {
-      const estado = s.configured
-        ? '<span class="pill pill-open">Configurado</span>'
-        : '<span class="pill pill-closed">No configurado</span>';
-      return `<div class="cfg-row">
-        <div class="cfg-meta"><div class="cfg-label">${s.label}</div>
-          <div class="cfg-desc">${s.description || ''}</div></div>
-        <div class="cfg-secret">${estado}<span class="cfg-secret-note">Se gestiona como secreto del servidor</span></div>
-      </div>`;
-    }
-    const ph = s.kind === 'url' ? 'https://…'
-      : s.kind === 'time' ? 'HH:MM (ej. 14:00)'
-      : s.kind === 'email' ? 'correo@grupocanaima.com'
-      : s.kind === 'number' ? 'solo números'
-      : '';
+async function cfgSettings(payload) {
+  return fetch('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload) }).then(r => r.json());
+}
+async function cfgCatalogs(payload) {
+  return fetch('/api/config-catalogs', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload) }).then(r => r.json());
+}
+
+async function viewConfig(user) {
+  $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros, catálogos e integraciones</p></div></div><div class="pnl-loading">Cargando…</div>`;
+  const [st, ty, ca] = await Promise.all([
+    cfgSettings({ action: 'list', adminId: user.id }),
+    cfgCatalogs({ action: 'absence_list', adminId: user.id }),
+    cfgCatalogs({ action: 'causa_list', adminId: user.id }),
+  ]);
+  if (!st.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${st.error}</div>`; return; }
+  CFG_DATA = { settings: st.settings || [], types: (ty.ok && ty.types) || [], causas: (ca.ok && ca.causas) || [] };
+
+  $('#pnlMain').innerHTML = `
+    <div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros, catálogos e integraciones del portal</p></div></div>
+    <div class="cfg-tabs">
+      <button class="cfg-tab" data-tab="aus">📅 Tipos de ausencia</button>
+      <button class="cfg-tab" data-tab="mar">🕐 Causas de marcaje</button>
+      <button class="cfg-tab" data-tab="cor">📆 Corte y períodos</button>
+      <button class="cfg-tab" data-tab="int">🔌 Integraciones</button>
+    </div>
+    <div id="cfgBody"></div>`;
+
+  $('#pnlMain').querySelectorAll('.cfg-tab').forEach(b =>
+    b.addEventListener('click', () => { CFG_TAB = b.dataset.tab; cfgRenderTab(user); }));
+  cfgRenderTab(user);
+}
+
+function cfgRenderTab(user) {
+  $('#pnlMain').querySelectorAll('.cfg-tab').forEach(b =>
+    b.classList.toggle('on', b.dataset.tab === CFG_TAB));
+  const body = $('#cfgBody');
+  if (CFG_TAB === 'aus') cfgRenderAusencia(user, body);
+  else if (CFG_TAB === 'mar') cfgRenderCausas(user, body);
+  else if (CFG_TAB === 'cor') cfgRenderCorte(user, body);
+  else if (CFG_TAB === 'int') cfgRenderIntegraciones(user, body);
+}
+
+/* ---- helpers de settings (corte / integraciones) ---- */
+function cfgFieldRow(s) {
+  if (s.is_secret) {
+    const estado = s.configured
+      ? '<span class="pill pill-open">Configurado</span>'
+      : '<span class="pill pill-closed">No configurado</span>';
     return `<div class="cfg-row">
       <div class="cfg-meta"><div class="cfg-label">${s.label}</div>
         <div class="cfg-desc">${s.description || ''}</div></div>
-      <div class="cfg-input">
-        <input type="text" id="cfg_${s.key}" value="${(s.value || '').replace(/"/g, '&quot;')}" placeholder="${ph}">
-        <button class="btn btn-mini btn-primary" data-key="${s.key}">Guardar</button>
-      </div>
+      <div class="cfg-secret">${estado}<span class="cfg-secret-note">Se gestiona como secreto del servidor</span></div>
     </div>`;
-  };
+  }
+  const ph = s.kind === 'url' ? 'https://…'
+    : s.kind === 'time' ? 'HH:MM (ej. 14:00)'
+    : s.kind === 'email' ? 'correo@grupocanaima.com'
+    : s.kind === 'number' ? 'solo números' : '';
+  const narrow = (s.kind === 'number' || s.kind === 'time') ? 'narrow' : '';
+  return `<div class="cfg-row">
+    <div class="cfg-meta"><div class="cfg-label">${s.label}</div>
+      <div class="cfg-desc">${s.description || ''}</div></div>
+    <div class="cfg-input">
+      <input type="text" class="${narrow}" data-cfgkey="${s.key}" value="${(s.value || '').replace(/"/g, '&quot;')}" placeholder="${ph}">
+    </div>
+  </div>`;
+}
 
-  // Agrupar settings por su campo 'grupo', respetando el orden recibido
-  const grupos = [];
-  const byGrupo = {};
-  d.settings.forEach(s => {
-    const g = s.grupo || 'General';
-    if (!byGrupo[g]) { byGrupo[g] = []; grupos.push(g); }
-    byGrupo[g].push(s);
-  });
+/* Guarda en bloque todos los inputs (no secretos) de un contenedor */
+async function cfgSaveSection(user, container, savedEl, btn) {
+  const inputs = [...container.querySelectorAll('input[data-cfgkey]')];
+  btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Guardando…';
+  let firstError = null;
+  for (const inp of inputs) {
+    const key = inp.dataset.cfgkey;
+    const r = await cfgSettings({ action: 'save', adminId: user.id, key, value: inp.value });
+    if (!r.ok) { firstError = firstError || `${key}: ${r.error}`; inp.style.borderColor = 'var(--danger)'; }
+    else { inp.value = r.value; inp.style.borderColor = ''; const s = CFG_DATA.settings.find(x => x.key === key); if (s) s.value = r.value; }
+  }
+  btn.disabled = false; btn.textContent = orig;
+  if (firstError) { alert('Algunos campos no se guardaron:\n' + firstError); return; }
+  if (savedEl) { savedEl.style.display = 'inline'; setTimeout(() => savedEl.style.display = 'none', 1800); }
+}
 
-  const cards = grupos.map(g => `
+/* ===== Pestana CORTE Y PERIODOS ===== */
+function cfgRenderCorte(user, body) {
+  const grupo = CFG_DATA.settings.filter(s => s.grupo === 'Quincenas y fechas límite');
+  body.innerHTML = `
     <div class="card">
-      <h3>${g}</h3>
-      ${byGrupo[g].map(fieldHtml).join('')}
-    </div>`).join('');
+      <div class="cfg-card-head"><h3>Corte de cálculo</h3><span class="cfg-saved" id="savedCorte">✓ Guardado</span></div>
+      <p class="cfg-desc" style="margin:0 0 8px">Define hasta cuándo hacia atrás se aceptan reportes. <b>Afecta todos los tipos</b> que respetan el corte (marcaje y ausencias). Cambiarlo aquí ajusta todo el portal.</p>
+      <div id="corteFields">${grupo.map(cfgFieldRow).join('')}</div>
+      <div class="cfg-foot"><button class="btn btn-primary" id="saveCorte">Guardar cambios</button></div>
+    </div>`;
+  $('#saveCorte').addEventListener('click', () =>
+    cfgSaveSection(user, $('#corteFields'), $('#savedCorte'), $('#saveCorte')));
+}
 
-  $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros del portal</p></div></div>
-    ${cards}
-    <p class="muted" style="font-size:12px;margin:14px 2px 0">Los secretos (como claves de API) no se almacenan en el portal por seguridad; se configuran como variables protegidas del servidor (Cloudflare Pages → Settings → Variables and Secrets).</p>`;
+/* ===== Pestana INTEGRACIONES (osTicket + correo) ===== */
+function cfgRenderIntegraciones(user, body) {
+  const ost = CFG_DATA.settings.filter(s => s.grupo === 'osTicket');
+  const cor = CFG_DATA.settings.filter(s => s.grupo === 'Notificaciones por correo');
+  body.innerHTML = `
+    <div class="card">
+      <div class="cfg-card-head"><h3>osTicket</h3><span class="cfg-saved" id="savedOst">✓ Guardado</span></div>
+      <div class="cfg-lock">🔒 <div>La <b>clave API</b> no se edita aquí: vive como <b>Secret de Cloudflare</b> (<span style="font-family:monospace">osticket_api_key</span>) y nunca viaja al navegador. Para cambiarla, se actualiza en el panel de Cloudflare.</div></div>
+      <div id="ostFields">${ost.map(cfgFieldRow).join('')}</div>
+      <div class="cfg-foot"><button class="btn btn-primary" id="saveOst">Guardar cambios</button></div>
+    </div>
+    <div class="card">
+      <div class="cfg-card-head"><h3>Notificaciones por correo</h3><span class="cfg-saved" id="savedMail">✓ Guardado</span></div>
+      <div id="mailFields">${cor.map(cfgFieldRow).join('')}</div>
+      <div class="cfg-foot"><button class="btn btn-primary" id="saveMail">Guardar cambios</button></div>
+    </div>
+    <p class="muted" style="font-size:12px;margin:14px 2px 0">Los secretos (claves de API) no se almacenan en el portal por seguridad; se configuran como variables protegidas del servidor (Cloudflare Pages → Settings → Variables and Secrets).</p>`;
+  $('#saveOst').addEventListener('click', () =>
+    cfgSaveSection(user, $('#ostFields'), $('#savedOst'), $('#saveOst')));
+  $('#saveMail').addEventListener('click', () =>
+    cfgSaveSection(user, $('#mailFields'), $('#savedMail'), $('#saveMail')));
+}
 
-  $('#pnlMain').querySelectorAll('button[data-key]').forEach(b =>
+/* ===== Pestana TIPOS DE AUSENCIA ===== */
+function cfgRenderAusencia(user, body) {
+  const enfPill = (e) => e === 'block' ? '<span class="pill pill-block">bloquea</span>'
+    : e === 'optional' ? '<span class="pill pill-opt">opcional</span>'
+    : '<span class="pill pill-warn2">advierte</span>';
+  const rows = CFG_DATA.types.map(t => {
+    const atras = t.past_uses_cutoff ? 'corte global' : (t.past_window_days == null ? 'sin límite' : `${t.past_window_days} días`);
+    const fut = (t.future_window_days > 0) ? `${t.future_window_days} días` : '—';
+    const doc = t.doc ? t.doc.name : '<span style="color:var(--muted)">—</span>';
+    const enf = t.doc ? enfPill(t.doc.enforcement) : '<span class="pill pill-opt">—</span>';
+    const estado = t.is_active ? '<span class="pill pill-open">activo</span>' : '<span class="pill pill-closed">inactivo</span>';
+    return `<tr>
+      <td><b>${t.label}</b></td>
+      <td><span class="pill pill-ax">${t.ax_code}</span></td>
+      <td>${atras}</td><td>${fut}</td>
+      <td>${doc}</td><td>${enf}</td><td>${estado}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-mini" data-edit-aus="${t.code}">${I.pencil}</button>
+        <button class="btn btn-mini" data-toggle-aus="${t.code}" data-active="${t.is_active}">${t.is_active ? 'Desactivar' : 'Activar'}</button>
+      </td></tr>`;
+  }).join('') || '<tr><td colspan="8" class="empty">Sin tipos.</td></tr>';
+
+  body.innerHTML = `
+    <div class="card">
+      <div class="cfg-card-head"><h3>Tipos de ausencia</h3>
+        <button class="btn btn-primary btn-mini" id="ausNew">${I.plus} Nuevo tipo</button></div>
+      <p class="cfg-desc" style="margin:0 0 14px">Código AX, ventanas de fecha y documento requerido por tipo. El límite hacia atrás "corte global" lo manda la pestaña Corte; cambiarlo allí ajusta todos estos tipos.</p>
+      <table class="cfg-cat-table"><thead><tr>
+        <th>Tipo</th><th>Cód. AX</th><th>Atrás</th><th>Futuro</th><th>Documento</th><th>Exigencia</th><th>Estado</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+
+  $('#ausNew').addEventListener('click', () => cfgAusModal(user, null));
+  body.querySelectorAll('[data-edit-aus]').forEach(b =>
+    b.addEventListener('click', () => cfgAusModal(user, CFG_DATA.types.find(t => t.code === b.dataset.editAus))));
+  body.querySelectorAll('[data-toggle-aus]').forEach(b =>
     b.addEventListener('click', async () => {
-      const key = b.dataset.key;
-      const value = $(`#cfg_${key}`).value;
-      const original = b.textContent;
-      b.disabled = true; b.textContent = 'Guardando…';
-      const r = await fetch('/api/settings', {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'save', adminId: user.id, key, value }),
-      }).then(r => r.json());
-      b.disabled = false; b.textContent = original;
+      const r = await cfgCatalogs({ action: 'absence_toggle', adminId: user.id, code: b.dataset.toggleAus, active: !(b.dataset.active === 'true') });
       if (!r.ok) { alert(r.error); return; }
-      $(`#cfg_${key}`).value = r.value; // refleja el valor normalizado
-      b.textContent = '✓ Guardado';
-      setTimeout(() => { b.textContent = original; }, 1500);
+      await cfgReloadCatalogs(user); cfgRenderTab(user);
     }));
+}
+
+function cfgAusModal(user, t) {
+  const isNew = !t;
+  const d = (t && t.doc) || null;
+  openModal(`
+    <div class="modal-head"><span>${isNew ? 'Nuevo tipo de ausencia' : 'Editar tipo de ausencia'}</span><button class="modal-x" id="mX">✕</button></div>
+    <div class="cfg-grid2">
+      <div><label class="flabel">Nombre (lo ve la tienda)</label><input id="au_label" value="${t ? t.label.replace(/"/g,'&quot;') : ''}" placeholder="Reposo"></div>
+      <div><label class="flabel">Código AX</label><input id="au_ax" value="${t ? (t.ax_code||'') : ''}" placeholder="REP" style="font-family:monospace;text-transform:uppercase"></div>
+    </div>
+    <div class="cfg-grid3" style="margin-top:12px">
+      <div><label class="flabel">Respeta corte global</label>
+        <select id="au_cut"><option value="1" ${!t || t.past_uses_cutoff ? 'selected' : ''}>Sí</option><option value="0" ${t && !t.past_uses_cutoff ? 'selected' : ''}>No</option></select></div>
+      <div><label class="flabel">Días atrás (si no respeta)</label><input id="au_past" type="number" min="0" value="${t && !t.past_uses_cutoff && t.past_window_days != null ? t.past_window_days : ''}" placeholder="vacío = sin límite"></div>
+      <div><label class="flabel">Días a futuro</label><input id="au_fut" type="number" min="0" value="${t ? (t.future_window_days||0) : 0}"></div>
+    </div>
+    <p class="muted" style="font-size:11.5px;margin:8px 0 0">Con "respeta corte global = Sí", el límite hacia atrás lo manda el Corte (no el número). 0 días a futuro = no permite fechas futuras.</p>
+    <div class="cfg-grid2" style="margin-top:14px">
+      <div><label class="flabel">Código (interno)</label><input id="au_code" value="${t ? t.code : ''}" ${t ? 'readonly' : ''} placeholder="REP" style="font-family:monospace;text-transform:uppercase"></div>
+      <div><label class="flabel">Estado</label>
+        <select id="au_active"><option value="1" ${!t || t.is_active ? 'selected' : ''}>Activo</option><option value="0" ${t && !t.is_active ? 'selected' : ''}>Inactivo</option></select></div>
+    </div>
+    <hr style="border:0;border-top:1px solid var(--border);margin:16px 0">
+    <p class="flabel" style="margin-bottom:8px">Documento requerido <span class="muted">(opcional)</span></p>
+    <div class="cfg-grid2">
+      <div><label class="flabel">Nombre del documento</label><input id="au_doc" value="${d ? d.name.replace(/"/g,'&quot;') : ''}" placeholder="Informe médico (vacío = sin documento)"></div>
+      <div><label class="flabel">Exigencia</label>
+        <select id="au_enf">
+          <option value="block" ${d && d.enforcement==='block'?'selected':''}>Bloquea (no deja enviar sin él)</option>
+          <option value="warn" ${!d || d.enforcement==='warn'?'selected':''}>Advierte (deja enviar, queda pendiente)</option>
+          <option value="optional" ${d && d.enforcement==='optional'?'selected':''}>Opcional</option>
+        </select></div>
+    </div>
+    <div style="margin-top:12px"><label class="flabel">Nota / coordinación (opcional)</label>
+      <input id="au_note" value="${t && t.note ? t.note.replace(/"/g,'&quot;') : ''}" placeholder="ej. coordinar con el jefe inmediato"></div>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Guardar</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const usesCutoff = $('#au_cut').value === '1';
+    const docName = $('#au_doc').value.trim();
+    const payload = {
+      action: 'absence_save', adminId: user.id,
+      type: {
+        code: $('#au_code').value, label: $('#au_label').value, ax_code: $('#au_ax').value,
+        note: $('#au_note').value, is_active: $('#au_active').value === '1',
+        past_uses_cutoff: usesCutoff,
+        past_window_days: usesCutoff ? null : ($('#au_past').value === '' ? null : $('#au_past').value),
+        future_window_days: $('#au_fut').value,
+        doc: docName ? { name: docName, enforcement: $('#au_enf').value, is_required: true } : null,
+      },
+    };
+    const r = await cfgCatalogs(payload);
+    if (!r.ok) { alert(r.error); return; }
+    closeModal();
+    await cfgReloadCatalogs(user); cfgRenderTab(user);
+  });
+}
+
+/* ===== Pestana CAUSAS DE MARCAJE ===== */
+function cfgRenderCausas(user, body) {
+  const rows = CFG_DATA.causas.map((c, i) => {
+    const tipo = c.is_other ? '<span class="pill pill-warn2">texto libre</span>' : '';
+    const estado = c.is_active ? '<span class="pill pill-open">activa</span>' : '<span class="pill pill-closed">inactiva</span>';
+    return `<tr>
+      <td style="font-family:monospace;color:var(--muted)">${i + 1}</td>
+      <td><b>${c.label}</b><br><span class="muted" style="font-size:11px;font-family:monospace">${c.code}</span></td>
+      <td>${tipo}</td><td>${estado}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-mini" data-edit-causa="${c.code}">${I.pencil}</button>
+        <button class="btn btn-mini" data-toggle-causa="${c.code}" data-active="${c.is_active}">${c.is_active ? 'Desactivar' : 'Activar'}</button>
+      </td></tr>`;
+  }).join('') || '<tr><td colspan="5" class="empty">Sin causas.</td></tr>';
+
+  body.innerHTML = `
+    <div class="card">
+      <div class="cfg-card-head"><h3>Causas de marcaje</h3>
+        <button class="btn btn-primary btn-mini" id="causaNew">${I.plus} Nueva causa</button></div>
+      <p class="cfg-desc" style="margin:0 0 14px">Motivos que la tienda elige al reportar un marcaje manual. "Texto libre" pide una descripción adicional (tipo Otros).</p>
+      <table class="cfg-cat-table"><thead><tr>
+        <th>#</th><th>Causa</th><th>Tipo</th><th>Estado</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+
+  $('#causaNew').addEventListener('click', () => cfgCausaModal(user, null));
+  body.querySelectorAll('[data-edit-causa]').forEach(b =>
+    b.addEventListener('click', () => cfgCausaModal(user, CFG_DATA.causas.find(c => c.code === b.dataset.editCausa))));
+  body.querySelectorAll('[data-toggle-causa]').forEach(b =>
+    b.addEventListener('click', async () => {
+      const r = await cfgCatalogs({ action: 'causa_toggle', adminId: user.id, code: b.dataset.toggleCausa, active: !(b.dataset.active === 'true') });
+      if (!r.ok) { alert(r.error); return; }
+      await cfgReloadCatalogs(user); cfgRenderTab(user);
+    }));
+}
+
+function cfgCausaModal(user, c) {
+  const isNew = !c;
+  openModal(`
+    <div class="modal-head"><span>${isNew ? 'Nueva causa' : 'Editar causa'}</span><button class="modal-x" id="mX">✕</button></div>
+    <label class="flabel">Nombre (lo ve la tienda)</label>
+    <input id="ca_label" value="${c ? c.label.replace(/"/g,'&quot;') : ''}" placeholder="Olvido de marcaje" style="margin-bottom:12px">
+    <label class="flabel">Código (interno)</label>
+    <input id="ca_code" value="${c ? c.code : ''}" ${c ? 'readonly' : ''} placeholder="olvido" style="font-family:monospace;margin-bottom:12px">
+    <label class="radio-row" style="margin-bottom:8px"><input type="checkbox" id="ca_other" ${c && c.is_other ? 'checked' : ''}>
+      <span>Pide texto libre <span class="muted" style="font-size:12px">(como "Otros": la tienda escribe el detalle)</span></span></label>
+    <label class="radio-row"><input type="checkbox" id="ca_active" ${!c || c.is_active ? 'checked' : ''}> <span>Activa</span></label>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Guardar</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const r = await cfgCatalogs({ action: 'causa_save', adminId: user.id,
+      causa: { code: $('#ca_code').value, label: $('#ca_label').value,
+        is_other: $('#ca_other').checked, is_active: $('#ca_active').checked } });
+    if (!r.ok) { alert(r.error); return; }
+    closeModal();
+    await cfgReloadCatalogs(user); cfgRenderTab(user);
+  });
+}
+
+/* Recarga catalogos (tras un cambio) sin recargar toda la vista */
+async function cfgReloadCatalogs(user) {
+  const [ty, ca] = await Promise.all([
+    cfgCatalogs({ action: 'absence_list', adminId: user.id }),
+    cfgCatalogs({ action: 'causa_list', adminId: user.id }),
+  ]);
+  if (ty.ok) CFG_DATA.types = ty.types || [];
+  if (ca.ok) CFG_DATA.causas = ca.causas || [];
 }
 
 /* ---------- navegación ---------- */
