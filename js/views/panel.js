@@ -68,7 +68,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.42</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.43</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1336,7 +1336,12 @@ function cfgRenderIntegraciones(user, body) {
       <div class="cfg-card-head"><h3>osTicket</h3><span class="cfg-saved" id="savedOst">✓ Guardado</span></div>
       <div class="cfg-lock">🔒 <div>La <b>clave API</b> no se edita aquí: vive como <b>Secret de Cloudflare</b> (<span style="font-family:monospace">osticket_api_key</span>) y nunca viaja al navegador. Para cambiarla, se actualiza en el panel de Cloudflare.</div></div>
       <div id="ostFields">${ost.map(cfgFieldRow).join('')}</div>
-      <div class="cfg-foot"><button class="btn btn-primary" id="saveOst">Guardar cambios</button></div>
+      <div class="cfg-foot">
+        <button class="btn btn-primary" id="saveOst">Guardar cambios</button>
+        <button class="btn" id="ostPing">🔬 Probar conexión</button>
+        <button class="btn" id="ostCreate" title="Crea un ticket real de prueba en el demo">🎫 Crear ticket de prueba</button>
+      </div>
+      <div id="ostTestResult" class="cfg-test-result" style="display:none"></div>
     </div>
     <div class="card">
       <div class="cfg-card-head"><h3>Notificaciones por correo</h3><span class="cfg-saved" id="savedMail">✓ Guardado</span></div>
@@ -1348,6 +1353,38 @@ function cfgRenderIntegraciones(user, body) {
     cfgSaveSection(user, $('#ostFields'), $('#savedOst'), $('#saveOst')));
   $('#saveMail').addEventListener('click', () =>
     cfgSaveSection(user, $('#mailFields'), $('#savedMail'), $('#saveMail')));
+  $('#ostPing').addEventListener('click', () => osticketTest(user, 'ping'));
+  $('#ostCreate').addEventListener('click', () => {
+    if (!confirm('Esto crea un ticket REAL en el osTicket demo (topic Ausencia). Usalo solo contra el demo. Continuar?')) return;
+    osticketTest(user, 'create');
+  });
+}
+
+/* Llama al Worker de prueba de osTicket y pinta el resultado. */
+async function osticketTest(user, mode) {
+  const box = $('#ostTestResult');
+  const pingBtn = $('#ostPing'), createBtn = $('#ostCreate');
+  pingBtn.disabled = true; createBtn.disabled = true;
+  box.style.display = 'block';
+  box.className = 'cfg-test-result testing';
+  box.textContent = mode === 'create' ? 'Creando ticket de prueba en el demo…' : 'Probando conexion con osTicket…';
+  let r;
+  try {
+    r = await fetch('/api/osticket-test', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminId: user.id, mode }),
+    }).then(x => x.json());
+  } catch (e) {
+    r = { ok: false, error: 'No se pudo contactar el servidor: ' + e.message };
+  }
+  pingBtn.disabled = false; createBtn.disabled = false;
+  const ok = r.ok;
+  box.className = 'cfg-test-result ' + (ok ? 'good' : 'bad');
+  const icon = ok ? '✅' : '⚠️';
+  const msg = r.message || r.error || (ok ? 'Conexion correcta.' : 'No se pudo verificar la conexion.');
+  const detail = r.detail ? `<div class="cfg-test-detail">Respuesta del servidor: <code>${String(r.detail).replace(/</g,'&lt;')}</code></div>` : '';
+  const statusLine = (r.status != null) ? `<div class="cfg-test-detail">Codigo HTTP: ${r.status}</div>` : '';
+  box.innerHTML = `<div class="cfg-test-msg">${icon} ${msg}</div>${statusLine}${detail}`;
 }
 
 /* ===== Pestana TIPOS DE AUSENCIA ===== */
