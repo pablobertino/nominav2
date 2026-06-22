@@ -157,6 +157,13 @@ function reportCode(id) {
   return String(id).padStart(4, '0');
 }
 
+// Construye un adjunto en el formato que ESPERA la API de osTicket:
+//   { "nombre.ext": "data:MIME;base64,XXXX" }
+// (objeto con la clave = nombre de archivo). NO {name,data,...}.
+function osAttach(filename, base64, mime) {
+  return { [filename]: `data:${mime || 'application/octet-stream'};base64,${base64}` };
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'JSON invalido' }, 400); }
@@ -596,9 +603,11 @@ async function submitAusencia(env, body) {
   // ENVIO A OSTICKET (sincrono).
   // 1) Crear/actualizar el usuario-tienda (From = "AA01 - Razon Social").
   // 2) Crear 1 ticket PLANTILLA (PLA) con el resumen de TODOS los
-  //    trabajadores. Asunto: [code] PLA [N], donde N = personas con doc.
-  // 3) Crear 1 ticket DOCUMENTO (DOC) por cada persona con archivo, con
-  //    sus adjuntos. Asunto: [code] DOC V-xxx [i-N].
+  //    trabajadores + la plantilla AX (Excel) adjunta. Es la pieza 1.
+  // 3) Crear 1 ticket DOCUMENTO (DOC) por cada persona con archivo. Las
+  //    piezas DOC se numeran a partir de 2 (el PLA es la 1).
+  //    Total de piezas T = 1 (PLA) + nDocs. Asunto PLA: [code] PLA [1/T].
+  //    Asunto DOC: [code] DOC ced [k/T] con k = 2,3,...
   // 4) Tras cada ticket, registrar la relacion (gc-report.json).
   // 5) Actualizar reports_log (osticket_id = numero del PLA, email_sent).
   // Si un DOC falla, NO se aborta el resto: se acumula en ticketErrors.
@@ -612,6 +621,8 @@ async function submitAusencia(env, body) {
   // Personas con documento (las que generan ticket DOC).
   const withDoc = doc ? clean.filter(l => l._fileB64) : [];
   const nDocs = withDoc.length;
+  // Total de piezas del reporte: el PLA (1) + un DOC por persona con doc.
+  const totalPieces = 1 + nDocs;
 
   const result = { osticket_pla: null, tickets_ok: 0, tickets_fail: 0, ticket_errors: [] };
 
@@ -658,8 +669,8 @@ async function submitAusencia(env, body) {
     });
 
     // Plantilla AX (Excel) adjunta al PLA. Tipos de celda garantizados:
-    // cedula/justificacion como TEXTO, fechas como FECHA real. El nombre
-    // del archivo sigue el patron {TIPO}_{alias}_{YYYYMMDD}.xlsx.
+    // cedula/justificacion como TEXTO, fechas como FECHA real. El formato
+    // del adjunto es el de la API de osTicket: { "nombre.xlsx": "data:..." }.
     let plaAttachments;
     try {
       const axCtx = {
@@ -676,12 +687,10 @@ async function submitAusencia(env, body) {
       };
       const wb = buildAxWorkbookBase64('ausencia', axCtx);
       if (wb) {
-        plaAttachments = [{
-          name: wb.filename,
-          data: wb.base64,
-          encoding: 'base64',
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        }];
+        plaAttachments = [osAttach(
+          wb.filename, wb.base64,
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )];
       }
     } catch (e) {
       // Si fallara el armado del Excel, el PLA igual se envia (con su texto);
@@ -693,7 +702,7 @@ async function submitAusencia(env, body) {
       const plaNum = await osticketCreateTicket(env, base, {
         email: fromEmail,
         name: fromName,
-        subject: `[${code}] PLA [${nDocs}]`,
+        subject: `[${code}] PLA [1/${totalPieces}]`,
         message: plaBody,
         topicId,
         source: 'API',
@@ -715,16 +724,17 @@ async function submitAusencia(env, body) {
       result.ticket_errors.push(`PLA: ${String(e.message || e)}`);
     }
 
-    // 3) Un ticket DOC por persona con documento.
+    // 3) Un ticket DOC por persona con documento. Pieza k = 2,3,... (el PLA es 1).
     for (let i = 0; i < withDoc.length; i++) {
       const l = withDoc[i];
       const ced = l.worker_id_number;
       const fname = l._fileName || `documento_${ced}`;
+      const piece = i + 2;   // el PLA ocupo la pieza 1
       try {
         const docNum = await osticketCreateTicket(env, base, {
           email: fromEmail,
           name: fromName,
-          subject: `[${code}] DOC ${ced} [${i + 1}-${nDocs}]`,
+          subject: `[${code}] DOC ${ced} [${piece}/${totalPieces}]`,
           message:
             `Documento(s) de ${l.worker_name} (${ced}) - reporte ${code}.\n` +
             `Tipo: ${atype.label} (AX: ${axCode}) - ${l.date_from === l.date_to ? l.date_from : l.date_from + ' a ' + l.date_to}.`,
@@ -734,19 +744,14 @@ async function submitAusencia(env, body) {
           autorespond: false,
           report_code: code,
           report_kind: 'DOC',
-          attachments: [{
-            name: fname,
-            data: l._fileB64,
-            encoding: 'base64',
-            type: l._fileType || 'application/octet-stream',
-          }],
+          attachments: [osAttach(fname, l._fileB64, l._fileType || 'application/octet-stream')],
         });
         result.tickets_ok++;
         await gcReportLink(env, base, {
           report_code: code, ticket_number: docNum, kind: 'DOC',
           company: cc, report_type: 'ausencia',
           worker_id: ced, worker_name: l.worker_name,
-          doc_pos: i + 1, doc_total: nDocs,
+          doc_pos: piece, doc_total: totalPieces,
         });
       } catch (e) {
         result.tickets_fail++;
