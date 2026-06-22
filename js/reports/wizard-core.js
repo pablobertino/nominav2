@@ -169,7 +169,7 @@ export function launchWizard(user, reportDef, onExit) {
           <thead><tr>
             <th class="sortable" data-sort="name">Trabajador ⇅</th>
             <th class="sortable" data-sort="ced">Cédula ⇅</th>
-            <th>Cargo</th><th>Estado</th>
+            <th class="sortable" data-sort="role">Cargo ⇅</th><th>Estado</th>
           </tr></thead><tbody id="rBody"></tbody>
         </table></div>
       </div>
@@ -219,13 +219,21 @@ export function launchWizard(user, reportDef, onExit) {
     list = Pick.sortRoster(list, S.rosterSort.key, S.rosterSort.dir);
     const vig = S.roster.filter(r => !r.end_date).length;
     if ($('#rInfo')) $('#rInfo').textContent = `${S.roster.length} en total · ${vig} vigentes`;
-    $('#rBody').innerHTML = list.map(r => `
-      <tr class="${r.end_date ? 'egresado' : ''}">
+    $('#rBody').innerHTML = list.map(r => {
+      const mr = r.manager_role || null;   // 'Gerente' | 'Sub-Gerente' | null
+      // Destacar responsables con fondo suave (gerente mas marcado que sub).
+      const rowStyle = mr === 'Gerente'
+        ? 'background:#eaf3ff'
+        : (mr === 'Sub-Gerente' ? 'background:#f2f7ff' : '');
+      const mgrBadge = mr ? ` <span class="pill pill-set" style="margin-left:4px">${mr}</span>` : '';
+      return `
+      <tr class="${r.end_date ? 'egresado' : ''} ${mr ? 'mgr-row' : ''}" ${rowStyle ? `style="${rowStyle}"` : ''}>
         <td class="pname">${r.full_name}</td>
         <td class="ced">${r.id_number}</td>
-        <td><span class="pill pill-role">${r.role || 'sin cargo'}</span></td>
+        <td><span class="pill pill-role">${r.role || 'sin cargo'}</span>${mgrBadge}</td>
         <td>${Roster.workerStatusLabel(r)}</td>
-      </tr>`).join('') || '<tr><td colspan="4" class="empty">Sin coincidencias.</td></tr>';
+      </tr>`;
+    }).join('') || '<tr><td colspan="4" class="empty">Sin coincidencias.</td></tr>';
   }
 
   async function onPickFile(e) {

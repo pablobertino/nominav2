@@ -91,11 +91,21 @@ export async function onRequestPost({ request, env }) {
       const workers = await sb(env,
         `store_workers?company_code=eq.${encodeURIComponent(cc)}`
         + `&select=id_number,full_name,role,has_biometric,start_date,end_date,is_active&order=full_name.asc`);
+      // Marcar cada trabajador con su rol de responsable detectado
+      // (manager_role: 'Gerente'|'Sub-Gerente'|null) usando las reglas
+      // configurables. Asi el front puede ordenar/destacar gerentes sin
+      // conocer los patrones (una sola fuente de verdad, el Worker).
+      const roleRules = await sb(env,
+        'manager_role_rules?is_active=eq.true&select=pattern,result_role&order=sort_order.asc');
+      const out = (workers || []).map(w => ({
+        ...w,
+        manager_role: detectManagerRole(w.role, roleRules),
+      }));
       const metaArr = await sb(env,
         `store_roster_meta?company_code=eq.${encodeURIComponent(cc)}`
         + `&select=uploaded_at,uploaded_by,total_count,active_count,source_file`);
       const meta = metaArr && metaArr[0] ? metaArr[0] : null;
-      return json({ ok: true, workers: workers || [], meta });
+      return json({ ok: true, workers: out, meta });
     }
 
     if (action === 'replace') {

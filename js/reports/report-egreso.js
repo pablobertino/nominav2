@@ -327,7 +327,7 @@ function openConfig(ctx, id) {
       <p class="who">${w.name} · ${w.ced}${w.endDate ? ` · egreso ya registrado ${DW.fmtDate(w.endDate)}` : ''}</p>
 
       <div><label class="flabel">Fecha de egreso <span style="color:var(--danger)">*</span> <span style="color:var(--muted);font-weight:400">(la que se reporta a Nómina)</span></label>
-        <input type="date" id="egDate" max="${maxEgreso}" value="${tmp.reportDate}"></div>
+        <input type="date" id="egDate" min="${win.reportMin}" max="${maxEgreso}" value="${tmp.reportDate}"></div>
       <div class="date-err" id="egErr" style="color:var(--danger);font-size:12px;min-height:16px;margin-top:6px"></div>
 
       <div style="margin-top:10px">
@@ -494,7 +494,7 @@ function openBulk(ctx) {
       <h3>Aplicar a seleccionados</h3>
       <p class="who">${ids.length} trabajador(es) · se aplica la misma fecha de egreso</p>
       <div><label class="flabel">Fecha de egreso <span style="color:var(--danger)">*</span></label>
-        <input type="date" id="bDate" max="${win.reportMax}"></div>
+        <input type="date" id="bDate" min="${win.reportMin}" max="${win.reportMax}"></div>
       <div class="date-err" id="bErr" style="color:var(--danger);font-size:12px;min-height:16px;margin-top:6px"></div>
       <div style="margin-top:12px"><label class="flabel">Carta de renuncia (causa común, opcional)</label>
         <select id="bCause">

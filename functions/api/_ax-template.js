@@ -328,7 +328,11 @@ function axAusencia(ctx) {
 }
 
 // INGRESO/EGRESO/MODIFICACION: 18 columnas. accion A/B/M.
-function axIngEgr(ctx, accion, filename) {
+// La plantilla de AX espera SIEMPRE las 18 columnas (formato fijo), por eso
+// no se elimina ninguna: en egreso (Baja) la columna TodoTicket va VACIA en
+// vez de 'N' (no aplica dar de alta nada). El control es el flag
+// fillTodoTicket: true (ingreso) -> 'N' por defecto; false (egreso) -> vacio.
+function axIngEgr(ctx, accion, filename, fillTodoTicket = true) {
   const cols = [
     { hdr: 'Nombre', key: 'nombre', type: 'text' },
     { hdr: 'Segundo Nombre', key: 'nombre2', type: 'text' },
@@ -365,7 +369,7 @@ function axIngEgr(ctx, accion, filename) {
     telefono: l.telefono || '',
     genero: l.genero || '',
     cuenta: String(l.cuenta || '').replace(/[^0-9]/g, ''),
-    todoTicket: l.todoTicket || 'N',
+    todoTicket: fillTodoTicket ? (l.todoTicket || 'N') : (l.todoTicket || ''),
     accion: accion,
     clave: '',
   }));
@@ -381,9 +385,9 @@ export function buildAxWorkbookBase64(kind, ctx) {
   let r = null;
   if (kind === 'marcaje') r = axMarcaje(ctx);
   else if (kind === 'ausencia') r = axAusencia(ctx);
-  else if (kind === 'ingreso') r = axIngEgr(ctx, 'A', 'INGRESOS_ALTA');
-  else if (kind === 'egreso') r = axIngEgr(ctx, 'B', 'EGRESOS_BAJA');
-  else if (kind === 'modificacion') r = axIngEgr(ctx, 'M', 'MODIFICACIONES');
+  else if (kind === 'ingreso') r = axIngEgr(ctx, 'A', 'INGRESOS_ALTA', true);
+  else if (kind === 'egreso') r = axIngEgr(ctx, 'B', 'EGRESOS_BAJA', false);   // egreso: TodoTicket vacio
+  else if (kind === 'modificacion') r = axIngEgr(ctx, 'M', 'MODIFICACIONES', true);
   if (!r) return null;
   const alias = ctx.companyAlias || 'tienda';
   const today = (ctx.todayYmd || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
