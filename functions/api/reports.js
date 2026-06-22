@@ -253,7 +253,7 @@ async function submitMarcaje(env, body) {
   (roster || []).forEach(w => { endDateByCed[w.id_number] = w.end_date || null; });
 
   // Causas validas
-  const causes = await sb(env, 'marcaje_causas?is_active=eq.true&select=code,is_other');
+  const causes = await sb(env, 'marcaje_causas?is_active=eq.true&select=code,label,is_other');
   const causeMap = {};
   (causes || []).forEach(c => { causeMap[c.code] = c; });
 
@@ -264,6 +264,8 @@ async function submitMarcaje(env, body) {
     const ced = String(ln.id_number || '').replace(/[^0-9]/g, '');
     const name = String(ln.name || '').trim();
     const date = String(ln.mark_date || '').slice(0, 10);
+    const dayType = String(ln.day_type || 'L').trim().toUpperCase() === 'D' ? 'D' : 'L';
+    const isRest = dayType === 'D';
     const tin = String(ln.time_in || '').slice(0, 5);
     const tout = String(ln.time_out || '').slice(0, 5);
     const cause = String(ln.cause_code || '').trim();
@@ -273,8 +275,12 @@ async function submitMarcaje(env, body) {
     if (!ced || ced.length < 6 || ced.length > 8) { errors.push(`${tag}: cedula invalida.`); return; }
     if (!name) { errors.push(`${tag}: falta el nombre.`); return; }
     if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) { errors.push(`${tag}: fecha invalida.`); return; }
-    if (!/^\d{2}:\d{2}$/.test(tin) || !/^\d{2}:\d{2}$/.test(tout)) { errors.push(`${tag}: horas invalidas.`); return; }
-    if (toMin(tin) >= toMin(tout)) { errors.push(`${tag}: la entrada debe ser menor que la salida.`); return; }
+    // Horas: en Laborable son obligatorias y entrada < salida; en Descanso
+    // NO se piden (la jornada no aplica) y se guardan como NULL.
+    if (!isRest) {
+      if (!/^\d{2}:\d{2}$/.test(tin) || !/^\d{2}:\d{2}$/.test(tout)) { errors.push(`${tag}: horas invalidas.`); return; }
+      if (toMin(tin) >= toMin(tout)) { errors.push(`${tag}: la entrada debe ser menor que la salida.`); return; }
+    }
     if (!causeMap[cause]) { errors.push(`${tag}: causa invalida.`); return; }
     if (causeMap[cause].is_other && !otherText) { errors.push(`${tag}: especifica la causa (Otros).`); return; }
 
@@ -296,10 +302,12 @@ async function submitMarcaje(env, body) {
       worker_id_number: ced,
       worker_name: name,
       mark_date: date,
-      time_in: tin,
-      time_out: tout,
+      day_type: dayType,
+      time_in: isRest ? null : tin,
+      time_out: isRest ? null : tout,
       cause_code: cause,
       cause_other_text: causeMap[cause].is_other ? otherText : null,
+      _causeLabel: causeMap[cause].label || cause,   // interno: para el Excel y el cuerpo
     });
   });
 
@@ -307,14 +315,35 @@ async function submitMarcaje(env, body) {
     return json({ ok: false, error: 'Hay datos que no cumplen las reglas.', details: errors }, 422);
   }
 
-  // --- Zona/subzona + datos de contacto de la tienda (encabezado + From osTicket) ---
+  // --- Datos de la tienda (encabezado + From osTicket + plantilla AX) ---
+  // data_area es el Data ID que la plantilla AX necesita; los nombres de
+  // zona/subzona/marca alimentan el cuerpo de texto del ticket.
   const comp = await sb(env,
-    `companies?company_code=eq.${encodeURIComponent(cc)}&select=zone_id,subzone_id,business_name,email,phone`);
+    `companies?company_code=eq.${encodeURIComponent(cc)}&select=data_area,zone_id,subzone_id,business_name,email,phone,concept_id`);
   const zone_id = comp && comp[0] ? comp[0].zone_id : null;
   const subzone_id = comp && comp[0] ? comp[0].subzone_id : null;
   const compBusinessName = comp && comp[0] ? (comp[0].business_name || '') : '';
   const compEmail = comp && comp[0] ? (comp[0].email || '') : '';
   const compPhone = comp && comp[0] ? (comp[0].phone || '') : '';
+  const compDataArea = comp && comp[0] ? (comp[0].data_area || '') : '';
+  const compConceptId = comp && comp[0] ? comp[0].concept_id : null;
+
+  // Nombres legibles de zona/subzona/marca para el cuerpo del ticket.
+  let zonaName = '', subzonaName = '', marcaName = '';
+  if (subzone_id != null) {
+    const sz = await sb(env, `subzones?id=eq.${encodeURIComponent(subzone_id)}&select=name`);
+    subzonaName = sz && sz[0] ? (sz[0].name || '') : '';
+  }
+  if (zone_id != null) {
+    const zn = await sb(env, `zones?id=eq.${encodeURIComponent(zone_id)}&select=name`);
+    zonaName = zn && zn[0] ? (zn[0].name || '') : '';
+  }
+  if (compConceptId != null) {
+    const cn = await sb(env, `concepts?id=eq.${encodeURIComponent(compConceptId)}&select=name`);
+    marcaName = cn && cn[0] ? (cn[0].name || '') : '';
+  }
+  // Mall / Zona del cuerpo: preferimos subzona (el mall) y caemos a zona.
+  const mallZona = subzonaName || zonaName || '';
 
   // --- Encabezado en reports_log ---
   const header = await sb(env, 'reports_log', {
@@ -336,18 +365,156 @@ async function submitMarcaje(env, body) {
   const reportId = header && header[0] && header[0].id;
   if (!reportId) return json({ ok: false, error: 'No se pudo registrar el reporte.' }, 500);
 
-  // --- Detalle en mark_report_lines ---
-  const payload = clean.map(l => ({ ...l, report_id: reportId }));
+  // --- Detalle en mark_report_lines (sin los campos internos _*) ---
+  const payload = clean.map(l => ({
+    report_id: reportId,
+    worker_id_number: l.worker_id_number,
+    worker_name: l.worker_name,
+    mark_date: l.mark_date,
+    day_type: l.day_type,
+    time_in: l.time_in,
+    time_out: l.time_out,
+    cause_code: l.cause_code,
+    cause_other_text: l.cause_other_text,
+  }));
   await sb(env, 'mark_report_lines', { method: 'POST', body: JSON.stringify(payload) });
 
-  // TODO (siguiente bloque): enviar a osTicket (topic 19) y marcar
-  // osticket_id / email_sent. Por ahora queda registrado en BD.
+  // ───────────────────────────────────────────────────────────────────
+  // ENVIO A OSTICKET (sincrono). Marcaje NO lleva documentos: es un solo
+  // ticket PLANTILLA (PLA) con la plantilla AX (Excel) adjunta. Pieza 1/1.
+  // 1) Crear/actualizar el usuario-tienda (From). 2) Crear el PLA con el
+  // cuerpo de texto (buildReportText) + Excel axMarcaje. 3) Registrar la
+  // relacion (gc-report.json). 4) Actualizar reports_log (osticket_id,
+  // email_sent). El Excel manda data_area como TEXTO, fecha como FECHA,
+  // horas como HORA (vacias en Descanso), Tipo de dia L/D y Causa legible.
+  // ───────────────────────────────────────────────────────────────────
+  const code = reportCode(reportId);
+  const base = await osticketBase(env);
+  const topicId = parseInt(await getSetting(env, 'osticket_topic_marcaje', '19'), 10) || 19;
+  const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
+  const fromName = `${cc} - ${compBusinessName || cc}`;
+  const totalPieces = 1;   // marcaje = solo PLA
+
+  const result = { osticket_pla: null, tickets_ok: 0, tickets_fail: 0, ticket_errors: [] };
+
+  if (!base || !env.osticket_api_key) {
+    result.ticket_errors.push('osTicket no configurado (url o api key).');
+  } else {
+    // 1) Usuario-tienda (idempotente). Auto-sync por uso (igual que ausencia).
+    const ostUserId = await gcUser(env, base, { email: fromEmail, name: fromName, phone: compPhone });
+    if (ostUserId) {
+      try {
+        await sb(env, `companies?company_code=eq.${encodeURIComponent(cc)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ osticket_user_id: ostUserId, osticket_synced_at: new Date().toISOString() }),
+        });
+      } catch { /* no critico */ }
+    }
+
+    // 2) Cuerpo del PLA. Cada registro: Trabajador, Cedula, Fecha, Tipo de
+    //    dia (Laborable (L)/Descanso (D)), y Entrada/Salida solo si es
+    //    laborable. La Causa se muestra con su label legible (no el code).
+    const registros = clean.map(l => {
+      const causaTxt = l.cause_code === 'other' ? (l.cause_other_text || 'Otros') : (l._causeLabel || l.cause_code);
+      const campos = [
+        ['Trabajador', l.worker_name],
+        ['Cédula', l.worker_id_number],
+        ['Fecha', dmy(l.mark_date)],
+        ['Tipo de día', l.day_type === 'D' ? 'Descanso (D)' : 'Laborable (L)'],
+      ];
+      if (l.day_type !== 'D') {
+        campos.push(['Entrada', l.time_in]);
+        campos.push(['Salida', l.time_out]);
+      }
+      campos.push(['Causa', causaTxt]);
+      return campos;
+    });
+    const plaBody = buildReportText({
+      pieceLabel: 'PLANTILLA', reportCode: code, piece: 1, totalPieces,
+      topicLabel: 'Marcaje Manual',
+      fecha: dmy(today), hora: nowHHMM,
+      alias: cc, razon: compBusinessName, zona: mallZona, marca: marcaName,
+      correoTienda: compEmail,
+      responsable: responsible, cargo: position, telefono: compPhone, correoResp: compEmail,
+      registros,
+    });
+
+    // Plantilla AX (Excel) adjunta. axMarcaje espera por linea: id_number,
+    // date, time_in/out (vacias si 'D'), tipo (L/D) y causa_label (texto).
+    let plaAttachments;
+    try {
+      const axCtx = {
+        companyDataArea: compDataArea,
+        companyName: compBusinessName,
+        companyAlias: cc,
+        todayYmd: today,
+        reportCode: code,
+        lines: clean.map(l => ({
+          id_number: l.worker_id_number,
+          date: l.mark_date,
+          time_in: l.time_in || '',
+          time_out: l.time_out || '',
+          tipo: l.day_type,
+          causa_label: l.cause_code === 'other' ? (l.cause_other_text || 'Otros') : (l._causeLabel || l.cause_code),
+        })),
+      };
+      const wb = buildAxWorkbookBase64('marcaje', axCtx);
+      if (wb) {
+        plaAttachments = [osAttach(
+          wb.filename, wb.base64,
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )];
+      }
+    } catch (e) {
+      result.ticket_errors.push(`Plantilla AX: ${String(e.message || e)}`);
+    }
+
+    try {
+      const plaNum = await osticketCreateTicket(env, base, {
+        email: fromEmail,
+        name: fromName,
+        subject: `[${code}] PLA [1/${totalPieces}]`,
+        message: plaBody,
+        topicId,
+        source: 'API',
+        alert: false,
+        autorespond: false,
+        report_code: code,
+        report_kind: 'PLA',
+        ...(plaAttachments ? { attachments: plaAttachments } : {}),
+      });
+      result.osticket_pla = plaNum;
+      result.tickets_ok++;
+      await gcReportLink(env, base, {
+        report_code: code, ticket_number: plaNum, kind: 'PLA',
+        company: cc, report_type: 'marcaje', doc_total: 0,
+      });
+    } catch (e) {
+      result.tickets_fail++;
+      result.ticket_errors.push(`PLA: ${String(e.message || e)}`);
+    }
+
+    if (result.osticket_pla) {
+      try {
+        await sb(env, `reports_log?id=eq.${reportId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ osticket_id: result.osticket_pla, email_sent: true }),
+        });
+      } catch { /* el reporte ya esta en BD */ }
+    }
+  }
 
   return json({
     ok: true,
     report_id: reportId,
     workers_count: clean.length,
     window: { today, now: nowHHMM, report_min: reportMin, report_max: reportMax },
+    osticket: {
+      pla: result.osticket_pla,
+      tickets_ok: result.tickets_ok,
+      tickets_fail: result.tickets_fail,
+      errors: result.ticket_errors,
+    },
   });
 }
 

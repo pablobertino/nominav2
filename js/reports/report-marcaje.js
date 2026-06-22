@@ -37,15 +37,18 @@ export const marcajeReport = {
 
   summaryColumns: [
     { key: 'date', label: 'Fecha' },
+    { key: 'day_type', label: 'Tipo' },
     { key: 'time_in', label: 'Entrada' },
     { key: 'time_out', label: 'Salida' },
     { key: 'cause', label: 'Causa' },
   ],
   summaryCell(w, key) {
     const m = w.mark || {};
+    const isRest = m.dayType === 'D';
     if (key === 'date') return m.date ? DW.fmtDate(m.date) : '—';
-    if (key === 'time_in') return `<span class="time-badge">${m.timeIn || '—'}</span>`;
-    if (key === 'time_out') return `<span class="time-badge">${m.timeOut || '—'}</span>`;
+    if (key === 'day_type') return isRest ? 'Descanso (D)' : 'Laborable (L)';
+    if (key === 'time_in') return isRest ? '—' : `<span class="time-badge">${m.timeIn || '—'}</span>`;
+    if (key === 'time_out') return isRest ? '—' : `<span class="time-badge">${m.timeOut || '—'}</span>`;
     if (key === 'cause') return m.cause === 'other' ? (m.other || 'Otros…') : causeLabel(m.cause);
     return '';
   },
@@ -60,7 +63,8 @@ export const marcajeReport = {
   async submit({ companyCode, responsible, position, workers, source_kind, source_admin_id }) {
     const lines = workers.map(w => ({
       id_number: w.ced, name: w.name,
-      mark_date: w.mark.date, time_in: w.mark.timeIn, time_out: w.mark.timeOut,
+      mark_date: w.mark.date, day_type: w.mark.dayType || 'L',
+      time_in: w.mark.timeIn, time_out: w.mark.timeOut,
       cause_code: w.mark.cause, cause_other_text: w.mark.cause === 'other' ? w.mark.other : null,
     }));
     const res = await fetch('/api/reports', {
@@ -89,7 +93,7 @@ function paintStep4(ctx) {
     </div>
     <table id="m4Tbl"><thead><tr>
       <th style="width:30px"><input type="checkbox" class="chk" id="m4All"></th>
-      <th>Trabajador</th><th>Fecha</th><th>Entrada</th><th>Salida</th><th>Causa</th><th style="width:70px"></th>
+      <th>Trabajador</th><th>Fecha</th><th>Tipo</th><th>Entrada</th><th>Salida</th><th>Causa</th><th style="width:70px"></th>
     </tr></thead><tbody id="m4Body"></tbody></table>
     <div class="wiz-foot">
       <button class="btn" id="m4Back">← Atrás</button>
@@ -121,15 +125,17 @@ function paintBody(ctx) {
   const { workers, fmt } = ctx;
   $('#m4Body').innerHTML = workers.map(w => {
     const m = w.mark;
+    const isRest = m && m.dayType === 'D';
     const fecha = m ? fmt.fmtDate(m.date) : '<span class="pill pill-pend">pendiente</span>';
-    const tin = m ? `<span class="time-badge">${m.timeIn}</span>` : '—';
-    const tout = m ? `<span class="time-badge">${m.timeOut}</span>` : '—';
+    const tipo = m ? (isRest ? 'Descanso (D)' : 'Laborable (L)') : '—';
+    const tin = m ? (isRest ? '—' : `<span class="time-badge">${m.timeIn}</span>`) : '—';
+    const tout = m ? (isRest ? '—' : `<span class="time-badge">${m.timeOut}</span>`) : '—';
     const causa = m ? (m.cause === 'other' ? (m.other || 'Otros…') : causeLabel(m.cause)) : '—';
     return `<tr>
       <td><input type="checkbox" class="chk m4sel" value="${w.id}"></td>
       <td><b>${w.name}</b><br><span style="font-size:12px;color:var(--muted)" class="ced">${w.ced}</span>
         ${w.endDate ? `<br><span class="pill pill-out" style="margin-top:3px">marcaje máx. ${fmt.fmtDate(w.endDate)}</span>` : ''}</td>
-      <td>${fecha}</td><td>${tin}</td><td>${tout}</td><td>${causa}</td>
+      <td>${fecha}</td><td>${tipo}</td><td>${tin}</td><td>${tout}</td><td>${causa}</td>
       <td style="white-space:nowrap"><button class="btn btn-sm" data-edit="${w.id}" title="Configurar">✏️</button>
         <button class="x-btn" data-rm="${w.id}" title="Quitar">✕</button></td>
     </tr>`;
@@ -175,10 +181,14 @@ function openCfg(mode, ctx) {
         <div><label class="flabel">Fecha</label>
           <input type="date" id="cfgDate" min="${win.reportMin}" max="${maxForWorker}">
           <div class="date-err" id="dateErr"></div></div>
+        <div><label class="flabel">Tipo de día</label>
+          <select id="cfgDayType"><option value="L" selected>Laborable (L)</option><option value="D">Descanso (D)</option></select></div>
+      </div>
+      <div class="grid2" style="margin-bottom:8px">
         <div><label class="flabel">Causa</label>
           <select id="cfgCause"><option value="" selected>Selecciona una causa…</option>${(CAUSES || []).map(c => `<option value="${c.code}">${c.label}</option>`).join('')}</select></div>
       </div>
-      <div class="grid2" style="margin-bottom:8px">
+      <div class="grid2" style="margin-bottom:8px" id="cfgHoras">
         <div><label class="flabel">Hora de entrada</label><input type="time" id="cfgIn"></div>
         <div><label class="flabel">Hora de salida</label><input type="time" id="cfgOut"></div>
       </div>
@@ -194,7 +204,8 @@ function openCfg(mode, ctx) {
 
   const dEl = ov.querySelector('#cfgDate'), inEl = ov.querySelector('#cfgIn'),
         outEl = ov.querySelector('#cfgOut'), causeEl = ov.querySelector('#cfgCause'),
-        otherEl = ov.querySelector('#cfgOther'), applyB = ov.querySelector('#cfgApply');
+        otherEl = ov.querySelector('#cfgOther'), applyB = ov.querySelector('#cfgApply'),
+        dtEl = ov.querySelector('#cfgDayType'), horasWrap = ov.querySelector('#cfgHoras');
 
   // valores iniciales: SOLO si se esta editando un marcaje ya configurado.
   // Para uno nuevo no se precarga nada (ni fecha, ni causa, ni horas) para
@@ -202,8 +213,18 @@ function openCfg(mode, ctx) {
   if (!isBulk && w.mark) {
     dEl.value = w.mark.date; causeEl.value = w.mark.cause; otherEl.value = w.mark.other || '';
     inEl.value = w.mark.timeIn; outEl.value = w.mark.timeOut;
+    dtEl.value = w.mark.dayType || 'L';
   }
   toggleOther();
+  toggleHoras();
+
+  // Descanso (D): el dia no tiene jornada, asi que se ocultan y limpian las
+  // horas; en Laborable (L) se piden ambas.
+  function toggleHoras() {
+    const isRest = dtEl.value === 'D';
+    horasWrap.style.display = isRest ? 'none' : 'grid';
+    if (isRest) { inEl.value = ''; outEl.value = ''; ov.querySelector('#timeErr').textContent = ''; }
+  }
 
   function toggleOther() {
     const c = (CAUSES || []).find(x => x.code === causeEl.value);
@@ -218,6 +239,7 @@ function openCfg(mode, ctx) {
     return v.ok;
   }
   function validateTimes() {
+    if (dtEl.value === 'D') { ov.querySelector('#timeErr').textContent = ''; return true; }  // descanso: sin horas
     if (!inEl.value || !outEl.value) { ov.querySelector('#timeErr').textContent = ''; return false; }
     const bad = inEl.value >= outEl.value;
     ov.querySelector('#timeErr').textContent = bad ? 'La hora de entrada debe ser menor que la de salida.' : '';
@@ -236,6 +258,7 @@ function openCfg(mode, ctx) {
   dEl.addEventListener('input', recheck);
   inEl.addEventListener('input', recheck);
   outEl.addEventListener('input', recheck);
+  dtEl.addEventListener('change', () => { toggleHoras(); recheck(); });
   causeEl.addEventListener('change', () => { toggleOther(); recheck(); });
   otherEl.addEventListener('input', recheck);
   ov.querySelector('#cfgCancel').addEventListener('click', () => ov.remove());
@@ -244,7 +267,9 @@ function openCfg(mode, ctx) {
   applyB.addEventListener('click', () => {
     const mark = {
       date: dEl.value, cause: causeEl.value, other: otherEl.value.trim(),
-      timeIn: inEl.value, timeOut: outEl.value,
+      dayType: dtEl.value,
+      timeIn: dtEl.value === 'D' ? '' : inEl.value,
+      timeOut: dtEl.value === 'D' ? '' : outEl.value,
     };
     if (isBulk) {
       let skipped = 0;
