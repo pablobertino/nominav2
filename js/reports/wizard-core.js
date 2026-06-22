@@ -657,21 +657,64 @@ export function launchWizard(user, reportDef, onExit) {
       return;
     }
     S.lastReportId = res.report_id;
+    S.lastResult = res; // guarda la respuesta completa (incluye osticket:{...})
     setStep(6);
   }
 
   /* ---------- PASO 6: listo ---------- */
   function stepDone() {
     const panel = $('#wzPanel');
+    const rep = S.lastReportId ? ` (<b>Reporte #${S.lastReportId}</b>)` : '';
+    const ost = (S.lastResult && S.lastResult.osticket) || null;
+
+    // Tres escenarios:
+    //  a) osTicket OK: hay PLA y ningun ticket fallo -> confirmacion plena.
+    //  b) osTicket parcial: hay PLA pero algun DOC fallo -> aviso suave.
+    //  c) osTicket no salio (sin pla): el reporte SI quedo en BD, pero no
+    //     llego a Capital Humano por osTicket -> avisar para reintentar.
+    let banner, detail;
+    if (!ost) {
+      // Reporte sin fase osTicket (p.ej. marcaje aun no conectado): cierre clasico.
+      banner = '<div class="ok-banner">✓ Reporte enviado correctamente</div>';
+      detail = `Tu reporte quedó registrado${rep} y será atendido por Capital Humano.`;
+    } else if (ost.pla && ost.tickets_fail === 0) {
+      banner = '<div class="ok-banner">✓ Reporte enviado a Capital Humano</div>';
+      // tickets_ok = 1 PLA + N DOC. nDocs = los DOC (uno por persona con documento).
+      const nDocs = Math.max(0, (ost.tickets_ok || 1) - 1);
+      if (nDocs > 0) {
+        const total = nDocs + 1;
+        detail = `Tu reporte quedó registrado${rep} y llegó a Capital Humano. Se crearon <b>${total} tickets</b>: 1 PLA (resumen) #${ost.pla} + ${nDocs} DOC (documentos).`;
+      } else {
+        detail = `Tu reporte quedó registrado${rep} y llegó a Capital Humano como ticket PLA <b>#${ost.pla}</b>.`;
+      }
+    } else if (ost.pla && ost.tickets_fail > 0) {
+      const n = ost.tickets_fail;
+      const plural = n === 1 ? 'documento' : 'documentos';
+      banner = '<div class="ok-banner warn">⚠ Reporte enviado, con observaciones</div>';
+      detail = `Tu reporte quedó registrado${rep} y se creó el PLA <b>#${ost.pla}</b>, pero ${n} DOC no se ${n === 1 ? 'pudo' : 'pudieron'} enviar. Capital Humano ya tiene el reporte; es posible que debas reenviar ${n === 1 ? 'ese ' + plural : 'esos ' + plural}.`;
+    } else {
+      banner = '<div class="ok-banner warn">⚠ Reporte guardado, pendiente de enviar</div>';
+      detail = `Tu reporte quedó registrado${rep}, pero no se pudo crear el ticket en Capital Humano en este momento. El reporte está a salvo; intenta reenviarlo o avisa a Sistemas.`;
+    }
+
+    // Detalle tecnico de errores (plegado), util para soporte. Solo si hubo fallos.
+    const errs = (ost && ost.errors && ost.errors.length) ? ost.errors : [];
+    const errBlock = errs.length
+      ? `<details class="done-errors"><summary>Ver detalle técnico (${errs.length})</summary>
+           <ul>${errs.map(e => `<li>${String(e).replace(/</g, '&lt;')}</li>`).join('')}</ul></details>`
+      : '';
+
     panel.innerHTML = `
-      <div class="ok-banner">✓ Reporte enviado correctamente</div>
-      <p class="hint" style="text-align:center">Tu reporte quedó registrado${S.lastReportId ? ` (folio #${S.lastReportId})` : ''} y será atendido por Capital Humano.</p>
+      ${banner}
+      <p class="hint" style="text-align:center">${detail}</p>
+      ${errBlock}
       <div class="wiz-foot" style="justify-content:center">
         <button class="btn btn-primary" id="doneNew">Nuevo reporte</button>
       </div>`;
     $('#doneNew').addEventListener('click', () => {
       // reset
       S.step = 1; S.workers = []; S.nextId = 1; S.selResp = null;
+      S.lastResult = null;
       paintStep();
     });
   }
