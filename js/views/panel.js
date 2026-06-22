@@ -69,7 +69,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.55</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.56</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -533,15 +533,27 @@ async function usuariosPortalTab(user, body) {
   const types = [...new Set(CU_ROWS.map(r => r.type).filter(Boolean))].sort();
 
   body.innerHTML = `
-    <p id="cuCount" class="muted" style="font-size:13px;margin:0 0 14px"></p>
+    <div class="pnl-head" style="padding-top:0">
+      <p id="cuCount" class="muted" style="font-size:13px;margin:0"></p>
+      <div class="export-wrap">
+        <button class="btn" id="cuExportBtn">Exportar ▾</button>
+        <div class="export-menu" id="cuExportMenu" hidden>
+          <button data-fmt="xlsx">Excel (.xlsx)</button>
+          <button data-fmt="csv">CSV (.csv)</button>
+          <button data-fmt="txt">Texto (.txt)</button>
+        </div>
+      </div>
+    </div>
     <div class="pnl-filters">
       <div class="search">${I.search}<input id="cuName" placeholder="Buscar compañía o código…"></div>
       <select id="cuType"><option value="Tienda">Tipo: Tienda</option>${types.filter(t=>t!=='Tienda').map(t=>`<option>${t}</option>`).join('')}<option value="ALL">Todos los tipos</option></select>
       <select id="cuAccess"><option value="ALL">Todas</option><option value="yes">Con acceso</option><option value="no">Sin acceso</option></select>
     </div>
     <div class="tablebox"><table><thead><tr>
-      <th>Código</th><th>Compañía</th><th>Tipo</th><th>Usuario / Correo</th><th>Estado</th><th style="text-align:right">Acciones</th>
+      <th>Código</th><th>Compañía</th><th>Tipo</th><th>Usuario</th><th>Correo</th><th>Teléfono</th><th>Estado</th><th style="text-align:right">Acciones</th>
     </tr></thead><tbody id="cuBody"></tbody></table></div>`;
+
+  let cuVisible = [];   // filas actualmente filtradas (para exportar)
 
   const fName = $('#cuName'), fType = $('#cuType'), fAccess = $('#cuAccess');
   function render() {
@@ -550,12 +562,23 @@ async function usuariosPortalTab(user, body) {
       (`${r.code} ${r.name || ''}`.toLowerCase().includes(n))
       && (fType.value === 'ALL' || r.type === fType.value)
       && (fAccess.value === 'ALL' || (fAccess.value === 'yes' ? !!r.user : !r.user)));
+    cuVisible = rows;
     $('#cuCount').textContent = `${rows.length} de ${CU_ROWS.length} compañías`;
     $('#cuBody').innerHTML = rows.map(r => {
       const u = r.user;
+      // Correo: el del usuario si existe; si no, el de la compañía.
+      const correo = (u && u.email) || r.companyEmail || null;
+      const correoCell = correo
+        ? correo
+        : '<span class="muted" style="font-size:12px">—</span>';
+      // Teléfono: de la compañía (no vive en el usuario). Muestra ambos si hay.
+      const tel = phoneDisplay(r.companyPhone);
+      const tel2 = phoneDisplay(r.companyPhone2);
+      const telLine = [tel, tel2].filter(Boolean).join(' / ');
+      const telCell = telLine || '<span class="muted" style="font-size:12px">—</span>';
       const userCell = u
-        ? `${r.code}<br><span class="muted" style="font-size:12px">${u.email || 'sin correo'}</span>`
-        : `<span class="muted" style="font-size:12px">— sin usuario —</span>`;
+        ? `<span class="code">${r.code}</span>`
+        : '<span class="muted" style="font-size:12px">— sin usuario —</span>';
       const stateCell = u
         ? (u.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>')
         : '<span class="pill pill-gray">Sin acceso</span>';
@@ -565,9 +588,12 @@ async function usuariosPortalTab(user, body) {
         : `<button class="btn btn-mini btn-primary" data-act="create" data-code="${r.code}" data-name="${(r.name||'').replace(/"/g,'')}" data-type="${r.type||''}" data-email="${r.companyEmail||''}">${I.plus} Crear acceso</button>`;
       return `<tr><td class="code">${r.code}</td><td>${r.name || '—'}</td>
         <td><span class="pill pill-gray">${r.type || '—'}</span></td>
-        <td style="font-size:13px">${userCell}</td><td>${stateCell}</td>
+        <td style="font-size:13px">${userCell}</td>
+        <td style="font-size:13px">${correoCell}</td>
+        <td style="font-size:13px">${telCell}</td>
+        <td>${stateCell}</td>
         <td style="text-align:right;white-space:nowrap">${actions}</td></tr>`;
-    }).join('') || '<tr><td colspan="6" class="empty">Sin resultados.</td></tr>';
+    }).join('') || '<tr><td colspan="8" class="empty">Sin resultados.</td></tr>';
 
     $('#cuBody').querySelectorAll('button[data-act]').forEach(b =>
       b.addEventListener('click', () => cuAction(b.dataset, user)));
@@ -575,6 +601,72 @@ async function usuariosPortalTab(user, body) {
   [fName].forEach(e => e.addEventListener('input', render));
   [fType, fAccess].forEach(e => e.addEventListener('change', render));
   render();
+
+  // Exportación (menú desplegable) de la grilla de accesos.
+  const cuExpBtn = $('#cuExportBtn'), cuExpMenu = $('#cuExportMenu');
+  cuExpBtn.addEventListener('click', (e) => { e.stopPropagation(); cuExpMenu.hidden = !cuExpMenu.hidden; });
+  document.addEventListener('click', () => { cuExpMenu.hidden = true; });
+  cuExpMenu.querySelectorAll('button').forEach(b =>
+    b.addEventListener('click', () => { cuExpMenu.hidden = true; exportUsuariosPortal(b.dataset.fmt, cuVisible); }));
+}
+
+/* Exportación de la grilla de Accesos al portal (xlsx / csv / txt) */
+async function exportUsuariosPortal(fmt, rows) {
+  const data = (rows || []).map(r => {
+    const u = r.user;
+    return {
+      'Código': r.code,
+      'Compañía': r.name || '',
+      'Tipo': r.type || '',
+      'Usuario': u ? r.code : '',
+      'Correo': (u && u.email) || r.companyEmail || '',
+      'Teléfono 1': phoneDisplay(r.companyPhone) || '',
+      'Teléfono 2': phoneDisplay(r.companyPhone2) || '',
+      'Estado': u ? (u.is_active ? 'Activo' : 'Inactivo') : 'Sin acceso',
+    };
+  });
+  if (!data.length) { alert('No hay filas para exportar con los filtros actuales.'); return; }
+  const headers = Object.keys(data[0]);
+  const fname = `accesos_portal_${tstamp()}`;
+
+  if (fmt === 'csv') {
+    const esc = (v) => {
+      const s = String(v ?? '');
+      return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lines = [headers.join(';')].concat(data.map(r => headers.map(h => esc(r[h])).join(';')));
+    downloadBlob('\uFEFF' + lines.join('\r\n'), `${fname}.csv`, 'text/csv;charset=utf-8');
+    return;
+  }
+
+  if (fmt === 'txt') {
+    const widths = headers.map(h => Math.max(h.length, ...data.map(r => String(r[h] ?? '').length)));
+    const fmtRow = (cells) => cells.map((c, i) => String(c ?? '').padEnd(widths[i])).join('  ');
+    const lines = [fmtRow(headers), widths.map(w => '-'.repeat(w)).join('  ')]
+      .concat(data.map(r => fmtRow(headers.map(h => r[h]))));
+    downloadBlob(lines.join('\r\n'), `${fname}.txt`, 'text/plain;charset=utf-8');
+    return;
+  }
+
+  if (fmt === 'xlsx') {
+    try {
+      if (!window.XLSX) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          s.onload = resolve; s.onerror = () => reject(new Error('No se pudo cargar la librería Excel.'));
+          document.head.appendChild(s);
+        });
+      }
+      const ws = window.XLSX.utils.json_to_sheet(data, { header: headers });
+      const wb = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(wb, ws, 'Accesos');
+      window.XLSX.writeFile(wb, `${fname}.xlsx`);
+    } catch (e) {
+      alert(e.message + ' Revisa tu conexión e inténtalo de nuevo.');
+    }
+    return;
+  }
 }
 
 /* ===== Pestana USUARIOS OSTICKET (sincronizacion) =====
