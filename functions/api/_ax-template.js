@@ -142,25 +142,26 @@ function sheetXml(cols, rows) {
     if (col.type === 'date') {
       const s = dateSerial(val);
       if (s === null) {
-        // sin fecha valida -> texto (o vacio)
-        return `<c r="${ref}" t="inlineStr"><is><t>${xmlEsc(val || '')}</t></is></c>`;
+        // sin fecha valida -> texto (o vacio), tambien con formato Texto
+        return `<c r="${ref}" s="3" t="inlineStr"><is><t>${xmlEsc(val || '')}</t></is></c>`;
       }
       return `<c r="${ref}" s="1"><v>${s}</v></c>`;
     }
     if (col.type === 'time') {
       const f = timeFraction(val);
-      if (f === null) return `<c r="${ref}" t="inlineStr"><is><t>${xmlEsc(val || '')}</t></is></c>`;
+      if (f === null) return `<c r="${ref}" s="3" t="inlineStr"><is><t>${xmlEsc(val || '')}</t></is></c>`;
       return `<c r="${ref}" s="2"><v>${f}</v></c>`;
     }
-    // texto literal (preserva ceros a la izquierda)
-    return `<c r="${ref}" t="inlineStr"><is><t>${xmlEsc(val == null ? '' : val)}</t></is></c>`;
+    // texto literal con formato Texto (@): preserva ceros a la izquierda y
+    // Excel muestra "Texto", no "General".
+    return `<c r="${ref}" s="3" t="inlineStr"><is><t>${xmlEsc(val == null ? '' : val)}</t></is></c>`;
   };
 
   let xml = '';
   // fila 1: encabezados (texto)
   xml += `<row r="1">`;
   cols.forEach((c, i) => {
-    xml += `<c r="${colLetter(i)}1" t="inlineStr"><is><t>${xmlEsc(c.hdr)}</t></is></c>`;
+    xml += `<c r="${colLetter(i)}1" s="3" t="inlineStr"><is><t>${xmlEsc(c.hdr)}</t></is></c>`;
   });
   xml += `</row>`;
   // filas de datos
@@ -185,7 +186,7 @@ function aoaSheetXml(aoa) {
     const r = ri + 1;
     xml += `<row r="${r}">`;
     row.forEach((val, ci) => {
-      xml += `<c r="${colLetter(ci)}${r}" t="inlineStr"><is><t>${xmlEsc(val)}</t></is></c>`;
+      xml += `<c r="${colLetter(ci)}${r}" s="3" t="inlineStr"><is><t>${xmlEsc(val)}</t></is></c>`;
     });
     xml += `</row>`;
   });
@@ -198,18 +199,20 @@ function aoaSheetXml(aoa) {
 const STYLES_XML =
   `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>` +
   `<styleSheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">` +
-  `<numFmts count="2">` +
+  `<numFmts count="3">` +
     `<numFmt numFmtId="164" formatCode="dd/mm/yyyy"/>` +
     `<numFmt numFmtId="165" formatCode="h:mm\\ AM/PM"/>` +
+    `<numFmt numFmtId="166" formatCode="@"/>` +
   `</numFmts>` +
   `<fonts count="1"><font><sz val="11"/><name val="Calibri"/></font></fonts>` +
   `<fills count="1"><fill><patternFill patternType="none"/></fill></fills>` +
   `<borders count="1"><border/></borders>` +
   `<cellStyleXfs count="1"><xf/></cellStyleXfs>` +
-  `<cellXfs count="3">` +
+  `<cellXfs count="4">` +
     `<xf/>` +
     `<xf numFmtId="164" applyNumberFormat="1"/>` +   // s="1" fecha
     `<xf numFmtId="165" applyNumberFormat="1"/>` +   // s="2" hora
+    `<xf numFmtId="166" applyNumberFormat="1"/>` +   // s="3" texto (@)
   `</cellXfs>` +
   `</styleSheet>`;
 
