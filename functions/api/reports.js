@@ -26,8 +26,17 @@
      corte_margen_dias, corte_hora_limite
    ===================================================================== */
 
+import { buildReportText, buildAxWorkbookBase64 } from './_ax-template.js';
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
+}
+
+// 'YYYY-MM-DD' -> 'DD/MM/YYYY' (para el cuerpo de texto del ticket)
+function dmy(ymd) {
+  if (!ymd) return '';
+  const m = String(ymd).slice(0, 10).split('-');
+  return m.length === 3 ? `${m[2]}/${m[1]}/${m[0]}` : ymd;
 }
 
 async function sb(env, path, opts = {}) {
@@ -291,16 +300,35 @@ async function submitMarcaje(env, body) {
     return json({ ok: false, error: 'Hay datos que no cumplen las reglas.', details: errors }, 422);
   }
 
-  // --- Zona/subzona + datos de contacto de la tienda (encabezado + From osTicket) ---
+  // --- Datos de la tienda (encabezado + From osTicket + plantilla AX) ---
+  // Trae data_area (Data ID de AX) y los nombres de zona/subzona/marca para
+  // el cuerpo de texto del ticket. data_area es CRITICO para la plantilla AX.
   const comp = await sb(env,
-    `companies?company_code=eq.${encodeURIComponent(cc)}&select=zone_id,subzone_id,business_name,email,phone`);
+    `companies?company_code=eq.${encodeURIComponent(cc)}&select=data_area,zone_id,subzone_id,business_name,email,phone,concept_id`);
   const zone_id = comp && comp[0] ? comp[0].zone_id : null;
   const subzone_id = comp && comp[0] ? comp[0].subzone_id : null;
   const compBusinessName = comp && comp[0] ? (comp[0].business_name || '') : '';
   const compEmail = comp && comp[0] ? (comp[0].email || '') : '';
   const compPhone = comp && comp[0] ? (comp[0].phone || '') : '';
+  const compDataArea = comp && comp[0] ? (comp[0].data_area || '') : '';
+  const compConceptId = comp && comp[0] ? comp[0].concept_id : null;
 
-  // --- Encabezado en reports_log ---
+  // Nombres legibles de zona/subzona/marca para el cuerpo del ticket.
+  let zonaName = '', subzonaName = '', marcaName = '';
+  if (subzone_id != null) {
+    const sz = await sb(env, `subzones?id=eq.${encodeURIComponent(subzone_id)}&select=name`);
+    subzonaName = sz && sz[0] ? (sz[0].name || '') : '';
+  }
+  if (zone_id != null) {
+    const zn = await sb(env, `zones?id=eq.${encodeURIComponent(zone_id)}&select=name`);
+    zonaName = zn && zn[0] ? (zn[0].name || '') : '';
+  }
+  if (compConceptId != null) {
+    const cn = await sb(env, `concepts?id=eq.${encodeURIComponent(compConceptId)}&select=name`);
+    marcaName = cn && cn[0] ? (cn[0].name || '') : '';
+  }
+  // Mall / Zona del cuerpo: preferimos subzona (el mall) y caemos a zona.
+  const mallZona = subzonaName || zonaName || '';
   const header = await sb(env, 'reports_log', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
@@ -602,23 +630,62 @@ async function submitAusencia(env, body) {
       } catch { /* no critico: el envio del ticket sigue igual */ }
     }
 
-    // 2) Cuerpo del PLA: resumen de todos los trabajadores del reporte.
-    const lineaTxt = (l, i) => {
-      const rango = l.date_from === l.date_to ? l.date_from : `${l.date_from} a ${l.date_to}`;
-      const docMark = l._fileB64 ? ' · documento adjunto (ticket aparte)'
-                    : (doc ? ' · sin documento' : '');
-      const nota = l.note ? ` · ${l.note}` : '';
-      return `${i + 1}. ${l.worker_name}  ${l.worker_id_number}  ${rango}${docMark}${nota}`;
-    };
-    const plaBody =
-      `REPORTE DE AUSENCIA - ${atype.label} (AX: ${axCode})\n` +
-      `Empresa: ${cc} - ${compBusinessName}\n` +
-      `Reportado por: ${responsible}${position ? ' (' + position + ')' : ''}\n` +
-      `Origen: ${sourceKind === 'admin' ? 'Central/Administrador' : 'Tienda'}\n` +
-      `Enviado: ${today} ${nowHHMM} (hora Venezuela)\n\n` +
-      `TRABAJADORES (${clean.length}):\n` +
-      clean.map(lineaTxt).join('\n') +
-      (doc ? `\n\nDocumentos: ${nDocs} persona(s) con ${doc.name} (en tickets DOC aparte).` : '');
+    // 2) Cuerpo del PLA: usa el formato oficial (buildReportText) con el
+    //    marco de doble linea + DATOS DE LA TIENDA + REPORTANTE + INCIDENCIA,
+    //    identico al del portal anterior. Cada registro lista los campos de
+    //    la ausencia. Las fechas se muestran en DD/MM/YYYY.
+    const registros = clean.map(l => {
+      const campos = [
+        ['Trabajador', l.worker_name],
+        ['Cédula', l.worker_id_number],
+        ['Desde', dmy(l.date_from)],
+        ['Hasta', dmy(l.date_to)],
+        ['Justificación', l.ax_code],
+      ];
+      if (l.note) campos.push(['Nota', l.note]);
+      if (doc) campos.push(['Documento', l._fileB64 ? 'adjunto (ticket DOC aparte)' : 'pendiente']);
+      return campos;
+    });
+    const plaBody = buildReportText({
+      topicLabel: `Período de Ausencia — ${atype.label}`,
+      fecha: dmy(today), hora: nowHHMM,
+      alias: cc, razon: compBusinessName, zona: mallZona, marca: marcaName,
+      correoTienda: compEmail,
+      responsable: responsible, cargo: position, telefono: compPhone, correoResp: compEmail,
+      registros,
+    });
+
+    // Plantilla AX (Excel) adjunta al PLA. Tipos de celda garantizados:
+    // cedula/justificacion como TEXTO, fechas como FECHA real. El nombre
+    // del archivo sigue el patron {TIPO}_{alias}_{YYYYMMDD}.xlsx.
+    let plaAttachments;
+    try {
+      const axCtx = {
+        companyDataArea: compDataArea,
+        companyName: compBusinessName,
+        companyAlias: cc,
+        todayYmd: today,
+        lines: clean.map(l => ({
+          id_number: l.worker_id_number,
+          date_from: l.date_from,
+          date_to: l.date_to,
+          ax_code: l.ax_code,
+        })),
+      };
+      const wb = buildAxWorkbookBase64('ausencia', axCtx);
+      if (wb) {
+        plaAttachments = [{
+          name: wb.filename,
+          data: wb.base64,
+          encoding: 'base64',
+          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        }];
+      }
+    } catch (e) {
+      // Si fallara el armado del Excel, el PLA igual se envia (con su texto);
+      // se registra el problema para revisarlo, sin abortar el reporte.
+      result.ticket_errors.push(`Plantilla AX: ${String(e.message || e)}`);
+    }
 
     try {
       const plaNum = await osticketCreateTicket(env, base, {
@@ -632,6 +699,7 @@ async function submitAusencia(env, body) {
         autorespond: false,
         report_code: code,
         report_kind: 'PLA',
+        ...(plaAttachments ? { attachments: plaAttachments } : {}),
       });
       result.osticket_pla = plaNum;
       result.tickets_ok++;
