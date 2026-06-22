@@ -255,10 +255,15 @@ function openConfig(ctx, id) {
   const dateEl = ov.querySelector('#egDate'), applyB = ov.querySelector('#egApply'),
         errEl = ov.querySelector('#egErr'), adjEl = ov.querySelector('#egAdjust');
 
+  // touched: solo mostramos el error "Falta la fecha" despues de que el
+  // usuario haya interactuado, para no "gritar" al abrir el modal vacio.
+  let touched = !!e.realDate;
+
   function check() {
     const real = dateEl.value;
     const err = realDateError(real, win, w.endDate);
-    errEl.textContent = err || '';
+    // Si aun no toco el campo y esta vacio, no pintamos error (solo deshabilita).
+    errEl.textContent = (touched || real) ? (err || '') : '';
     adjEl.style.display = 'none';
     if (err || !real) { applyB.disabled = true; return; }
     // Derivar reportable y, si hubo ajuste, mostrar el aviso.
@@ -266,7 +271,11 @@ function openConfig(ctx, id) {
     if (d.adjusted) { adjEl.style.display = 'flex'; adjEl.innerHTML = `⚠ <div>${d.msg}</div>`; }
     applyB.disabled = false;
   }
-  dateEl.addEventListener('input', check);
+  // El input date dispara 'input' al teclear y 'change' al elegir del
+  // calendario nativo; escuchamos ambos para no perder ninguno.
+  const onTouch = () => { touched = true; check(); };
+  dateEl.addEventListener('input', onTouch);
+  dateEl.addEventListener('change', onTouch);
   ov.querySelector('#egCancel').addEventListener('click', () => ov.remove());
   applyB.addEventListener('click', () => {
     const real = dateEl.value;
@@ -277,6 +286,8 @@ function openConfig(ctx, id) {
   });
 
   check();
+  // Foco al campo para que el usuario pueda escribir/abrir el calendario.
+  setTimeout(() => dateEl.focus(), 40);
 }
 
 /* ---------- MODAL: aplicar la misma fecha real en bloque ---------- */
@@ -305,13 +316,14 @@ function openBulk(ctx) {
   const dateEl = ov.querySelector('#bDate'), applyB = ov.querySelector('#bApply'),
         errEl = ov.querySelector('#bErr'), adjEl = ov.querySelector('#bAdjust');
 
+  let touched = false;
   function check() {
     const real = dateEl.value;
     // En bloque no validamos egreso por persona (se valida al aplicar); solo
     // no-futura. La derivacion por trabajador respeta su propio egreso.
     const err = !real ? 'Falta la fecha real de egreso.'
       : (real > win.reportMax ? `La fecha real no puede ser futura (máximo ${DW.fmtDate(win.reportMax)}).` : null);
-    errEl.textContent = err || '';
+    errEl.textContent = (touched && err) ? err : '';
     adjEl.style.display = 'none';
     if (err) { applyB.disabled = true; return; }
     // Aviso general si la fecha cae fuera de la ventana (se ajustara a AX).
@@ -321,7 +333,9 @@ function openBulk(ctx) {
     }
     applyB.disabled = false;
   }
-  dateEl.addEventListener('input', check);
+  const onTouch = () => { touched = true; check(); };
+  dateEl.addEventListener('input', onTouch);
+  dateEl.addEventListener('change', onTouch);
   ov.querySelector('#bCancel').addEventListener('click', () => ov.remove());
   applyB.addEventListener('click', () => {
     const real = dateEl.value;
