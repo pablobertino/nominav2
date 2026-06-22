@@ -21,7 +21,9 @@
          lines:[{ id_number, name, mark_date, time_in, time_out,
                   cause_code, cause_other_text? }] }
 
-   Secrets: supabase_url, supabase_service_role
+   Secrets: supabase_url, supabase_service_role, osticket_api_key
+   Settings (app_settings): osticket_url, osticket_topic_ausencia,
+     corte_margen_dias, corte_hora_limite
    ===================================================================== */
 
 function json(b, s = 200) {
@@ -78,6 +80,72 @@ async function currentPeriod(env, todayYmd) {
 function toMin(hhmm) {
   const [h, m] = String(hhmm).split(':').map(Number);
   return h * 60 + m;
+}
+
+/* =====================================================================
+   osTicket — helpers de envio
+   El Worker habla con osTicket por HTTP (la URL vive en app_settings,
+   la API key es Secret de Cloudflare osticket_api_key). Crea tickets
+   via /api/tickets.json y registra la relacion via /api/gc-report.json,
+   y crea/actualiza el usuario-tienda via /api/gc-user.json.
+   ===================================================================== */
+
+// Base URL del osTicket (sin barra final). Viene de app_settings.osticket_url.
+async function osticketBase(env) {
+  const url = await getSetting(env, 'osticket_url', '');
+  return String(url || '').replace(/\/+$/, '');
+}
+
+// POST JSON a un endpoint del osTicket con la X-API-Key. Devuelve
+// { status, ok, text, json }. No lanza: el llamador decide que hacer.
+async function osticketPost(env, base, path, payload) {
+  const res = await fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: {
+      'X-API-Key': env.osticket_api_key,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify(payload),
+  });
+  const text = await res.text();
+  let js = null;
+  try { js = text ? JSON.parse(text) : null; } catch { /* la creacion de ticket devuelve el numero como texto plano */ }
+  return { status: res.status, ok: res.ok, text, json: js };
+}
+
+// Crea un ticket en osTicket. Devuelve el NUMERO del ticket (texto, ej
+// '002140') o lanza Error con el detalle. La API responde 201 con el
+// numero como cuerpo (texto plano), o JSON segun config.
+async function osticketCreateTicket(env, base, payload) {
+  const r = await osticketPost(env, base, '/api/tickets.json', payload);
+  if (r.status !== 201) {
+    throw new Error(`osTicket ticket ${r.status}: ${r.text || 'sin detalle'}`);
+  }
+  // El cuerpo suele ser el numero como texto plano (puede venir con comillas).
+  let num = (r.text || '').trim().replace(/^"|"$/g, '');
+  return num;
+}
+
+// Registra la relacion del ticket con su reporte (gc_report_link).
+// No critico: si falla, se loguea pero no aborta el envio.
+async function gcReportLink(env, base, data) {
+  try {
+    const r = await osticketPost(env, base, '/api/gc-report.json', data);
+    return r.ok || r.status === 201;
+  } catch { return false; }
+}
+
+// Crea/actualiza el usuario-tienda (From). Idempotente. Devuelve user_id|null.
+async function gcUser(env, base, data) {
+  try {
+    const r = await osticketPost(env, base, '/api/gc-user.json', data);
+    return (r.json && r.json.user_id) ? r.json.user_id : null;
+  } catch { return null; }
+}
+
+// Codigo de reporte para el asunto: id con ceros, minimo 4 digitos.
+function reportCode(id) {
+  return String(id).padStart(4, '0');
 }
 
 export async function onRequestPost({ request, env }) {
@@ -223,11 +291,14 @@ async function submitMarcaje(env, body) {
     return json({ ok: false, error: 'Hay datos que no cumplen las reglas.', details: errors }, 422);
   }
 
-  // --- Zona/subzona de la tienda (para el encabezado) ---
+  // --- Zona/subzona + datos de contacto de la tienda (encabezado + From osTicket) ---
   const comp = await sb(env,
-    `companies?company_code=eq.${encodeURIComponent(cc)}&select=zone_id,subzone_id`);
+    `companies?company_code=eq.${encodeURIComponent(cc)}&select=zone_id,subzone_id,business_name,email,phone`);
   const zone_id = comp && comp[0] ? comp[0].zone_id : null;
   const subzone_id = comp && comp[0] ? comp[0].subzone_id : null;
+  const compBusinessName = comp && comp[0] ? (comp[0].business_name || '') : '';
+  const compEmail = comp && comp[0] ? (comp[0].email || '') : '';
+  const compPhone = comp && comp[0] ? (comp[0].phone || '') : '';
 
   // --- Encabezado en reports_log ---
   const header = await sb(env, 'reports_log', {
@@ -379,6 +450,8 @@ async function submitAusencia(env, body) {
     const to = String(ln.date_to || '').slice(0, 10);
     const note = (ln.note || '').toString().trim();
     const fileName = (ln.doc_file_name || '').toString().trim();
+    const fileB64 = (ln.doc_file_b64 || '').toString();
+    const fileType = (ln.doc_file_type || '').toString().trim();
     const tag = name || ced || `fila ${i + 1}`;
 
     if (!ced || ced.length < 6 || ced.length > 8) { errors.push(`${tag}: cedula invalida.`); return; }
@@ -420,6 +493,8 @@ async function submitAusencia(env, body) {
       date_to: to,
       note: note || null,
       _fileName: fileName || null,   // interno, no es columna de la tabla
+      _fileB64: fileB64 || null,     // interno, viaja a osTicket
+      _fileType: fileType || null,   // interno, mime del adjunto
     });
   });
 
@@ -485,17 +560,127 @@ async function submitAusencia(env, body) {
   }
 
   // ───────────────────────────────────────────────────────────────────
-  // TODO osTicket: aqui se creara el ticket de Capital Humano (topic 20
-  // = ausencia) y se adjuntaran los archivos que la tienda haya elegido.
-  // El archivo NO viaja todavia: el frontend solo manda doc_file_name.
-  // Cuando se conecte osTicket:
-  //   1. El frontend (report-ausencia.js) leera cada File a base64 y lo
-  //      enviara en lines[].doc_file_b64 + doc_file_name.
-  //   2. Aqui se arma el ticket con esos adjuntos (lotes de 4 si aplica)
-  //      y se actualiza reports_log.osticket_id / email_sent.
-  //   3. Los absence_report_docs con archivo enviado pasan a 'adjunto'
-  //      (ya quedan asi); los sin archivo siguen 'pendiente'.
+  // ENVIO A OSTICKET (sincrono).
+  // 1) Crear/actualizar el usuario-tienda (From = "AA01 - Razon Social").
+  // 2) Crear 1 ticket PLANTILLA (PLA) con el resumen de TODOS los
+  //    trabajadores. Asunto: [code] PLA [N], donde N = personas con doc.
+  // 3) Crear 1 ticket DOCUMENTO (DOC) por cada persona con archivo, con
+  //    sus adjuntos. Asunto: [code] DOC V-xxx [i-N].
+  // 4) Tras cada ticket, registrar la relacion (gc-report.json).
+  // 5) Actualizar reports_log (osticket_id = numero del PLA, email_sent).
+  // Si un DOC falla, NO se aborta el resto: se acumula en ticketErrors.
   // ───────────────────────────────────────────────────────────────────
+  const code = reportCode(reportId);
+  const base = await osticketBase(env);
+  const topicId = parseInt(await getSetting(env, 'osticket_topic_ausencia', '20'), 10) || 20;
+  const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
+  const fromName = `${cc} - ${compBusinessName || cc}`;
+
+  // Personas con documento (las que generan ticket DOC).
+  const withDoc = doc ? clean.filter(l => l._fileB64) : [];
+  const nDocs = withDoc.length;
+
+  const result = { osticket_pla: null, tickets_ok: 0, tickets_fail: 0, ticket_errors: [] };
+
+  if (!base || !env.osticket_api_key) {
+    // Sin configuracion de osTicket no se envia, pero el reporte ya quedo en BD.
+    result.ticket_errors.push('osTicket no configurado (url o api key).');
+  } else {
+    // 1) Usuario-tienda (idempotente). No critico.
+    await gcUser(env, base, { email: fromEmail, name: fromName, phone: compPhone });
+
+    // 2) Cuerpo del PLA: resumen de todos los trabajadores del reporte.
+    const lineaTxt = (l, i) => {
+      const rango = l.date_from === l.date_to ? l.date_from : `${l.date_from} a ${l.date_to}`;
+      const docMark = l._fileB64 ? ' · documento adjunto (ticket aparte)'
+                    : (doc ? ' · sin documento' : '');
+      const nota = l.note ? ` · ${l.note}` : '';
+      return `${i + 1}. ${l.worker_name}  ${l.worker_id_number}  ${rango}${docMark}${nota}`;
+    };
+    const plaBody =
+      `REPORTE DE AUSENCIA - ${atype.label} (AX: ${axCode})\n` +
+      `Empresa: ${cc} - ${compBusinessName}\n` +
+      `Reportado por: ${responsible}${position ? ' (' + position + ')' : ''}\n` +
+      `Origen: ${sourceKind === 'admin' ? 'Central/Administrador' : 'Tienda'}\n` +
+      `Enviado: ${today} ${nowHHMM} (hora Venezuela)\n\n` +
+      `TRABAJADORES (${clean.length}):\n` +
+      clean.map(lineaTxt).join('\n') +
+      (doc ? `\n\nDocumentos: ${nDocs} persona(s) con ${doc.name} (en tickets DOC aparte).` : '');
+
+    try {
+      const plaNum = await osticketCreateTicket(env, base, {
+        email: fromEmail,
+        name: fromName,
+        subject: `[${code}] PLA [${nDocs}]`,
+        message: plaBody,
+        topicId,
+        source: 'API',
+        alert: false,
+        autorespond: false,
+        report_code: code,
+        report_kind: 'PLA',
+      });
+      result.osticket_pla = plaNum;
+      result.tickets_ok++;
+      // Registrar relacion del PLA.
+      await gcReportLink(env, base, {
+        report_code: code, ticket_number: plaNum, kind: 'PLA',
+        company: cc, report_type: 'ausencia', doc_total: nDocs,
+      });
+    } catch (e) {
+      result.tickets_fail++;
+      result.ticket_errors.push(`PLA: ${String(e.message || e)}`);
+    }
+
+    // 3) Un ticket DOC por persona con documento.
+    for (let i = 0; i < withDoc.length; i++) {
+      const l = withDoc[i];
+      const ced = l.worker_id_number;
+      const fname = l._fileName || `documento_${ced}`;
+      try {
+        const docNum = await osticketCreateTicket(env, base, {
+          email: fromEmail,
+          name: fromName,
+          subject: `[${code}] DOC ${ced} [${i + 1}-${nDocs}]`,
+          message:
+            `Documento(s) de ${l.worker_name} (${ced}) - reporte ${code}.\n` +
+            `Tipo: ${atype.label} (AX: ${axCode}) - ${l.date_from === l.date_to ? l.date_from : l.date_from + ' a ' + l.date_to}.`,
+          topicId,
+          source: 'API',
+          alert: false,
+          autorespond: false,
+          report_code: code,
+          report_kind: 'DOC',
+          attachments: [{
+            name: fname,
+            data: l._fileB64,
+            encoding: 'base64',
+            type: l._fileType || 'application/octet-stream',
+          }],
+        });
+        result.tickets_ok++;
+        await gcReportLink(env, base, {
+          report_code: code, ticket_number: docNum, kind: 'DOC',
+          company: cc, report_type: 'ausencia',
+          worker_id: ced, worker_name: l.worker_name,
+          doc_pos: i + 1, doc_total: nDocs,
+        });
+      } catch (e) {
+        result.tickets_fail++;
+        result.ticket_errors.push(`DOC ${ced}: ${String(e.message || e)}`);
+      }
+    }
+
+    // 5) Actualizar el encabezado con el resultado del envio.
+    if (result.osticket_pla) {
+      try {
+        await sb(env, `reports_log?id=eq.${reportId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ osticket_id: result.osticket_pla, email_sent: true }),
+        });
+      } catch { /* el reporte ya esta en BD; el envio se reintenta luego */ }
+    }
+  }
 
   // Cuantos quedaron debiendo documento (para feedback al usuario).
   const pendingDocs = doc ? clean.filter(l => !l._fileName).length : 0;
@@ -507,5 +692,11 @@ async function submitAusencia(env, body) {
     absence_code: absenceCode,
     ax_code: axCode,
     pending_docs: pendingDocs,
+    osticket: {
+      pla: result.osticket_pla,
+      tickets_ok: result.tickets_ok,
+      tickets_fail: result.tickets_fail,
+      errors: result.ticket_errors,
+    },
   });
 }

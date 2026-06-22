@@ -14,9 +14,9 @@
        nada aparece hasta elegirlo. (Regla UX del proyecto: ningun campo
        de reporte arranca con valor por defecto.)
 
-   Adjuntos: por ahora NO se suben a Storage. Se elige el archivo y solo
-   se recuerda su nombre; el envio real a osTicket se conecta despues
-   (ver los bloques marcados con  TODO osTicket ).
+   Adjuntos: el archivo NO se sube a Storage. Se lee a base64 al elegirlo
+   y viaja dentro del envio hacia osTicket (ticket DOC por persona). El
+   archivo no se persiste en BD; si el envio falla, se re-adjunta (ver DOC).
 
    Fechas: ventana CONFIGURABLE POR TIPO (no es la ventana de quincena del
    marcaje). Cada tipo define cuanto hacia atras y hacia el futuro:
@@ -123,9 +123,11 @@ export const ausenciaReport = {
       date_from: w.absence.from,
       date_to: w.absence.to,
       note: (w.absence.note || '').trim() || null,
-      // Documento: por ahora solo el nombre del archivo elegido (si lo hay).
-      // El archivo en si se enviara a osTicket cuando se conecte (ver Worker).
+      // Documento: nombre + contenido base64 + tipo MIME (si lo hay). El
+      // archivo viaja dentro del envio hacia osTicket; NO se guarda en BD.
       doc_file_name: doc ? (w.absence.fileName || null) : null,
+      doc_file_b64: doc ? (w.absence.fileB64 || null) : null,
+      doc_file_type: doc ? (w.absence.fileType || null) : null,
     }));
     const res = await fetch('/api/reports', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -396,21 +398,31 @@ function openConfig(ctx, id) {
     const pick = ov.querySelector('#mPick');
     const clear = ov.querySelector('#mClearFile');
     if (pick) pick.addEventListener('click', () => ov.querySelector('#mFile').click());
-    if (clear) clear.addEventListener('click', () => { fileName = null; repaintDoc(); check(); });
+    if (clear) clear.addEventListener('click', () => {
+      fileName = null;
+      // Limpiar tambien el archivo leido (b64) del trabajador.
+      if (w.absence) { w.absence.fileB64 = null; w.absence.fileType = null; }
+      repaintDoc(); check();
+    });
   }
   if (doc) {
     ov.querySelector('#mFile').addEventListener('change', e => {
       const f = e.target.files && e.target.files[0];
       if (f) {
         fileName = f.name;
-        // ─────────────────────────────────────────────────────────────
-        // TODO osTicket: aqui guardar el File (f) para adjuntarlo al
-        // ticket al enviar. Por ahora SOLO recordamos el nombre. Cuando se
-        // conecte osTicket, leer el File a base64 y mandarlo en submit():
-        //   const reader = new FileReader();
-        //   reader.onload = () => { w.absence.fileB64 = reader.result.split(',')[1]; };
-        //   reader.readAsDataURL(f);
-        // ─────────────────────────────────────────────────────────────
+        // Leer el File a base64 para adjuntarlo al ticket de osTicket al
+        // enviar. Guardamos b64, nombre y tipo MIME en el trabajador. El
+        // archivo NO se sube a Storage: viaja solo dentro del envio.
+        const reader = new FileReader();
+        reader.onload = () => {
+          w.absence = w.absence || {};
+          w.absence.fileB64 = String(reader.result).split(',')[1] || null;
+          w.absence.fileName = f.name;
+          w.absence.fileType = f.type || 'application/octet-stream';
+        };
+        reader.readAsDataURL(f);
+      } else {
+        fileName = null;
       }
       repaintDoc(); check();
     });
@@ -429,11 +441,16 @@ function openConfig(ctx, id) {
 
   ov.querySelector('#mCancel').addEventListener('click', () => ov.remove());
   applyB.addEventListener('click', () => {
+    // Preservar el archivo leido (b64/tipo) que el reader dejo en w.absence.
+    const prev = w.absence || {};
     w.absence = {
       from: fromEl.value,
       to: toEl.value,
       note: noteEl.value.trim(),
       fileName: doc ? fileName : null,
+      // El b64/tipo solo valen si sigue habiendo archivo (fileName).
+      fileB64: (doc && fileName) ? (prev.fileB64 || null) : null,
+      fileType: (doc && fileName) ? (prev.fileType || null) : null,
     };
     ov.remove();
     renderRows(ctx);
@@ -514,7 +531,8 @@ function openBulk(ctx) {
       if (!ids.includes(w.id)) return;
       if (w.endDate && to > w.endDate) { skipped++; return; }
       const prev = w.absence || {};
-      w.absence = { from, to, note: note || prev.note || '', fileName: prev.fileName || null };
+      w.absence = { from, to, note: note || prev.note || '', fileName: prev.fileName || null,
+                    fileB64: prev.fileB64 || null, fileType: prev.fileType || null };
     });
     ov.remove();
     // limpiar seleccion
