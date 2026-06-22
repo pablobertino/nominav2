@@ -68,7 +68,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.46</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.47</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -494,21 +494,45 @@ function wirePwdBlock() {
     }));
 }
 
-/* ---------- VISTA: USUARIOS (de compañía) ---------- */
+/* ---------- VISTA: USUARIOS (con pestanas: portal + osTicket) ---------- */
+let USERS_TAB = 'portal';   // 'portal' | 'osticket'
 let CU_ROWS = null;
+
 async function viewUsuarios(user) {
-  $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Usuarios</h1><p>Accesos de compañía al portal</p></div></div><div class="pnl-loading">Cargando…</div>`;
+  $('#pnlMain').innerHTML = `
+    <div class="pnl-head"><div><h1>Usuarios</h1><p>Accesos al portal y usuarios en osTicket</p></div></div>
+    <div class="cfg-tabs">
+      <button class="cfg-tab" data-utab="portal">👤 Acceso al portal</button>
+      <button class="cfg-tab" data-utab="osticket">🎫 Usuarios osTicket</button>
+    </div>
+    <div id="usersBody"></div>`;
+  $('#pnlMain').querySelectorAll('.cfg-tab').forEach(b =>
+    b.addEventListener('click', () => { USERS_TAB = b.dataset.utab; usersRenderTab(user); }));
+  usersRenderTab(user);
+}
+
+function usersRenderTab(user) {
+  $('#pnlMain').querySelectorAll('.cfg-tab').forEach(b =>
+    b.classList.toggle('on', b.dataset.utab === USERS_TAB));
+  const body = $('#usersBody');
+  if (USERS_TAB === 'portal') usuariosPortalTab(user, body);
+  else usuariosOsticketTab(user, body);
+}
+
+/* ===== Pestana ACCESO AL PORTAL (lo que era la vista Usuarios) ===== */
+async function usuariosPortalTab(user, body) {
+  body.innerHTML = `<div class="pnl-loading">Cargando…</div>`;
   const res = await fetch('/api/company-users', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'list', adminId: user.id }),
   });
   const d = await res.json();
-  if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
+  if (!d.ok) { body.innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
   CU_ROWS = d.rows;
   const types = [...new Set(CU_ROWS.map(r => r.type).filter(Boolean))].sort();
 
-  $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Usuarios</h1><p id="cuCount"></p></div></div>
+  body.innerHTML = `
+    <p id="cuCount" class="muted" style="font-size:13px;margin:0 0 14px"></p>
     <div class="pnl-filters">
       <div class="search">${I.search}<input id="cuName" placeholder="Buscar compañía o código…"></div>
       <select id="cuType"><option value="Tienda">Tipo: Tienda</option>${types.filter(t=>t!=='Tienda').map(t=>`<option>${t}</option>`).join('')}<option value="ALL">Todos los tipos</option></select>
@@ -550,6 +574,130 @@ async function viewUsuarios(user) {
   [fName].forEach(e => e.addEventListener('input', render));
   [fType, fAccess].forEach(e => e.addEventListener('change', render));
   render();
+}
+
+/* ===== Pestana USUARIOS OSTICKET (sincronizacion) =====
+   Lista las tiendas con su estado en osTicket (sincronizada / pendiente /
+   sin correo) y permite crear/re-sincronizar el usuario-tienda (el "From"
+   de los tickets), individual o masivamente. Reusa /api/osticket-users. */
+let OU_ROWS = null;
+let OU_SUMMARY = null;
+let OU_FILTER = 'all';   // all | synced | pending | no_email
+
+async function usuariosOsticketTab(user, body) {
+  body.innerHTML = `<div class="pnl-loading">Cargando estado de osTicket…</div>`;
+  const d = await ouApi({ action: 'list', adminId: user.id });
+  if (!d.ok) { body.innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
+  OU_ROWS = d.tiendas || [];
+  OU_SUMMARY = d.summary || { total: 0, synced: 0, pending: 0, no_email: 0 };
+
+  body.innerHTML = `
+    <div class="sum-cards">
+      <div class="sum-card ok"><div class="n">${OU_SUMMARY.synced}</div><div class="l">Sincronizadas en osTicket</div></div>
+      <div class="sum-card pend"><div class="n">${OU_SUMMARY.pending}</div><div class="l">Pendientes (con correo)</div></div>
+      <div class="sum-card none"><div class="n">${OU_SUMMARY.no_email}</div><div class="l">Sin correo</div></div>
+      <div class="sum-card"><div class="n">${OU_SUMMARY.total}</div><div class="l">Total tiendas</div></div>
+    </div>
+    <div class="pnl-filters">
+      <div class="search">${I.search}<input id="ouSearch" placeholder="Buscar tienda o código…"></div>
+      <select id="ouFilter">
+        <option value="all">Todas</option>
+        <option value="synced">Sincronizadas</option>
+        <option value="pending">Pendientes</option>
+        <option value="no_email">Sin correo</option>
+      </select>
+      <button class="btn btn-primary" id="ouSyncAll">${I.sync} Sincronizar todas${OU_SUMMARY.pending ? ` (${OU_SUMMARY.pending} pendientes)` : ''}</button>
+    </div>
+    <div class="tablebox"><table><thead><tr>
+      <th>Código</th><th>Razón social</th><th>Correo (From)</th><th>Estado osTicket</th><th>Última sinc.</th><th style="text-align:right">Acción</th>
+    </tr></thead><tbody id="ouBody"></tbody></table></div>
+    <p class="muted" style="font-size:12px;margin:14px 2px 0;line-height:1.6">El usuario-tienda es el <b>remitente (From)</b> de los tickets en osTicket. “Sincronizada” ya existe; “pendiente” tiene correo pero falta crearla; “sin correo” no se puede crear hasta cargarle un correo (en la pestaña Empresas). Cada envío de reporte de ausencia también sincroniza la tienda automáticamente. El número <b>#N</b> es el id del usuario en osTicket.</p>`;
+
+  $('#ouSearch').addEventListener('input', ouRender);
+  $('#ouFilter').addEventListener('change', (e) => { OU_FILTER = e.target.value; ouRender(); });
+  $('#ouSyncAll').addEventListener('click', () => ouSyncAll(user));
+  ouRender(user);
+}
+
+function ouStatePill(state) {
+  if (state === 'synced') return '<span class="pill pill-open">Sincronizada</span>';
+  if (state === 'pending') return '<span class="pill pill-temp">Pendiente</span>';
+  return '<span class="pill pill-gray">Sin correo</span>';
+}
+
+/* Fecha ISO -> 'DD/MM HH:MM' hora Caracas (reusa el patron del resto). */
+function ouWhen(iso) {
+  if (!iso) return '—';
+  const dt = new Date(iso);
+  if (isNaN(dt)) return '—';
+  const car = new Date(dt.getTime() - 4 * 3600 * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(car.getUTCDate())}/${p(car.getUTCMonth() + 1)} ${p(car.getUTCHours())}:${p(car.getUTCMinutes())}`;
+}
+
+function ouRender(user) {
+  const q = ($('#ouSearch') && $('#ouSearch').value || '').toLowerCase();
+  const rows = (OU_ROWS || []).filter(t =>
+    (`${t.code} ${t.name || ''}`.toLowerCase().includes(q))
+    && (OU_FILTER === 'all' || t.state === OU_FILTER));
+  $('#ouBody').innerHTML = rows.map(t => {
+    const idTag = t.osticket_user_id ? ` <span class="muted" style="font-size:11px">#${t.osticket_user_id}</span>` : '';
+    const correo = t.email
+      ? t.email
+      : '<span class="muted">sin correo</span>';
+    let actionBtn;
+    if (t.state === 'no_email') {
+      actionBtn = `<button class="btn btn-mini" disabled style="opacity:.5" title="Carga un correo en Empresas">Falta correo</button>`;
+    } else if (t.state === 'synced') {
+      actionBtn = `<button class="btn btn-mini" data-ousync="${t.code}">Re-sincronizar</button>`;
+    } else {
+      actionBtn = `<button class="btn btn-mini btn-primary" data-ousync="${t.code}">Crear en osTicket</button>`;
+    }
+    return `<tr>
+      <td class="code">${t.code}</td>
+      <td>${t.name || '—'}</td>
+      <td style="font-size:13px">${correo}</td>
+      <td>${ouStatePill(t.state)}${idTag}</td>
+      <td class="muted" style="font-size:12px">${ouWhen(t.synced_at)}</td>
+      <td style="text-align:right">${actionBtn}</td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" class="empty">Sin resultados.</td></tr>';
+
+  $('#ouBody').querySelectorAll('[data-ousync]').forEach(b =>
+    b.addEventListener('click', () => ouSyncOne(user, b.dataset.ousync, b)));
+}
+
+/* Sincroniza UNA tienda (boton de fila). */
+async function ouSyncOne(user, code, btn) {
+  const orig = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Sincronizando…';
+  const d = await ouApi({ action: 'sync', adminId: user.id, codes: [code] });
+  if (!d.ok) { alert(d.error || 'No se pudo sincronizar.'); btn.disabled = false; btn.textContent = orig; return; }
+  const r = (d.results && d.results[0]) || null;
+  if (r && !r.ok) { alert(`${code}: ${r.error || 'error'}`); btn.disabled = false; btn.textContent = orig; return; }
+  // refrescar la pestana para reflejar el nuevo estado + tarjetas
+  usuariosOsticketTab(user, $('#usersBody'));
+}
+
+/* Sincroniza TODAS las pendientes con correo (boton masivo). */
+async function ouSyncAll(user) {
+  const pend = OU_SUMMARY ? OU_SUMMARY.pending : 0;
+  if (!pend) { alert('No hay tiendas pendientes con correo para sincronizar.'); return; }
+  if (!confirm(`Se crearan/actualizaran ${pend} usuario(s)-tienda en osTicket. Continuar?`)) return;
+  const btn = $('#ouSyncAll'); const orig = btn.innerHTML;
+  btn.disabled = true; btn.textContent = 'Sincronizando todas…';
+  const d = await ouApi({ action: 'sync', adminId: user.id, all: true });
+  btn.disabled = false; btn.innerHTML = orig;
+  if (!d.ok) { alert(d.error || 'No se pudo sincronizar.'); return; }
+  alert(`Listo: ${d.ok_count} sincronizada(s), ${d.fail_count} con error (de ${d.processed}).`);
+  usuariosOsticketTab(user, $('#usersBody'));
+}
+
+async function ouApi(payload) {
+  const res = await fetch('/api/osticket-users', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+  });
+  return res.json();
 }
 
 function cuAction(ds, user) {
