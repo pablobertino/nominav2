@@ -978,21 +978,28 @@ async function submitAusencia(env, body) {
 /* =====================================================================
    EGRESO (Baja)
    Registra el encabezado en reports_log (topic 'egreso') + el detalle por
-   trabajador en egress_report_lines. NO lleva documentos: es un solo
-   ticket PLA (topic 33) con la plantilla AX (Excel, accion B) adjunta.
+   trabajador en egress_report_lines. Lleva carta de renuncia OPCIONAL: si
+   se adjunta, viaja como ticket DOC por persona (igual que ausencia); si no,
+   la tienda elige una causa que puede eximir el documento o dejarlo
+   pendiente.
 
-   Dos fechas por trabajador:
-     - real_date   : la fecha real de egreso (cuando dejo de trabajar).
-     - report_date : la que va a AX. Se DERIVA server-side de la real,
-                     limitada por la ventana hacia atras (regla general de
-                     marcaje). Si la real es mas antigua que el minimo
-                     reportable, report_date = minimo; la real queda igual.
-   El Excel recibe report_date (Fecha Final de Empleo). El cuerpo del
-   ticket muestra ambas cuando difieren, una sola cuando coinciden.
+   Dos fechas por trabajador (modelo: la tienda decide la de egreso):
+     - report_date : la FECHA DE EGRESO que va a AX. La elige la tienda y el
+                     servidor la VALIDA contra la ventana del corte (no la
+                     deriva). Es la obligatoria.
+     - real_date   : la fecha real en que egreso, OPCIONAL e informativa.
+                     Solo se registra si fue distinta a la reportada (p.ej.
+                     mas antigua, fuera del margen). No se ata a la ventana:
+                     solo <= hoy y <= report_date. Si no se indica, real =
+                     report_date.
+   El Excel recibe report_date (Fecha Final de Empleo). El cuerpo del ticket
+   muestra la real solo cuando difiere.
 
    Body:
      { action:'submit_egreso', company_code, responsible, position,
-       lines:[{ id_number, name, report_date, real_date }],
+       lines:[{ id_number, name, report_date, real_date,
+                doc_file_name?, doc_file_b64?, doc_file_type?,
+                doc_cause?, doc_cause_other? }],
        source_kind?, source_admin_id? }
    ===================================================================== */
 async function submitEgreso(env, body) {
@@ -1040,14 +1047,18 @@ async function submitEgreso(env, body) {
   const causeMap = {};
   (causes || []).forEach(c => { causeMap[c.code] = c; });
 
-  // --- Validacion + derivacion linea por linea ---
+  // --- Validacion linea por linea ---
+  // Nuevo modelo: el front manda report_date = la FECHA DE EGRESO elegida por
+  // la tienda (la que va a AX). El servidor la VALIDA contra la ventana (no la
+  // deriva). real_date es informativa: <= hoy y <= report_date; si no se
+  // indica distinta, llega igual a report_date.
   const clean = [];
   const errors = [];
   lines.forEach((ln, i) => {
     const ced = String(ln.id_number || '').replace(/[^0-9]/g, '');
     const name = String(ln.name || '').trim();
-    const real = String(ln.real_date || '').slice(0, 10);
-    let report = String(ln.report_date || '').slice(0, 10);
+    const report = String(ln.report_date || '').slice(0, 10);
+    let real = String(ln.real_date || '').slice(0, 10);
     const tag = name || ced || `fila ${i + 1}`;
     // Documento (carta de renuncia): opcional. Si no hay carta, debe venir
     // una causa; segun la causa, exime o queda pendiente.
@@ -1059,24 +1070,32 @@ async function submitEgreso(env, body) {
 
     if (!ced || ced.length < 6 || ced.length > 8) { errors.push(`${tag}: cedula invalida.`); return; }
     if (!name) { errors.push(`${tag}: falta el nombre.`); return; }
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(real)) { errors.push(`${tag}: fecha real de egreso invalida.`); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(report)) { errors.push(`${tag}: fecha de egreso invalida.`); return; }
 
-    // La fecha real: no futura, no posterior al egreso ya registrado.
-    if (real > reportMax) { errors.push(`${tag}: la fecha real (${real}) no puede ser futura ni posterior al ${reportMax}.`); return; }
+    // FECHA DE EGRESO (reportable): validada contra la ventana del corte.
     const end = endDateByCed[ced];
-    if (end && real > end) { errors.push(`${tag}: la fecha real es posterior al egreso ya registrado (${end}).`); return; }
-
-    // Derivar la REPORTABLE server-side (no se confia en la del cliente):
-    //  - tope superior: hoy/hito, acotado por el egreso ya registrado.
-    //  - si la real cae dentro de la ventana -> reportable = real.
-    //  - si la real es mas antigua que el minimo -> reportable = minimo.
     const maxRep = (end && end < reportMax) ? end : reportMax;
-    let derived = real;
-    if (real < reportMin) derived = reportMin;   // reportada tarde: AX recibe el minimo
-    else if (real > maxRep) derived = maxRep;    // (defensivo)
-    report = derived;
+    if (report > maxRep) {
+      errors.push(end && end < reportMax
+        ? `${tag}: la fecha de egreso (${report}) no puede ser posterior al egreso ya registrado (${end}).`
+        : `${tag}: la fecha de egreso (${report}) no puede ser futura ni posterior al ${reportMax}.`);
+      return;
+    }
+    if (report < reportMin) {
+      if (report === oldestDay && pastCutoff) {
+        errors.push(`${tag}: el ${oldestDay} ya no se puede reportar (paso la hora tope ${cutoffTime} de Venezuela).`);
+      } else {
+        errors.push(`${tag}: la fecha de egreso (${report}) esta fuera del margen reportable (desde ${reportMin}).`);
+      }
+      return;
+    }
 
-    if (real > report) { errors.push(`${tag}: inconsistencia de fechas (real ${real} > reportable ${report}).`); return; }
+    // FECHA REAL (opcional, informativa): si no vino o es igual, usa report.
+    // Si vino distinta: <= hoy y <= report. No se ata a la ventana del corte
+    // (puede ser mas antigua libremente).
+    if (!real || !/^\d{4}-\d{2}-\d{2}$/.test(real)) real = report;
+    if (real > today) { errors.push(`${tag}: la fecha real (${real}) no puede ser futura.`); return; }
+    if (real > report) { errors.push(`${tag}: la fecha real (${real}) no puede ser posterior a la fecha de egreso (${report}).`); return; }
 
     // Documento: si NO adjunta carta, exige una causa valida.
     const hasDoc = !!fileB64;

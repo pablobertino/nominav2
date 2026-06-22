@@ -3,7 +3,8 @@
    Lista de personal de cada tienda (snapshot del Reporte 10 del POS).
    El frontend lee el .xlsx con SheetJS y envia las filas ya extraidas
    como JSON; este Worker valida, detecta egresados y responsables
-   (GERENTE / SUB-GERENTE), y REEMPLAZA por completo el snapshot.
+   (segun las reglas configurables de manager_role_rules), y REEMPLAZA
+   por completo el snapshot.
 
    Acciones (POST {action}):
      - get     : devuelve el snapshot actual + metadatos de la tienda.
@@ -42,10 +43,23 @@ async function sb(env, path, opts = {}) {
   return t ? JSON.parse(t) : null;
 }
 
-// Detecta el rol de responsable a partir del cargo del Reporte 10.
-// Devuelve 'Gerente' | 'Sub-Gerente' | null.
-function detectManagerRole(rawRole) {
+// Detecta el rol de responsable a partir del cargo del Reporte 10, usando
+// las reglas configurables de manager_role_rules (ya cargadas y ordenadas
+// por sort_order asc). Gana la PRIMERA regla cuyo patron este contenido en
+// el cargo. Devuelve la etiqueta (result_role) o null si ninguna coincide.
+// Si no hay reglas configuradas, cae al comportamiento clasico (GERENTE /
+// SUB) para no quedar sin deteccion ante una tabla vacia.
+function detectManagerRole(rawRole, rules) {
   const r = (rawRole || '').toUpperCase();
+  if (!r) return null;
+  if (Array.isArray(rules) && rules.length) {
+    for (const rule of rules) {
+      const pat = String(rule.pattern || '').toUpperCase().trim();
+      if (pat && r.includes(pat)) return rule.result_role;
+    }
+    return null;
+  }
+  // Fallback defensivo (tabla vacia): logica original.
   if (!r.includes('GERENTE')) return null;
   if (r.includes('SUB')) return 'Sub-Gerente';
   return 'Gerente';
@@ -111,9 +125,15 @@ export async function onRequestPost({ request, env }) {
       const activos = valid.filter(r => !r.end_date);
       const egresados = valid.filter(r => r.end_date);
 
+      // Reglas configurables de clasificacion de cargo -> responsable.
+      // Se leen de manager_role_rules (activas, por orden). Si la tabla
+      // esta vacia, detectManagerRole cae a la logica clasica.
+      const roleRules = await sb(env,
+        'manager_role_rules?is_active=eq.true&select=pattern,result_role&order=sort_order.asc');
+
       // Responsables detectados (gerentes/subgerentes vigentes)
       const managers = activos
-        .map(r => ({ ...r, mrole: detectManagerRole(r.role) }))
+        .map(r => ({ ...r, mrole: detectManagerRole(r.role, roleRules) }))
         .filter(r => r.mrole);
       const nGer = managers.filter(m => m.mrole === 'Gerente').length;
       const nSub = managers.filter(m => m.mrole === 'Sub-Gerente').length;

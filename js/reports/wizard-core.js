@@ -260,7 +260,7 @@ export function launchWizard(user, reportDef, onExit) {
             ? `<div class="vrow err">✗ Faltan columnas esenciales: ${parsed.missing.join(', ')}</div>`
             : `<div class="vrow ok">✓ Columnas esenciales: ${parsed.columnsFound.join(', ')}</div>`}
           <div class="vrow ok">✓ ${v.total} trabajadores leídos (${v.active} vigentes · ${v.terminated} egresados)</div>
-          <div class="vrow ok">✓ Responsables detectados: ${v.gerentes} Gerente(s), ${v.subgerentes} Sub-Gerente(s)</div>
+          <div class="vrow ok">✓ Responsables detectados (estimado): ${v.gerentes} Gerente(s), ${v.subgerentes} Sub-Gerente(s)</div>
           ${v.warnings.map(w => `<div class="vrow warn">⚠ ${w}</div>`).join('')}
           ${!v.okToUpload ? `<div class="vrow err" style="margin-top:8px">No se puede cargar: revisa el archivo.</div>` : ''}
         </div>
@@ -289,6 +289,22 @@ export function launchWizard(user, reportDef, onExit) {
       await loadRoster();
       await loadResponsables();
       renderRosterStep();
+      // Confirmacion con el conteo REAL del Worker (reglas configurables),
+      // que puede diferir del estimado previo si hay patrones de cargo nuevos.
+      const sm = up.summary || {};
+      const seeded = sm.contacts_seeded || 0;
+      const segReal = `${sm.gerentes || 0} Gerente(s) y ${sm.subgerentes || 0} Sub-Gerente(s)`;
+      const seededTxt = seeded
+        ? ` Se renovaron ${seeded} responsable(s) desde el Reporte 10.`
+        : (sm.managers ? ' Los responsables que ya gestionaste se conservaron.' : '');
+      const upBox = $('#rUpResult');
+      if (upBox) {
+        // Asegurar que la subtab de actualizacion este visible para mostrar el aviso.
+        document.querySelectorAll('#rTabs .subtab').forEach(x => x.classList.toggle('on', x.dataset.tab === 'upload'));
+        document.querySelectorAll('[data-tp]').forEach(p => p.style.display = p.dataset.tp === 'upload' ? 'block' : 'none');
+        upBox.innerHTML = `<div class="validation"><div class="vrow ok">✓ Lista actualizada: ${sm.total || 0} trabajadores (${sm.active || 0} vigentes · ${sm.terminated || 0} egresados).</div>`
+          + `<div class="vrow ok">✓ Responsables detectados: ${segReal}.${seededTxt}</div></div>`;
+      }
     });
   }
 

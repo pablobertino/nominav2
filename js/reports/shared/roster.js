@@ -131,6 +131,12 @@ export function validateParsed(parsed) {
   }
   const active = valid.filter(r => !r.end_date);
   const terminated = valid.filter(r => r.end_date);
+  // ESTIMACION visual de responsables (solo para la previsualizacion del
+  // modal). El conteo DEFINITIVO lo hace el Worker con las reglas
+  // configurables de manager_role_rules; aqui se usa la heuristica clasica
+  // (GERENTE / SUB) porque el front no tiene las reglas a mano. Si en BD se
+  // agregan patrones nuevos (ej. ENCARGADO), el numero real puede ser mayor;
+  // por eso el modal lo presenta como estimado y el Worker confirma al subir.
   const managers = active.filter(r => /GERENTE/i.test(r.role || ''));
   const gerentes = managers.filter(r => !/SUB/i.test(r.role)).length;
   const subgerentes = managers.filter(r => /SUB/i.test(r.role)).length;
