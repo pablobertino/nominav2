@@ -300,35 +300,16 @@ async function submitMarcaje(env, body) {
     return json({ ok: false, error: 'Hay datos que no cumplen las reglas.', details: errors }, 422);
   }
 
-  // --- Datos de la tienda (encabezado + From osTicket + plantilla AX) ---
-  // Trae data_area (Data ID de AX) y los nombres de zona/subzona/marca para
-  // el cuerpo de texto del ticket. data_area es CRITICO para la plantilla AX.
+  // --- Zona/subzona + datos de contacto de la tienda (encabezado + From osTicket) ---
   const comp = await sb(env,
-    `companies?company_code=eq.${encodeURIComponent(cc)}&select=data_area,zone_id,subzone_id,business_name,email,phone,concept_id`);
+    `companies?company_code=eq.${encodeURIComponent(cc)}&select=zone_id,subzone_id,business_name,email,phone`);
   const zone_id = comp && comp[0] ? comp[0].zone_id : null;
   const subzone_id = comp && comp[0] ? comp[0].subzone_id : null;
   const compBusinessName = comp && comp[0] ? (comp[0].business_name || '') : '';
   const compEmail = comp && comp[0] ? (comp[0].email || '') : '';
   const compPhone = comp && comp[0] ? (comp[0].phone || '') : '';
-  const compDataArea = comp && comp[0] ? (comp[0].data_area || '') : '';
-  const compConceptId = comp && comp[0] ? comp[0].concept_id : null;
 
-  // Nombres legibles de zona/subzona/marca para el cuerpo del ticket.
-  let zonaName = '', subzonaName = '', marcaName = '';
-  if (subzone_id != null) {
-    const sz = await sb(env, `subzones?id=eq.${encodeURIComponent(subzone_id)}&select=name`);
-    subzonaName = sz && sz[0] ? (sz[0].name || '') : '';
-  }
-  if (zone_id != null) {
-    const zn = await sb(env, `zones?id=eq.${encodeURIComponent(zone_id)}&select=name`);
-    zonaName = zn && zn[0] ? (zn[0].name || '') : '';
-  }
-  if (compConceptId != null) {
-    const cn = await sb(env, `concepts?id=eq.${encodeURIComponent(compConceptId)}&select=name`);
-    marcaName = cn && cn[0] ? (cn[0].name || '') : '';
-  }
-  // Mall / Zona del cuerpo: preferimos subzona (el mall) y caemos a zona.
-  const mallZona = subzonaName || zonaName || '';
+  // --- Encabezado en reports_log ---
   const header = await sb(env, 'reports_log', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
@@ -530,14 +511,35 @@ async function submitAusencia(env, body) {
     return json({ ok: false, error: 'Hay datos que no cumplen las reglas.', details: errors }, 422);
   }
 
-  // --- Zona/subzona + datos de contacto de la tienda (encabezado + From osTicket) ---
+  // --- Datos de la tienda (encabezado + From osTicket + plantilla AX) ---
+  // Trae data_area (Data ID de AX) y los nombres de zona/subzona/marca para
+  // el cuerpo de texto del ticket. data_area es CRITICO para la plantilla AX.
   const comp = await sb(env,
-    `companies?company_code=eq.${encodeURIComponent(cc)}&select=zone_id,subzone_id,business_name,email,phone`);
+    `companies?company_code=eq.${encodeURIComponent(cc)}&select=data_area,zone_id,subzone_id,business_name,email,phone,concept_id`);
   const zone_id = comp && comp[0] ? comp[0].zone_id : null;
   const subzone_id = comp && comp[0] ? comp[0].subzone_id : null;
   const compBusinessName = comp && comp[0] ? (comp[0].business_name || '') : '';
   const compEmail = comp && comp[0] ? (comp[0].email || '') : '';
   const compPhone = comp && comp[0] ? (comp[0].phone || '') : '';
+  const compDataArea = comp && comp[0] ? (comp[0].data_area || '') : '';
+  const compConceptId = comp && comp[0] ? comp[0].concept_id : null;
+
+  // Nombres legibles de zona/subzona/marca para el cuerpo del ticket.
+  let zonaName = '', subzonaName = '', marcaName = '';
+  if (subzone_id != null) {
+    const sz = await sb(env, `subzones?id=eq.${encodeURIComponent(subzone_id)}&select=name`);
+    subzonaName = sz && sz[0] ? (sz[0].name || '') : '';
+  }
+  if (zone_id != null) {
+    const zn = await sb(env, `zones?id=eq.${encodeURIComponent(zone_id)}&select=name`);
+    zonaName = zn && zn[0] ? (zn[0].name || '') : '';
+  }
+  if (compConceptId != null) {
+    const cn = await sb(env, `concepts?id=eq.${encodeURIComponent(compConceptId)}&select=name`);
+    marcaName = cn && cn[0] ? (cn[0].name || '') : '';
+  }
+  // Mall / Zona del cuerpo: preferimos subzona (el mall) y caemos a zona.
+  const mallZona = subzonaName || zonaName || '';
 
   // --- Encabezado en reports_log ---
   const header = await sb(env, 'reports_log', {
