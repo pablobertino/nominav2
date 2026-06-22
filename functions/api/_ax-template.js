@@ -392,11 +392,13 @@ export function buildAxWorkbookBase64(kind, ctx) {
 }
 
 /* =====================================================================
-   CUERPO DE TEXTO del ticket (PLA). Mismo formato del portal anterior:
-   marco de doble linea + DATOS DE LA TIENDA + REPORTANTE + INCIDENCIA.
-   ctx: topicLabel, alias, razon, zona, marca, correoTienda, responsable,
-        cargo, telefono, correoResp, fecha, hora, registros[] (lineas de
-        texto ya formateadas por el llamador).
+   CUERPO DE TEXTO del ticket. Mismo formato para PLA y DOC: marco de
+   doble linea + identificacion de PLANTILLA/DOCUMENTO con reporte y
+   pieza + TÓPICO + DATOS DE LA TIENDA + REPORTANTE + registros.
+   ctx: pieceLabel ('PLANTILLA'|'DOCUMENTO'), reportCode, piece, totalPieces,
+        topicLabel, alias, razon, zona, marca, correoTienda, responsable,
+        cargo, telefono, correoResp, fecha, hora, registros[] (cada uno es
+        un array de pares [label, value]).
    ===================================================================== */
 const LINE = '══════════════════════════════════════';
 const SUB = '──────────────';
@@ -406,6 +408,13 @@ export function buildReportText(ctx) {
   txt += `REPORTE DE INCIDENCIA DE NÓMINA\n`;
   txt += `Fecha: ${ctx.fecha}  Hora: ${ctx.hora}\n`;
   txt += `${LINE}\n\n`;
+  // Identificacion de la pieza (PLANTILLA o DOCUMENTO) + reporte + pieza,
+  // justo encima del TÓPICO para que PLA y DOC se distingan de un vistazo.
+  if (ctx.pieceLabel) {
+    txt += `${ctx.pieceLabel}\n`;
+    const pieza = (ctx.piece && ctx.totalPieces) ? `   ·   Pieza ${ctx.piece}/${ctx.totalPieces}` : '';
+    txt += `Reporte: ${ctx.reportCode || ''}${pieza}\n`;
+  }
   txt += `TÓPICO: ${(ctx.topicLabel || '').toUpperCase()}\n\n`;
   txt += `── DATOS DE LA TIENDA ${SUB}\n`;
   txt += `Alias:           ${ctx.alias || ''}\n`;
@@ -417,8 +426,7 @@ export function buildReportText(ctx) {
   txt += `Responsable:     ${ctx.responsable || ''}\n`;
   txt += `Cargo:           ${ctx.cargo || ''}\n`;
   txt += `Teléfono:        ${ctx.telefono || '—'}\n`;
-  txt += `Correo:          ${ctx.correoResp || ''}\n\n`;
-  txt += `── INCIDENCIA ${SUB}──────\n`;
+  txt += `Correo:          ${ctx.correoResp || ''}\n`;
   (ctx.registros || []).forEach((reg, i) => {
     txt += `\nRegistro #${i + 1}:\n`;
     reg.forEach(([label, value]) => {

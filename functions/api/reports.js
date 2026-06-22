@@ -644,9 +644,8 @@ async function submitAusencia(env, body) {
     }
 
     // 2) Cuerpo del PLA: usa el formato oficial (buildReportText) con el
-    //    marco de doble linea + DATOS DE LA TIENDA + REPORTANTE + INCIDENCIA,
-    //    identico al del portal anterior. Cada registro lista los campos de
-    //    la ausencia. Las fechas se muestran en DD/MM/YYYY.
+    //    marco de doble linea + bloque PLANTILLA + DATOS DE LA TIENDA +
+    //    REPORTANTE + registros de todos los trabajadores. Fechas DD/MM/YYYY.
     const registros = clean.map(l => {
       const campos = [
         ['Trabajador', l.worker_name],
@@ -660,6 +659,7 @@ async function submitAusencia(env, body) {
       return campos;
     });
     const plaBody = buildReportText({
+      pieceLabel: 'PLANTILLA', reportCode: code, piece: 1, totalPieces,
       topicLabel: `Período de Ausencia — ${atype.label}`,
       fecha: dmy(today), hora: nowHHMM,
       alias: cc, razon: compBusinessName, zona: mallZona, marca: marcaName,
@@ -726,19 +726,34 @@ async function submitAusencia(env, body) {
     }
 
     // 3) Un ticket DOC por persona con documento. Pieza k = 2,3,... (el PLA es 1).
+    //    El cuerpo usa el MISMO formato que el PLA (buildReportText) pero con
+    //    bloque DOCUMENTO y un solo trabajador.
     for (let i = 0; i < withDoc.length; i++) {
       const l = withDoc[i];
       const ced = l.worker_id_number;
       const fname = l._fileName || `documento_${ced}`;
       const piece = i + 2;   // el PLA ocupo la pieza 1
+      const periodo = l.date_from === l.date_to ? dmy(l.date_from) : `${dmy(l.date_from)} a ${dmy(l.date_to)}`;
+      const docBody = buildReportText({
+        pieceLabel: 'DOCUMENTO', reportCode: code, piece, totalPieces,
+        topicLabel: `Período de Ausencia — ${atype.label}`,
+        fecha: dmy(today), hora: nowHHMM,
+        alias: cc, razon: compBusinessName, zona: mallZona, marca: marcaName,
+        correoTienda: compEmail,
+        responsable: responsible, cargo: position, telefono: compPhone, correoResp: compEmail,
+        registros: [[
+          ['Trabajador', l.worker_name],
+          ['Cédula', ced],
+          ['Período', periodo],
+          ['Justificación', l.ax_code],
+        ]],
+      });
       try {
         const docNum = await osticketCreateTicket(env, base, {
           email: fromEmail,
           name: fromName,
           subject: `[${code}] DOC ${ced} [${piece}/${totalPieces}]`,
-          message:
-            `Documento(s) de ${l.worker_name} (${ced}) - reporte ${code}.\n` +
-            `Tipo: ${atype.label} (AX: ${axCode}) - ${l.date_from === l.date_to ? l.date_from : l.date_from + ' a ' + l.date_to}.`,
+          message: docBody,
           topicId,
           source: 'API',
           alert: false,
