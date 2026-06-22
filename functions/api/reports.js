@@ -476,7 +476,7 @@ async function submitMarcaje(env, body) {
       const plaNum = await osticketCreateTicket(env, base, {
         email: fromEmail,
         name: fromName,
-        subject: `[${code}] PLA [1/${totalPieces}]`,
+        subject: `[${code}] [1/${totalPieces}] PLA`,
         message: plaBody,
         topicId,
         source: 'API',
@@ -873,7 +873,7 @@ async function submitAusencia(env, body) {
       const plaNum = await osticketCreateTicket(env, base, {
         email: fromEmail,
         name: fromName,
-        subject: `[${code}] PLA [1/${totalPieces}]`,
+        subject: `[${code}] [1/${totalPieces}] PLA`,
         message: plaBody,
         topicId,
         source: 'API',
@@ -922,7 +922,7 @@ async function submitAusencia(env, body) {
         const docNum = await osticketCreateTicket(env, base, {
           email: fromEmail,
           name: fromName,
-          subject: `[${code}] DOC ${ced} [${piece}/${totalPieces}]`,
+          subject: `[${code}] [${piece}/${totalPieces}] DOC ${ced}`,
           message: docBody,
           topicId,
           source: 'API',
@@ -1034,6 +1034,12 @@ async function submitEgreso(env, body) {
   const endDateByCed = {};
   (roster || []).forEach(w => { endDateByCed[w.id_number] = w.end_date || null; });
 
+  // --- Causas de egreso sin carta (catalogo) ---
+  // waives_document: si la causa exime el documento (no queda pendiente).
+  const causes = await sb(env, 'egress_doc_causes?is_active=eq.true&select=code,label,waives_document');
+  const causeMap = {};
+  (causes || []).forEach(c => { causeMap[c.code] = c; });
+
   // --- Validacion + derivacion linea por linea ---
   const clean = [];
   const errors = [];
@@ -1043,6 +1049,13 @@ async function submitEgreso(env, body) {
     const real = String(ln.real_date || '').slice(0, 10);
     let report = String(ln.report_date || '').slice(0, 10);
     const tag = name || ced || `fila ${i + 1}`;
+    // Documento (carta de renuncia): opcional. Si no hay carta, debe venir
+    // una causa; segun la causa, exime o queda pendiente.
+    const fileName = (ln.doc_file_name || '').toString().trim();
+    const fileB64 = (ln.doc_file_b64 || '').toString();
+    const fileType = (ln.doc_file_type || '').toString().trim();
+    const causeCode = (ln.doc_cause || '').toString().trim();
+    const causeOther = (ln.doc_cause_other || '').toString().trim();
 
     if (!ced || ced.length < 6 || ced.length > 8) { errors.push(`${tag}: cedula invalida.`); return; }
     if (!name) { errors.push(`${tag}: falta el nombre.`); return; }
@@ -1063,9 +1076,20 @@ async function submitEgreso(env, body) {
     else if (real > maxRep) derived = maxRep;    // (defensivo)
     report = derived;
 
-    // Coherencia con el CHECK de la tabla: real <= report.
-    // (real solo puede ser < report cuando se reporto tarde; nunca mayor.)
     if (real > report) { errors.push(`${tag}: inconsistencia de fechas (real ${real} > reportable ${report}).`); return; }
+
+    // Documento: si NO adjunta carta, exige una causa valida.
+    const hasDoc = !!fileB64;
+    let docCause = null, docWaived = false, causeLabel = null;
+    if (!hasDoc) {
+      if (!causeCode) { errors.push(`${tag}: indica la causa por la que no adjunta la carta de renuncia.`); return; }
+      const c = causeMap[causeCode];
+      if (!c) { errors.push(`${tag}: causa de no-adjunto invalida.`); return; }
+      if (causeCode === 'other' && !causeOther) { errors.push(`${tag}: especifica la causa (Otra).`); return; }
+      docCause = causeCode;
+      docWaived = !!c.waives_document;
+      causeLabel = causeCode === 'other' ? (causeOther || 'Otra causa') : (c.label || causeCode);
+    }
 
     clean.push({
       worker_id_number: ced,
@@ -1073,6 +1097,15 @@ async function submitEgreso(env, body) {
       report_date: report,
       real_date: real,
       _adjusted: real !== report,
+      // documento
+      has_document: hasDoc,
+      doc_cause: docCause,
+      doc_waived: docWaived,
+      _causeLabel: causeLabel,        // interno: para el cuerpo del ticket
+      _causeOther: causeOther || null,
+      _fileName: fileName || null,    // interno: para el ticket DOC
+      _fileB64: fileB64 || null,
+      _fileType: fileType || null,
     });
   });
 
@@ -1126,28 +1159,36 @@ async function submitEgreso(env, body) {
   const reportId = header && header[0] && header[0].id;
   if (!reportId) return json({ ok: false, error: 'No se pudo registrar el reporte.' }, 500);
 
-  // --- Detalle en egress_report_lines (ambas fechas) ---
+  // --- Detalle en egress_report_lines (ambas fechas + estado del documento) ---
   const payload = clean.map(l => ({
     report_id: reportId,
     worker_id_number: l.worker_id_number,
     worker_name: l.worker_name,
     report_date: l.report_date,
     real_date: l.real_date,
+    has_document: l.has_document,
+    doc_cause: l.doc_cause,
+    doc_waived: l.doc_waived,
   }));
   await sb(env, 'egress_report_lines', { method: 'POST', body: JSON.stringify(payload) });
 
   // ───────────────────────────────────────────────────────────────────
-  // ENVIO A OSTICKET. Egreso NO lleva documentos: un solo PLA [1/1] con
-  // el Excel axIngEgr (accion B) adjunto. Topic 33. El Excel lleva la
-  // fecha REPORTABLE en "Fecha Final de Empleo". El cuerpo muestra ambas
-  // fechas cuando difieren.
+  // ENVIO A OSTICKET. Igual que ausencia: 1 PLA (resumen + Excel accion B)
+  // + 1 DOC por persona que adjunte carta de renuncia. Topic 33. El Excel
+  // lleva la fecha REPORTABLE en "Fecha Final de Empleo" y el nombre dividido
+  // (ultima palabra = apellidos). El cuerpo del PLA muestra el estado del
+  // documento por persona (adjunto / causa).
   // ───────────────────────────────────────────────────────────────────
   const code = reportCode(reportId);
   const base = await osticketBase(env);
   const topicId = parseInt(await getSetting(env, 'osticket_topic_egreso', '33'), 10) || 33;
   const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
   const fromName = `${cc} - ${compBusinessName || cc}`;
-  const totalPieces = 1;   // egreso = solo PLA
+
+  // Personas con carta adjunta (las que generan ticket DOC).
+  const withDoc = clean.filter(l => l._fileB64);
+  const nDocs = withDoc.length;
+  const totalPieces = 1 + nDocs;   // PLA (1) + un DOC por carta
 
   const result = { osticket_pla: null, tickets_ok: 0, tickets_fail: 0, ticket_errors: [] };
 
@@ -1166,7 +1207,8 @@ async function submitEgreso(env, body) {
     }
 
     // 2) Cuerpo del PLA. Cada registro: Trabajador, Cedula, Tipo (Baja (B)),
-    //    Fecha de egreso (la reportable) y, SOLO si difiere, Fecha real.
+    //    Fecha de egreso (reportable), Fecha real (solo si difiere), y el
+    //    estado de la Carta de renuncia (adjunta / la causa elegida).
     const registros = clean.map(l => {
       const campos = [
         ['Trabajador', l.worker_name],
@@ -1175,6 +1217,12 @@ async function submitEgreso(env, body) {
         ['Fecha de egreso', dmy(l.report_date)],
       ];
       if (l._adjusted) campos.push(['Fecha real de egreso', dmy(l.real_date)]);
+      if (l.has_document) {
+        campos.push(['Carta de renuncia', 'adjunta (ticket DOC aparte)']);
+      } else {
+        const suf = l.doc_waived ? '' : ' — pendiente';
+        campos.push(['Carta de renuncia', `${l._causeLabel}${suf}`]);
+      }
       return campos;
     });
     const plaBody = buildReportText({
@@ -1187,10 +1235,9 @@ async function submitEgreso(env, body) {
       registros,
     });
 
-    // Plantilla AX (Excel) accion B. axIngEgr espera por linea: nombre
-    // (usamos el nombre completo del roster), id_number y fechaFin (la
-    // reportable). El resto de columnas van vacias (baja = identificar +
-    // fecha final). data_area va como Data ID.
+    // Plantilla AX (Excel) accion B. El nombre se DIVIDE: la ultima palabra
+    // va a Apellidos y el resto a Nombre (heuristica simple). id_number y
+    // fechaFin = reportable. data_area va como Data ID. Resto vacio.
     let plaAttachments;
     try {
       const axCtx = {
@@ -1199,11 +1246,17 @@ async function submitEgreso(env, body) {
         companyAlias: cc,
         todayYmd: today,
         reportCode: code,
-        lines: clean.map(l => ({
-          id_number: l.worker_id_number,
-          nombre: l.worker_name,   // nombre completo (no se separa)
-          fechaFin: l.report_date, // "Fecha Final de Empleo" = reportable
-        })),
+        lines: clean.map(l => {
+          const parts = String(l.worker_name).trim().split(/\s+/);
+          const apellidos = parts.length > 1 ? parts[parts.length - 1] : '';
+          const nombre = parts.length > 1 ? parts.slice(0, -1).join(' ') : parts[0];
+          return {
+            id_number: l.worker_id_number,
+            nombre,           // todo menos la ultima palabra
+            apellidos,        // ultima palabra
+            fechaFin: l.report_date,
+          };
+        }),
       };
       const wb = buildAxWorkbookBase64('egreso', axCtx);
       if (wb) {
@@ -1220,7 +1273,7 @@ async function submitEgreso(env, body) {
       const plaNum = await osticketCreateTicket(env, base, {
         email: fromEmail,
         name: fromName,
-        subject: `[${code}] PLA [1/${totalPieces}]`,
+        subject: `[${code}] [1/${totalPieces}] PLA`,
         message: plaBody,
         topicId,
         source: 'API',
@@ -1234,11 +1287,59 @@ async function submitEgreso(env, body) {
       result.tickets_ok++;
       await gcReportLink(env, base, {
         report_code: code, ticket_number: plaNum, kind: 'PLA',
-        company: cc, report_type: 'egreso', doc_total: 0,
+        company: cc, report_type: 'egreso', doc_total: nDocs,
       });
     } catch (e) {
       result.tickets_fail++;
       result.ticket_errors.push(`PLA: ${String(e.message || e)}`);
+    }
+
+    // 3) Un ticket DOC por persona con carta de renuncia. Pieza k = 2,3,...
+    for (let i = 0; i < withDoc.length; i++) {
+      const l = withDoc[i];
+      const ced = l.worker_id_number;
+      const fname = l._fileName || `carta_renuncia_${ced}`;
+      const piece = i + 2;   // el PLA ocupo la pieza 1
+      const docBody = buildReportText({
+        pieceLabel: 'DOCUMENTO', reportCode: code, piece, totalPieces,
+        topicLabel: 'Egreso',
+        fecha: dmy(today), hora: nowHHMM,
+        alias: cc, razon: compBusinessName, zona: mallZona, marca: marcaName,
+        correoTienda: compEmail,
+        responsable: responsible, cargo: position, telefono: compPhone, correoResp: compEmail,
+        registros: [[
+          ['Trabajador', l.worker_name],
+          ['Cédula', ced],
+          ['Tipo', 'Baja (B)'],
+          ['Fecha de egreso', dmy(l.report_date)],
+          ['Documento', 'Carta de renuncia'],
+        ]],
+      });
+      try {
+        const docNum = await osticketCreateTicket(env, base, {
+          email: fromEmail,
+          name: fromName,
+          subject: `[${code}] [${piece}/${totalPieces}] DOC ${ced}`,
+          message: docBody,
+          topicId,
+          source: 'API',
+          alert: false,
+          autorespond: false,
+          report_code: code,
+          report_kind: 'DOC',
+          attachments: [osAttach(fname, l._fileB64, l._fileType || 'application/octet-stream')],
+        });
+        result.tickets_ok++;
+        await gcReportLink(env, base, {
+          report_code: code, ticket_number: docNum, kind: 'DOC',
+          company: cc, report_type: 'egreso',
+          worker_id: ced, worker_name: l.worker_name,
+          doc_pos: piece, doc_total: totalPieces,
+        });
+      } catch (e) {
+        result.tickets_fail++;
+        result.ticket_errors.push(`DOC ${ced}: ${String(e.message || e)}`);
+      }
     }
 
     if (result.osticket_pla) {
@@ -1251,10 +1352,14 @@ async function submitEgreso(env, body) {
     }
   }
 
+  // Cuantos quedaron debiendo carta (sin adjunto y sin causa que exima).
+  const pendingDocs = clean.filter(l => !l.has_document && !l.doc_waived).length;
+
   return json({
     ok: true,
     report_id: reportId,
     workers_count: clean.length,
+    pending_docs: pendingDocs,
     osticket: {
       pla: result.osticket_pla,
       tickets_ok: result.tickets_ok,

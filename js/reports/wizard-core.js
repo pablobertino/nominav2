@@ -357,8 +357,23 @@ export function launchWizard(user, reportDef, onExit) {
     $('#respNext').addEventListener('click', () => setStep(3));
   }
 
+  // Centinela para "Sin gerente asignado". Solo se ofrece cuando la tienda
+  // NO tiene ningun responsable detectado/gestionado (para que no abusen de
+  // la opcion cuando si hay gerentes). Si la eligen, queda registrado quien
+  // reporto sin gerente.
+  const NO_MANAGER = 'none';
+
   function respCards() {
-    if (!S.responsables.length) return '<div class="empty">No hay responsables. Agrega al menos uno con “Gestionar responsables”.</div>';
+    // Caso sin responsables: ofrecer una unica tarjeta "Sin gerente asignado".
+    if (!S.responsables.length) {
+      return `
+        <div class="warn-banner" style="margin:0 0 12px">⚠ <div>Esta tienda no tiene ningún gerente ni sub-gerente en la lista. Puedes agregar un responsable con “Gestionar responsables”, o continuar <b>sin gerente asignado</b> (quedará registrado).</div></div>
+        <div class="resp-card ${S.selResp === NO_MANAGER ? 'sel' : ''}" data-id="${NO_MANAGER}">
+          <span class="resp-radio"></span>
+          <div class="resp-info"><div class="resp-name">Sin gerente asignado</div><div class="resp-role">La tienda no tiene gerente en la lista</div></div>
+        </div>`;
+    }
+    // Hay responsables: debe elegir uno (no se ofrece "sin gerente").
     return S.responsables.map(r => `
       <div class="resp-card ${S.selResp === r.id ? 'sel' : ''}" data-id="${r.id}">
         <span class="resp-radio"></span>
@@ -367,7 +382,8 @@ export function launchWizard(user, reportDef, onExit) {
   }
   function bindRespCards() {
     $('#respList').querySelectorAll('.resp-card').forEach(c => c.addEventListener('click', () => {
-      S.selResp = parseInt(c.dataset.id, 10);
+      const raw = c.dataset.id;
+      S.selResp = raw === NO_MANAGER ? NO_MANAGER : parseInt(raw, 10);
       $('#respList').innerHTML = respCards(); bindRespCards();
       $('#respNext').disabled = false;
     }));
@@ -608,9 +624,16 @@ export function launchWizard(user, reportDef, onExit) {
   function stepSummary() {
     const panel = $('#wzPanel');
     const resp = S.responsables.find(r => r.id === S.selResp);
-    // Responsable mostrado: admin = la central; tienda = gerente elegido.
-    const respName = isAdmin ? (user.name || user.username) : (resp ? resp.full_name : '—');
-    const respRole = isAdmin ? 'Administrador' : (resp ? resp.role : '');
+    // Responsable mostrado: admin = la central; tienda = gerente elegido, o
+    // "Sin gerente asignado" si la tienda no tiene gerente y eligio esa opcion.
+    let respName, respRole;
+    if (isAdmin) {
+      respName = user.name || user.username; respRole = 'Administrador';
+    } else if (S.selResp === NO_MANAGER) {
+      respName = 'Sin gerente asignado'; respRole = '';
+    } else {
+      respName = resp ? resp.full_name : '—'; respRole = resp ? resp.role : '';
+    }
     const respLabel = respRole ? `${respName} · ${respRole}` : respName;
     const extraCols = reportDef.summaryColumns || [];
     panel.innerHTML = `
@@ -639,9 +662,17 @@ export function launchWizard(user, reportDef, onExit) {
     const btn = $('#sumSend'); btn.disabled = true; btn.textContent = 'Enviando…';
     $('#sumError').textContent = '';
     const resp = S.responsables.find(r => r.id === S.selResp);
-    // Origen y responsable segun rol.
-    const responsible = isAdmin ? (user.name || user.username) : (resp ? resp.full_name : '');
-    const position = isAdmin ? 'Administrador' : (resp ? resp.role : '');
+    // Origen y responsable segun rol. Si la tienda no tiene gerente y eligio
+    // "Sin gerente asignado", se envia ese texto como responsable (queda
+    // registrado en reports_log) con cargo vacio.
+    let responsible, position;
+    if (isAdmin) {
+      responsible = user.name || user.username; position = 'Administrador';
+    } else if (S.selResp === NO_MANAGER) {
+      responsible = 'Sin gerente asignado'; position = '';
+    } else {
+      responsible = resp ? resp.full_name : ''; position = resp ? resp.role : '';
+    }
     const res = await reportDef.submit({
       companyCode,
       responsible,

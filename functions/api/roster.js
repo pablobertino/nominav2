@@ -147,23 +147,46 @@ export async function onRequestPost({ request, env }) {
         }),
       });
 
-      // Precargar responsables SOLO si la tienda aun no tiene ninguno activo.
-      // (No pisamos los que la tienda ya gestiono.)
+      // Precargar/RENOVAR responsables detectados del Reporte 10.
+      // Regla: los responsables con source 'report10' se RENUEVAN con cada
+      // carga (se borran los viejos y se siembran los gerentes/subgerentes
+      // del nuevo Reporte 10). Los responsables 'manual' (agregados a mano
+      // por la tienda/admin) NO se tocan: se conservan siempre.
+      // Asi, al subir un Reporte 10 nuevo, los gerentes quedan actualizados
+      // sin pisar lo que la tienda gestiono manualmente.
       let contactsSeeded = 0;
-      const existing = await sb(env,
+      // 1) Borrar (baja logica) los responsables 'report10' previos.
+      await sb(env,
+        `store_contacts?company_code=eq.${encodeURIComponent(cc)}&source=eq.report10`,
+        { method: 'DELETE' });
+      // 2) Cuantos 'manual' activos quedan (para respetar el tope de 4).
+      const manualLeft = await sb(env,
         `store_contacts?company_code=eq.${encodeURIComponent(cc)}&is_active=eq.true&select=id`);
-      if ((!existing || existing.length === 0) && managers.length) {
-        const seed = managers.slice(0, 4).map(m => ({
-          company_code: cc,
-          full_name: m.full_name,
-          role: m.mrole,
-          id_number: m.id_number,
-          source: 'report10',
-        }));
-        try {
-          await sb(env, 'store_contacts', { method: 'POST', body: JSON.stringify(seed) });
-          contactsSeeded = seed.length;
-        } catch (e) { /* el trigger de max 4 no deberia saltar con <=4 */ }
+      const room = Math.max(0, 4 - ((manualLeft && manualLeft.length) || 0));
+      // 3) Sembrar los gerentes/subgerentes del nuevo Reporte 10, evitando
+      //    duplicar una cedula que ya este como responsable manual.
+      if (room > 0 && managers.length) {
+        const manualCeds = new Set();
+        // Releer los manuales con su cedula para no duplicar.
+        const manualRows = await sb(env,
+          `store_contacts?company_code=eq.${encodeURIComponent(cc)}&is_active=eq.true&select=id_number`);
+        (manualRows || []).forEach(m => { if (m.id_number) manualCeds.add(m.id_number); });
+        const seed = managers
+          .filter(m => !manualCeds.has(m.id_number))
+          .slice(0, room)
+          .map(m => ({
+            company_code: cc,
+            full_name: m.full_name,
+            role: m.mrole,
+            id_number: m.id_number,
+            source: 'report10',
+          }));
+        if (seed.length) {
+          try {
+            await sb(env, 'store_contacts', { method: 'POST', body: JSON.stringify(seed) });
+            contactsSeeded = seed.length;
+          } catch (e) { /* el trigger de max 4 no deberia saltar con <=4 */ }
+        }
       }
 
       return json({

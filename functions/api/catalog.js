@@ -70,6 +70,13 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, causas: causas || [] });
     }
 
+    // --- Catalogo de causas de egreso sin carta (para el wizard de egreso) ---
+    // waives_document: si la causa exime el documento (no queda pendiente).
+    if (body.action === 'egress_causes') {
+      const causas = await sb(env, 'egress_doc_causes?is_active=eq.true&select=code,label,waives_document&order=sort_order');
+      return json({ ok: true, causas: causas || [] });
+    }
+
     // --- Catalogo de tipos de ausencia + documentos requeridos (wizard de ausencia) ---
     if (body.action === 'absence_types') {
       const types = await sb(env, 'absence_types?is_active=eq.true&select=code,label,ax_code,allows_future,note,past_window_days,past_uses_cutoff,future_window_days&order=sort_order');
