@@ -502,11 +502,14 @@ async function submitAusencia(env, body) {
     return json({ ok: false, error: 'Hay datos que no cumplen las reglas.', details: errors }, 422);
   }
 
-  // --- Zona/subzona de la tienda (para el encabezado) ---
+  // --- Zona/subzona + datos de contacto de la tienda (encabezado + From osTicket) ---
   const comp = await sb(env,
-    `companies?company_code=eq.${encodeURIComponent(cc)}&select=zone_id,subzone_id`);
+    `companies?company_code=eq.${encodeURIComponent(cc)}&select=zone_id,subzone_id,business_name,email,phone`);
   const zone_id = comp && comp[0] ? comp[0].zone_id : null;
   const subzone_id = comp && comp[0] ? comp[0].subzone_id : null;
+  const compBusinessName = comp && comp[0] ? (comp[0].business_name || '') : '';
+  const compEmail = comp && comp[0] ? (comp[0].email || '') : '';
+  const compPhone = comp && comp[0] ? (comp[0].phone || '') : '';
 
   // --- Encabezado en reports_log ---
   const header = await sb(env, 'reports_log', {
@@ -586,8 +589,18 @@ async function submitAusencia(env, body) {
     // Sin configuracion de osTicket no se envia, pero el reporte ya quedo en BD.
     result.ticket_errors.push('osTicket no configurado (url o api key).');
   } else {
-    // 1) Usuario-tienda (idempotente). No critico.
-    await gcUser(env, base, { email: fromEmail, name: fromName, phone: compPhone });
+    // 1) Usuario-tienda (idempotente). No critico. Si devuelve user_id,
+    //    lo guardamos en companies (auto-sync por uso): asi la pantalla de
+    //    sincronizacion sabe que esta tienda ya existe en osTicket.
+    const ostUserId = await gcUser(env, base, { email: fromEmail, name: fromName, phone: compPhone });
+    if (ostUserId) {
+      try {
+        await sb(env, `companies?company_code=eq.${encodeURIComponent(cc)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ osticket_user_id: ostUserId, osticket_synced_at: new Date().toISOString() }),
+        });
+      } catch { /* no critico: el envio del ticket sigue igual */ }
+    }
 
     // 2) Cuerpo del PLA: resumen de todos los trabajadores del reporte.
     const lineaTxt = (l, i) => {
