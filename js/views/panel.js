@@ -10,6 +10,7 @@ import { go } from '../core/router.js';
 import { launchWizard } from '../reports/wizard-core.js';
 import { marcajeReport } from '../reports/report-marcaje.js';
 import { ausenciaReport } from '../reports/report-ausencia.js';
+import { egresoReport } from '../reports/report-egreso.js';
 import { renderHistory } from '../reports/history.js';
 
 let CATALOG = null;       // { companies, zones, subzones, concepts }
@@ -68,7 +69,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.54</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.55</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1767,9 +1768,11 @@ function openReportPicker(u, onExit) {
       <div class="report-tile soon"><span class="rt-ico">➕</span>
         <span class="rt-body"><span class="rt-title">Ingreso <span class="badge-soon">pronto</span></span>
           <span class="rt-desc">Nuevo trabajador en la tienda.</span></span></div>
-      <div class="report-tile soon"><span class="rt-ico">➖</span>
-        <span class="rt-body"><span class="rt-title">Egreso <span class="badge-soon">pronto</span></span>
-          <span class="rt-desc">Trabajador que deja la tienda.</span></span></div>
+      <button class="report-tile" data-report="egreso">
+        <span class="rt-ico">🔴</span>
+        <span class="rt-body"><span class="rt-title">Egreso</span>
+          <span class="rt-desc">Trabajador que deja la tienda.</span></span>
+      </button>
       <div class="report-tile soon"><span class="rt-ico">✏️</span>
         <span class="rt-body"><span class="rt-title">Modificación <span class="badge-soon">pronto</span></span>
           <span class="rt-desc">Corrección de datos de un trabajador.</span></span></div>
@@ -1784,6 +1787,11 @@ function openReportPicker(u, onExit) {
   if (tileAus) tileAus.addEventListener('click', () => {
     closeModal();
     launchWizard(u, ausenciaReport, onExit);
+  });
+  const tileEgr = document.querySelector('#rpGrid [data-report="egreso"]');
+  if (tileEgr) tileEgr.addEventListener('click', () => {
+    closeModal();
+    launchWizard(u, egresoReport, onExit);
   });
 }
 
@@ -1831,9 +1839,11 @@ async function viewMiEmpresa(user) {
       <div class="report-tile soon"><span class="rt-ico">➕</span>
         <span class="rt-body"><span class="rt-title">Ingreso <span class="badge-soon">pronto</span></span>
           <span class="rt-desc">Nuevo trabajador en la tienda.</span></span></div>
-      <div class="report-tile soon"><span class="rt-ico">➖</span>
-        <span class="rt-body"><span class="rt-title">Egreso <span class="badge-soon">pronto</span></span>
-          <span class="rt-desc">Trabajador que deja la tienda.</span></span></div>
+      <button class="report-tile" data-report="egreso">
+        <span class="rt-ico">🔴</span>
+        <span class="rt-body"><span class="rt-title">Egreso</span>
+          <span class="rt-desc">Trabajador que deja la tienda.</span></span>
+      </button>
       <div class="report-tile soon"><span class="rt-ico">✏️</span>
         <span class="rt-body"><span class="rt-title">Modificación <span class="badge-soon">pronto</span></span>
           <span class="rt-desc">Corrección de datos de un trabajador.</span></span></div>
@@ -1846,6 +1856,10 @@ async function viewMiEmpresa(user) {
   const tileAus = $('#reportGrid').querySelector('[data-report="ausencia"]');
   if (tileAus) tileAus.addEventListener('click', () => {
     launchWizard(user, ausenciaReport, () => viewMiEmpresa(user));
+  });
+  const tileEgr = $('#reportGrid').querySelector('[data-report="egreso"]');
+  if (tileEgr) tileEgr.addEventListener('click', () => {
+    launchWizard(user, egresoReport, () => viewMiEmpresa(user));
   });
 }
 

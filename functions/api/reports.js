@@ -175,6 +175,9 @@ export async function onRequestPost({ request, env }) {
     if (body.action === 'submit_ausencia') {
       return await submitAusencia(env, body);
     }
+    if (body.action === 'submit_egreso') {
+      return await submitEgreso(env, body);
+    }
     if (body.action === 'window') {
       return await getWindow(env, body);
     }
@@ -963,6 +966,295 @@ async function submitAusencia(env, body) {
     absence_code: absenceCode,
     ax_code: axCode,
     pending_docs: pendingDocs,
+    osticket: {
+      pla: result.osticket_pla,
+      tickets_ok: result.tickets_ok,
+      tickets_fail: result.tickets_fail,
+      errors: result.ticket_errors,
+    },
+  });
+}
+
+/* =====================================================================
+   EGRESO (Baja)
+   Registra el encabezado en reports_log (topic 'egreso') + el detalle por
+   trabajador en egress_report_lines. NO lleva documentos: es un solo
+   ticket PLA (topic 33) con la plantilla AX (Excel, accion B) adjunta.
+
+   Dos fechas por trabajador:
+     - real_date   : la fecha real de egreso (cuando dejo de trabajar).
+     - report_date : la que va a AX. Se DERIVA server-side de la real,
+                     limitada por la ventana hacia atras (regla general de
+                     marcaje). Si la real es mas antigua que el minimo
+                     reportable, report_date = minimo; la real queda igual.
+   El Excel recibe report_date (Fecha Final de Empleo). El cuerpo del
+   ticket muestra ambas cuando difieren, una sola cuando coinciden.
+
+   Body:
+     { action:'submit_egreso', company_code, responsible, position,
+       lines:[{ id_number, name, report_date, real_date }],
+       source_kind?, source_admin_id? }
+   ===================================================================== */
+async function submitEgreso(env, body) {
+  const cc = (body.company_code || '').trim();
+  const responsible = (body.responsible || '').trim();
+  const position = (body.position || '').trim();
+  const lines = Array.isArray(body.lines) ? body.lines : [];
+
+  // Origen del reporte: 'company' (tienda) | 'admin' (central).
+  let sourceKind = body.source_kind === 'admin' ? 'admin' : 'company';
+  let sourceAdminId = null;
+  if (sourceKind === 'admin') {
+    const aid = parseInt(body.source_admin_id, 10);
+    if (aid) {
+      const a = await sb(env, `admin_users?id=eq.${aid}&is_active=eq.true&select=id`);
+      if (a && a.length) sourceAdminId = aid;
+    }
+    if (!sourceAdminId) sourceKind = 'company';
+  }
+
+  if (!cc) return json({ ok: false, error: 'Falta la tienda.' }, 400);
+  if (!responsible) return json({ ok: false, error: 'Falta el responsable.' }, 400);
+  if (!lines.length) return json({ ok: false, error: 'No hay trabajadores en el reporte.' }, 400);
+
+  // --- Ventana reportable (regla general de marcaje, server-side) ---
+  const { ymd: today, hhmm: nowHHMM } = nowCaracas();
+  const margin = parseInt(await getSetting(env, 'corte_margen_dias', '2'), 10) || 2;
+  const cutoffTime = await getSetting(env, 'corte_hora_limite', '14:00');
+  const pastCutoff = toMin(nowHHMM) >= toMin(cutoffTime);
+  const reportMin = addDays(today, pastCutoff ? -(margin - 1) : -margin);
+  const oldestDay = addDays(today, -margin);
+  const period = await currentPeriod(env, today);
+  const hito = period && period.milestone_date ? period.milestone_date : today;
+  const reportMax = today < hito ? today : hito;
+
+  // Trabajadores de la tienda (para validar egreso ya conocido). cedula -> end_date.
+  const roster = await sb(env,
+    `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,end_date`);
+  const endDateByCed = {};
+  (roster || []).forEach(w => { endDateByCed[w.id_number] = w.end_date || null; });
+
+  // --- Validacion + derivacion linea por linea ---
+  const clean = [];
+  const errors = [];
+  lines.forEach((ln, i) => {
+    const ced = String(ln.id_number || '').replace(/[^0-9]/g, '');
+    const name = String(ln.name || '').trim();
+    const real = String(ln.real_date || '').slice(0, 10);
+    let report = String(ln.report_date || '').slice(0, 10);
+    const tag = name || ced || `fila ${i + 1}`;
+
+    if (!ced || ced.length < 6 || ced.length > 8) { errors.push(`${tag}: cedula invalida.`); return; }
+    if (!name) { errors.push(`${tag}: falta el nombre.`); return; }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(real)) { errors.push(`${tag}: fecha real de egreso invalida.`); return; }
+
+    // La fecha real: no futura, no posterior al egreso ya registrado.
+    if (real > reportMax) { errors.push(`${tag}: la fecha real (${real}) no puede ser futura ni posterior al ${reportMax}.`); return; }
+    const end = endDateByCed[ced];
+    if (end && real > end) { errors.push(`${tag}: la fecha real es posterior al egreso ya registrado (${end}).`); return; }
+
+    // Derivar la REPORTABLE server-side (no se confia en la del cliente):
+    //  - tope superior: hoy/hito, acotado por el egreso ya registrado.
+    //  - si la real cae dentro de la ventana -> reportable = real.
+    //  - si la real es mas antigua que el minimo -> reportable = minimo.
+    const maxRep = (end && end < reportMax) ? end : reportMax;
+    let derived = real;
+    if (real < reportMin) derived = reportMin;   // reportada tarde: AX recibe el minimo
+    else if (real > maxRep) derived = maxRep;    // (defensivo)
+    report = derived;
+
+    // Coherencia con el CHECK de la tabla: real <= report.
+    // (real solo puede ser < report cuando se reporto tarde; nunca mayor.)
+    if (real > report) { errors.push(`${tag}: inconsistencia de fechas (real ${real} > reportable ${report}).`); return; }
+
+    clean.push({
+      worker_id_number: ced,
+      worker_name: name,
+      report_date: report,
+      real_date: real,
+      _adjusted: real !== report,
+    });
+  });
+
+  if (errors.length) {
+    return json({ ok: false, error: 'Hay datos que no cumplen las reglas.', details: errors }, 422);
+  }
+
+  // --- Datos de la tienda (encabezado + From osTicket + plantilla AX) ---
+  const comp = await sb(env,
+    `companies?company_code=eq.${encodeURIComponent(cc)}&select=data_area,zone_id,subzone_id,business_name,email,phone,concept_id`);
+  const zone_id = comp && comp[0] ? comp[0].zone_id : null;
+  const subzone_id = comp && comp[0] ? comp[0].subzone_id : null;
+  const compBusinessName = comp && comp[0] ? (comp[0].business_name || '') : '';
+  const compEmail = comp && comp[0] ? (comp[0].email || '') : '';
+  const compPhone = comp && comp[0] ? (comp[0].phone || '') : '';
+  const compDataArea = comp && comp[0] ? (comp[0].data_area || '') : '';
+  const compConceptId = comp && comp[0] ? comp[0].concept_id : null;
+
+  let zonaName = '', subzonaName = '', marcaName = '';
+  if (subzone_id != null) {
+    const sz = await sb(env, `subzones?id=eq.${encodeURIComponent(subzone_id)}&select=name`);
+    subzonaName = sz && sz[0] ? (sz[0].name || '') : '';
+  }
+  if (zone_id != null) {
+    const zn = await sb(env, `zones?id=eq.${encodeURIComponent(zone_id)}&select=name`);
+    zonaName = zn && zn[0] ? (zn[0].name || '') : '';
+  }
+  if (compConceptId != null) {
+    const cn = await sb(env, `concepts?id=eq.${encodeURIComponent(compConceptId)}&select=name`);
+    marcaName = cn && cn[0] ? (cn[0].name || '') : '';
+  }
+  const mallZona = subzonaName || zonaName || '';
+
+  // --- Encabezado en reports_log ---
+  const header = await sb(env, 'reports_log', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify({
+      company_code: cc,
+      zone_id, subzone_id,
+      topic: 'egreso',
+      responsible,
+      position: position || null,
+      workers_count: clean.length,
+      attention: 'pending',
+      email_sent: false,
+      source_kind: sourceKind,
+      source_admin_id: sourceAdminId,
+    }),
+  });
+  const reportId = header && header[0] && header[0].id;
+  if (!reportId) return json({ ok: false, error: 'No se pudo registrar el reporte.' }, 500);
+
+  // --- Detalle en egress_report_lines (ambas fechas) ---
+  const payload = clean.map(l => ({
+    report_id: reportId,
+    worker_id_number: l.worker_id_number,
+    worker_name: l.worker_name,
+    report_date: l.report_date,
+    real_date: l.real_date,
+  }));
+  await sb(env, 'egress_report_lines', { method: 'POST', body: JSON.stringify(payload) });
+
+  // ───────────────────────────────────────────────────────────────────
+  // ENVIO A OSTICKET. Egreso NO lleva documentos: un solo PLA [1/1] con
+  // el Excel axIngEgr (accion B) adjunto. Topic 33. El Excel lleva la
+  // fecha REPORTABLE en "Fecha Final de Empleo". El cuerpo muestra ambas
+  // fechas cuando difieren.
+  // ───────────────────────────────────────────────────────────────────
+  const code = reportCode(reportId);
+  const base = await osticketBase(env);
+  const topicId = parseInt(await getSetting(env, 'osticket_topic_egreso', '33'), 10) || 33;
+  const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
+  const fromName = `${cc} - ${compBusinessName || cc}`;
+  const totalPieces = 1;   // egreso = solo PLA
+
+  const result = { osticket_pla: null, tickets_ok: 0, tickets_fail: 0, ticket_errors: [] };
+
+  if (!base || !env.osticket_api_key) {
+    result.ticket_errors.push('osTicket no configurado (url o api key).');
+  } else {
+    // 1) Usuario-tienda (idempotente). Auto-sync por uso.
+    const ostUserId = await gcUser(env, base, { email: fromEmail, name: fromName, phone: compPhone });
+    if (ostUserId) {
+      try {
+        await sb(env, `companies?company_code=eq.${encodeURIComponent(cc)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ osticket_user_id: ostUserId, osticket_synced_at: new Date().toISOString() }),
+        });
+      } catch { /* no critico */ }
+    }
+
+    // 2) Cuerpo del PLA. Cada registro: Trabajador, Cedula, Tipo (Baja (B)),
+    //    Fecha de egreso (la reportable) y, SOLO si difiere, Fecha real.
+    const registros = clean.map(l => {
+      const campos = [
+        ['Trabajador', l.worker_name],
+        ['Cédula', l.worker_id_number],
+        ['Tipo', 'Baja (B)'],
+        ['Fecha de egreso', dmy(l.report_date)],
+      ];
+      if (l._adjusted) campos.push(['Fecha real de egreso', dmy(l.real_date)]);
+      return campos;
+    });
+    const plaBody = buildReportText({
+      pieceLabel: 'PLANTILLA', reportCode: code, piece: 1, totalPieces,
+      topicLabel: 'Egreso',
+      fecha: dmy(today), hora: nowHHMM,
+      alias: cc, razon: compBusinessName, zona: mallZona, marca: marcaName,
+      correoTienda: compEmail,
+      responsable: responsible, cargo: position, telefono: compPhone, correoResp: compEmail,
+      registros,
+    });
+
+    // Plantilla AX (Excel) accion B. axIngEgr espera por linea: nombre
+    // (usamos el nombre completo del roster), id_number y fechaFin (la
+    // reportable). El resto de columnas van vacias (baja = identificar +
+    // fecha final). data_area va como Data ID.
+    let plaAttachments;
+    try {
+      const axCtx = {
+        companyDataArea: compDataArea,
+        companyName: compBusinessName,
+        companyAlias: cc,
+        todayYmd: today,
+        reportCode: code,
+        lines: clean.map(l => ({
+          id_number: l.worker_id_number,
+          nombre: l.worker_name,   // nombre completo (no se separa)
+          fechaFin: l.report_date, // "Fecha Final de Empleo" = reportable
+        })),
+      };
+      const wb = buildAxWorkbookBase64('egreso', axCtx);
+      if (wb) {
+        plaAttachments = [osAttach(
+          wb.filename, wb.base64,
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )];
+      }
+    } catch (e) {
+      result.ticket_errors.push(`Plantilla AX: ${String(e.message || e)}`);
+    }
+
+    try {
+      const plaNum = await osticketCreateTicket(env, base, {
+        email: fromEmail,
+        name: fromName,
+        subject: `[${code}] PLA [1/${totalPieces}]`,
+        message: plaBody,
+        topicId,
+        source: 'API',
+        alert: false,
+        autorespond: false,
+        report_code: code,
+        report_kind: 'PLA',
+        ...(plaAttachments ? { attachments: plaAttachments } : {}),
+      });
+      result.osticket_pla = plaNum;
+      result.tickets_ok++;
+      await gcReportLink(env, base, {
+        report_code: code, ticket_number: plaNum, kind: 'PLA',
+        company: cc, report_type: 'egreso', doc_total: 0,
+      });
+    } catch (e) {
+      result.tickets_fail++;
+      result.ticket_errors.push(`PLA: ${String(e.message || e)}`);
+    }
+
+    if (result.osticket_pla) {
+      try {
+        await sb(env, `reports_log?id=eq.${reportId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ osticket_id: result.osticket_pla, email_sent: true }),
+        });
+      } catch { /* el reporte ya esta en BD */ }
+    }
+  }
+
+  return json({
+    ok: true,
+    report_id: reportId,
+    workers_count: clean.length,
     osticket: {
       pla: result.osticket_pla,
       tickets_ok: result.tickets_ok,
