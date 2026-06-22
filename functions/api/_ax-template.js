@@ -372,7 +372,11 @@ function axIngEgr(ctx, accion, filename) {
   return { base64: packXlsx([{ name: 'Hoja1', xml: sheetXml(cols, rows) }]), filename };
 }
 
-/* Devuelve { base64, filename } para el tipo dado, o null si no aplica. */
+/* Devuelve { base64, filename } para el tipo dado, o null si no aplica.
+   El filename empieza por FECHA y NUMERO de reporte para que el orden
+   alfabetico del sistema de archivos coincida con el cronologico:
+     {YYYYMMDD}_{NNNN}_{alias}_{TIPO}.xlsx
+   (ej 20260622_0012_AA01_PERIODO_DE_AUSENCIA.xlsx). r.filename es el TIPO. */
 export function buildAxWorkbookBase64(kind, ctx) {
   let r = null;
   if (kind === 'marcaje') r = axMarcaje(ctx);
@@ -383,7 +387,8 @@ export function buildAxWorkbookBase64(kind, ctx) {
   if (!r) return null;
   const alias = ctx.companyAlias || 'tienda';
   const today = (ctx.todayYmd || new Date().toISOString().slice(0, 10)).replace(/-/g, '');
-  return { base64: r.base64, filename: `${r.filename}_${alias}_${today}.xlsx` };
+  const code = ctx.reportCode ? `${ctx.reportCode}_` : '';
+  return { base64: r.base64, filename: `${today}_${code}${alias}_${r.filename}.xlsx` };
 }
 
 /* =====================================================================

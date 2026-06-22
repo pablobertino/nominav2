@@ -678,6 +678,7 @@ async function submitAusencia(env, body) {
         companyName: compBusinessName,
         companyAlias: cc,
         todayYmd: today,
+        reportCode: code,   // numero de reporte -> nombre de archivo unico
         lines: clean.map(l => ({
           id_number: l.worker_id_number,
           date_from: l.date_from,
