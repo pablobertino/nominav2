@@ -69,7 +69,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.59</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.60</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1080,12 +1080,51 @@ function estimateScope() {
 
 async function saveScope(user) {
   const btn = $('#scSave'); btn.disabled = true; btn.textContent = 'Guardando…';
+  const targetUser = SCOPE.targetUser || 'el agente';
+  // 1) Guardar el alcance en el portal (la verdad). Esto no debe fallar por osTicket.
   const d = await fetch('/api/admin-scope', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'save', adminId: user.id, targetId: SCOPE.target,
       include: SCOPE.include, exclude: SCOPE.exclude }),
   }).then(r => r.json());
   if (!d.ok) { alert(d.error); btn.disabled = false; btn.textContent = 'Guardar alcance'; return; }
+
+  // 2) Empujar el alcance a osTicket (agente + bandeja). Reflejo del portal.
+  btn.textContent = 'Sincronizando con osTicket…';
+  let p;
+  try {
+    p = await fetch('/api/admin-scope', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'push_to_osticket', adminId: user.id, targetId: SCOPE.target }),
+    }).then(r => r.json());
+  } catch (e) {
+    p = { ok: false, error: 'No se pudo contactar el servidor: ' + e.message };
+  }
+
+  if (!p || !p.ok) {
+    // El alcance SÍ se guardó; solo falló el reflejo en osTicket.
+    alert('⚠️ El alcance se guardó, pero no se pudo sincronizar con osTicket:\n'
+      + ((p && p.error) || 'error desconocido')
+      + '\n\nPuedes reintentar volviendo a guardar el alcance.');
+    viewPermisos(user);
+    return;
+  }
+
+  // 3) Resultado OK. Armar el aviso al superadmin.
+  const staffTag = p.staff_id ? ` (#${p.staff_id})` : '';
+  let msg = '✅ Alcance guardado y sincronizado con osTicket.\n\n'
+    + `Agente: ${targetUser}${staffTag}\n`
+    + `Tiendas en su bandeja: ${p.scope_count} de ${p.scope_total} con usuario en osTicket.`;
+  if (p.scope_pending_user > 0) {
+    msg += `\n(${p.scope_pending_user} tienda(s) de su alcance aún no tienen usuario en osTicket;`
+      + ` se sumarán a medida que las sincronices en Usuarios → osTicket.)`;
+  }
+  if (p.agent_created && p.temp_password) {
+    msg += `\n\n🔑 Clave temporal del agente: ${p.temp_password}\n`
+      + `Entrégasela a ${targetUser}. La deberá cambiar al entrar por primera vez.`
+      + ` (No se vuelve a mostrar.)`;
+  }
+  alert(msg);
   viewPermisos(user);
 }
 
