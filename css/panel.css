@@ -706,6 +706,12 @@
 .docrow-name { font-size:13px; color:var(--ink); }
 .docrow-act { display:flex; align-items:center; gap:8px; flex-shrink:0; }
 .docrow-foot { margin-top:4px; }
+/* ficha solo-lectura del ingreso (Resumen -> Ver detalle): filas etiqueta+valor */
+.vr-row { display:flex; justify-content:space-between; align-items:baseline; gap:14px;
+  padding:7px 0; border-bottom:1px solid var(--border-soft); font-size:13px; }
+.vr-row:last-child { border-bottom:0; }
+.vr-lbl { color:var(--muted); flex-shrink:0; }
+.vr-val { color:var(--ink); font-weight:500; text-align:right; word-break:break-word; }
 
 /* ===================== CONFIGURACION: menu lateral =====================
    La vista de Configuracion paso de pestanas horizontales a un menu

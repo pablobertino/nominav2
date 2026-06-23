@@ -31,6 +31,12 @@ import * as DW from './shared/date-window.js';
 // Catalogos del wizard (cargos + bancos + operadoras + ventana). Una vez.
 let CAT = null;
 
+// Lista de ingresos del reporte en curso. La guardamos a nivel de modulo
+// para que el boton "Ver detalle" del Resumen (que pinta wizard-core, sin
+// hook a nuestras celdas) pueda localizar a la persona por su cedula y
+// abrir su ficha en modo solo-lectura. Se refresca en cada render del paso 4.
+let LAST_WORKERS = [];
+
 async function loadCatalogs() {
   if (CAT) return CAT;
   const res = await fetch('/api/catalog', {
@@ -137,6 +143,7 @@ export const ingresoReport = {
     { key: 'start', label: 'Fecha de ingreso' },
     { key: 'docs', label: 'Recaudos' },
     { key: 'kind', label: 'Acción' },
+    { key: 'detalle', label: '' },
   ],
   summaryCell(w, key) {
     const g = w.ingreso || {};
@@ -155,6 +162,13 @@ export const ingresoReport = {
       return `<span class="pill pill-warn2">${n}/${total}</span>`;
     }
     if (key === 'kind') return '<span class="pill pill-set">A · Alta</span>';
+    if (key === 'detalle') {
+      // Boton que abre la ficha completa en solo-lectura. wizard-core no
+      // engancha listeners a las celdas del resumen, asi que usamos onclick
+      // inline -> funcion global registrada por este modulo (ver abajo).
+      // La lista LAST_WORKERS la mantiene renderRows (paso 4) al dia.
+      return `<button type="button" class="btn btn-sm" onclick="window.__nv2VerIngreso &amp;&amp; window.__nv2VerIngreso('${w.ced}')">👁 Ver detalle</button>`;
+    }
     return '';
   },
 
@@ -275,6 +289,9 @@ function updateNext(ctx) {
 }
 
 function renderRows(ctx) {
+  // Mantener la lista del reporte accesible para el boton "Ver detalle" del
+  // Resumen (que pinta wizard-core en otra fase).
+  LAST_WORKERS = ctx.workers || [];
   const tb = $('#igBody');
   if (!tb) return;
   $('#igEmpty').style.display = ctx.workers.length ? 'none' : 'block';
@@ -619,3 +636,85 @@ function openIngresoModal(ctx, id) {
 }
 
 function esc(s) { return String(s == null ? '' : s).replace(/"/g, '&quot;'); }
+
+/* =====================================================================
+   FICHA SOLO-LECTURA (Resumen -> "Ver detalle")
+   Muestra TODOS los datos capturados del ingreso sin permitir editarlos.
+   Se invoca desde el boton del Resumen via la funcion global de abajo,
+   porque wizard-core pinta el Resumen y no engancha listeners a nuestras
+   celdas. Busca a la persona por cedula en LAST_WORKERS (la lista del
+   reporte en curso, refrescada en cada render del paso 4).
+   ===================================================================== */
+window.__nv2VerIngreso = function (ced) {
+  const w = (LAST_WORKERS || []).find(x => String(x.ced) === String(ced));
+  if (!w || !w.ingreso) { alert('No se encontraron los datos de este ingreso.'); return; }
+  openIngresoView(w);
+};
+
+function openIngresoView(w) {
+  const g = w.ingreso || {};
+  const GEN = { M: 'Masculino', F: 'Femenino' };
+  const CIV = { S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a' };
+  const age = ageFrom(g.birthDate);
+  const phoneNat = g.phone ? g.phone : '—';
+  const docsList = (CAT && CAT.docs) ? CAT.docs : [];
+  const docState = {};
+  (g.docs || []).forEach(d => { if (d && d.required_doc_id) docState[d.required_doc_id] = d; });
+
+  // Fila de dato (etiqueta + valor). Para valores vacios muestra una raya.
+  const row = (label, value) =>
+    `<div class="vr-row"><span class="vr-lbl">${label}</span><span class="vr-val">${value == null || value === '' ? '—' : esc(value)}</span></div>`;
+
+  const docsHtml = docsList.length
+    ? docsList.map(d => {
+        const st = docState[d.id];
+        const has = st && st.file_b64;
+        const pill = has
+          ? `<span class="pill pill-set">📎 ${esc(st.file_name || 'adjunto')}</span>`
+          : `<span class="pill pill-pend">pendiente</span>`;
+        return `<div class="vr-row"><span class="vr-lbl">${esc(d.name)}</span><span class="vr-val">${pill}</span></div>`;
+      }).join('')
+    : `<div class="vr-row"><span class="vr-val" style="color:var(--muted)">Esta tienda no tiene recaudos configurados.</span></div>`;
+
+  const ov = document.createElement('div');
+  ov.className = 'modal-ov';
+  ov.innerHTML = `
+    <div class="modal modal-wide">
+      <h3>Detalle del ingreso</h3>
+      <p class="who">${esc(w.name || '')} · <span class="pill pill-set">A · Alta</span> · solo lectura</p>
+
+      <div class="ig-sec" style="margin-top:6px">Identidad</div>
+      ${row('Primer nombre', g.firstName)}
+      ${row('Segundo nombre', g.secondName)}
+      ${row('Apellidos', g.lastNames)}
+      ${row('Cédula', `${g.cedKind || 'V'}-${w.ced}`)}
+      ${row('Cargo', g.cargoCode ? cargoLabel(g.cargoCode) : '—')}
+      ${row('Fecha de nacimiento', g.birthDate ? DW.fmtDate(g.birthDate) : '—')}
+      ${row('Edad', age == null ? '—' : `${age} años`)}
+
+      <div class="ig-sec">Datos personales y bancarios</div>
+      ${row('Género', GEN[g.gender] || g.gender)}
+      ${row('Estado civil', CIV[g.marital] || g.marital)}
+      ${row('Cuenta bancaria', g.account ? `${g.account}${g.bankName ? ' · ' + g.bankName : ''}` : '—')}
+
+      <div class="ig-sec">Contacto</div>
+      ${row('Correo', g.email)}
+      ${row('Teléfono', phoneNat)}
+      ${row('Dirección', g.address)}
+
+      <div class="ig-sec">Fecha de ingreso</div>
+      ${row('Fecha inicial de empleo', g.startDate ? DW.fmtDate(g.startDate) : '—')}
+
+      <div class="ig-sec">Recaudos</div>
+      ${docsHtml}
+
+      <div class="wiz-foot" style="margin-top:18px">
+        <span></span>
+        <button class="btn btn-primary" id="ivClose">Cerrar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector('#ivClose').addEventListener('click', close);
+  ov.addEventListener('click', e => { if (e.target === ov) close(); });
+}
