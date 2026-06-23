@@ -178,6 +178,9 @@ export async function onRequestPost({ request, env }) {
     if (body.action === 'submit_egreso') {
       return await submitEgreso(env, body);
     }
+    if (body.action === 'submit_ingreso') {
+      return await submitIngreso(env, body);
+    }
     if (body.action === 'window') {
       return await getWindow(env, body);
     }
@@ -1379,6 +1382,383 @@ async function submitEgreso(env, body) {
     report_id: reportId,
     workers_count: clean.length,
     pending_docs: pendingDocs,
+    osticket: {
+      pla: result.osticket_pla,
+      tickets_ok: result.tickets_ok,
+      tickets_fail: result.tickets_fail,
+      errors: result.ticket_errors,
+    },
+  });
+}
+
+/* =====================================================================
+   INGRESO (Alta)
+   Registra el encabezado en reports_log (topic 'ingreso') + el detalle
+   por trabajador en ingreso_report_lines. NO lleva documentos: es un
+   solo ticket PLANTILLA (PLA) con el Excel de AX (accion 'A') adjunto.
+   Un ingreso es una persona NUEVA (no sale del roster); por eso el
+   formulario captura toda su identidad. Validaciones server-side:
+     - cedula: 6 a 8 digitos; letra V/E derivada (>=80.000.000 -> E).
+     - edad: fecha de nacimiento obligatoria; bloquea menores de 18.
+     - cuenta: 20 digitos; los 4 primeros deben existir en 'bancos'
+       (activo). Se guarda el nombre resuelto por trazabilidad.
+     - telefono (opcional): 11 digitos 04XX+7; prefijo debe existir en
+       'operadoras' (activo); se normaliza a +58XXXXXXXXXX.
+     - cargo: code debe existir en 'cargos' (activo, selectable_on_ingreso).
+     - fecha de ingreso (start_date): validada contra la ventana del corte
+       (igual que la fecha de egreso), nunca futura mas alla del tope.
+   El Data ID lo aporta la empresa (data_area). TodoTicket no se captura:
+   el Excel pone 'N' por defecto. topic = osticket_topic_ingreso (31).
+
+   Body:
+     { action:'submit_ingreso', company_code, responsible, position,
+       lines:[{ id_number, first_name, second_name?, last_names, cargo_code,
+                birth_date, gender, marital_status, account_number,
+                email?, phone?, address?, start_date }],
+       source_kind?, source_admin_id? }
+   ===================================================================== */
+async function submitIngreso(env, body) {
+  const cc = (body.company_code || '').trim();
+  const responsible = (body.responsible || '').trim();
+  const position = (body.position || '').trim();
+  const lines = Array.isArray(body.lines) ? body.lines : [];
+
+  // Origen del reporte: 'company' (tienda) | 'admin' (central).
+  let sourceKind = body.source_kind === 'admin' ? 'admin' : 'company';
+  let sourceAdminId = null;
+  if (sourceKind === 'admin') {
+    const aid = parseInt(body.source_admin_id, 10);
+    if (aid) {
+      const a = await sb(env, `admin_users?id=eq.${aid}&is_active=eq.true&select=id`);
+      if (a && a.length) sourceAdminId = aid;
+    }
+    if (!sourceAdminId) sourceKind = 'company';
+  }
+
+  if (!cc) return json({ ok: false, error: 'Falta la tienda.' }, 400);
+  if (!responsible) return json({ ok: false, error: 'Falta el responsable.' }, 400);
+  if (!lines.length) return json({ ok: false, error: 'No hay trabajadores en el reporte.' }, 400);
+
+  // --- Ventana reportable (regla general del corte, server-side) ---
+  const { ymd: today, hhmm: nowHHMM } = nowCaracas();
+  const margin = parseInt(await getSetting(env, 'corte_margen_dias', '2'), 10) || 2;
+  const cutoffTime = await getSetting(env, 'corte_hora_limite', '14:00');
+  const futureDays = parseInt(await getSetting(env, 'futuro_ingreso_egreso_dias', '7'), 10) || 7;
+  const pastCutoff = toMin(nowHHMM) >= toMin(cutoffTime);
+  const reportMin = addDays(today, pastCutoff ? -(margin - 1) : -margin);
+  const oldestDay = addDays(today, -margin);
+  const reportMax = addDays(today, futureDays);
+
+  // --- Catalogos para validar (cargos / bancos / operadoras activos) ---
+  const cargos = await sb(env, 'cargos?is_active=eq.true&selectable_on_ingreso=eq.true&select=code,ax_code,label');
+  const cargoMap = {};
+  (cargos || []).forEach(c => { cargoMap[c.code] = c; });
+  const bancos = await sb(env, 'bancos?is_active=eq.true&select=code,name');
+  const bancoMap = {};
+  (bancos || []).forEach(b => { bancoMap[b.code] = b.name; });
+  const operadoras = await sb(env, 'operadoras?is_active=eq.true&select=code,name');
+  const opSet = new Set((operadoras || []).map(o => o.code));
+
+  // Helper edad cumplida a partir de 'YYYY-MM-DD' (referencia: hoy VE).
+  const ageFrom = (ymd) => {
+    const t = today.split('-').map(Number), b = ymd.split('-').map(Number);
+    let a = t[0] - b[0];
+    if (t[1] < b[1] || (t[1] === b[1] && t[2] < b[2])) a--;
+    return a;
+  };
+
+  // --- Validacion linea por linea ---
+  const clean = [];
+  const errors = [];
+  const seenCed = new Set();
+  lines.forEach((ln, i) => {
+    const ced = String(ln.id_number || '').replace(/[^0-9]/g, '');
+    const first = String(ln.first_name || '').trim();
+    const second = String(ln.second_name || '').trim();
+    const last = String(ln.last_names || '').trim();
+    const cargo = String(ln.cargo_code || '').trim().toUpperCase();
+    const birth = String(ln.birth_date || '').slice(0, 10);
+    const gender = String(ln.gender || '').trim().toUpperCase();
+    const marital = String(ln.marital_status || '').trim().toUpperCase();
+    const accountRaw = String(ln.account_number || '').replace(/[^0-9]/g, '');
+    const email = String(ln.email || '').trim();
+    const phoneRaw = String(ln.phone || '').replace(/[^0-9]/g, '');
+    const address = String(ln.address || '').trim();
+    const start = String(ln.start_date || '').slice(0, 10);
+    const tag = [first, last].filter(Boolean).join(' ') || ced || `fila ${i + 1}`;
+
+    // Cedula 6-8 digitos; letra V/E (>=80.000.000 -> E).
+    if (!ced || ced.length < 6 || ced.length > 8) { errors.push(`${tag}: cedula invalida (6 a 8 digitos).`); return; }
+    if (seenCed.has(ced)) { errors.push(`${tag}: cedula repetida en el reporte.`); return; }
+    seenCed.add(ced);
+    const cedKind = parseInt(ced, 10) >= 80000000 ? 'E' : 'V';
+
+    if (!first) { errors.push(`${tag}: falta el primer nombre.`); return; }
+    if (!last) { errors.push(`${tag}: faltan los apellidos.`); return; }
+    if (!cargoMap[cargo]) { errors.push(`${tag}: cargo invalido o no disponible para ingreso.`); return; }
+    if (gender !== 'M' && gender !== 'F') { errors.push(`${tag}: genero invalido.`); return; }
+    if (!['S', 'C', 'D', 'V'].includes(marital)) { errors.push(`${tag}: estado civil invalido.`); return; }
+
+    // Fecha de nacimiento + edad >= 18.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(birth)) { errors.push(`${tag}: fecha de nacimiento invalida.`); return; }
+    if (birth > today) { errors.push(`${tag}: la fecha de nacimiento no puede ser futura.`); return; }
+    if (ageFrom(birth) < 18) { errors.push(`${tag}: no se permiten menores de 18 anios.`); return; }
+
+    // Cuenta 20 digitos + prefijo en bancos.
+    if (accountRaw.length !== 20) { errors.push(`${tag}: la cuenta bancaria debe tener 20 digitos.`); return; }
+    const bankCode = accountRaw.slice(0, 4);
+    if (!bancoMap[bankCode]) { errors.push(`${tag}: el prefijo ${bankCode} de la cuenta no corresponde a un banco valido.`); return; }
+
+    // Telefono opcional: 11 digitos 04XX+7, prefijo en operadoras, normaliza +58.
+    let phoneIntl = null;
+    if (phoneRaw) {
+      if (phoneRaw.length !== 11 || phoneRaw[0] !== '0') { errors.push(`${tag}: el telefono debe tener 11 digitos (04XX-XXXXXXX).`); return; }
+      const opPre = phoneRaw.slice(0, 4);
+      if (!opSet.has(opPre)) { errors.push(`${tag}: prefijo telefonico ${opPre} invalido.`); return; }
+      phoneIntl = '+58' + phoneRaw.slice(1);
+    }
+
+    // Correo opcional: formato simple.
+    if (email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) { errors.push(`${tag}: correo con formato invalido.`); return; }
+
+    // Fecha de ingreso: ventana del corte.
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(start)) { errors.push(`${tag}: fecha de ingreso invalida.`); return; }
+    if (start > reportMax) { errors.push(`${tag}: la fecha de ingreso (${start}) no puede ser posterior al ${reportMax} (max. ${futureDays} dias a futuro).`); return; }
+    if (start < reportMin) {
+      if (start === oldestDay && pastCutoff) {
+        errors.push(`${tag}: el ${oldestDay} ya no se puede reportar (paso la hora tope ${cutoffTime} de Venezuela).`);
+      } else {
+        errors.push(`${tag}: la fecha de ingreso (${start}) esta fuera del margen reportable (desde ${reportMin}).`);
+      }
+      return;
+    }
+
+    const fullName = [first, second, last].filter(Boolean).join(' ').toUpperCase();
+    clean.push({
+      worker_id_number: ced,
+      ced_kind: cedKind,
+      first_name: first.toUpperCase(),
+      second_name: second ? second.toUpperCase() : null,
+      last_names: last.toUpperCase(),
+      worker_name: fullName,
+      cargo_code: cargo,
+      _cargoAx: cargoMap[cargo].ax_code || cargo,   // interno: lo que va al Excel
+      _cargoLabel: cargoMap[cargo].label || cargo,  // interno: cuerpo del ticket
+      birth_date: birth,
+      gender, marital_status: marital,
+      account_number: accountRaw,
+      bank_code: bankCode,
+      bank_name: bancoMap[bankCode],
+      email: email || null,
+      phone: phoneIntl,
+      address: address || null,
+      start_date: start,
+    });
+  });
+
+  if (errors.length) {
+    return json({ ok: false, error: 'Hay datos que no cumplen las reglas.', details: errors }, 422);
+  }
+
+  // --- Datos de la tienda (encabezado + From osTicket + plantilla AX) ---
+  const comp = await sb(env,
+    `companies?company_code=eq.${encodeURIComponent(cc)}&select=data_area,zone_id,subzone_id,business_name,email,phone,concept_id`);
+  const zone_id = comp && comp[0] ? comp[0].zone_id : null;
+  const subzone_id = comp && comp[0] ? comp[0].subzone_id : null;
+  const compBusinessName = comp && comp[0] ? (comp[0].business_name || '') : '';
+  const compEmail = comp && comp[0] ? (comp[0].email || '') : '';
+  const compPhone = comp && comp[0] ? (comp[0].phone || '') : '';
+  const compDataArea = comp && comp[0] ? (comp[0].data_area || '') : '';
+  const compConceptId = comp && comp[0] ? comp[0].concept_id : null;
+
+  let zonaName = '', subzonaName = '', marcaName = '';
+  if (subzone_id != null) {
+    const sz = await sb(env, `subzones?id=eq.${encodeURIComponent(subzone_id)}&select=name`);
+    subzonaName = sz && sz[0] ? (sz[0].name || '') : '';
+  }
+  if (zone_id != null) {
+    const zn = await sb(env, `zones?id=eq.${encodeURIComponent(zone_id)}&select=name`);
+    zonaName = zn && zn[0] ? (zn[0].name || '') : '';
+  }
+  if (compConceptId != null) {
+    const cn = await sb(env, `concepts?id=eq.${encodeURIComponent(compConceptId)}&select=name`);
+    marcaName = cn && cn[0] ? (cn[0].name || '') : '';
+  }
+  const mallZona = subzonaName || zonaName || '';
+
+  // --- Encabezado en reports_log ---
+  const header = await sb(env, 'reports_log', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify({
+      company_code: cc,
+      zone_id, subzone_id,
+      topic: 'ingreso',
+      responsible,
+      position: position || null,
+      workers_count: clean.length,
+      attention: 'pending',
+      email_sent: false,
+      source_kind: sourceKind,
+      source_admin_id: sourceAdminId,
+    }),
+  });
+  const reportId = header && header[0] && header[0].id;
+  if (!reportId) return json({ ok: false, error: 'No se pudo registrar el reporte.' }, 500);
+
+  // --- Detalle en ingreso_report_lines ---
+  const payload = clean.map(l => ({
+    report_id: reportId,
+    worker_id_number: l.worker_id_number,
+    ced_kind: l.ced_kind,
+    first_name: l.first_name,
+    second_name: l.second_name,
+    last_names: l.last_names,
+    worker_name: l.worker_name,
+    cargo_code: l.cargo_code,
+    birth_date: l.birth_date,
+    gender: l.gender,
+    marital_status: l.marital_status,
+    account_number: l.account_number,
+    bank_code: l.bank_code,
+    bank_name: l.bank_name,
+    email: l.email,
+    phone: l.phone,
+    address: l.address,
+    start_date: l.start_date,
+  }));
+  await sb(env, 'ingreso_report_lines', { method: 'POST', body: JSON.stringify(payload) });
+
+  // ─── ENVIO A OSTICKET ───
+  // Ingreso NO lleva documentos: 1 solo ticket PLA con el Excel (accion A).
+  // El telefono se muestra en nacional en el cuerpo, pero al Excel va el
+  // valor guardado (+58). El nombre va dividido en las 3 columnas del Excel.
+  const code = reportCode(reportId);
+  const base = await osticketBase(env);
+  const topicId = parseInt(await getSetting(env, 'osticket_topic_ingreso', '31'), 10) || 31;
+  const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
+  const fromName = `${cc} - ${compBusinessName || cc}`;
+  const totalPieces = 1;   // ingreso = solo PLA
+
+  const result = { osticket_pla: null, tickets_ok: 0, tickets_fail: 0, ticket_errors: [] };
+
+  if (!base || !env.osticket_api_key) {
+    result.ticket_errors.push('osTicket no configurado (url o api key).');
+  } else {
+    const ostUserId = await gcUser(env, base, { email: fromEmail, name: fromName, phone: compPhone });
+    if (ostUserId) {
+      try {
+        await sb(env, `companies?company_code=eq.${encodeURIComponent(cc)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ osticket_user_id: ostUserId, osticket_synced_at: new Date().toISOString() }),
+        });
+      } catch { /* no critico */ }
+    }
+
+    // Telefono en nacional para el cuerpo (+58XXXXXXXXXX -> 0XXXXXXXXXX).
+    const phoneNat = (intl) => intl ? '0' + String(intl).replace(/^\+58/, '') : '—';
+    const registros = clean.map(l => ([
+      ['Trabajador', l.worker_name],
+      ['Cedula', `${l.ced_kind}-${l.worker_id_number}`],
+      ['Tipo', 'Alta (A)'],
+      ['Cargo', l._cargoLabel],
+      ['Fecha de ingreso', dmy(l.start_date)],
+      ['Fecha de nacimiento', dmy(l.birth_date)],
+      ['Genero', l.gender === 'M' ? 'Masculino' : 'Femenino'],
+      ['Estado civil', { S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a' }[l.marital_status] || l.marital_status],
+      ['Cuenta', `${l.account_number} (${l.bank_name})`],
+      ['Correo', l.email || '—'],
+      ['Telefono', phoneNat(l.phone)],
+      ['Direccion', l.address || '—'],
+    ]));
+    const plaBody = buildReportText({
+      pieceLabel: 'PLANTILLA', reportCode: code, piece: 1, totalPieces,
+      topicLabel: 'Ingreso',
+      fecha: dmy(today), hora: nowHHMM,
+      alias: cc, razon: compBusinessName, zona: mallZona, marca: marcaName,
+      correoTienda: compEmail,
+      responsable: responsible, cargo: position, telefono: compPhone, correoResp: compEmail,
+      registros,
+    });
+
+    // Plantilla AX (Excel) accion A. 18 columnas; TodoTicket 'N' por defecto
+    // (lo pone el template). El nombre ya viene dividido en nombre/nombre2/
+    // apellidos. La cuenta y la cedula van como texto (preservan ceros).
+    let plaAttachments;
+    try {
+      const axCtx = {
+        companyDataArea: compDataArea,
+        companyName: compBusinessName,
+        companyAlias: cc,
+        todayYmd: today,
+        reportCode: code,
+        lines: clean.map(l => ({
+          id_number: l.worker_id_number,
+          nombre: l.first_name,
+          nombre2: l.second_name || '',
+          apellidos: l.last_names,
+          correo: l.email || '',
+          fechaIni: l.start_date,
+          cargo: l._cargoAx,
+          direccion: l.address || '',
+          fechaNac: l.birth_date,
+          estCivil: l.marital_status,
+          telefono: l.phone || '',
+          genero: l.gender,
+          cuenta: l.account_number,
+        })),
+      };
+      const wb = buildAxWorkbookBase64('ingreso', axCtx);
+      if (wb) {
+        plaAttachments = [osAttach(
+          wb.filename, wb.base64,
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )];
+      }
+    } catch (e) {
+      result.ticket_errors.push(`Plantilla AX: ${String(e.message || e)}`);
+    }
+
+    try {
+      const plaNum = await osticketCreateTicket(env, base, {
+        email: fromEmail,
+        name: fromName,
+        subject: `[${code}] [1/${totalPieces}] PLA`,
+        message: plaBody,
+        topicId,
+        source: 'API',
+        alert: false,
+        autorespond: false,
+        report_code: code,
+        report_kind: 'PLA',
+        ...(plaAttachments ? { attachments: plaAttachments } : {}),
+      });
+      result.osticket_pla = plaNum;
+      result.tickets_ok++;
+      await gcReportLink(env, base, {
+        report_code: code, ticket_number: plaNum, kind: 'PLA',
+        company: cc, report_type: 'ingreso', doc_total: 0,
+      });
+    } catch (e) {
+      result.tickets_fail++;
+      result.ticket_errors.push(`PLA: ${String(e.message || e)}`);
+    }
+
+    if (result.osticket_pla) {
+      try {
+        await sb(env, `reports_log?id=eq.${reportId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ osticket_id: result.osticket_pla, email_sent: true }),
+        });
+      } catch { /* el reporte ya esta en BD */ }
+    }
+  }
+
+  return json({
+    ok: true,
+    report_id: reportId,
+    workers_count: clean.length,
+    window: { today, now: nowHHMM, report_min: reportMin, report_max: reportMax },
     osticket: {
       pla: result.osticket_pla,
       tickets_ok: result.tickets_ok,

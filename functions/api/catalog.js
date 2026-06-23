@@ -77,6 +77,32 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, causas: causas || [] });
     }
 
+    // --- Catalogos del wizard de INGRESO (cargos + bancos + operadoras + ventana) ---
+    // Una sola llamada para llenar el formulario de Alta. Todo configurable
+    // por ABM. Cargos: solo los activos y marcados para ingreso, con label
+    // (lo ve la tienda) y ax_code (lo que se exporta). Bancos/operadoras:
+    // prefijo de 4 digitos -> nombre. La ventana de fecha se calcula con el
+    // corte global + el tope futuro de ingreso/egreso (hora Venezuela).
+    if (body.action === 'ingreso_catalogs') {
+      const cargos = await sb(env, 'cargos?is_active=eq.true&selectable_on_ingreso=eq.true&select=code,label,ax_code,sort_order&order=sort_order');
+      const bancos = await sb(env, 'bancos?is_active=eq.true&select=code,name,sort_order&order=sort_order');
+      const operadoras = await sb(env, 'operadoras?is_active=eq.true&select=code,name,sort_order&order=sort_order');
+      const settings = await sb(env, 'app_settings?key=in.(corte_hora_limite,corte_margen_dias,futuro_ingreso_egreso_dias)&select=key,value');
+      const sm = {};
+      (settings || []).forEach(s => { sm[s.key] = s.value; });
+      return json({
+        ok: true,
+        cargos: (cargos || []).map(c => ({ code: c.code, label: c.label, ax_code: c.ax_code || c.code })),
+        bancos: (bancos || []).map(b => ({ code: b.code, name: b.name })),
+        operadoras: (operadoras || []).map(o => ({ code: o.code, name: o.name })),
+        window_config: {
+          cutoff_time: sm.corte_hora_limite || '14:00',
+          margin_days: parseInt(sm.corte_margen_dias, 10) || 2,
+          future_days: parseInt(sm.futuro_ingreso_egreso_dias, 10) || 7,
+        },
+      });
+    }
+
     // --- Catalogo de tipos de ausencia + documentos requeridos (wizard de ausencia) ---
     if (body.action === 'absence_types') {
       const types = await sb(env, 'absence_types?is_active=eq.true&select=code,label,ax_code,allows_future,note,past_window_days,past_uses_cutoff,future_window_days&order=sort_order');

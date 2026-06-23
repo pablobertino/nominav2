@@ -619,6 +619,15 @@ export function launchWizard(user, reportDef, onExit) {
     return {
       user, companyCode, win: S.win, workers: S.workers,
       getWorker: (id) => S.workers.find(w => w.id === id),
+      // Agrega un trabajador creado en el paso 4 (lo usa Ingreso: altas
+      // manuales que no salen del roster). Devuelve el worker con su id.
+      // El spread va primero para que id/ced/name/forma estandar siempre
+      // ganen (datos extra del reporte, como .ingreso, se conservan).
+      addWorker: (data) => {
+        const w = { ...data, id: S.nextId++, ced: data.ced, name: data.name, role: data.role || null, endDate: data.endDate || null, mark: null };
+        S.workers.push(w);
+        return w;
+      },
       removeWorker, rerenderStep4: stepDetail,
       setStep, fmt: { fmtDate }, DW,
     };

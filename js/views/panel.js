@@ -11,6 +11,7 @@ import { launchWizard } from '../reports/wizard-core.js';
 import { marcajeReport } from '../reports/report-marcaje.js';
 import { ausenciaReport } from '../reports/report-ausencia.js';
 import { egresoReport } from '../reports/report-egreso.js';
+import { ingresoReport } from '../reports/report-ingreso.js';
 import { renderHistory } from '../reports/history.js';
 
 let CATALOG = null;       // { companies, zones, subzones, concepts }
@@ -69,7 +70,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.63</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.64</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -2206,9 +2207,11 @@ function openReportPicker(u, onExit) {
         <span class="rt-body"><span class="rt-title">Ausencia</span>
           <span class="rt-desc">Reposos, permisos y faltas.</span></span>
       </button>
-      <div class="report-tile soon"><span class="rt-ico">➕</span>
-        <span class="rt-body"><span class="rt-title">Ingreso <span class="badge-soon">pronto</span></span>
-          <span class="rt-desc">Nuevo trabajador en la tienda.</span></span></div>
+      <button class="report-tile" data-report="ingreso">
+        <span class="rt-ico">➕</span>
+        <span class="rt-body"><span class="rt-title">Ingreso</span>
+          <span class="rt-desc">Nuevo trabajador en la tienda.</span></span>
+      </button>
       <button class="report-tile" data-report="egreso">
         <span class="rt-ico">🔴</span>
         <span class="rt-body"><span class="rt-title">Egreso</span>
@@ -2228,6 +2231,11 @@ function openReportPicker(u, onExit) {
   if (tileAus) tileAus.addEventListener('click', () => {
     closeModal();
     launchWizard(u, ausenciaReport, onExit);
+  });
+  const tileIng = document.querySelector('#rpGrid [data-report="ingreso"]');
+  if (tileIng) tileIng.addEventListener('click', () => {
+    closeModal();
+    launchWizard(u, ingresoReport, onExit);
   });
   const tileEgr = document.querySelector('#rpGrid [data-report="egreso"]');
   if (tileEgr) tileEgr.addEventListener('click', () => {
@@ -2277,9 +2285,11 @@ async function viewMiEmpresa(user) {
         <span class="rt-body"><span class="rt-title">Ausencia</span>
           <span class="rt-desc">Reposos, permisos y faltas.</span></span>
       </button>
-      <div class="report-tile soon"><span class="rt-ico">➕</span>
-        <span class="rt-body"><span class="rt-title">Ingreso <span class="badge-soon">pronto</span></span>
-          <span class="rt-desc">Nuevo trabajador en la tienda.</span></span></div>
+      <button class="report-tile" data-report="ingreso">
+        <span class="rt-ico">➕</span>
+        <span class="rt-body"><span class="rt-title">Ingreso</span>
+          <span class="rt-desc">Nuevo trabajador en la tienda.</span></span>
+      </button>
       <button class="report-tile" data-report="egreso">
         <span class="rt-ico">🔴</span>
         <span class="rt-body"><span class="rt-title">Egreso</span>
@@ -2297,6 +2307,10 @@ async function viewMiEmpresa(user) {
   const tileAus = $('#reportGrid').querySelector('[data-report="ausencia"]');
   if (tileAus) tileAus.addEventListener('click', () => {
     launchWizard(user, ausenciaReport, () => viewMiEmpresa(user));
+  });
+  const tileIng = $('#reportGrid').querySelector('[data-report="ingreso"]');
+  if (tileIng) tileIng.addEventListener('click', () => {
+    launchWizard(user, ingresoReport, () => viewMiEmpresa(user));
   });
   const tileEgr = $('#reportGrid').querySelector('[data-report="egreso"]');
   if (tileEgr) tileEgr.addEventListener('click', () => {
