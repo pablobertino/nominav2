@@ -69,7 +69,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.62</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.63</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1603,19 +1603,25 @@ async function cfgCatalogs(payload) {
 
 async function viewConfig(user) {
   $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros, catálogos e integraciones</p></div></div><div class="pnl-loading">Cargando…</div>`;
-  const [st, ty, ca] = await Promise.all([
+  const [st, ty, ca, cg, bn, op] = await Promise.all([
     cfgSettings({ action: 'list', adminId: user.id }),
     cfgCatalogs({ action: 'absence_list', adminId: user.id }),
     cfgCatalogs({ action: 'causa_list', adminId: user.id }),
+    cfgCatalogs({ action: 'cargo_list', adminId: user.id }),
+    cfgCatalogs({ action: 'banco_list', adminId: user.id }),
+    cfgCatalogs({ action: 'operadora_list', adminId: user.id }),
   ]);
   if (!st.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${st.error}</div>`; return; }
-  CFG_DATA = { settings: st.settings || [], types: (ty.ok && ty.types) || [], causas: (ca.ok && ca.causas) || [] };
+  CFG_DATA = { settings: st.settings || [], types: (ty.ok && ty.types) || [], causas: (ca.ok && ca.causas) || [], cargos: (cg.ok && cg.cargos) || [], bancos: (bn.ok && bn.bancos) || [], operadoras: (op.ok && op.operadoras) || [] };
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros, catálogos e integraciones del portal</p></div></div>
     <div class="cfg-tabs">
       <button class="cfg-tab" data-tab="aus">📅 Tipos de ausencia</button>
       <button class="cfg-tab" data-tab="mar">🕐 Causas de marcaje</button>
+      <button class="cfg-tab" data-tab="car">👔 Cargos</button>
+      <button class="cfg-tab" data-tab="ban">🏦 Bancos</button>
+      <button class="cfg-tab" data-tab="ope">📱 Operadoras</button>
       <button class="cfg-tab" data-tab="cor">📆 Corte y períodos</button>
       <button class="cfg-tab" data-tab="int">🔌 Integraciones</button>
     </div>
@@ -1632,6 +1638,9 @@ function cfgRenderTab(user) {
   const body = $('#cfgBody');
   if (CFG_TAB === 'aus') cfgRenderAusencia(user, body);
   else if (CFG_TAB === 'mar') cfgRenderCausas(user, body);
+  else if (CFG_TAB === 'car') cfgRenderCargos(user, body);
+  else if (CFG_TAB === 'ban') cfgRenderBancos(user, body);
+  else if (CFG_TAB === 'ope') cfgRenderOperadoras(user, body);
   else if (CFG_TAB === 'cor') cfgRenderCorte(user, body);
   else if (CFG_TAB === 'int') cfgRenderIntegraciones(user, body);
 }
@@ -1919,14 +1928,230 @@ function cfgCausaModal(user, c) {
   });
 }
 
+/* ===== Pestana CARGOS ===== */
+function cfgRenderCargos(user, body) {
+  const rows = (CFG_DATA.cargos || []).map(c => {
+    const resp = c.can_be_responsible
+      ? `<span class="pill pill-open">${c.responsible_role || 'Responsable'}</span>`
+      : '<span style="color:var(--muted)">—</span>';
+    const ing = c.selectable_on_ingreso ? '<span class="pill pill-open">sí</span>' : '<span class="pill pill-closed">no</span>';
+    const estado = c.is_active ? '<span class="pill pill-open">activo</span>' : '<span class="pill pill-closed">inactivo</span>';
+    const pats = (c.patterns || []).map(p => p.pattern).join(', ') || '<span style="color:var(--muted)">—</span>';
+    return `<tr>
+      <td><b>${c.label}</b><br><span class="muted" style="font-size:11px;font-family:monospace">${c.code}</span></td>
+      <td><span class="pill pill-ax">${c.ax_code}</span></td>
+      <td>${resp}</td><td>${ing}</td>
+      <td style="font-size:11.5px;color:var(--muted)">${pats}</td>
+      <td>${estado}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-mini" data-edit-car="${c.code}">${I.pencil}</button>
+        <button class="btn btn-mini" data-toggle-car="${c.code}" data-active="${c.is_active}">${c.is_active ? 'Desactivar' : 'Activar'}</button>
+      </td></tr>`;
+  }).join('') || '<tr><td colspan="7" class="empty">Sin cargos.</td></tr>';
+
+  body.innerHTML = `
+    <div class="card">
+      <div class="cfg-card-head"><h3>Cargos</h3>
+        <button class="btn btn-primary btn-mini" id="carNew">${I.plus} Nuevo cargo</button></div>
+      <p class="cfg-desc" style="margin:0 0 14px">Catálogo único de cargos. La <b>etiqueta</b> es lo que ve la tienda; el <b>código de plantilla</b> es lo que se exporta (puede diferir, ej. Cajero → CAJEROS). Quien puede ser <b>responsable</b> y los <b>patrones</b> de lectura de la lista de personal se definen aquí.</p>
+      <table class="cfg-cat-table"><thead><tr>
+        <th>Cargo</th><th>Cód. plantilla</th><th>Responsable</th><th>En ingreso</th><th>Patrones (lista de personal)</th><th>Estado</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+
+  $('#carNew').addEventListener('click', () => cfgCargoModal(user, null));
+  body.querySelectorAll('[data-edit-car]').forEach(b =>
+    b.addEventListener('click', () => cfgCargoModal(user, CFG_DATA.cargos.find(c => c.code === b.dataset.editCar))));
+  body.querySelectorAll('[data-toggle-car]').forEach(b =>
+    b.addEventListener('click', async () => {
+      const r = await cfgCatalogs({ action: 'cargo_toggle', adminId: user.id, code: b.dataset.toggleCar, active: !(b.dataset.active === 'true') });
+      if (!r.ok) { alert(r.error); return; }
+      await cfgReloadCatalogs(user); cfgRenderTab(user);
+    }));
+}
+
+function cfgCargoModal(user, c) {
+  const isNew = !c;
+  const pats = c && c.patterns ? c.patterns.map(p => p.pattern).join(', ') : '';
+  openModal(`
+    <div class="modal-head"><span>${isNew ? 'Nuevo cargo' : 'Editar cargo'}</span><button class="modal-x" id="mX">✕</button></div>
+    <div class="cfg-grid2">
+      <div><label class="flabel">Nombre (lo ve la tienda)</label><input id="cg_label" value="${c ? c.label.replace(/"/g,'&quot;') : ''}" placeholder="Cajero"></div>
+      <div><label class="flabel">Código de plantilla</label><input id="cg_ax" value="${c ? (c.ax_code||'') : ''}" placeholder="CAJEROS" style="font-family:monospace;text-transform:uppercase"></div>
+    </div>
+    <div class="cfg-grid2" style="margin-top:12px">
+      <div><label class="flabel">Código (interno)</label><input id="cg_code" value="${c ? c.code : ''}" ${c ? 'readonly' : ''} placeholder="CAJERO" style="font-family:monospace;text-transform:uppercase"></div>
+      <div><label class="flabel">Estado</label>
+        <select id="cg_active"><option value="1" ${!c || c.is_active ? 'selected' : ''}>Activo</option><option value="0" ${c && !c.is_active ? 'selected' : ''}>Inactivo</option></select></div>
+    </div>
+    <div class="cfg-grid3" style="margin-top:12px">
+      <div><label class="flabel">Puede ser responsable</label>
+        <select id="cg_resp"><option value="0" ${!c || !c.can_be_responsible ? 'selected' : ''}>No</option><option value="1" ${c && c.can_be_responsible ? 'selected' : ''}>Sí</option></select></div>
+      <div><label class="flabel">Rol de responsable</label>
+        <select id="cg_role"><option value="">—</option><option value="Gerente" ${c && c.responsible_role==='Gerente'?'selected':''}>Gerente</option><option value="Sub-Gerente" ${c && c.responsible_role==='Sub-Gerente'?'selected':''}>Sub-Gerente</option></select></div>
+      <div><label class="flabel">Aparece en Ingreso</label>
+        <select id="cg_ing"><option value="1" ${!c || c.selectable_on_ingreso ? 'selected' : ''}>Sí</option><option value="0" ${c && !c.selectable_on_ingreso ? 'selected' : ''}>No</option></select></div>
+    </div>
+    <div style="margin-top:14px"><label class="flabel">Patrones de la lista de personal <span class="muted">(separados por coma)</span></label>
+      <input id="cg_pats" value="${pats.replace(/"/g,'&quot;')}" placeholder="CAJERO, CAJEROS, CAJERA">
+      <p class="muted" style="font-size:11.5px;margin:6px 0 0">Texto del cargo en el Reporte 10 que debe reconocerse como este cargo. Lo más específico (ej. SUB GERENTE) debe ir en su propio cargo para que gane sobre GERENTE.</p></div>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Guardar</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const canResp = $('#cg_resp').value === '1';
+    const role = $('#cg_role').value;
+    if (canResp && !role) { alert('Si el cargo puede ser responsable, elige el rol (Gerente o Sub-Gerente).'); return; }
+    const r = await cfgCatalogs({ action: 'cargo_save', adminId: user.id,
+      cargo: {
+        code: $('#cg_code').value, label: $('#cg_label').value, ax_code: $('#cg_ax').value,
+        can_be_responsible: canResp, responsible_role: canResp ? role : null,
+        selectable_on_ingreso: $('#cg_ing').value === '1', is_active: $('#cg_active').value === '1',
+        patterns: $('#cg_pats').value.split(',').map(s => s.trim()).filter(Boolean),
+      } });
+    if (!r.ok) { alert(r.error); return; }
+    closeModal();
+    await cfgReloadCatalogs(user); cfgRenderTab(user);
+  });
+}
+
+/* ===== Pestana BANCOS ===== */
+function cfgRenderBancos(user, body) {
+  const rows = (CFG_DATA.bancos || []).map(b => {
+    const estado = b.is_active ? '<span class="pill pill-open">activo</span>' : '<span class="pill pill-closed">inactivo</span>';
+    return `<tr>
+      <td style="font-family:monospace;font-weight:600">${b.code}</td>
+      <td><b>${b.name}</b></td>
+      <td>${estado}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-mini" data-edit-ban="${b.code}">${I.pencil}</button>
+        <button class="btn btn-mini" data-toggle-ban="${b.code}" data-active="${b.is_active}">${b.is_active ? 'Desactivar' : 'Activar'}</button>
+      </td></tr>`;
+  }).join('') || '<tr><td colspan="4" class="empty">Sin bancos.</td></tr>';
+
+  body.innerHTML = `
+    <div class="card">
+      <div class="cfg-card-head"><h3>Bancos</h3>
+        <button class="btn btn-primary btn-mini" id="banNew">${I.plus} Nuevo banco</button></div>
+      <p class="cfg-desc" style="margin:0 0 14px">Prefijo de 4 dígitos de la cuenta bancaria (20 dígitos en total). Si el prefijo no está activo aquí, la cuenta no se acepta en los reportes.</p>
+      <table class="cfg-cat-table"><thead><tr>
+        <th>Prefijo</th><th>Banco</th><th>Estado</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+
+  $('#banNew').addEventListener('click', () => cfgBancoModal(user, null));
+  body.querySelectorAll('[data-edit-ban]').forEach(b =>
+    b.addEventListener('click', () => cfgBancoModal(user, CFG_DATA.bancos.find(x => x.code === b.dataset.editBan))));
+  body.querySelectorAll('[data-toggle-ban]').forEach(b =>
+    b.addEventListener('click', async () => {
+      const r = await cfgCatalogs({ action: 'banco_toggle', adminId: user.id, code: b.dataset.toggleBan, active: !(b.dataset.active === 'true') });
+      if (!r.ok) { alert(r.error); return; }
+      await cfgReloadCatalogs(user); cfgRenderTab(user);
+    }));
+}
+
+function cfgBancoModal(user, b) {
+  const isNew = !b;
+  openModal(`
+    <div class="modal-head"><span>${isNew ? 'Nuevo banco' : 'Editar banco'}</span><button class="modal-x" id="mX">✕</button></div>
+    <label class="flabel">Prefijo (4 dígitos)</label>
+    <input id="bn_code" value="${b ? b.code : ''}" ${b ? 'readonly' : ''} placeholder="0134" maxlength="4" inputmode="numeric" style="font-family:monospace;margin-bottom:12px">
+    <label class="flabel">Nombre del banco</label>
+    <input id="bn_name" value="${b ? b.name.replace(/"/g,'&quot;') : ''}" placeholder="Banesco" style="margin-bottom:12px">
+    <label class="radio-row"><input type="checkbox" id="bn_active" ${!b || b.is_active ? 'checked' : ''}> <span>Activo</span></label>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Guardar</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#bn_code').addEventListener('input', function(){ this.value = this.value.replace(/[^0-9]/g,'').slice(0,4); });
+  $('#mOk').addEventListener('click', async () => {
+    const r = await cfgCatalogs({ action: 'banco_save', adminId: user.id,
+      banco: { code: $('#bn_code').value, name: $('#bn_name').value, is_active: $('#bn_active').checked } });
+    if (!r.ok) { alert(r.error); return; }
+    closeModal();
+    await cfgReloadCatalogs(user); cfgRenderTab(user);
+  });
+}
+
+/* ===== Pestana OPERADORAS ===== */
+function cfgRenderOperadoras(user, body) {
+  const rows = (CFG_DATA.operadoras || []).map(o => {
+    const estado = o.is_active ? '<span class="pill pill-open">activa</span>' : '<span class="pill pill-closed">inactiva</span>';
+    return `<tr>
+      <td style="font-family:monospace;font-weight:600">${o.code}</td>
+      <td><b>${o.name}</b></td>
+      <td>${estado}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-mini" data-edit-ope="${o.code}">${I.pencil}</button>
+        <button class="btn btn-mini" data-toggle-ope="${o.code}" data-active="${o.is_active}">${o.is_active ? 'Desactivar' : 'Activar'}</button>
+      </td></tr>`;
+  }).join('') || '<tr><td colspan="4" class="empty">Sin operadoras.</td></tr>';
+
+  body.innerHTML = `
+    <div class="card">
+      <div class="cfg-card-head"><h3>Operadoras móviles</h3>
+        <button class="btn btn-primary btn-mini" id="opeNew">${I.plus} Nueva operadora</button></div>
+      <p class="cfg-desc" style="margin:0 0 14px">Prefijo de 4 dígitos del teléfono móvil (04XX). Si el prefijo no está activo aquí, el teléfono no se acepta. El número se guarda en formato internacional (+58).</p>
+      <table class="cfg-cat-table"><thead><tr>
+        <th>Prefijo</th><th>Operadora</th><th>Estado</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+
+  $('#opeNew').addEventListener('click', () => cfgOperadoraModal(user, null));
+  body.querySelectorAll('[data-edit-ope]').forEach(b =>
+    b.addEventListener('click', () => cfgOperadoraModal(user, CFG_DATA.operadoras.find(x => x.code === b.dataset.editOpe))));
+  body.querySelectorAll('[data-toggle-ope]').forEach(b =>
+    b.addEventListener('click', async () => {
+      const r = await cfgCatalogs({ action: 'operadora_toggle', adminId: user.id, code: b.dataset.toggleOpe, active: !(b.dataset.active === 'true') });
+      if (!r.ok) { alert(r.error); return; }
+      await cfgReloadCatalogs(user); cfgRenderTab(user);
+    }));
+}
+
+function cfgOperadoraModal(user, o) {
+  const isNew = !o;
+  openModal(`
+    <div class="modal-head"><span>${isNew ? 'Nueva operadora' : 'Editar operadora'}</span><button class="modal-x" id="mX">✕</button></div>
+    <label class="flabel">Prefijo (4 dígitos)</label>
+    <input id="op_code" value="${o ? o.code : ''}" ${o ? 'readonly' : ''} placeholder="0414" maxlength="4" inputmode="numeric" style="font-family:monospace;margin-bottom:12px">
+    <label class="flabel">Operadora</label>
+    <input id="op_name" value="${o ? o.name.replace(/"/g,'&quot;') : ''}" placeholder="Movistar" style="margin-bottom:12px">
+    <label class="radio-row"><input type="checkbox" id="op_active" ${!o || o.is_active ? 'checked' : ''}> <span>Activa</span></label>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Guardar</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#op_code').addEventListener('input', function(){ this.value = this.value.replace(/[^0-9]/g,'').slice(0,4); });
+  $('#mOk').addEventListener('click', async () => {
+    const r = await cfgCatalogs({ action: 'operadora_save', adminId: user.id,
+      operadora: { code: $('#op_code').value, name: $('#op_name').value, is_active: $('#op_active').checked } });
+    if (!r.ok) { alert(r.error); return; }
+    closeModal();
+    await cfgReloadCatalogs(user); cfgRenderTab(user);
+  });
+}
+
 /* Recarga catalogos (tras un cambio) sin recargar toda la vista */
 async function cfgReloadCatalogs(user) {
-  const [ty, ca] = await Promise.all([
+  const [ty, ca, cg, bn, op] = await Promise.all([
     cfgCatalogs({ action: 'absence_list', adminId: user.id }),
     cfgCatalogs({ action: 'causa_list', adminId: user.id }),
+    cfgCatalogs({ action: 'cargo_list', adminId: user.id }),
+    cfgCatalogs({ action: 'banco_list', adminId: user.id }),
+    cfgCatalogs({ action: 'operadora_list', adminId: user.id }),
   ]);
   if (ty.ok) CFG_DATA.types = ty.types || [];
   if (ca.ok) CFG_DATA.causas = ca.causas || [];
+  if (cg.ok) CFG_DATA.cargos = cg.cargos || [];
+  if (bn.ok) CFG_DATA.bancos = bn.bancos || [];
+  if (op.ok) CFG_DATA.operadoras = op.operadoras || [];
 }
 
 /* ---------- navegación ---------- */

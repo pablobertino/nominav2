@@ -206,6 +206,159 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true });
     }
 
+    /* ---------------- CARGOS (catalogo maestro) ----------------
+       cargos: code (clave interna estable), label (lo ve la tienda),
+       ax_code (lo que va a la plantilla AX; puede diferir del label,
+       ej. Cajero->CAJEROS), can_be_responsible + responsible_role
+       (quien puede ser responsable en los wizard), selectable_on_ingreso
+       (aparece en el combo de Ingreso), sort_order (orden/destacado).
+       Los patrones del Reporte 10 (cargo_patterns) se editan aparte. */
+    if (action === 'cargo_list') {
+      const cargos = await sb(env, 'cargos?select=id,code,label,ax_code,can_be_responsible,responsible_role,selectable_on_ingreso,is_active,sort_order&order=sort_order');
+      const pats = await sb(env, 'cargo_patterns?select=id,cargo_id,pattern,sort_order,is_active&order=sort_order');
+      const patByCargo = {};
+      (pats || []).forEach(p => { (patByCargo[p.cargo_id] = patByCargo[p.cargo_id] || []).push(p); });
+      const out = (cargos || []).map(c => ({
+        id: c.id, code: c.code, label: c.label, ax_code: c.ax_code,
+        can_be_responsible: !!c.can_be_responsible,
+        responsible_role: c.responsible_role || null,
+        selectable_on_ingreso: c.selectable_on_ingreso !== false,
+        is_active: c.is_active, sort_order: c.sort_order,
+        patterns: (patByCargo[c.id] || []).map(p => ({ id: p.id, pattern: p.pattern, sort_order: p.sort_order, is_active: p.is_active })),
+      }));
+      return json({ ok: true, cargos: out });
+    }
+
+    if (action === 'cargo_save') {
+      const c = body.cargo || {};
+      const code = (c.code || '').trim().toUpperCase();
+      const label = (c.label || '').trim();
+      const axCode = (c.ax_code || '').trim().toUpperCase() || code;
+      if (!code || !/^[A-Z0-9_\-]{2,20}$/.test(code)) return json({ ok: false, error: 'Codigo invalido (2 a 20: letras, numeros, guion).' }, 400);
+      if (!label) return json({ ok: false, error: 'Falta el nombre del cargo.' }, 400);
+      const canResp = !!c.can_be_responsible;
+      let respRole = (c.responsible_role || '').trim();
+      if (!canResp) respRole = null;
+      else if (respRole !== 'Gerente' && respRole !== 'Sub-Gerente') {
+        return json({ ok: false, error: 'Rol de responsable invalido (Gerente o Sub-Gerente).' }, 400);
+      }
+      const row = {
+        code, label, ax_code: axCode,
+        can_be_responsible: canResp,
+        responsible_role: respRole,
+        selectable_on_ingreso: c.selectable_on_ingreso !== false,
+        is_active: c.is_active !== false,
+      };
+      const existing = await sb(env, `cargos?code=eq.${encodeURIComponent(code)}&select=id`);
+      let cargoId;
+      if (existing && existing.length) {
+        cargoId = existing[0].id;
+        await sb(env, `cargos?code=eq.${encodeURIComponent(code)}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(row),
+        });
+      } else {
+        const last = await sb(env, 'cargos?select=sort_order&order=sort_order.desc&limit=1');
+        row.sort_order = ((last && last[0] && last[0].sort_order) || 0) + 10;
+        const ins = await sb(env, 'cargos', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
+        cargoId = ins && ins[0] && ins[0].id;
+      }
+
+      // Patrones del Reporte 10 (texto libre -> este cargo). El front manda
+      // patterns: [string,...] (lista completa). Se reescribe el set: se
+      // borran los actuales y se insertan los nuevos. Cada patron se guarda
+      // normalizado (mayus, sin acentos, espacios colapsados) como lo compara
+      // la lectura del Reporte 10.
+      if (cargoId && Array.isArray(c.patterns)) {
+        const norm = s => String(s || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+        const clean = [...new Set(c.patterns.map(norm).filter(Boolean))];
+        await sb(env, `cargo_patterns?cargo_id=eq.${cargoId}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } });
+        if (clean.length) {
+          const payload = clean.map((pattern, i) => ({ cargo_id: cargoId, pattern, sort_order: (i + 1) * 10, is_active: true }));
+          await sb(env, 'cargo_patterns', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(payload) });
+        }
+      }
+      return json({ ok: true, code });
+    }
+
+    if (action === 'cargo_toggle') {
+      const code = (body.code || '').trim().toUpperCase();
+      if (!code) return json({ ok: false, error: 'Falta el codigo.' }, 400);
+      await sb(env, `cargos?code=eq.${encodeURIComponent(code)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ is_active: !!body.active }),
+      });
+      return json({ ok: true });
+    }
+
+    /* ---------------- BANCOS (prefijo 4 digitos -> nombre) ---------------- */
+    if (action === 'banco_list') {
+      const bancos = await sb(env, 'bancos?select=code,name,is_active,sort_order&order=sort_order');
+      return json({ ok: true, bancos: bancos || [] });
+    }
+
+    if (action === 'banco_save') {
+      const b = body.banco || {};
+      const code = (b.code || '').trim();
+      const name = (b.name || '').trim();
+      if (!/^[0-9]{4}$/.test(code)) return json({ ok: false, error: 'El prefijo debe tener 4 digitos.' }, 400);
+      if (!name) return json({ ok: false, error: 'Falta el nombre del banco.' }, 400);
+      const row = { code, name, is_active: b.is_active !== false };
+      const existing = await sb(env, `bancos?code=eq.${encodeURIComponent(code)}&select=code`);
+      if (existing && existing.length) {
+        await sb(env, `bancos?code=eq.${encodeURIComponent(code)}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(row),
+        });
+      } else {
+        const last = await sb(env, 'bancos?select=sort_order&order=sort_order.desc&limit=1');
+        row.sort_order = ((last && last[0] && last[0].sort_order) || 0) + 10;
+        await sb(env, 'bancos', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(row) });
+      }
+      return json({ ok: true, code });
+    }
+
+    if (action === 'banco_toggle') {
+      const code = (body.code || '').trim();
+      if (!code) return json({ ok: false, error: 'Falta el codigo.' }, 400);
+      await sb(env, `bancos?code=eq.${encodeURIComponent(code)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ is_active: !!body.active }),
+      });
+      return json({ ok: true });
+    }
+
+    /* ---------------- OPERADORAS (prefijo 4 digitos -> operadora) ---------------- */
+    if (action === 'operadora_list') {
+      const ops = await sb(env, 'operadoras?select=code,name,is_active,sort_order&order=sort_order');
+      return json({ ok: true, operadoras: ops || [] });
+    }
+
+    if (action === 'operadora_save') {
+      const o = body.operadora || {};
+      const code = (o.code || '').trim();
+      const name = (o.name || '').trim();
+      if (!/^[0-9]{4}$/.test(code)) return json({ ok: false, error: 'El prefijo debe tener 4 digitos.' }, 400);
+      if (!name) return json({ ok: false, error: 'Falta el nombre de la operadora.' }, 400);
+      const row = { code, name, is_active: o.is_active !== false };
+      const existing = await sb(env, `operadoras?code=eq.${encodeURIComponent(code)}&select=code`);
+      if (existing && existing.length) {
+        await sb(env, `operadoras?code=eq.${encodeURIComponent(code)}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(row),
+        });
+      } else {
+        const last = await sb(env, 'operadoras?select=sort_order&order=sort_order.desc&limit=1');
+        row.sort_order = ((last && last[0] && last[0].sort_order) || 0) + 10;
+        await sb(env, 'operadoras', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(row) });
+      }
+      return json({ ok: true, code });
+    }
+
+    if (action === 'operadora_toggle') {
+      const code = (body.code || '').trim();
+      if (!code) return json({ ok: false, error: 'Falta el codigo.' }, 400);
+      await sb(env, `operadoras?code=eq.${encodeURIComponent(code)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ is_active: !!body.active }),
+      });
+      return json({ ok: true });
+    }
+
     return json({ ok: false, error: 'Accion desconocida.' }, 400);
   } catch (err) {
     return json({ ok: false, error: err.message }, 500);
