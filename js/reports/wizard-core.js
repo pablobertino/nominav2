@@ -197,7 +197,12 @@ export function launchWizard(user, reportDef, onExit) {
       </div>
 
       <div class="wiz-foot"><span></span>
-        <button class="btn btn-primary" id="rNext" ${S.roster.length ? '' : 'disabled'}>Siguiente →</button>
+        ${S.roster.length
+          ? `<button class="btn btn-primary" id="rNext">Siguiente →</button>`
+          : `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;justify-content:flex-end">
+               <span style="font-size:12px;color:var(--muted);max-width:340px;text-align:right">Sin lista no se validan cédulas contra el personal ni fechas de egreso, y deberás escribir los datos a mano.</span>
+               <button class="btn" id="rNoList">Continuar sin lista →</button>
+             </div>`}
       </div>`;
 
     // tabs
@@ -218,7 +223,13 @@ export function launchWizard(user, reportDef, onExit) {
     $('#rFile').addEventListener('change', onPickFile);
     if ($('#rClear')) $('#rClear').addEventListener('click', openRosterClear);
     // next: admin salta el paso 2 (Responsable); Ingreso ademas salta el 3.
-    $('#rNext').addEventListener('click', () => setStep(isAdmin ? (skipWorkers ? 4 : 3) : 2));
+    // Hay dos botones posibles segun haya lista o no (#rNext / #rNoList);
+    // ambos avanzan al mismo paso. "Continuar sin lista" deja S.roster vacio
+    // (el paso 3 cae en captura manual y el paso 2 permite cargar el
+    // responsable a mano o elegir "Sin gerente asignado").
+    const goNext = () => setStep(isAdmin ? (skipWorkers ? 4 : 3) : 2);
+    if ($('#rNext')) $('#rNext').addEventListener('click', goNext);
+    if ($('#rNoList')) $('#rNoList').addEventListener('click', goNext);
 
     paintRosterTable();
   }
@@ -483,16 +494,21 @@ export function launchWizard(user, reportDef, onExit) {
   /* ---------- PASO 3: trabajadores ---------- */
   function stepWorkers() {
     const panel = $('#wzPanel');
+    // Si la tienda no tiene lista cargada, la pestania "De mi tienda" no
+    // aporta nada: arrancamos directamente en "Agregar manual".
+    const noList = S.roster.length === 0;
     panel.innerHTML = `
       <h2>Trabajadores afectados</h2>
-      <p class="hint">Marca a varios y agrégalos en bloque, o usa “Agregar” individual. También puedes ordenar y buscar. Para quien no esté en la lista, usa “Agregar manual”.</p>
+      <p class="hint">${noList
+        ? 'Esta tienda no tiene lista cargada, así que agrega a los trabajadores a mano (cédula y nombre). Si subes el Reporte 10 más adelante, podrás elegirlos de la lista.'
+        : 'Marca a varios y agrégalos en bloque, o usa “Agregar” individual. También puedes ordenar y buscar. Para quien no esté en la lista, usa “Agregar manual”.'}</p>
 
       <div class="subtabs" id="wTabs">
-        <div class="subtab on" data-tab2="roster">De mi tienda</div>
-        <div class="subtab" data-tab2="manual">Agregar manual</div>
+        <div class="subtab ${noList ? '' : 'on'}" data-tab2="roster">De mi tienda</div>
+        <div class="subtab ${noList ? 'on' : ''}" data-tab2="manual">Agregar manual</div>
       </div>
 
-      <div data-tp2="roster">
+      <div data-tp2="roster" ${noList ? 'style="display:none"' : ''}>
         <div class="roster-head">
           <div class="search"><input id="pSearch" placeholder="Buscar por nombre o cédula…"></div>
           <span class="roster-info" id="pInfo"></span>
@@ -512,7 +528,7 @@ export function launchWizard(user, reportDef, onExit) {
         </table></div>
       </div>
 
-      <div data-tp2="manual" style="display:none">
+      <div data-tp2="manual" ${noList ? '' : 'style="display:none"'}>
         <div class="add-row">
           <div class="af-field"><label class="flabel">Cédula</label><input id="mCed" placeholder="V-12345678">
             <div class="ced-hint" id="mCedHint"></div></div>
