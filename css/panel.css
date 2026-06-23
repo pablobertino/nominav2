@@ -700,3 +700,31 @@
 .modal-ov .modal.modal-wide .ferr { color:var(--danger); font-size:11px; min-height:14px; margin-top:3px; }
 /* etiqueta "(opcional)" tenue */
 .modal-ov .modal.modal-wide .opt { color:var(--faint); font-weight:400; }
+
+/* ===================== CONFIGURACION: menu lateral =====================
+   La vista de Configuracion paso de pestanas horizontales a un menu
+   lateral izquierdo (escala mejor con muchas secciones). Columna fija a
+   la izquierda + panel de contenido a la derecha. En movil colapsa a una
+   sola columna (el menu arriba, scrollable en horizontal). */
+.cfg-layout { display:flex; gap:22px; align-items:flex-start; }
+.cfg-side { flex:0 0 224px; display:flex; flex-direction:column; gap:2px;
+  border:1px solid var(--border); border-radius:var(--radius-md); padding:10px; background:var(--surface);
+  position:sticky; top:16px; }
+.cfg-side-group { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.05em;
+  color:var(--faint); padding:12px 10px 5px; }
+.cfg-side-group:first-child { padding-top:4px; }
+.cfg-side-item { display:flex; align-items:center; gap:9px; width:100%; text-align:left;
+  padding:9px 11px; border:0; background:none; border-radius:var(--radius-sm); cursor:pointer;
+  font-family:inherit; font-size:13.5px; font-weight:500; color:var(--ink-soft); transition:background .12s; }
+.cfg-side-item:hover { background:var(--bg-soft, #f5f6f8); color:var(--ink); }
+.cfg-side-item.on { background:var(--brand-bg); color:var(--brand); font-weight:650; }
+.cfg-side-ic { font-size:15px; width:20px; text-align:center; flex-shrink:0; }
+.cfg-panel-wrap { flex:1; min-width:0; }
+
+@media (max-width:760px) {
+  .cfg-layout { flex-direction:column; }
+  .cfg-side { position:static; flex-direction:row; flex-wrap:nowrap; overflow-x:auto; width:100%;
+    box-sizing:border-box; gap:4px; }
+  .cfg-side-group { display:none; }
+  .cfg-side-item { white-space:nowrap; flex:0 0 auto; }
+}

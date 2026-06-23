@@ -125,6 +125,9 @@ export const ingresoReport = {
   icon: '➕',
   tag: 'Ingreso · wizard',
   step4Label: 'Ingresos',
+  // Ingreso captura TODO en el paso 4 (la persona es nueva, no sale del
+  // roster), asi que el wizard omite el paso 3 (Trabajadores).
+  skipWorkerStep: true,
 
   summaryColumns: [
     { key: 'cargo', label: 'Cargo' },
@@ -215,7 +218,7 @@ function paintStep4(ctx) {
     </div>`;
 
   $('#igAdd').addEventListener('click', () => openIngresoModal(ctx, null));
-  $('#igBack').addEventListener('click', () => ctx.setStep(3));
+  $('#igBack').addEventListener('click', () => ctx.setStep(ctx.stepBefore4 || 2));
   $('#igNext').addEventListener('click', () => ctx.setStep(5));
 
   renderRows(ctx);

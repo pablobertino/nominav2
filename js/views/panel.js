@@ -70,7 +70,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.65</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.66</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1617,24 +1617,29 @@ async function viewConfig(user) {
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros, catálogos e integraciones del portal</p></div></div>
-    <div class="cfg-tabs">
-      <button class="cfg-tab" data-tab="aus">📅 Tipos de ausencia</button>
-      <button class="cfg-tab" data-tab="mar">🕐 Causas de marcaje</button>
-      <button class="cfg-tab" data-tab="car">👔 Cargos</button>
-      <button class="cfg-tab" data-tab="ban">🏦 Bancos</button>
-      <button class="cfg-tab" data-tab="ope">📱 Operadoras</button>
-      <button class="cfg-tab" data-tab="cor">📆 Corte y períodos</button>
-      <button class="cfg-tab" data-tab="int">🔌 Integraciones</button>
-    </div>
-    <div id="cfgBody"></div>`;
+    <div class="cfg-layout">
+      <nav class="cfg-side" id="cfgSide">
+        <div class="cfg-side-group">Catálogos de reportes</div>
+        <button class="cfg-side-item" data-tab="aus"><span class="cfg-side-ic">📅</span> Tipos de ausencia</button>
+        <button class="cfg-side-item" data-tab="mar"><span class="cfg-side-ic">🕐</span> Causas de marcaje</button>
+        <div class="cfg-side-group">Datos de ingreso</div>
+        <button class="cfg-side-item" data-tab="car"><span class="cfg-side-ic">👔</span> Cargos</button>
+        <button class="cfg-side-item" data-tab="ban"><span class="cfg-side-ic">🏦</span> Bancos</button>
+        <button class="cfg-side-item" data-tab="ope"><span class="cfg-side-ic">📱</span> Operadoras</button>
+        <div class="cfg-side-group">Sistema</div>
+        <button class="cfg-side-item" data-tab="cor"><span class="cfg-side-ic">📆</span> Corte y períodos</button>
+        <button class="cfg-side-item" data-tab="int"><span class="cfg-side-ic">🔌</span> Integraciones</button>
+      </nav>
+      <div class="cfg-panel-wrap" id="cfgBody"></div>
+    </div>`;
 
-  $('#pnlMain').querySelectorAll('.cfg-tab').forEach(b =>
+  $('#pnlMain').querySelectorAll('.cfg-side-item').forEach(b =>
     b.addEventListener('click', () => { CFG_TAB = b.dataset.tab; cfgRenderTab(user); }));
   cfgRenderTab(user);
 }
 
 function cfgRenderTab(user) {
-  $('#pnlMain').querySelectorAll('.cfg-tab').forEach(b =>
+  $('#pnlMain').querySelectorAll('.cfg-side-item').forEach(b =>
     b.classList.toggle('on', b.dataset.tab === CFG_TAB));
   const body = $('#cfgBody');
   if (CFG_TAB === 'aus') cfgRenderAusencia(user, body);

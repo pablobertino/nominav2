@@ -36,6 +36,14 @@ export function launchWizard(user, reportDef, onExit) {
   // omite el paso 2 y el reporte se marca con origen 'admin'.
   const isAdmin = user.kind !== 'company';
 
+  // Algunos reportes (Ingreso) capturan TODO en el paso 4 y no usan el paso
+  // 3 (Trabajadores), porque la persona es nueva y no sale del roster. El
+  // flag skipWorkerStep del reportDef omite ese paso del recorrido y del
+  // stepper, sin afectar a los demas reportes.
+  const skipWorkers = !!reportDef.skipWorkerStep;
+  // Paso anterior al 4 segun el rol y si se omite el paso 3.
+  const stepBefore4 = skipWorkers ? (isAdmin ? 1 : 2) : 3;
+
   // ---- estado ----
   const S = {
     step: 1,
@@ -68,6 +76,8 @@ export function launchWizard(user, reportDef, onExit) {
       [4, reportDef.step4Label || 'Detalle'],
       [5, 'Resumen'],
     ];
+    // Ingreso (skipWorkers): quitar el paso 3 (Trabajadores) del stepper.
+    const visibleSteps = skipWorkers ? steps.filter(([n]) => n !== 3) : steps;
     const host = document.getElementById('pnlMain') || document.getElementById('app');
     host.innerHTML = `
       <div class="wiz">
@@ -80,10 +90,10 @@ export function launchWizard(user, reportDef, onExit) {
         <div class="now-clock" id="wzClock">🕓 —</div>
 
         <div class="steps" id="wzSteps">
-          ${steps.map(([n, label], i) => `
+          ${visibleSteps.map(([n, label], i) => `
             <div class="step" data-s="${n}">
               <span class="dot">${i + 1}</span><span class="slabel">${label}</span>
-              ${i < steps.length - 1 ? '<span class="bar"></span>' : ''}
+              ${i < visibleSteps.length - 1 ? '<span class="bar"></span>' : ''}
             </div>`).join('')}
         </div>
 
@@ -207,8 +217,8 @@ export function launchWizard(user, reportDef, onExit) {
     $('#rDrop').addEventListener('click', () => $('#rFile').click());
     $('#rFile').addEventListener('change', onPickFile);
     if ($('#rClear')) $('#rClear').addEventListener('click', openRosterClear);
-    // next: admin salta el paso 2 (Responsable)
-    $('#rNext').addEventListener('click', () => setStep(isAdmin ? 3 : 2));
+    // next: admin salta el paso 2 (Responsable); Ingreso ademas salta el 3.
+    $('#rNext').addEventListener('click', () => setStep(isAdmin ? (skipWorkers ? 4 : 3) : 2));
 
     paintRosterTable();
   }
@@ -381,7 +391,7 @@ export function launchWizard(user, reportDef, onExit) {
     bindRespCards();
     $('#respManageBtn').addEventListener('click', openRespManage);
     $('#respBack').addEventListener('click', () => setStep(1));
-    $('#respNext').addEventListener('click', () => setStep(3));
+    $('#respNext').addEventListener('click', () => setStep(skipWorkers ? 4 : 3));
   }
 
   // Centinela para "Sin gerente asignado". Solo se ofrece cuando la tienda
@@ -634,6 +644,7 @@ export function launchWizard(user, reportDef, onExit) {
       },
       removeWorker, rerenderStep4: stepDetail,
       setStep, fmt: { fmtDate }, DW,
+      stepBefore4,   // a donde vuelve el "Atras" del paso 4 (3 normal; 1/2 si se omite el paso 3)
     };
   }
   function stepDetail() {
