@@ -359,6 +359,67 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true });
     }
 
+    /* ---------------- DOCUMENTOS POR INCIDENCIA (ingreso / egreso) ----------------
+       Recaudos fijos de un tipo de incidencia (no por tipo de ausencia).
+       Viven en required_docs con incidence_code = 'ingreso' | 'egreso'.
+       A diferencia de los docs de ausencia (0 o 1 por absence_code), aqui
+       puede haber VARIOS por incidence_code (ej. ingreso pide 4 recaudos).
+       Cada doc: id, name, note, enforcement (block|warn|optional),
+       is_required, is_active, sort_order. El archivo NO se guarda: viaja por
+       osTicket al enviar el reporte (ticket DOC por recaudo y por trabajador).
+
+       Acciones:
+         incdoc_list   {incidence_code}            -> lista los docs del tipo
+         incdoc_save   {incidence_code, doc}       -> crea/actualiza un doc
+         incdoc_toggle {id, active}                -> activa/desactiva un doc
+       incidence_code valido: 'ingreso' | 'egreso'. */
+    if (action === 'incdoc_list') {
+      const inc = (body.incidence_code || '').trim().toLowerCase();
+      if (inc !== 'ingreso' && inc !== 'egreso') return json({ ok: false, error: 'Tipo de incidencia invalido.' }, 400);
+      const docs = await sb(env,
+        `required_docs?incidence_code=eq.${encodeURIComponent(inc)}&select=id,name,note,enforcement,is_required,is_active,sort_order&order=sort_order`);
+      return json({ ok: true, incidence_code: inc, docs: docs || [] });
+    }
+
+    if (action === 'incdoc_save') {
+      const inc = (body.incidence_code || '').trim().toLowerCase();
+      if (inc !== 'ingreso' && inc !== 'egreso') return json({ ok: false, error: 'Tipo de incidencia invalido.' }, 400);
+      const d = body.doc || {};
+      const name = (d.name || '').trim();
+      if (!name) return json({ ok: false, error: 'Falta el nombre del documento.' }, 400);
+      const enforcement = ENFORCEMENTS.includes(d.enforcement) ? d.enforcement : 'warn';
+      const row = {
+        incidence_code: inc,
+        name,
+        note: (d.note || '').trim() || null,
+        enforcement,
+        is_required: d.is_required !== false,
+        is_active: d.is_active !== false,
+      };
+      // id presente -> actualizar ese doc; ausente -> crear al final del orden.
+      const id = parseInt(d.id, 10);
+      if (id) {
+        await sb(env, `required_docs?id=eq.${id}&incidence_code=eq.${encodeURIComponent(inc)}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(row),
+        });
+        return json({ ok: true, id });
+      } else {
+        const lastD = await sb(env, `required_docs?incidence_code=eq.${encodeURIComponent(inc)}&select=sort_order&order=sort_order.desc&limit=1`);
+        row.sort_order = ((lastD && lastD[0] && lastD[0].sort_order) || 0) + 10;
+        const ins = await sb(env, 'required_docs', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
+        return json({ ok: true, id: ins && ins[0] && ins[0].id });
+      }
+    }
+
+    if (action === 'incdoc_toggle') {
+      const id = parseInt(body.id, 10);
+      if (!id) return json({ ok: false, error: 'Falta el id del documento.' }, 400);
+      await sb(env, `required_docs?id=eq.${id}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ is_active: !!body.active }),
+      });
+      return json({ ok: true });
+    }
+
     return json({ ok: false, error: 'Accion desconocida.' }, 400);
   } catch (err) {
     return json({ ok: false, error: err.message }, 500);

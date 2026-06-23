@@ -70,7 +70,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.66</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.67</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1604,16 +1604,18 @@ async function cfgCatalogs(payload) {
 
 async function viewConfig(user) {
   $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros, catálogos e integraciones</p></div></div><div class="pnl-loading">Cargando…</div>`;
-  const [st, ty, ca, cg, bn, op] = await Promise.all([
+  const [st, ty, ca, cg, bn, op, di, de] = await Promise.all([
     cfgSettings({ action: 'list', adminId: user.id }),
     cfgCatalogs({ action: 'absence_list', adminId: user.id }),
     cfgCatalogs({ action: 'causa_list', adminId: user.id }),
     cfgCatalogs({ action: 'cargo_list', adminId: user.id }),
     cfgCatalogs({ action: 'banco_list', adminId: user.id }),
     cfgCatalogs({ action: 'operadora_list', adminId: user.id }),
+    cfgCatalogs({ action: 'incdoc_list', adminId: user.id, incidence_code: 'ingreso' }),
+    cfgCatalogs({ action: 'incdoc_list', adminId: user.id, incidence_code: 'egreso' }),
   ]);
   if (!st.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${st.error}</div>`; return; }
-  CFG_DATA = { settings: st.settings || [], types: (ty.ok && ty.types) || [], causas: (ca.ok && ca.causas) || [], cargos: (cg.ok && cg.cargos) || [], bancos: (bn.ok && bn.bancos) || [], operadoras: (op.ok && op.operadoras) || [] };
+  CFG_DATA = { settings: st.settings || [], types: (ty.ok && ty.types) || [], causas: (ca.ok && ca.causas) || [], cargos: (cg.ok && cg.cargos) || [], bancos: (bn.ok && bn.bancos) || [], operadoras: (op.ok && op.operadoras) || [], docsIngreso: (di.ok && di.docs) || [], docsEgreso: (de.ok && de.docs) || [] };
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros, catálogos e integraciones del portal</p></div></div>
@@ -1626,6 +1628,9 @@ async function viewConfig(user) {
         <button class="cfg-side-item" data-tab="car"><span class="cfg-side-ic">👔</span> Cargos</button>
         <button class="cfg-side-item" data-tab="ban"><span class="cfg-side-ic">🏦</span> Bancos</button>
         <button class="cfg-side-item" data-tab="ope"><span class="cfg-side-ic">📱</span> Operadoras</button>
+        <div class="cfg-side-group">Documentos</div>
+        <button class="cfg-side-item" data-tab="dingreso"><span class="cfg-side-ic">➕</span> Ingresos</button>
+        <button class="cfg-side-item" data-tab="degreso"><span class="cfg-side-ic">🔴</span> Egresos</button>
         <div class="cfg-side-group">Sistema</div>
         <button class="cfg-side-item" data-tab="cor"><span class="cfg-side-ic">📆</span> Corte y períodos</button>
         <button class="cfg-side-item" data-tab="int"><span class="cfg-side-ic">🔌</span> Integraciones</button>
@@ -1647,6 +1652,8 @@ function cfgRenderTab(user) {
   else if (CFG_TAB === 'car') cfgRenderCargos(user, body);
   else if (CFG_TAB === 'ban') cfgRenderBancos(user, body);
   else if (CFG_TAB === 'ope') cfgRenderOperadoras(user, body);
+  else if (CFG_TAB === 'dingreso') cfgRenderIncDocs(user, body, 'ingreso');
+  else if (CFG_TAB === 'degreso') cfgRenderIncDocs(user, body, 'egreso');
   else if (CFG_TAB === 'cor') cfgRenderCorte(user, body);
   else if (CFG_TAB === 'int') cfgRenderIntegraciones(user, body);
 }
@@ -2144,20 +2151,104 @@ function cfgOperadoraModal(user, o) {
   });
 }
 
+/* ===== Pestanas DOCUMENTOS: Ingresos / Egresos =====
+   Recaudos por tipo de incidencia (required_docs con incidence_code).
+   Ingreso pide varios (Cedula, RIF, Soporte bancario, Sintesis curricular);
+   Egreso normalmente uno (Carta de renuncia). ABM completo: crear, editar,
+   activar/desactivar. La exigencia (block/warn/optional) se respeta al
+   reportar: 'warn' deja enviar y queda pendiente; 'block' obliga a adjuntar. */
+function cfgRenderIncDocs(user, body, inc) {
+  const list = inc === 'ingreso' ? (CFG_DATA.docsIngreso || []) : (CFG_DATA.docsEgreso || []);
+  const titulo = inc === 'ingreso' ? 'Recaudos de ingreso' : 'Documentos de egreso';
+  const desc = inc === 'ingreso'
+    ? 'Documentos que se piden a cada trabajador que ingresa. Cada uno viaja como un ticket aparte en osTicket; los que la tienda no adjunte quedan registrados como pendientes.'
+    : 'Documentos del egreso (ej. carta de renuncia). Si la tienda no adjunta, puede indicar una causa o queda pendiente.';
+  const enfPill = (e) => e === 'block' ? '<span class="pill pill-block">bloquea</span>'
+    : e === 'optional' ? '<span class="pill pill-opt">opcional</span>'
+    : '<span class="pill pill-warn2">advierte</span>';
+  const rows = list.map(d => {
+    const estado = d.is_active ? '<span class="pill pill-open">activo</span>' : '<span class="pill pill-closed">inactivo</span>';
+    return `<tr>
+      <td><b>${d.name}</b>${d.note ? `<br><span class="muted" style="font-size:11px">${d.note}</span>` : ''}</td>
+      <td>${enfPill(d.enforcement)}</td>
+      <td>${estado}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-mini" data-edit-doc="${d.id}">${I.pencil}</button>
+        <button class="btn btn-mini" data-toggle-doc="${d.id}" data-active="${d.is_active}">${d.is_active ? 'Desactivar' : 'Activar'}</button>
+      </td></tr>`;
+  }).join('') || '<tr><td colspan="4" class="empty">Sin documentos. Agrega uno con “Nuevo documento”.</td></tr>';
+
+  body.innerHTML = `
+    <div class="card">
+      <div class="cfg-card-head"><h3>${titulo}</h3>
+        <button class="btn btn-primary btn-mini" id="docNew">${I.plus} Nuevo documento</button></div>
+      <p class="cfg-desc" style="margin:0 0 14px">${desc}</p>
+      <table class="cfg-cat-table"><thead><tr>
+        <th>Documento</th><th>Exigencia</th><th>Estado</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+
+  $('#docNew').addEventListener('click', () => cfgIncDocModal(user, inc, null));
+  body.querySelectorAll('[data-edit-doc]').forEach(b =>
+    b.addEventListener('click', () => cfgIncDocModal(user, inc, list.find(d => String(d.id) === b.dataset.editDoc))));
+  body.querySelectorAll('[data-toggle-doc]').forEach(b =>
+    b.addEventListener('click', async () => {
+      const r = await cfgCatalogs({ action: 'incdoc_toggle', adminId: user.id, id: b.dataset.toggleDoc, active: !(b.dataset.active === 'true') });
+      if (!r.ok) { alert(r.error); return; }
+      await cfgReloadCatalogs(user); cfgRenderTab(user);
+    }));
+}
+
+function cfgIncDocModal(user, inc, d) {
+  const isNew = !d;
+  openModal(`
+    <div class="modal-head"><span>${isNew ? 'Nuevo documento' : 'Editar documento'}</span><button class="modal-x" id="mX">✕</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 16px">${inc === 'ingreso' ? 'Recaudo de ingreso' : 'Documento de egreso'}</p>
+    <label class="flabel">Nombre del documento</label>
+    <input id="id_name" value="${d ? d.name.replace(/"/g,'&quot;') : ''}" placeholder="${inc === 'ingreso' ? 'Cédula' : 'Carta de renuncia'}" style="margin-bottom:12px">
+    <label class="flabel">Exigencia</label>
+    <select id="id_enf" style="width:100%;margin-bottom:12px">
+      <option value="block" ${d && d.enforcement==='block'?'selected':''}>Bloquea (no deja enviar sin él)</option>
+      <option value="warn" ${!d || d.enforcement==='warn'?'selected':''}>Advierte (deja enviar, queda pendiente)</option>
+      <option value="optional" ${d && d.enforcement==='optional'?'selected':''}>Opcional</option>
+    </select>
+    <label class="flabel">Nota / instrucción <span class="muted">(opcional)</span></label>
+    <input id="id_note" value="${d && d.note ? d.note.replace(/"/g,'&quot;') : ''}" placeholder="ej. ambos lados de la cédula" style="margin-bottom:6px">
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Guardar</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const name = $('#id_name').value.trim();
+    if (!name) { alert('Falta el nombre del documento.'); return; }
+    const r = await cfgCatalogs({ action: 'incdoc_save', adminId: user.id, incidence_code: inc,
+      doc: { id: d ? d.id : null, name, enforcement: $('#id_enf').value, note: $('#id_note').value, is_required: true, is_active: d ? d.is_active : true } });
+    if (!r.ok) { alert(r.error); return; }
+    closeModal();
+    await cfgReloadCatalogs(user); cfgRenderTab(user);
+  });
+}
+
 /* Recarga catalogos (tras un cambio) sin recargar toda la vista */
 async function cfgReloadCatalogs(user) {
-  const [ty, ca, cg, bn, op] = await Promise.all([
+  const [ty, ca, cg, bn, op, di, de] = await Promise.all([
     cfgCatalogs({ action: 'absence_list', adminId: user.id }),
     cfgCatalogs({ action: 'causa_list', adminId: user.id }),
     cfgCatalogs({ action: 'cargo_list', adminId: user.id }),
     cfgCatalogs({ action: 'banco_list', adminId: user.id }),
     cfgCatalogs({ action: 'operadora_list', adminId: user.id }),
+    cfgCatalogs({ action: 'incdoc_list', adminId: user.id, incidence_code: 'ingreso' }),
+    cfgCatalogs({ action: 'incdoc_list', adminId: user.id, incidence_code: 'egreso' }),
   ]);
   if (ty.ok) CFG_DATA.types = ty.types || [];
   if (ca.ok) CFG_DATA.causas = ca.causas || [];
   if (cg.ok) CFG_DATA.cargos = cg.cargos || [];
   if (bn.ok) CFG_DATA.bancos = bn.bancos || [];
   if (op.ok) CFG_DATA.operadoras = op.operadoras || [];
+  if (di.ok) CFG_DATA.docsIngreso = di.docs || [];
+  if (de.ok) CFG_DATA.docsEgreso = de.docs || [];
 }
 
 /* ---------- navegación ---------- */

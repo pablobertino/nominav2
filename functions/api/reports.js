@@ -510,10 +510,15 @@ async function submitMarcaje(env, body) {
     }
   }
 
+  // Cuantos recaudos quedaron pendientes (sin archivo) en todo el reporte.
+  const pendingDocs = clean.reduce((acc, l) =>
+    acc + (l._docs || []).filter(d => !d._b64).length, 0);
+
   return json({
     ok: true,
     report_id: reportId,
     workers_count: clean.length,
+    pending_docs: pendingDocs,
     window: { today, now: nowHHMM, report_min: reportMin, report_max: reportMax },
     osticket: {
       pla: result.osticket_pla,
@@ -1459,6 +1464,14 @@ async function submitIngreso(env, body) {
   const operadoras = await sb(env, 'operadoras?is_active=eq.true&select=code,name');
   const opSet = new Set((operadoras || []).map(o => o.code));
 
+  // --- Recaudos del ingreso (required_docs incidence_code='ingreso', activos) ---
+  // Catalogo fijo de documentos que se piden a CADA persona que ingresa.
+  // map por id -> {id,name,enforcement}. Si un doc es 'block' y la persona
+  // no adjunta su archivo, el envio se rechaza (no se registra el reporte).
+  const ingDocs = await sb(env, 'required_docs?incidence_code=eq.ingreso&is_active=eq.true&select=id,name,enforcement,is_required&order=sort_order');
+  const ingDocMap = {};
+  (ingDocs || []).forEach(d => { ingDocMap[d.id] = { id: d.id, name: d.name, enforcement: d.enforcement || 'warn' }; });
+
   // Helper edad cumplida a partir de 'YYYY-MM-DD' (referencia: hoy VE).
   const ageFrom = (ymd) => {
     const t = today.split('-').map(Number), b = ymd.split('-').map(Number);
@@ -1486,6 +1499,12 @@ async function submitIngreso(env, body) {
     const address = String(ln.address || '').trim();
     const start = String(ln.start_date || '').slice(0, 10);
     const tag = [first, last].filter(Boolean).join(' ') || ced || `fila ${i + 1}`;
+    // Recaudos adjuntos de esta persona (Cedula, RIF, etc). Cada uno:
+    // { required_doc_id, doc_name, file_name?, file_b64?, file_type? }.
+    // El archivo es opcional (enforcement warn por defecto): si no viene,
+    // el recaudo queda 'pendiente'. Se valida y normaliza mas abajo contra
+    // el catalogo de required_docs del ingreso.
+    const rawDocs = Array.isArray(ln.docs) ? ln.docs : [];
 
     // Cedula 6-8 digitos; letra V/E (>=80.000.000 -> E).
     if (!ced || ced.length < 6 || ced.length > 8) { errors.push(`${tag}: cedula invalida (6 a 8 digitos).`); return; }
@@ -1534,6 +1553,38 @@ async function submitIngreso(env, body) {
     }
 
     const fullName = [first, second, last].filter(Boolean).join(' ').toUpperCase();
+
+    // Recaudos de esta persona: emparejar contra el catalogo de ingreso.
+    // Para cada doc del catalogo, ver si el cliente mando archivo.
+    // - block sin archivo -> error (no se registra el reporte).
+    // - warn/optional sin archivo -> se registra 'pendiente'.
+    const docsByReq = {};
+    rawDocs.forEach(d => {
+      const rid = parseInt(d.required_doc_id, 10);
+      if (rid && ingDocMap[rid]) docsByReq[rid] = d;
+    });
+    const lineDocs = [];
+    let docErr = false;
+    (ingDocs || []).forEach(cat => {
+      const sent = docsByReq[cat.id];
+      const b64 = sent ? String(sent.file_b64 || '') : '';
+      const fname = sent ? String(sent.file_name || '').trim() : '';
+      const ftype = sent ? String(sent.file_type || '').trim() : '';
+      const enforcement = cat.enforcement || 'warn';
+      if (!b64 && enforcement === 'block') {
+        errors.push(`${tag}: debe adjuntar ${cat.name} (obligatorio).`); docErr = true; return;
+      }
+      lineDocs.push({
+        required_doc_id: cat.id,
+        doc_name: cat.name,
+        enforcement,
+        _b64: b64 || null,
+        _fname: fname || `${cat.name}_${ced}`,
+        _ftype: ftype || 'application/octet-stream',
+      });
+    });
+    if (docErr) return;
+
     clean.push({
       worker_id_number: ced,
       ced_kind: cedKind,
@@ -1553,6 +1604,7 @@ async function submitIngreso(env, body) {
       phone: phoneIntl,
       address: address || null,
       start_date: start,
+      _docs: lineDocs,   // interno: recaudos de esta persona (no es columna)
     });
   });
 
@@ -1606,7 +1658,7 @@ async function submitIngreso(env, body) {
   const reportId = header && header[0] && header[0].id;
   if (!reportId) return json({ ok: false, error: 'No se pudo registrar el reporte.' }, 500);
 
-  // --- Detalle en ingreso_report_lines ---
+  // --- Detalle en ingreso_report_lines (devolviendo ids para enlazar docs) ---
   const payload = clean.map(l => ({
     report_id: reportId,
     worker_id_number: l.worker_id_number,
@@ -1627,18 +1679,59 @@ async function submitIngreso(env, body) {
     address: l.address,
     start_date: l.start_date,
   }));
-  await sb(env, 'ingreso_report_lines', { method: 'POST', body: JSON.stringify(payload) });
+  const insertedLines = await sb(env, 'ingreso_report_lines', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify(payload),
+  });
+
+  // --- Recaudos esperados por linea (ingreso_report_docs) ---
+  // Un registro por (persona x recaudo del catalogo). status 'adjunto' si la
+  // persona subio el archivo; 'pendiente' si no (enforcement warn/optional).
+  // El archivo NO se guarda aqui: viaja por osTicket como ticket DOC. Ademas
+  // guardamos el line_id en cada _docs de clean[] para no recalcular abajo.
+  if (Array.isArray(insertedLines) && insertedLines.length === clean.length) {
+    const docsPayload = [];
+    insertedLines.forEach((row, idx) => {
+      clean[idx]._lineId = row.id;
+      (clean[idx]._docs || []).forEach(d => {
+        docsPayload.push({
+          line_id: row.id,
+          required_doc_id: d.required_doc_id,
+          doc_name: d.doc_name,
+          enforcement: d.enforcement,
+          status: d._b64 ? 'adjunto' : 'pendiente',
+        });
+      });
+    });
+    if (docsPayload.length) {
+      await sb(env, 'ingreso_report_docs', { method: 'POST', body: JSON.stringify(docsPayload) });
+    }
+  }
 
   // ─── ENVIO A OSTICKET ───
-  // Ingreso NO lleva documentos: 1 solo ticket PLA con el Excel (accion A).
-  // El telefono se muestra en nacional en el cuerpo, pero al Excel va el
-  // valor guardado (+58). El nombre va dividido en las 3 columnas del Excel.
+  // 1 ticket PLA (resumen de todas las personas + Excel accion A) +
+  // 1 ticket DOC por cada RECAUDO ADJUNTO (Cedula, RIF, etc), aplanando
+  // todas las personas. Es decir, si 2 personas suben 4 recaudos c/u, son
+  // 8 tickets DOC + 1 PLA = 9 piezas. Los recaudos 'pendiente' (sin archivo)
+  // no generan ticket; quedan registrados en ingreso_report_docs.
+  // El telefono se muestra en nacional en el cuerpo; al Excel va el +58.
   const code = reportCode(reportId);
   const base = await osticketBase(env);
   const topicId = parseInt(await getSetting(env, 'osticket_topic_ingreso', '31'), 10) || 31;
   const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
   const fromName = `${cc} - ${compBusinessName || cc}`;
-  const totalPieces = 1;   // ingreso = solo PLA
+
+  // Aplanar los recaudos CON archivo de todas las personas -> lista de DOCs.
+  // Cada DOC referencia a su persona (para el cuerpo y el gc-report).
+  const docPieces = [];
+  clean.forEach(l => {
+    (l._docs || []).forEach(d => {
+      if (d._b64) docPieces.push({ line: l, doc: d });
+    });
+  });
+  const nDocs = docPieces.length;
+  const totalPieces = 1 + nDocs;   // PLA (1) + un DOC por recaudo adjunto
 
   const result = { osticket_pla: null, tickets_ok: 0, tickets_fail: 0, ticket_errors: [] };
 
@@ -1737,11 +1830,60 @@ async function submitIngreso(env, body) {
       result.tickets_ok++;
       await gcReportLink(env, base, {
         report_code: code, ticket_number: plaNum, kind: 'PLA',
-        company: cc, report_type: 'ingreso', doc_total: 0,
+        company: cc, report_type: 'ingreso', doc_total: nDocs,
       });
     } catch (e) {
       result.tickets_fail++;
       result.ticket_errors.push(`PLA: ${String(e.message || e)}`);
+    }
+
+    // Un ticket DOC por cada recaudo adjunto, aplanando todas las personas.
+    // Pieza k = 2,3,... (el PLA es la 1). El cuerpo lleva los datos de la
+    // persona + el nombre del recaudo. El asunto incluye ced y recaudo para
+    // identificarlo de un vistazo en osTicket.
+    for (let i = 0; i < docPieces.length; i++) {
+      const { line: l, doc: d } = docPieces[i];
+      const ced = l.worker_id_number;
+      const piece = i + 2;   // el PLA ocupo la pieza 1
+      const docBody = buildReportText({
+        pieceLabel: 'DOCUMENTO', reportCode: code, piece, totalPieces,
+        topicLabel: `Ingreso — ${d.doc_name}`,
+        fecha: dmy(today), hora: nowHHMM,
+        alias: cc, razon: compBusinessName, zona: mallZona, marca: marcaName,
+        correoTienda: compEmail,
+        responsable: responsible, cargo: position, telefono: compPhone, correoResp: compEmail,
+        registros: [[
+          ['Trabajador', l.worker_name],
+          ['Cédula', `${l.ced_kind}-${ced}`],
+          ['Tipo', 'Alta (A)'],
+          ['Recaudo', d.doc_name],
+        ]],
+      });
+      try {
+        const docNum = await osticketCreateTicket(env, base, {
+          email: fromEmail,
+          name: fromName,
+          subject: `[${code}] [${piece}/${totalPieces}] DOC ${ced} ${d.doc_name}`,
+          message: docBody,
+          topicId,
+          source: 'API',
+          alert: false,
+          autorespond: false,
+          report_code: code,
+          report_kind: 'DOC',
+          attachments: [osAttach(d._fname, d._b64, d._ftype || 'application/octet-stream')],
+        });
+        result.tickets_ok++;
+        await gcReportLink(env, base, {
+          report_code: code, ticket_number: docNum, kind: 'DOC',
+          company: cc, report_type: 'ingreso',
+          worker_id: ced, worker_name: l.worker_name,
+          doc_pos: piece, doc_total: totalPieces,
+        });
+      } catch (e) {
+        result.tickets_fail++;
+        result.ticket_errors.push(`DOC ${ced} ${d.doc_name}: ${String(e.message || e)}`);
+      }
     }
 
     if (result.osticket_pla) {

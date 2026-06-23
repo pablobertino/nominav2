@@ -87,7 +87,11 @@ export async function onRequestPost({ request, env }) {
       const cargos = await sb(env, 'cargos?is_active=eq.true&selectable_on_ingreso=eq.true&select=code,label,ax_code,sort_order&order=sort_order');
       const bancos = await sb(env, 'bancos?is_active=eq.true&select=code,name,sort_order&order=sort_order');
       const operadoras = await sb(env, 'operadoras?is_active=eq.true&select=code,name,sort_order&order=sort_order');
-      const settings = await sb(env, 'app_settings?key=in.(corte_hora_limite,corte_margen_dias,futuro_ingreso_egreso_dias)&select=key,value');
+      // Recaudos del ingreso (required_docs con incidence_code='ingreso', activos).
+      // El modal de Alta los pide por trabajador; el envio los manda como
+      // tickets DOC (uno por recaudo y por persona). enforcement: block/warn/optional.
+      const docs = await sb(env, 'required_docs?incidence_code=eq.ingreso&is_active=eq.true&select=id,name,note,enforcement,is_required,sort_order&order=sort_order');
+      const settings = await sb(env, 'app_settings?key=in.(corte_hora_limite,corte_margen_dias,futuro_ingreso_egreso_dias,doc_max_file_mb,doc_max_total_mb,doc_allowed_ext)&select=key,value');
       const sm = {};
       (settings || []).forEach(s => { sm[s.key] = s.value; });
       return json({
@@ -95,6 +99,16 @@ export async function onRequestPost({ request, env }) {
         cargos: (cargos || []).map(c => ({ code: c.code, label: c.label, ax_code: c.ax_code || c.code })),
         bancos: (bancos || []).map(b => ({ code: b.code, name: b.name })),
         operadoras: (operadoras || []).map(o => ({ code: o.code, name: o.name })),
+        docs: (docs || []).map(d => ({
+          id: d.id, name: d.name, note: d.note || null,
+          enforcement: d.enforcement || 'warn', is_required: d.is_required !== false,
+        })),
+        doc_limits: {
+          max_file_mb: parseFloat(sm.doc_max_file_mb) || 2,
+          max_total_mb: parseFloat(sm.doc_max_total_mb) || 20,
+          allowed_ext: (sm.doc_allowed_ext || 'jpg,jpeg,png,pdf,doc,docx')
+            .split(',').map(s => s.trim().toLowerCase()).filter(Boolean),
+        },
         window_config: {
           cutoff_time: sm.corte_hora_limite || '14:00',
           margin_days: parseInt(sm.corte_margen_dias, 10) || 2,

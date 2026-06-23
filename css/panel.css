@@ -700,6 +700,12 @@
 .modal-ov .modal.modal-wide .ferr { color:var(--danger); font-size:11px; min-height:14px; margin-top:3px; }
 /* etiqueta "(opcional)" tenue */
 .modal-ov .modal.modal-wide .opt { color:var(--faint); font-weight:400; }
+/* recaudos del trabajador (adjuntos por documento) en el modal de ingreso */
+.docrow { display:flex; align-items:center; gap:10px; justify-content:space-between;
+  border:1px solid var(--border); border-radius:var(--radius-sm); padding:9px 12px; margin-bottom:7px; background:var(--surface); }
+.docrow-name { font-size:13px; color:var(--ink); }
+.docrow-act { display:flex; align-items:center; gap:8px; flex-shrink:0; }
+.docrow-foot { margin-top:4px; }
 
 /* ===================== CONFIGURACION: menu lateral =====================
    La vista de Configuracion paso de pestanas horizontales a un menu

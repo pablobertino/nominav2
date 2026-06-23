@@ -41,10 +41,12 @@ async function loadCatalogs() {
     cargos: res.cargos || [],
     bancos: res.bancos || [],
     operadoras: res.operadoras || [],
+    docs: res.docs || [],
+    docLimits: res.doc_limits || { max_file_mb: 2, max_total_mb: 20, allowed_ext: ['jpg','jpeg','png','pdf','doc','docx'] },
     win: res.window_config || { cutoff_time: '14:00', margin_days: 2, future_days: 7 },
     bankMap: Object.fromEntries((res.bancos || []).map(b => [b.code, b.name])),
     opMap: Object.fromEntries((res.operadoras || []).map(o => [o.code, o.name])),
-  } : { cargos: [], bancos: [], operadoras: [], win: { cutoff_time: '14:00', margin_days: 2, future_days: 7 }, bankMap: {}, opMap: {} };
+  } : { cargos: [], bancos: [], operadoras: [], docs: [], docLimits: { max_file_mb: 2, max_total_mb: 20, allowed_ext: ['jpg','jpeg','png','pdf','doc','docx'] }, win: { cutoff_time: '14:00', margin_days: 2, future_days: 7 }, bankMap: {}, opMap: {} };
   return CAT;
 }
 
@@ -133,6 +135,7 @@ export const ingresoReport = {
     { key: 'cargo', label: 'Cargo' },
     { key: 'edad', label: 'Edad' },
     { key: 'start', label: 'Fecha de ingreso' },
+    { key: 'docs', label: 'Recaudos' },
     { key: 'kind', label: 'Acción' },
   ],
   summaryCell(w, key) {
@@ -143,6 +146,14 @@ export const ingresoReport = {
       return a == null ? '—' : `${a} años`;
     }
     if (key === 'start') return g.startDate ? DW.fmtDate(g.startDate) : '—';
+    if (key === 'docs') {
+      const total = (CAT && CAT.docs) ? CAT.docs.length : 0;
+      if (!total) return '<span style="color:var(--muted)">—</span>';
+      const n = (g.docs || []).filter(d => d.file_b64).length;
+      if (n === 0) return `<span class="pill pill-pend">0/${total}</span>`;
+      if (n === total) return `<span class="pill pill-set">📎 ${n}/${total}</span>`;
+      return `<span class="pill pill-warn2">${n}/${total}</span>`;
+    }
     if (key === 'kind') return '<span class="pill pill-set">A · Alta</span>';
     return '';
   },
@@ -168,9 +179,22 @@ export const ingresoReport = {
         marital_status: g.marital,
         account_number: g.account,
         email: g.email || '',
-        phone: g.phoneIntl || '',   // se envia en +58 (server revalida)
+        // Se envia en NACIONAL (04XX-XXXXXXX). El server valida con su regla
+        // nacional (11 digitos, empieza en 0) y normaliza a +58 al guardar.
+        // Enviar phoneIntl (+58) rompia la cuenta de digitos del server.
+        phone: g.phone || '',
         address: g.address || '',
         start_date: g.startDate,
+        // Recaudos adjuntos de esta persona. Cada uno: required_doc_id +
+        // archivo (nombre/base64/tipo). Los que el server no reciba con
+        // archivo quedan 'pendiente'. El archivo NO se persiste: viaja a
+        // osTicket como ticket DOC.
+        docs: (g.docs || []).map(d => ({
+          required_doc_id: d.required_doc_id,
+          file_name: d.file_name || null,
+          file_b64: d.file_b64 || null,
+          file_type: d.file_type || null,
+        })),
       };
     });
     const res = await fetch('/api/reports', {
@@ -208,7 +232,7 @@ function paintStep4(ctx) {
     </div>
 
     <table id="igTbl" style="display:none"><thead><tr>
-      <th>Trabajador</th><th>Cédula</th><th>Cargo</th><th>Edad</th><th>Fecha ingreso</th><th>Acción</th><th style="width:120px"></th>
+      <th>Trabajador</th><th>Cédula</th><th>Cargo</th><th>Edad</th><th>Fecha ingreso</th><th>Recaudos</th><th>Acción</th><th style="width:120px"></th>
     </tr></thead><tbody id="igBody"></tbody></table>
     <div class="empty" id="igEmpty">Aún no has agregado ningún ingreso. Usa “＋ Agregar ingreso”.</div>
 
@@ -266,12 +290,19 @@ function renderRows(ctx) {
     const startCell = g.startDate
       ? (startDateError(g.startDate, ingresoWindow()) ? '<span class="pill pill-pend">revisar</span>' : `<span class="date-badge">${DW.fmtDate(g.startDate)}</span>`)
       : '<span class="pill pill-pend">pendiente</span>';
+    const totalDocs = (CAT && CAT.docs) ? CAT.docs.length : 0;
+    const nDocs = (g.docs || []).filter(d => d.file_b64).length;
+    const docsCell = !totalDocs ? '<span style="color:var(--muted)">—</span>'
+      : (nDocs === 0 ? `<span class="pill pill-pend">0/${totalDocs}</span>`
+        : (nDocs === totalDocs ? `<span class="pill pill-set">📎 ${nDocs}/${totalDocs}</span>`
+          : `<span class="pill pill-warn2">${nDocs}/${totalDocs}</span>`));
     return `<tr class="${ok ? 'done-row' : ''}">
       <td><b>${w.name || '—'}</b></td>
       <td class="ced">${cedTxt}</td>
       <td>${g.cargoCode ? `<span class="pill pill-role">${cargoLabel(g.cargoCode)}</span>` : '—'}</td>
       <td>${ageCell}</td>
       <td>${startCell}</td>
+      <td>${docsCell}</td>
       <td><span class="pill pill-set">A · Alta</span></td>
       <td style="white-space:nowrap">
         <button class="btn btn-sm" data-cfg="${w.id}">${ok ? '✏️ Editar' : '＋ Completar'}</button>
@@ -359,15 +390,96 @@ function openIngresoModal(ctx, id) {
       </div>
       <div style="margin-top:12px"><label class="flabel">Dirección <span class="opt">(opcional)</span></label><input id="ig_address" value="${esc(g.address)}" placeholder="Calle, sector, ciudad"><div class="ferr"></div></div>
 
+      ${(CAT.docs && CAT.docs.length) ? `
+      <div class="ig-sec">Recaudos del trabajador <span class="opt">(opcionales)</span></div>
+      <p class="hint" style="margin:-4px 0 8px">Adjunta lo que tengas; los que falten quedan como <b>pendientes</b> en el ticket. Máx. ${CAT.docLimits.max_file_mb} MB por archivo (${CAT.docLimits.allowed_ext.join(', ')}).</p>
+      <div id="ig_docs"></div>` : ''}
+
       <div class="wiz-foot" style="margin-top:18px">
         <button class="btn" id="ig_cancel">Cancelar</button>
         <button class="btn btn-primary" id="ig_save" disabled>${id ? 'Guardar cambios' : 'Agregar al reporte'}</button>
       </div>
+      <input type="file" id="ig_file" hidden accept=".jpg,.jpeg,.png,.pdf,.doc,.docx,image/*">
     </div>`;
   document.body.appendChild(ov);
 
   const q = s => ov.querySelector(s);
   const saveB = q('#ig_save');
+
+  /* ---- Recaudos (adjuntos por trabajador) ----
+     Estado local: docState[required_doc_id] = { file_name, file_b64, file_type }.
+     Se precarga de g.docs al editar. El archivo se lee a base64 en el momento
+     de elegirlo (no se sube a Storage): viaja en el submit hacia osTicket. */
+  const CATDOCS = CAT.docs || [];
+  const LIM = CAT.docLimits || { max_file_mb: 2, allowed_ext: ['jpg','jpeg','png','pdf','doc','docx'] };
+  const docState = {};
+  (g.docs || []).forEach(d => {
+    if (d && d.required_doc_id) docState[d.required_doc_id] = {
+      file_name: d.file_name || null, file_b64: d.file_b64 || null, file_type: d.file_type || null,
+    };
+  });
+
+  function renderDocs() {
+    const box = q('#ig_docs');
+    if (!box) return;
+    box.innerHTML = CATDOCS.map(d => {
+      const st = docState[d.id];
+      const has = st && st.file_b64;
+      const right = has
+        ? `<span class="file-pill">📎 ${esc(st.file_name)} <span class="x" data-clr="${d.id}" title="Quitar">✕</span></span>
+           <button type="button" class="btn btn-sm" data-pick="${d.id}">Cambiar</button>`
+        : `<button type="button" class="btn btn-sm btn-primary" data-pick="${d.id}">📎 Adjuntar</button>`;
+      return `<div class="docrow">
+        <span class="docrow-name">📄 ${esc(d.name)}</span>
+        <span class="docrow-act">${right}</span>
+      </div>`;
+    }).join('') +
+      `<div class="docrow-foot" id="ig_docs_foot"></div>`;
+    updateDocsFoot();
+    box.querySelectorAll('[data-pick]').forEach(b =>
+      b.addEventListener('click', () => pickFor(+b.dataset.pick)));
+    box.querySelectorAll('[data-clr]').forEach(b =>
+      b.addEventListener('click', () => { delete docState[+b.dataset.clr]; renderDocs(); }));
+  }
+  function updateDocsFoot() {
+    const foot = q('#ig_docs_foot');
+    if (!foot) return;
+    const n = CATDOCS.filter(d => docState[d.id] && docState[d.id].file_b64).length;
+    foot.innerHTML = `<span style="font-size:12px;color:var(--muted)">ℹ ${n} de ${CATDOCS.length} recaudos adjuntos.</span>`;
+  }
+  function pickFor(docId) {
+    const inp = q('#ig_file');
+    inp.value = '';
+    inp.dataset.docId = String(docId);
+    inp.click();
+  }
+
+  if (CATDOCS.length) {
+    q('#ig_file').addEventListener('change', function () {
+      const f = this.files && this.files[0];
+      const docId = parseInt(this.dataset.docId, 10);
+      if (!f || !docId) return;
+      const ext = (f.name.split('.').pop() || '').toLowerCase();
+      if (LIM.allowed_ext.length && !LIM.allowed_ext.includes(ext)) {
+        alert(`Tipo no permitido (.${ext}). Use: ${LIM.allowed_ext.join(', ')}.`); return;
+      }
+      const maxBytes = (LIM.max_file_mb || 2) * 1024 * 1024;
+      if (f.size > maxBytes) {
+        alert(`El archivo pesa ${(f.size/1048576).toFixed(1)} MB y el máximo es ${LIM.max_file_mb} MB.`); return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        docState[docId] = {
+          file_name: f.name,
+          file_b64: String(reader.result).split(',')[1] || null,
+          file_type: f.type || 'application/octet-stream',
+        };
+        renderDocs();
+      };
+      reader.readAsDataURL(f);
+    });
+    renderDocs();
+  }
 
   q('#ig_ced').addEventListener('input', function () { this.value = this.value.replace(/[^0-9]/g, ''); showCed(); check(); });
   q('#ig_account').addEventListener('input', function () { this.value = this.value.replace(/[^0-9 \-]/g, ''); showBank(); check(); });
@@ -478,6 +590,16 @@ function openIngresoModal(ctx, id) {
       phoneIntl: phoneV.intl || '',                          // +58, para enviar
       address: q('#ig_address').value.trim(),
       startDate: q('#ig_start').value,
+      // Recaudos adjuntos: array {required_doc_id, file_name, file_b64, file_type}.
+      // Solo los que tienen archivo cargado. Viajan en el submit a osTicket.
+      docs: (CAT.docs || [])
+        .filter(d => docState[d.id] && docState[d.id].file_b64)
+        .map(d => ({
+          required_doc_id: d.id,
+          file_name: docState[d.id].file_name,
+          file_b64: docState[d.id].file_b64,
+          file_type: docState[d.id].file_type,
+        })),
     };
 
     if (existing) {
