@@ -1,0 +1,19 @@
+# Carpetas locales que NO van al repo ni a Cloudflare
+_VERSIONES/
+_PRUEBAS/
+DOC/
+
+# Sistema
+.DS_Store
+Thumbs.db
+*.log
+
+# Dependencias (por si en el futuro se agregan)
+node_modules/
+
+# Entornos / secretos
+.env
+.dev.vars
+
+# Cache y estado local de Wrangler (NO versionar: contiene datos de la cuenta de Cloudflare)
+.wrangler/
