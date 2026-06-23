@@ -69,7 +69,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.60</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.61</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1078,6 +1078,101 @@ function estimateScope() {
   return inSet.size;
 }
 
+/* Copia un texto al portapapeles y da feedback breve en el botón.
+   Usa el API moderno y cae a execCommand si el navegador no lo permite. */
+async function copyToClipboard(text, btn) {
+  const done = () => {
+    if (!btn) return;
+    const orig = btn.dataset.orig || btn.textContent;
+    btn.dataset.orig = orig;
+    btn.textContent = '✓ Copiado';
+    btn.classList.add('ok');
+    setTimeout(() => { btn.textContent = orig; btn.classList.remove('ok'); }, 1400);
+  };
+  try {
+    await navigator.clipboard.writeText(text);
+    done();
+  } catch {
+    // Fallback: seleccionar un textarea temporal y ejecutar copy
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.focus(); ta.select();
+      document.execCommand('copy'); ta.remove();
+      done();
+    } catch { alert('No se pudo copiar automáticamente. Selecciona el texto y cópialo a mano.'); }
+  }
+}
+
+/* Una fila "campo + botón copiar": valor en input readonly seleccionable. */
+function copyFieldHtml(label, value, id) {
+  return `
+    <div style="margin-bottom:12px">
+      <label class="flabel" style="display:block;margin-bottom:5px">${label}</label>
+      <div style="display:flex;gap:8px">
+        <input type="text" id="${id}" value="${String(value).replace(/"/g, '&quot;')}" readonly
+          onclick="this.select()"
+          style="flex:1;font-family:monospace;font-size:14px;background:var(--bg-soft,#f5f5f7)">
+        <button class="btn" data-copy="${id}" type="button" style="white-space:nowrap">Copiar</button>
+      </div>
+    </div>`;
+}
+
+/* Modal de resultado de la sincronización con osTicket. Muestra el conteo y,
+   si se creó el agente, el usuario y la clave temporal en campos copiables. */
+function scopeResultModal(user, p, targetUser) {
+  const staffTag = p.staff_id ? ` <span class="muted">(#${p.staff_id})</span>` : '';
+  const pend = p.scope_pending_user > 0
+    ? `<p class="muted" style="font-size:12px;margin:6px 0 0;line-height:1.5">`
+      + `${p.scope_pending_user} tienda(s) de su alcance aún no tienen usuario en osTicket; `
+      + `se sumarán a medida que las sincronices en Usuarios → osTicket.</p>`
+    : '';
+
+  // Bloque de credenciales: solo cuando se creó el agente en esta corrida.
+  const creds = (p.agent_created && p.temp_password) ? `
+    <div style="margin-top:16px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--bg-soft,#f7f7f9)">
+      <p class="flabel" style="margin:0 0 10px;display:flex;align-items:center;gap:6px">🔑 Credenciales del nuevo agente</p>
+      ${copyFieldHtml('Usuario', targetUser, 'scrUser')}
+      ${copyFieldHtml('Clave temporal', p.temp_password, 'scrPass')}
+      <button class="btn" data-copy-both type="button" style="width:100%;margin-top:2px">Copiar usuario y clave juntos</button>
+      <p class="muted" style="font-size:11.5px;margin:10px 0 0;line-height:1.5">`
+      + `Entrégaselas a <b>${targetUser}</b>. La clave la deberá cambiar al entrar por primera vez. `
+      + `<b>No se vuelve a mostrar</b>, cópiala ahora.</p>
+    </div>` : '';
+
+  openModal(`
+    <div class="modal-head"><span>Alcance sincronizado con osTicket</span><button class="modal-x" id="mX">✕</button></div>
+    <p style="margin:0 0 4px">✅ Alcance guardado y reflejado en osTicket.</p>
+    <p style="margin:0">Agente: <b>${targetUser}</b>${staffTag}<br>
+      Tiendas en su bandeja: <b>${p.scope_count}</b> de ${p.scope_total} con usuario en osTicket.</p>
+    ${pend}
+    ${creds}
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="mClose">Listo</button>
+    </div>`);
+
+  const finish = () => { closeModal(); viewPermisos(user); };
+  $('#mX').addEventListener('click', finish);
+  $('#mClose').addEventListener('click', finish);
+  // Cerrar al hacer clic fuera también vuelve a la lista
+  const ov = document.getElementById('modalOv');
+  if (ov) ov.addEventListener('click', e => { if (e.target === ov) finish(); });
+
+  // Botones de copiado por campo
+  document.querySelectorAll('[data-copy]').forEach(b =>
+    b.addEventListener('click', () => {
+      const el = document.getElementById(b.dataset.copy);
+      if (el) { el.select(); copyToClipboard(el.value, b); }
+    }));
+  // Copiar ambos juntos (formato "Usuario: x  Clave: y")
+  const both = document.querySelector('[data-copy-both]');
+  if (both) both.addEventListener('click', () => {
+    const u = document.getElementById('scrUser');
+    const pw = document.getElementById('scrPass');
+    if (u && pw) copyToClipboard(`Usuario: ${u.value}\nClave temporal: ${pw.value}`, both);
+  });
+}
+
 async function saveScope(user) {
   const btn = $('#scSave'); btn.disabled = true; btn.textContent = 'Guardando…';
   const targetUser = SCOPE.targetUser || 'el agente';
@@ -1110,22 +1205,8 @@ async function saveScope(user) {
     return;
   }
 
-  // 3) Resultado OK. Armar el aviso al superadmin.
-  const staffTag = p.staff_id ? ` (#${p.staff_id})` : '';
-  let msg = '✅ Alcance guardado y sincronizado con osTicket.\n\n'
-    + `Agente: ${targetUser}${staffTag}\n`
-    + `Tiendas en su bandeja: ${p.scope_count} de ${p.scope_total} con usuario en osTicket.`;
-  if (p.scope_pending_user > 0) {
-    msg += `\n(${p.scope_pending_user} tienda(s) de su alcance aún no tienen usuario en osTicket;`
-      + ` se sumarán a medida que las sincronices en Usuarios → osTicket.)`;
-  }
-  if (p.agent_created && p.temp_password) {
-    msg += `\n\n🔑 Clave temporal del agente: ${p.temp_password}\n`
-      + `Entrégasela a ${targetUser}. La deberá cambiar al entrar por primera vez.`
-      + ` (No se vuelve a mostrar.)`;
-  }
-  alert(msg);
-  viewPermisos(user);
+  // 3) Resultado OK. Mostrar el modal con conteo y credenciales copiables.
+  scopeResultModal(user, p, targetUser);
 }
 
 /* ---------- VISTA: placeholders ---------- */
