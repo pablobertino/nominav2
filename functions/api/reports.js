@@ -164,6 +164,17 @@ function osAttach(filename, base64, mime) {
   return { [filename]: `data:${mime || 'application/octet-stream'};base64,${base64}` };
 }
 
+// Tamano real (en bytes) que representa un string base64, sin decodificarlo.
+// Un base64 de longitud L codifica floor(L/4)*3 bytes menos el padding '='
+// (cada '=' final resta 1 byte). Sirve para validar el peso de un adjunto
+// en el servidor sin materializar el binario.
+function base64Bytes(b64) {
+  const s = String(b64 || '').replace(/[^A-Za-z0-9+/=]/g, '');
+  if (!s) return 0;
+  const pad = s.endsWith('==') ? 2 : (s.endsWith('=') ? 1 : 0);
+  return Math.floor(s.length / 4) * 3 - pad;
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'JSON invalido' }, 400); }
@@ -1449,6 +1460,12 @@ async function submitIngreso(env, body) {
   const margin = parseInt(await getSetting(env, 'corte_margen_dias', '2'), 10) || 2;
   const cutoffTime = await getSetting(env, 'corte_hora_limite', '14:00');
   const futureDays = parseInt(await getSetting(env, 'futuro_ingreso_egreso_dias', '7'), 10) || 7;
+  // Limite de tamano por recaudo (MB), configurable en app_settings. El
+  // cliente ya valida, pero el servidor NO confia: revalida el tamano real
+  // de cada archivo base64 antes de aceptarlo (un cliente podria saltarse
+  // la validacion del navegador). Fallback 2 si el setting faltara.
+  const docMaxFileMb = parseFloat(await getSetting(env, 'doc_max_file_mb', '2')) || 2;
+  const docMaxFileBytes = docMaxFileMb * 1024 * 1024;
   const pastCutoff = toMin(nowHHMM) >= toMin(cutoffTime);
   const reportMin = addDays(today, pastCutoff ? -(margin - 1) : -margin);
   const oldestDay = addDays(today, -margin);
@@ -1573,6 +1590,14 @@ async function submitIngreso(env, body) {
       const enforcement = cat.enforcement || 'warn';
       if (!b64 && enforcement === 'block') {
         errors.push(`${tag}: debe adjuntar ${cat.name} (obligatorio).`); docErr = true; return;
+      }
+      // Revalidacion server-side del tamano (no se confia en el cliente).
+      if (b64) {
+        const bytes = base64Bytes(b64);
+        if (bytes > docMaxFileBytes) {
+          errors.push(`${tag}: ${cat.name} pesa ${(bytes / 1048576).toFixed(1)} MB y el maximo es ${docMaxFileMb} MB.`);
+          docErr = true; return;
+        }
       }
       lineDocs.push({
         required_doc_id: cat.id,
