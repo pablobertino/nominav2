@@ -69,7 +69,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.61</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.62</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -676,8 +676,10 @@ async function exportUsuariosPortal(fmt, rows) {
 let OU_ROWS = null;
 let OU_SUMMARY = null;
 let OU_FILTER = 'all';   // all | synced | pending | no_email
+let OU_USER = null;      // user de la sesion (para que ouRender/ouSyncOne no dependan del parametro)
 
 async function usuariosOsticketTab(user, body) {
+  OU_USER = user;   // fijar el user de sesion para ouRender/ouSyncOne
   body.innerHTML = `<div class="pnl-loading">Cargando estado de osTicket…</div>`;
   const d = await ouApi({ action: 'list', adminId: user.id });
   if (!d.ok) { body.innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
@@ -708,8 +710,8 @@ async function usuariosOsticketTab(user, body) {
 
   $('#ouSearch').addEventListener('input', ouRender);
   $('#ouFilter').addEventListener('change', (e) => { OU_FILTER = e.target.value; ouRender(); });
-  $('#ouSyncAll').addEventListener('click', () => ouSyncAll(user));
-  ouRender(user);
+  $('#ouSyncAll').addEventListener('click', () => ouSyncAll(OU_USER));
+  ouRender();
 }
 
 function ouStatePill(state) {
@@ -728,7 +730,7 @@ function ouWhen(iso) {
   return `${p(car.getUTCDate())}/${p(car.getUTCMonth() + 1)} ${p(car.getUTCHours())}:${p(car.getUTCMinutes())}`;
 }
 
-function ouRender(user) {
+function ouRender() {
   const q = ($('#ouSearch') && $('#ouSearch').value || '').toLowerCase();
   const rows = (OU_ROWS || []).filter(t =>
     (`${t.code} ${t.name || ''}`.toLowerCase().includes(q))
@@ -757,11 +759,12 @@ function ouRender(user) {
   }).join('') || '<tr><td colspan="6" class="empty">Sin resultados.</td></tr>';
 
   $('#ouBody').querySelectorAll('[data-ousync]').forEach(b =>
-    b.addEventListener('click', () => ouSyncOne(user, b.dataset.ousync, b)));
+    b.addEventListener('click', () => ouSyncOne(OU_USER, b.dataset.ousync, b)));
 }
 
 /* Sincroniza UNA tienda (boton de fila). */
 async function ouSyncOne(user, code, btn) {
+  user = user || OU_USER;   // respaldo: nunca depender de un user nulo
   const orig = btn.textContent;
   btn.disabled = true; btn.textContent = 'Sincronizando…';
   const d = await ouApi({ action: 'sync', adminId: user.id, codes: [code] });
@@ -774,6 +777,7 @@ async function ouSyncOne(user, code, btn) {
 
 /* Sincroniza TODAS las pendientes con correo (boton masivo). */
 async function ouSyncAll(user) {
+  user = user || OU_USER;   // respaldo: nunca depender de un user nulo
   const pend = OU_SUMMARY ? OU_SUMMARY.pending : 0;
   if (!pend) { alert('No hay tiendas pendientes con correo para sincronizar.'); return; }
   if (!confirm(`Se crearan/actualizaran ${pend} usuario(s)-tienda en osTicket. Continuar?`)) return;
@@ -2080,7 +2084,7 @@ export function renderPanel() {
   if (!user) { go('/login'); return; }
   // Limpiar estado en memoria de cualquier sesión previa (evita que datos
   // de un usuario anterior "se filtren" si se cambia de sesión sin recargar).
-  CATALOG = null; CU_ROWS = null; SCOPE = null; currentView = 'tiendas';
+  CATALOG = null; CU_ROWS = null; SCOPE = null; OU_USER = null; currentView = 'tiendas';
   mount(shell(user));
   loadAvatar((user.email || '').trim().toLowerCase());
   $('#logoutBtn').addEventListener('click', () => { clearSession(); go('/login'); });
