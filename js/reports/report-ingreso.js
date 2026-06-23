@@ -424,6 +424,11 @@ function openIngresoModal(ctx, id) {
       // cedula repetida en el reporte (excluyendo el que edito)
       const dup = ctx.workers.some(w => w.ced === cedV.ced && w.id !== (existing ? existing.id : -1));
       if (dup) e.ced = 'Ya agregaste esa cédula.';
+      // cedula que YA esta en la lista de la tienda: no es un ingreso
+      // (esa persona ya trabaja ahi). Se bloquea para evitar altas duplicadas.
+      else if ((ctx.roster || []).some(r => r.id_number === cedV.ced)) {
+        e.ced = 'Esa cédula ya está en la lista de la tienda (no es un ingreso nuevo).';
+      }
     }
     if (!cargo) e.cargo = 'Selecciona un cargo.';
     if (!gender) e.gender = 'Requerido.';

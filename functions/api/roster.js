@@ -43,13 +43,41 @@ async function sb(env, path, opts = {}) {
   return t ? JSON.parse(t) : null;
 }
 
-// Detecta el rol de responsable a partir del cargo del Reporte 10, usando
-// las reglas configurables de manager_role_rules (ya cargadas y ordenadas
-// por sort_order asc). Gana la PRIMERA regla cuyo patron este contenido en
-// el cargo. Devuelve la etiqueta (result_role) o null si ninguna coincide.
-// Si no hay reglas configuradas, cae al comportamiento clasico (GERENTE /
-// SUB) para no quedar sin deteccion ante una tabla vacia.
-function detectManagerRole(rawRole, rules) {
+// Normaliza texto de cargo para comparar con patrones: mayusculas, sin
+// acentos, espacios colapsados. Igual que guarda el ABM (cargo_save).
+function normCargo(s) {
+  return String(s || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/\s+/g, ' ').trim();
+}
+
+// Resuelve el cargo del Reporte 10 contra el catalogo configurable
+// (cargo_patterns -> cargos). 'cat' es el indice precargado por
+// loadCargoCatalog(): { patterns:[{pattern,cargo}], ... } ordenado por
+// especificidad (sort_order asc, lo mas especifico primero). Gana el PRIMER
+// patron contenido en el cargo. Devuelve el cargo resuelto o null.
+//   cargo = { code, label, ax_code, can_be_responsible, responsible_role }
+function resolveCargo(rawRole, cat) {
+  const r = normCargo(rawRole);
+  if (!r || !cat || !cat.patterns.length) return null;
+  for (const p of cat.patterns) {
+    if (p.pattern && r.includes(p.pattern)) return p.cargo;
+  }
+  return null;
+}
+
+// Detecta SOLO el rol de responsable. Prioridad:
+//   1) catalogo de cargos (cargo_patterns) si esta poblado;
+//   2) manager_role_rules (reglas viejas) como respaldo;
+//   3) logica clasica GERENTE/SUB si todo lo anterior esta vacio.
+// Asi el cambio es seguro aunque el catalogo nuevo aun no tenga patrones.
+function detectManagerRole(rawRole, rules, cat) {
+  // 1) catalogo de cargos
+  if (cat && cat.patterns.length) {
+    const c = resolveCargo(rawRole, cat);
+    if (c) return c.can_be_responsible ? (c.responsible_role || null) : null;
+    // si el catalogo existe pero el cargo no matchea ninguno, no es responsable
+    return null;
+  }
+  // 2) reglas viejas
   const r = (rawRole || '').toUpperCase();
   if (!r) return null;
   if (Array.isArray(rules) && rules.length) {
@@ -59,10 +87,34 @@ function detectManagerRole(rawRole, rules) {
     }
     return null;
   }
-  // Fallback defensivo (tabla vacia): logica original.
+  // 3) Fallback defensivo (todo vacio): logica original.
   if (!r.includes('GERENTE')) return null;
   if (r.includes('SUB')) return 'Sub-Gerente';
   return 'Gerente';
+}
+
+// Carga el catalogo de cargos + patrones una vez por request y lo deja
+// listo para resolveCargo/detectManagerRole. Patrones ordenados por
+// sort_order asc (lo mas especifico primero, ej. SUB GERENTE antes que
+// GERENTE). Devuelve { patterns:[{pattern,cargo}], byCode:{code->cargo} }.
+async function loadCargoCatalog(env) {
+  const cargos = await sb(env,
+    'cargos?is_active=eq.true&select=id,code,label,ax_code,can_be_responsible,responsible_role');
+  const byId = {};
+  const byCode = {};
+  (cargos || []).forEach(c => {
+    const cargo = {
+      code: c.code, label: c.label, ax_code: c.ax_code || c.code,
+      can_be_responsible: !!c.can_be_responsible, responsible_role: c.responsible_role || null,
+    };
+    byId[c.id] = cargo; byCode[c.code] = cargo;
+  });
+  const pats = await sb(env,
+    'cargo_patterns?is_active=eq.true&select=pattern,cargo_id,sort_order&order=sort_order.asc');
+  const patterns = (pats || [])
+    .map(p => ({ pattern: normCargo(p.pattern), cargo: byId[p.cargo_id] }))
+    .filter(p => p.pattern && p.cargo);
+  return { patterns, byCode };
 }
 
 // Normaliza una fila cruda del Reporte 10 a la forma de store_workers.
@@ -92,15 +144,23 @@ export async function onRequestPost({ request, env }) {
         `store_workers?company_code=eq.${encodeURIComponent(cc)}`
         + `&select=id_number,full_name,role,has_biometric,start_date,end_date,is_active&order=full_name.asc`);
       // Marcar cada trabajador con su rol de responsable detectado
-      // (manager_role: 'Gerente'|'Sub-Gerente'|null) usando las reglas
-      // configurables. Asi el front puede ordenar/destacar gerentes sin
-      // conocer los patrones (una sola fuente de verdad, el Worker).
+      // (manager_role: 'Gerente'|'Sub-Gerente'|null) y, si el catalogo de
+      // cargos lo resuelve, tambien el cargo canonico (cargo_code/label)
+      // ademas del texto crudo del Reporte 10. Una sola fuente de verdad:
+      // el catalogo configurable (cargo_patterns -> cargos), con respaldo
+      // en manager_role_rules. El front ordena/destaca sin conocer patrones.
+      const cargoCat = await loadCargoCatalog(env);
       const roleRules = await sb(env,
         'manager_role_rules?is_active=eq.true&select=pattern,result_role&order=sort_order.asc');
-      const out = (workers || []).map(w => ({
-        ...w,
-        manager_role: detectManagerRole(w.role, roleRules),
-      }));
+      const out = (workers || []).map(w => {
+        const cargo = resolveCargo(w.role, cargoCat);
+        return {
+          ...w,
+          manager_role: detectManagerRole(w.role, roleRules, cargoCat),
+          cargo_code: cargo ? cargo.code : null,
+          cargo_label: cargo ? cargo.label : null,
+        };
+      });
       const metaArr = await sb(env,
         `store_roster_meta?company_code=eq.${encodeURIComponent(cc)}`
         + `&select=uploaded_at,uploaded_by,total_count,active_count,source_file`);
@@ -136,14 +196,16 @@ export async function onRequestPost({ request, env }) {
       const egresados = valid.filter(r => r.end_date);
 
       // Reglas configurables de clasificacion de cargo -> responsable.
-      // Se leen de manager_role_rules (activas, por orden). Si la tabla
-      // esta vacia, detectManagerRole cae a la logica clasica.
+      // Prioridad: catalogo de cargos (cargo_patterns) y, como respaldo,
+      // manager_role_rules. Si ambos vacios, detectManagerRole cae a la
+      // logica clasica GERENTE/SUB.
+      const cargoCat = await loadCargoCatalog(env);
       const roleRules = await sb(env,
         'manager_role_rules?is_active=eq.true&select=pattern,result_role&order=sort_order.asc');
 
       // Responsables detectados (gerentes/subgerentes vigentes)
       const managers = activos
-        .map(r => ({ ...r, mrole: detectManagerRole(r.role, roleRules) }))
+        .map(r => ({ ...r, mrole: detectManagerRole(r.role, roleRules, cargoCat) }))
         .filter(r => r.mrole);
       const nGer = managers.filter(m => m.mrole === 'Gerente').length;
       const nSub = managers.filter(m => m.mrole === 'Sub-Gerente').length;

@@ -226,11 +226,14 @@ export function launchWizard(user, reportDef, onExit) {
         ? 'background:#eaf3ff'
         : (mr === 'Sub-Gerente' ? 'background:#f2f7ff' : '');
       const mgrBadge = mr ? ` <span class="pill pill-set" style="margin-left:4px">${mr}</span>` : '';
+      // Cargo mostrado: el canonico del catalogo (cargo_label) si se
+      // resolvio; si no, el texto crudo del Reporte 10.
+      const cargoTxt = r.cargo_label || r.role || 'sin cargo';
       return `
       <tr class="${r.end_date ? 'egresado' : ''} ${mr ? 'mgr-row' : ''}" ${rowStyle ? `style="${rowStyle}"` : ''}>
         <td class="pname">${r.full_name}</td>
         <td class="ced">${r.id_number}</td>
-        <td><span class="pill pill-role">${r.role || 'sin cargo'}</span>${mgrBadge}</td>
+        <td><span class="pill pill-role">${cargoTxt}</span>${mgrBadge}</td>
         <td>${Roster.workerStatusLabel(r)}</td>
       </tr>`;
     }).join('') || '<tr><td colspan="4" class="empty">Sin coincidencias.</td></tr>';
@@ -561,7 +564,7 @@ export function launchWizard(user, reportDef, onExit) {
         <td>${added ? '' : `<input type="checkbox" class="chk pchk" value="${r.id_number}">`}</td>
         <td class="pname">${r.full_name} ${r.end_date ? `<span class="pill pill-out">egresó ${fmtDate(r.end_date)}</span>` : ''}</td>
         <td class="ced">${r.id_number}</td>
-        <td><span class="pill pill-role">${r.role || 'sin cargo'}</span></td>
+        <td><span class="pill pill-role">${r.cargo_label || r.role || 'sin cargo'}</span></td>
         <td>${added ? '<span class="pill pill-set">✓ agregado</span>' : `<button class="btn btn-sm btn-primary" data-add="${r.id_number}">＋ Agregar</button>`}</td>
       </tr>`;
     }).join('') || '<tr><td colspan="5" class="empty">Sin coincidencias.</td></tr>';
@@ -618,6 +621,7 @@ export function launchWizard(user, reportDef, onExit) {
   function ctx() {
     return {
       user, companyCode, win: S.win, workers: S.workers,
+      roster: S.roster,   // lista de la tienda (solo lectura): Ingreso valida que no se de de alta a alguien que ya esta en ella
       getWorker: (id) => S.workers.find(w => w.id === id),
       // Agrega un trabajador creado en el paso 4 (lo usa Ingreso: altas
       // manuales que no salen del roster). Devuelve el worker con su id.
