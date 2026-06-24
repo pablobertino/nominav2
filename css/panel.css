@@ -740,3 +740,58 @@
   .cfg-side-group { display:none; }
   .cfg-side-item { white-space:nowrap; flex:0 0 auto; }
 }
+
+/* ===================== WIZARD MODIFICACION (paso 4) =====================
+   Modal de modificacion: cedula ancla (siempre va) + una fila por campo
+   modificable con deteccion de cambio en vivo (borde azul + badge "cambia")
+   + resumen de "lo que viajara". Reusa .modal-wide, .pill, .flabel, .hint,
+   .wiz-foot del resto. */
+
+/* Banda de la cedula: identifica al trabajador, no es editable, siempre va. */
+.mo-anchor { display:flex; align-items:center; gap:10px; background:#f0f7ff; border:1px solid #bcd8fb;
+  border-radius:var(--radius-md); padding:11px 14px; margin-bottom:14px; }
+.mo-anchor-lbl { font-size:12.5px; font-weight:700; color:#1e40af; }
+.mo-anchor-val { font-family:monospace; font-size:15px; font-weight:700; color:var(--ink); letter-spacing:.02em; }
+
+/* Fila de campo: nombre del campo | control | estado | error. El control
+   ocupa el centro; el estado (cambia/sin cambio/sin dato) va a la derecha. */
+.mo-frow { display:grid; grid-template-columns:150px 1fr 120px; grid-template-areas:"name ctrl status" ". err err";
+  gap:6px 12px; align-items:center; padding:11px 12px; border:1px solid var(--border-soft);
+  border-radius:var(--radius-sm); margin-bottom:8px; background:var(--surface); transition:border-color .12s, background .12s; }
+.mo-frow.changed { border-color:var(--brand); background:var(--brand-bg); }
+.mo-fname { grid-area:name; font-size:13px; font-weight:600; color:var(--ink); }
+.mo-fname small { display:block; font-size:11px; font-weight:400; color:var(--muted); margin-top:2px; }
+.mo-fctrl { grid-area:ctrl; min-width:0; }
+.mo-fstatus { grid-area:status; text-align:right; }
+.mo-ferr { grid-area:err; color:var(--danger); font-size:11.5px; min-height:0; }
+.mo-ferr:empty { display:none; }
+/* el nombre se despliega en 3 sub-campos: ocupa todo el ancho de la fila */
+.mo-frow[data-row="nombre"] { grid-template-columns:150px 1fr; grid-template-areas:"name ctrl" ". err"; }
+.mo-frow[data-row="nombre"] .mo-fstatus { display:none; }
+.mo-namegrid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; }
+.mo-namegrid .flabel { font-size:11px; }
+/* estado "sin cambio" / "sin dato" (texto tenue, no pill) */
+.mo-same { font-size:11px; color:var(--faint); }
+.mo-empty { font-size:11px; color:var(--muted); font-style:italic; }
+
+/* Resumen "lo que viajara a la plantilla" */
+.mo-summary { margin-top:14px; border:1px dashed var(--border); border-radius:var(--radius-md);
+  padding:12px 14px; background:#fafbfd; }
+.mo-sum-title { font-size:12px; font-weight:700; color:var(--ink-soft); margin-bottom:8px; }
+.mo-summary ul { list-style:none; margin:0; padding:0; display:flex; flex-direction:column; gap:6px; }
+.mo-summary li { display:flex; align-items:baseline; gap:8px; font-size:12.5px; }
+.mo-summary .k { color:var(--muted); flex:0 0 130px; }
+.mo-summary .arrow { color:var(--brand); font-weight:700; }
+.mo-summary .nv { color:var(--ink); font-weight:600; word-break:break-word; }
+.mo-none { font-size:12.5px; color:var(--muted); font-style:italic; }
+/* contador de campos a modificar (pie del modal) */
+.mo-frow + .mo-frow { margin-top:0; }
+.wiz-foot .count { font-size:12.5px; color:var(--muted); }
+.wiz-foot .count b { color:var(--brand); }
+
+@media (max-width:560px) {
+  .mo-frow { grid-template-columns:1fr; grid-template-areas:"name" "ctrl" "status" "err"; }
+  .mo-fstatus { text-align:left; }
+  .mo-namegrid { grid-template-columns:1fr; }
+  .mo-summary .k { flex-basis:auto; }
+}

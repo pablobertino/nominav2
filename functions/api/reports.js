@@ -192,6 +192,9 @@ export async function onRequestPost({ request, env }) {
     if (body.action === 'submit_ingreso') {
       return await submitIngreso(env, body);
     }
+    if (body.action === 'submit_modificacion') {
+      return await submitModificacion(env, body);
+    }
     if (body.action === 'window') {
       return await getWindow(env, body);
     }
@@ -1926,6 +1929,485 @@ async function submitIngreso(env, body) {
     report_id: reportId,
     workers_count: clean.length,
     window: { today, now: nowHHMM, report_min: reportMin, report_max: reportMax },
+    osticket: {
+      pla: result.osticket_pla,
+      tickets_ok: result.tickets_ok,
+      tickets_fail: result.tickets_fail,
+      errors: result.ticket_errors,
+    },
+  });
+}
+
+/* =====================================================================
+   MODIFICACION DE DATOS (accion AX 'M')
+   Registra el encabezado en reports_log (topic 'modificacion') + el
+   detalle por trabajador en modificacion_report_lines (changes JSONB).
+   NO lleva documentos: es un solo ticket PLANTILLA (PLA) con el Excel de
+   AX (accion 'M', 18 columnas) adjunto.
+
+   MODELO: solo viaja lo que CAMBIA. La cedula identifica y va SIEMPRE (no
+   es modificable). El nombre tambien va siempre al Excel (AX lo exige para
+   ubicar el registro): si no se modifico, se usa el actual del roster
+   dividido en first/second/last. Cada campo del catalogo modificacion_fields
+   que venga en changes se valida segun su input_kind; los que no vienen, se
+   dejan VACIOS en el Excel (no se tocan en AX).
+
+   No hay ventana de fechas (date_rule = none): la modificacion no se ata
+   al corte de nomina.
+
+   Body:
+     { action:'submit_modificacion', company_code, responsible, position,
+       lines:[{ id_number, worker_name?, changes:{ code: valor, ... } }],
+       source_kind?, source_admin_id? }
+   donde changes usa los code del catalogo (cargo, cuenta, telefono, correo,
+   direccion, estCivil, fechaNac, todoTicket) y, para el nombre, las claves
+   first_name / second_name / last_names (el modal divide el nombre en 3).
+   ===================================================================== */
+async function submitModificacion(env, body) {
+  const cc = (body.company_code || '').trim();
+  const responsible = (body.responsible || '').trim();
+  const position = (body.position || '').trim();
+  const lines = Array.isArray(body.lines) ? body.lines : [];
+
+  // Origen del reporte: 'company' (tienda) | 'admin' (central).
+  let sourceKind = body.source_kind === 'admin' ? 'admin' : 'company';
+  let sourceAdminId = null;
+  if (sourceKind === 'admin') {
+    const aid = parseInt(body.source_admin_id, 10);
+    if (aid) {
+      const a = await sb(env, `admin_users?id=eq.${aid}&is_active=eq.true&select=id`);
+      if (a && a.length) sourceAdminId = aid;
+    }
+    if (!sourceAdminId) sourceKind = 'company';
+  }
+
+  if (!cc) return json({ ok: false, error: 'Falta la tienda.' }, 400);
+  if (!responsible) return json({ ok: false, error: 'Falta el responsable.' }, 400);
+  if (!lines.length) return json({ ok: false, error: 'No hay trabajadores en el reporte.' }, 400);
+
+  const { ymd: today, hhmm: nowHHMM } = nowCaracas();
+
+  // --- Catalogo de campos modificables (activos) + catalogos de validacion ---
+  // El catalogo define que se puede cambiar y como se valida (input_kind).
+  // El nombre (input_kind 'name') se captura dividido en 3 sub-campos en el
+  // modal; aqui se valida cada parte. cargo/cuenta/telefono requieren sus
+  // catalogos para validar (existencia de cargo, prefijo de banco/operadora).
+  const fieldsRows = await sb(env,
+    'modificacion_fields?is_active=eq.true&select=code,label,ax_column,input_kind');
+  if (!fieldsRows || !fieldsRows.length) {
+    return json({ ok: false, error: 'No hay campos modificables configurados.' }, 400);
+  }
+  const fieldByCode = {};
+  (fieldsRows || []).forEach(f => { fieldByCode[f.code] = f; });
+  const hasField = (code) => !!fieldByCode[code];
+
+  const cargos = await sb(env, 'cargos?is_active=eq.true&selectable_on_ingreso=eq.true&select=code,ax_code,label');
+  const cargoMap = {};
+  (cargos || []).forEach(c => { cargoMap[c.code] = c; });
+  const bancos = await sb(env, 'bancos?is_active=eq.true&select=code,name');
+  const bancoMap = {};
+  (bancos || []).forEach(b => { bancoMap[b.code] = b.name; });
+  const operadoras = await sb(env, 'operadoras?is_active=eq.true&select=code,name');
+  const opSet = new Set((operadoras || []).map(o => o.code));
+
+  // Helper edad cumplida (referencia: hoy VE), para validar fecha de nacimiento.
+  const ageFrom = (ymd) => {
+    const t = today.split('-').map(Number), b = ymd.split('-').map(Number);
+    let a = t[0] - b[0];
+    if (t[1] < b[1] || (t[1] === b[1] && t[2] < b[2])) a--;
+    return a;
+  };
+
+  // --- Roster de la tienda: para precargar el nombre actual cuando el
+  //     reporte no lo modifique (AX necesita el nombre dividido siempre). ---
+  const roster = await sb(env,
+    `store_workers?company_code=eq.${encodeURIComponent(cc)}`
+    + `&select=id_number,full_name,first_name,second_name,last_names`);
+  const rosterByCed = {};
+  (roster || []).forEach(w => { rosterByCed[w.id_number] = w; });
+
+  // --- Validacion linea por linea ---
+  // Cada linea: cedula obligatoria (identifica) + un objeto changes con SOLO
+  // los campos que cambian. Validar cada cambio segun el input_kind del campo.
+  const clean = [];
+  const errors = [];
+  const seenCed = new Set();
+  lines.forEach((ln, i) => {
+    const ced = String(ln.id_number || '').replace(/[^0-9]/g, '');
+    const changes = (ln.changes && typeof ln.changes === 'object') ? ln.changes : {};
+    const tag = (ln.worker_name || '').trim() || ced || `fila ${i + 1}`;
+
+    // Cedula obligatoria (6-8 digitos). Identifica al trabajador y va SIEMPRE.
+    if (!ced || ced.length < 6 || ced.length > 8) { errors.push(`${tag}: cedula invalida (6 a 8 digitos).`); return; }
+    if (seenCed.has(ced)) { errors.push(`${tag}: cedula repetida en el reporte.`); return; }
+    seenCed.add(ced);
+    const cedKind = parseInt(ced, 10) >= 80000000 ? 'E' : 'V';
+
+    // Acumular en outChanges los valores YA VALIDADOS Y NORMALIZADOS, con la
+    // clave del code del catalogo (o first/second/last para el nombre).
+    const outChanges = {};
+    let lineErr = false;
+    const push = (k, v) => { outChanges[k] = v; };
+
+    // --- Nombre (input_kind 'name'): llega dividido en first/second/last ---
+    // Se considera "cambia el nombre" si vino cualquiera de las 3 claves.
+    const nameTouched = ('first_name' in changes) || ('second_name' in changes) || ('last_names' in changes);
+    if (nameTouched) {
+      if (!hasField('nombre')) { errors.push(`${tag}: el nombre no es modificable.`); lineErr = true; }
+      else {
+        const f1 = String(changes.first_name == null ? '' : changes.first_name).trim().toUpperCase();
+        const f2 = String(changes.second_name == null ? '' : changes.second_name).trim().toUpperCase();
+        const ln3 = String(changes.last_names == null ? '' : changes.last_names).trim().toUpperCase();
+        if (f1 && f1.length < 2) { errors.push(`${tag}: el primer nombre es muy corto.`); lineErr = true; }
+        if (ln3 && ln3.length < 2) { errors.push(`${tag}: los apellidos son muy cortos.`); lineErr = true; }
+        // Si cambia el nombre, exigir al menos primer nombre y apellidos
+        // (no se admite un nombre vacio).
+        if (!f1) { errors.push(`${tag}: falta el primer nombre.`); lineErr = true; }
+        if (!ln3) { errors.push(`${tag}: faltan los apellidos.`); lineErr = true; }
+        if (!lineErr) { push('first_name', f1); push('second_name', f2 || ''); push('last_names', ln3); }
+      }
+    }
+
+    // --- Cargo (input_kind 'cargo'): code debe existir en el catalogo ---
+    if ('cargo' in changes) {
+      if (!hasField('cargo')) { errors.push(`${tag}: el cargo no es modificable.`); lineErr = true; }
+      else {
+        const cargo = String(changes.cargo || '').trim().toUpperCase();
+        if (!cargoMap[cargo]) { errors.push(`${tag}: cargo invalido o no disponible.`); lineErr = true; }
+        else push('cargo', cargo);
+      }
+    }
+
+    // --- Cuenta (input_kind 'account'): 20 digitos + prefijo de banco ---
+    if ('cuenta' in changes) {
+      if (!hasField('cuenta')) { errors.push(`${tag}: la cuenta no es modificable.`); lineErr = true; }
+      else {
+        const acc = String(changes.cuenta || '').replace(/[^0-9]/g, '');
+        if (acc.length !== 20) { errors.push(`${tag}: la cuenta debe tener 20 digitos.`); lineErr = true; }
+        else if (!bancoMap[acc.slice(0, 4)]) { errors.push(`${tag}: el prefijo ${acc.slice(0, 4)} no es un banco valido.`); lineErr = true; }
+        else push('cuenta', acc);
+      }
+    }
+
+    // --- Telefono (input_kind 'phone'): 11 digitos 04XX+7, normaliza +58 ---
+    if ('telefono' in changes) {
+      if (!hasField('telefono')) { errors.push(`${tag}: el telefono no es modificable.`); lineErr = true; }
+      else {
+        const ph = String(changes.telefono || '').replace(/[^0-9]/g, '');
+        if (ph.length !== 11 || ph[0] !== '0') { errors.push(`${tag}: el telefono debe tener 11 digitos (04XX-XXXXXXX).`); lineErr = true; }
+        else if (!opSet.has(ph.slice(0, 4))) { errors.push(`${tag}: prefijo telefonico ${ph.slice(0, 4)} invalido.`); lineErr = true; }
+        else push('telefono', '+58' + ph.slice(1));
+      }
+    }
+
+    // --- Correo (input_kind 'email') ---
+    if ('correo' in changes) {
+      if (!hasField('correo')) { errors.push(`${tag}: el correo no es modificable.`); lineErr = true; }
+      else {
+        const em = String(changes.correo || '').trim();
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em)) { errors.push(`${tag}: correo con formato invalido.`); lineErr = true; }
+        else push('correo', em);
+      }
+    }
+
+    // --- Direccion (input_kind 'text') ---
+    if ('direccion' in changes) {
+      if (!hasField('direccion')) { errors.push(`${tag}: la direccion no es modificable.`); lineErr = true; }
+      else {
+        const dir = String(changes.direccion || '').trim();
+        if (!dir) { errors.push(`${tag}: la direccion no puede quedar vacia si se modifica.`); lineErr = true; }
+        else push('direccion', dir);
+      }
+    }
+
+    // --- Estado civil (input_kind 'marital'): S/C/D/V ---
+    if ('estCivil' in changes) {
+      if (!hasField('estCivil')) { errors.push(`${tag}: el estado civil no es modificable.`); lineErr = true; }
+      else {
+        const ec = String(changes.estCivil || '').trim().toUpperCase();
+        if (!['S', 'C', 'D', 'V'].includes(ec)) { errors.push(`${tag}: estado civil invalido.`); lineErr = true; }
+        else push('estCivil', ec);
+      }
+    }
+
+    // --- Fecha de nacimiento (input_kind 'birthdate'): mayor de 18 ---
+    if ('fechaNac' in changes) {
+      if (!hasField('fechaNac')) { errors.push(`${tag}: la fecha de nacimiento no es modificable.`); lineErr = true; }
+      else {
+        const fn = String(changes.fechaNac || '').slice(0, 10);
+        if (!/^\d{4}-\d{2}-\d{2}$/.test(fn)) { errors.push(`${tag}: fecha de nacimiento invalida.`); lineErr = true; }
+        else if (fn > today) { errors.push(`${tag}: la fecha de nacimiento no puede ser futura.`); lineErr = true; }
+        else if (ageFrom(fn) < 18) { errors.push(`${tag}: no se permiten menores de 18 anios.`); lineErr = true; }
+        else push('fechaNac', fn);
+      }
+    }
+
+    // --- TodoTicket (input_kind 'todoticket'): S/N ---
+    if ('todoTicket' in changes) {
+      if (!hasField('todoTicket')) { errors.push(`${tag}: TodoTicket no es modificable.`); lineErr = true; }
+      else {
+        const tt = String(changes.todoTicket || '').trim().toUpperCase();
+        if (!['S', 'N'].includes(tt)) { errors.push(`${tag}: TodoTicket invalido (S/N).`); lineErr = true; }
+        else push('todoTicket', tt);
+      }
+    }
+
+    if (lineErr) return;
+
+    // Debe cambiar AL MENOS un campo (la cedula sola no modifica nada).
+    const changedKeys = Object.keys(outChanges);
+    if (!changedKeys.length) {
+      errors.push(`${tag}: no se indico ningun cambio.`); return;
+    }
+
+    // Nombre para el Excel (AX lo exige). Si cambio, usar el nuevo; si no,
+    // tomar el actual del roster (ya dividido). Si el roster no lo tiene
+    // dividido, dividir el full_name al vuelo (heuristica simple: ultima
+    // palabra = apellidos) como respaldo.
+    const r = rosterByCed[ced] || {};
+    let exFirst, exSecond, exLast;
+    if (nameTouched) {
+      exFirst = outChanges.first_name;
+      exSecond = outChanges.second_name || '';
+      exLast = outChanges.last_names;
+    } else if (r.first_name || r.last_names) {
+      exFirst = (r.first_name || '').toUpperCase();
+      exSecond = (r.second_name || '').toUpperCase();
+      exLast = (r.last_names || '').toUpperCase();
+    } else {
+      const parts = String(r.full_name || ln.worker_name || '').trim().toUpperCase().split(/\s+/).filter(Boolean);
+      if (parts.length > 1) { exLast = parts[parts.length - 1]; exFirst = parts.slice(0, -1).join(' '); exSecond = ''; }
+      else { exFirst = parts[0] || ''; exSecond = ''; exLast = ''; }
+    }
+
+    // worker_name legible para BD/cuerpo (nombre completo resultante).
+    const wname = [exFirst, exSecond, exLast].filter(Boolean).join(' ').trim()
+      || (ln.worker_name || '').trim() || ced;
+
+    clean.push({
+      worker_id_number: ced,
+      ced_kind: cedKind,
+      worker_name: wname,
+      changes: outChanges,        // lo que se guarda en BD (JSONB) y se muestra
+      _exFirst: exFirst, _exSecond: exSecond, _exLast: exLast,  // para el Excel
+    });
+  });
+
+  if (errors.length) {
+    return json({ ok: false, error: 'Hay datos que no cumplen las reglas.', details: errors }, 422);
+  }
+
+  // --- Datos de la tienda (encabezado + From osTicket + plantilla AX) ---
+  const comp = await sb(env,
+    `companies?company_code=eq.${encodeURIComponent(cc)}&select=data_area,zone_id,subzone_id,business_name,email,phone,concept_id`);
+  const zone_id = comp && comp[0] ? comp[0].zone_id : null;
+  const subzone_id = comp && comp[0] ? comp[0].subzone_id : null;
+  const compBusinessName = comp && comp[0] ? (comp[0].business_name || '') : '';
+  const compEmail = comp && comp[0] ? (comp[0].email || '') : '';
+  const compPhone = comp && comp[0] ? (comp[0].phone || '') : '';
+  const compDataArea = comp && comp[0] ? (comp[0].data_area || '') : '';
+  const compConceptId = comp && comp[0] ? comp[0].concept_id : null;
+
+  let zonaName = '', subzonaName = '', marcaName = '';
+  if (subzone_id != null) {
+    const sz = await sb(env, `subzones?id=eq.${encodeURIComponent(subzone_id)}&select=name`);
+    subzonaName = sz && sz[0] ? (sz[0].name || '') : '';
+  }
+  if (zone_id != null) {
+    const zn = await sb(env, `zones?id=eq.${encodeURIComponent(zone_id)}&select=name`);
+    zonaName = zn && zn[0] ? (zn[0].name || '') : '';
+  }
+  if (compConceptId != null) {
+    const cn = await sb(env, `concepts?id=eq.${encodeURIComponent(compConceptId)}&select=name`);
+    marcaName = cn && cn[0] ? (cn[0].name || '') : '';
+  }
+  const mallZona = subzonaName || zonaName || '';
+
+  // --- Encabezado en reports_log ---
+  const header = await sb(env, 'reports_log', {
+    method: 'POST',
+    headers: { Prefer: 'return=representation' },
+    body: JSON.stringify({
+      company_code: cc,
+      zone_id, subzone_id,
+      topic: 'modificacion',
+      responsible,
+      position: position || null,
+      workers_count: clean.length,
+      attention: 'pending',
+      email_sent: false,
+      source_kind: sourceKind,
+      source_admin_id: sourceAdminId,
+    }),
+  });
+  const reportId = header && header[0] && header[0].id;
+  if (!reportId) return json({ ok: false, error: 'No se pudo registrar el reporte.' }, 500);
+
+  // --- Detalle en modificacion_report_lines (changes JSONB) ---
+  const payload = clean.map(l => ({
+    report_id: reportId,
+    worker_id_number: l.worker_id_number,
+    worker_name: l.worker_name,
+    changes: l.changes,
+  }));
+  await sb(env, 'modificacion_report_lines', { method: 'POST', body: JSON.stringify(payload) });
+
+  // ───────────────────────────────────────────────────────────────────
+  // ENVIO A OSTICKET. Modificacion NO lleva documentos: 1 solo ticket PLA
+  // con el Excel accion 'M' adjunto. Topic 32. El Excel lleva SIEMPRE la
+  // cedula y el nombre dividido; los campos cambiados en su columna y los NO
+  // cambiados VACIOS (AX solo actualiza lo que viene con valor). Las fechas
+  // de ingreso/egreso van vacias (no se modifican aqui).
+  // ───────────────────────────────────────────────────────────────────
+  const code = reportCode(reportId);
+  const base = await osticketBase(env);
+  const topicId = parseInt(await getSetting(env, 'osticket_topic_modificacion', '32'), 10) || 32;
+  const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
+  const fromName = `${cc} - ${compBusinessName || cc}`;
+  const totalPieces = 1;   // modificacion = solo PLA
+
+  const result = { osticket_pla: null, tickets_ok: 0, tickets_fail: 0, ticket_errors: [] };
+
+  // Etiquetas legibles para el cuerpo del ticket.
+  const maritalLbl = { S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a' };
+  const phoneNat = (intl) => intl ? '0' + String(intl).replace(/^\+58/, '') : intl;
+  // Convierte una clave+valor de changes a texto legible para el cuerpo.
+  const changeText = (l) => {
+    const ch = l.changes;
+    const parts = [];
+    if ('first_name' in ch || 'last_names' in ch) {
+      parts.push(['Nombre', [l._exFirst, l._exSecond, l._exLast].filter(Boolean).join(' ')]);
+    }
+    if ('cargo' in ch) parts.push(['Cargo', (cargoMap[ch.cargo] && cargoMap[ch.cargo].label) || ch.cargo]);
+    if ('cuenta' in ch) parts.push(['Cuenta', `${ch.cuenta} (${bancoMap[ch.cuenta.slice(0, 4)] || ''})`]);
+    if ('telefono' in ch) parts.push(['Telefono', phoneNat(ch.telefono)]);
+    if ('correo' in ch) parts.push(['Correo', ch.correo]);
+    if ('direccion' in ch) parts.push(['Direccion', ch.direccion]);
+    if ('estCivil' in ch) parts.push(['Estado civil', maritalLbl[ch.estCivil] || ch.estCivil]);
+    if ('fechaNac' in ch) parts.push(['Fecha de nacimiento', dmy(ch.fechaNac)]);
+    if ('todoTicket' in ch) parts.push(['TodoTicket', ch.todoTicket === 'S' ? 'Si' : 'No']);
+    return parts;
+  };
+
+  if (!base || !env.osticket_api_key) {
+    result.ticket_errors.push('osTicket no configurado (url o api key).');
+  } else {
+    // 1) Usuario-tienda (idempotente). Auto-sync por uso.
+    const ostUserId = await gcUser(env, base, { email: fromEmail, name: fromName, phone: compPhone });
+    if (ostUserId) {
+      try {
+        await sb(env, `companies?company_code=eq.${encodeURIComponent(cc)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ osticket_user_id: ostUserId, osticket_synced_at: new Date().toISOString() }),
+        });
+      } catch { /* no critico */ }
+    }
+
+    // 2) Cuerpo del PLA. Cada registro: Trabajador (resultante), Cedula, Tipo
+    //    (Modificacion (M)) y SOLO los campos que cambian (con su valor nuevo).
+    const registros = clean.map(l => {
+      const campos = [
+        ['Trabajador', l.worker_name],
+        ['Cédula', `${l.ced_kind}-${l.worker_id_number}`],
+        ['Tipo', 'Modificación (M)'],
+      ];
+      changeText(l).forEach(([k, v]) => campos.push([k, v]));
+      return campos;
+    });
+    const plaBody = buildReportText({
+      pieceLabel: 'PLANTILLA', reportCode: code, piece: 1, totalPieces,
+      topicLabel: 'Modificación de Datos',
+      fecha: dmy(today), hora: nowHHMM,
+      alias: cc, razon: compBusinessName, zona: mallZona, marca: marcaName,
+      correoTienda: compEmail,
+      responsable: responsible, cargo: position, telefono: compPhone, correoResp: compEmail,
+      registros,
+    });
+
+    // Plantilla AX (Excel) accion 'M'. SIEMPRE cedula + nombre dividido; los
+    // campos cambiados en su columna AX, los NO cambiados VACIOS. Las fechas
+    // de ingreso/egreso van vacias (no se modifican). TodoTicket: solo va si
+    // se cambio (si no, vacio -> AX no lo toca).
+    let plaAttachments;
+    try {
+      const axCtx = {
+        companyDataArea: compDataArea,
+        companyName: compBusinessName,
+        companyAlias: cc,
+        todayYmd: today,
+        reportCode: code,
+        lines: clean.map(l => {
+          const ch = l.changes;
+          return {
+            id_number: l.worker_id_number,
+            nombre: l._exFirst,
+            nombre2: l._exSecond || '',
+            apellidos: l._exLast,
+            correo: ('correo' in ch) ? ch.correo : '',
+            // fechaIni / fechaFin: vacias (no se modifican en M).
+            fechaIni: '',
+            fechaFin: '',
+            cargo: ('cargo' in ch) ? ((cargoMap[ch.cargo] && cargoMap[ch.cargo].ax_code) || ch.cargo) : '',
+            direccion: ('direccion' in ch) ? ch.direccion : '',
+            fechaNac: ('fechaNac' in ch) ? ch.fechaNac : '',
+            estCivil: ('estCivil' in ch) ? ch.estCivil : '',
+            telefono: ('telefono' in ch) ? ch.telefono : '',
+            genero: '',   // el genero no es modificable
+            cuenta: ('cuenta' in ch) ? ch.cuenta : '',
+            todoTicket: ('todoTicket' in ch) ? ch.todoTicket : '',
+          };
+        }),
+      };
+      const wb = buildAxWorkbookBase64('modificacion', axCtx);
+      if (wb) {
+        plaAttachments = [osAttach(
+          wb.filename, wb.base64,
+          'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        )];
+      }
+    } catch (e) {
+      result.ticket_errors.push(`Plantilla AX: ${String(e.message || e)}`);
+    }
+
+    try {
+      const plaNum = await osticketCreateTicket(env, base, {
+        email: fromEmail,
+        name: fromName,
+        subject: `[${code}] [1/${totalPieces}] PLA`,
+        message: plaBody,
+        topicId,
+        source: 'API',
+        alert: false,
+        autorespond: false,
+        report_code: code,
+        report_kind: 'PLA',
+        ...(plaAttachments ? { attachments: plaAttachments } : {}),
+      });
+      result.osticket_pla = plaNum;
+      result.tickets_ok++;
+      await gcReportLink(env, base, {
+        report_code: code, ticket_number: plaNum, kind: 'PLA',
+        company: cc, report_type: 'modificacion', doc_total: 0,
+      });
+    } catch (e) {
+      result.tickets_fail++;
+      result.ticket_errors.push(`PLA: ${String(e.message || e)}`);
+    }
+
+    if (result.osticket_pla) {
+      try {
+        await sb(env, `reports_log?id=eq.${reportId}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ osticket_id: result.osticket_pla, email_sent: true }),
+        });
+      } catch { /* el reporte ya esta en BD */ }
+    }
+  }
+
+  return json({
+    ok: true,
+    report_id: reportId,
+    workers_count: clean.length,
     osticket: {
       pla: result.osticket_pla,
       tickets_ok: result.tickets_ok,
