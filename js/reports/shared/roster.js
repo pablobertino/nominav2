@@ -131,6 +131,32 @@ export function splitFullName(full) {
   };
 }
 
+/* Normaliza un valor de cuenta bancaria a string de digitos. CRITICO:
+   una cuenta de 20 digitos excede Number.MAX_SAFE_INTEGER (~9e15), asi que
+   si Excel la guardo como NUMERO, SheetJS (raw:true) la entrega como float
+   en notacion cientifica (ej. 1.340379133791e+18) y String() pierde digitos.
+   Por eso: si la celda es un objeto de SheetJS con texto formateado (.w),
+   se usa ese; si es number, se intenta el texto formateado y, en ultimo
+   caso, BigInt para no perder precision. Devuelve solo los digitos. */
+function accountDigits(cell) {
+  if (cell == null || cell === '') return '';
+  // Celda como objeto {v, w}: w es el texto tal como se ve en Excel.
+  if (typeof cell === 'object' && cell.w != null) {
+    return String(cell.w).replace(/[^0-9]/g, '');
+  }
+  if (typeof cell === 'number') {
+    // Entero seguro -> BigInt preserva todos los digitos.
+    if (Number.isInteger(cell)) {
+      try { return BigInt(cell).toString().replace(/[^0-9]/g, ''); } catch { /* sigue */ }
+    }
+    // Float (notacion cientifica): toFixed(0) recupera el entero sin 'e'.
+    const fixed = cell.toFixed(0);
+    return fixed.replace(/[^0-9]/g, '');
+  }
+  // String normal (lo ideal: el POS la exporta como texto).
+  return String(cell).replace(/[^0-9]/g, '');
+}
+
 /**
  * Parsea un File del Reporte 10. Devuelve { rows, fileName, columnsFound,
  * missing } donde rows son objetos {id_number, full_name, role,
@@ -143,13 +169,50 @@ export async function parseReport10(file) {
   // hoja "Datos" si existe, si no la primera
   const sheetName = wb.SheetNames.includes('Datos') ? 'Datos' : wb.SheetNames[0];
   const ws = wb.Sheets[sheetName];
+  // raw:false hace que SheetJS rellene .w (texto formateado) en cada celda,
+  // pero para fechas/numeros preferimos el valor crudo. Solucion: pedimos la
+  // matriz con raw:true para la logica general, y aparte una matriz de TEXTO
+  // (raw:false) SOLO para la cuenta bancaria, que es la unica que sufre por
+  // la notacion cientifica de los numeros grandes.
   const matrix = XLSX.utils.sheet_to_json(ws, { header: 1, raw: true, defval: '' });
+  const matrixTxt = XLSX.utils.sheet_to_json(ws, { header: 1, raw: false, defval: '' });
   if (!matrix.length) return { rows: [], fileName: file.name, columnsFound: [], missing: ['Cédula', 'Nombre'] };
 
-  // Encabezados -> indice de columna
+  // Encabezados -> indice de columna. IMPORTANTE: algunos headers del Reporte
+  // 10 aparecen DUPLICADOS (p.ej. 'Cuenta Bancaria' y 'Todoticket' salen al
+  // inicio CON datos y otra vez al final VACIOS). El PRIMER match debe ganar:
+  // por eso se asigna solo si la clave aun no existe (no sobreescribir).
   const headers = matrix[0].map(normHeader);
   const colIdx = {};
-  headers.forEach((h, i) => { if (HEADER_MAP[h] != null) colIdx[HEADER_MAP[h]] = i; });
+  headers.forEach((h, i) => {
+    const key = HEADER_MAP[h];
+    if (key != null && colIdx[key] == null) colIdx[key] = i;
+  });
+
+  // Fallback tolerante para columnas cuyo header puede variar entre versiones
+  // del Reporte 10. Si el match exacto no encontro la columna, se busca por
+  // CONTENIDO del header normalizado (incluye). El primer hit gana. Esto
+  // cubre 'Cuenta Bancaria' vs 'Nro de Cuenta' vs 'Cuenta', 'TodoTicket' vs
+  // 'Todo Ticket', 'Codigo de Pantalla' vs 'Cod Pantalla', etc.
+  const findByIncludes = (needles) => {
+    for (let i = 0; i < headers.length; i++) {
+      const h = headers[i];
+      if (needles.some(n => h.includes(n))) return i;
+    }
+    return null;
+  };
+  if (colIdx.account_raw == null) {
+    const idx = findByIncludes(['cuenta']);
+    if (idx != null) colIdx.account_raw = idx;
+  }
+  if (colIdx.todoticket_raw == null) {
+    const idx = findByIncludes(['todoticket', 'todo ticket']);
+    if (idx != null) colIdx.todoticket_raw = idx;
+  }
+  if (colIdx.data_id_raw == null) {
+    const idx = findByIncludes(['codigo de pantalla', 'cod pantalla', 'data id']);
+    if (idx != null) colIdx.data_id_raw = idx;
+  }
 
   const columnsFound = [];
   if (colIdx.id_number != null) columnsFound.push('Cédula');
@@ -165,6 +228,7 @@ export async function parseReport10(file) {
   const rows = [];
   for (let r = 1; r < matrix.length; r++) {
     const row = matrix[r];
+    const rowTxt = matrixTxt[r] || [];
     if (!row || row.every(c => c === '' || c == null)) continue;
     const id_number = colIdx.id_number != null ? String(row[colIdx.id_number] ?? '').replace(/[^0-9]/g, '') : '';
     const full_name = colIdx.full_name != null ? String(row[colIdx.full_name] ?? '').trim() : '';
@@ -173,12 +237,21 @@ export async function parseReport10(file) {
     const start_date = colIdx.start_raw != null ? excelDateToISO(row[colIdx.start_raw]) : null;
     const end_date = colIdx.end_raw != null ? excelDateToISO(row[colIdx.end_raw]) : null;
     // Datos personales nuevos (pueden venir o no). Se normalizan:
-    //  - cuenta: solo digitos; se guarda si tiene 20 (si no, null para no
-    //    guardar basura). El POS la trae completa en el Reporte 10 real.
-    //  - todoticket: 'SI'/'SÍ' -> 'S', cualquier otra cosa con valor -> 'N',
+    //  - cuenta: se lee con accountDigits desde la matriz de TEXTO (raw:false)
+    //    para no perder digitos por notacion cientifica; se guarda si tiene
+    //    20 (si no, null para no guardar basura).
+    //  - todoticket: 'SI'/'SI' -> 'S', cualquier otra cosa con valor -> 'N',
     //    vacio -> null (no sabemos).
     //  - data_id (Codigo de Pantalla): texto tal cual (suele venir vacio).
-    const accDigits = colIdx.account_raw != null ? String(row[colIdx.account_raw] ?? '').replace(/[^0-9]/g, '') : '';
+    let accDigits = '';
+    if (colIdx.account_raw != null) {
+      // Preferir el texto formateado (raw:false); si vacio, caer al crudo.
+      accDigits = accountDigits(rowTxt[colIdx.account_raw]);
+      if (accDigits.length !== 20) {
+        const alt = accountDigits(row[colIdx.account_raw]);
+        if (alt.length === 20) accDigits = alt;
+      }
+    }
     const account_number = accDigits.length === 20 ? accDigits : null;
     let todo_ticket = null;
     if (colIdx.todoticket_raw != null) {
