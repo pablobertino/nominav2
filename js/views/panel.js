@@ -14,6 +14,7 @@ import { egresoReport } from '../reports/report-egreso.js';
 import { ingresoReport } from '../reports/report-ingreso.js';
 import { modificacionReport } from '../reports/report-modificacion.js';
 import { renderHistory } from '../reports/history.js';
+import { renderWorkerPhotos } from './worker-photos.js';
 
 let CATALOG = null;       // { companies, zones, subzones, concepts }
 let currentView = 'tiendas';
@@ -38,6 +39,7 @@ const I = {
   cog: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
   calendar: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>',
   history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>',
+  photo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>',
 };
 
 const NAV = [
@@ -63,7 +65,7 @@ function shell(user) {
 
   // Navegación según rol: la tienda ve "Mi empresa" y su "Historial".
   const navItems = isCompany
-    ? [['miempresa', I.store, 'Mi empresa'], ['historial', I.history, 'Historial']]
+    ? [['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Fichas y fotos'], ['historial', I.history, 'Historial']]
     : NAV.filter(n => n[3] !== 'superonly' || isSuper);
 
   return `
@@ -277,7 +279,7 @@ function viewTiendas(user) {
         <td>${contacto}</td>
         <td>${statusPill(c.status)}</td>
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
-        <td style="text-align:right"><button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button></td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" style="margin-right:4px">Fotos</button><button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button></td>
       </tr>`;
     }).join('') || '<tr><td colspan="8" class="empty">Sin resultados.</td></tr>';
 
@@ -287,6 +289,14 @@ function viewTiendas(user) {
       b.addEventListener('click', () => {
         const u = { ...user, pickedCompany: b.dataset.reportCode, pickedCompanyName: b.dataset.reportName };
         openReportPicker(u, () => viewTiendas(user));
+      }));
+    $('#tBody').querySelectorAll('[data-photos-code]').forEach(b =>
+      b.addEventListener('click', () => {
+        // Admin/superadmin entra a las fichas/fotos de la tienda elegida.
+        // El "Volver" regresa a la lista de Empresas.
+        currentView = 'fotos';
+        document.querySelectorAll('#pnlNav button').forEach(x => x.classList.remove('active'));
+        renderWorkerPhotos(user, b.dataset.photosCode, () => { currentView = 'tiendas'; navigate('tiendas', user); });
       }));
   }
 
@@ -2284,6 +2294,13 @@ async function navigate(view, user) {
   else if (view === 'config') viewConfig(user);
   else if (view === 'historial') renderHistory(user);
   else if (view === 'miempresa') viewMiEmpresa(user);
+  else if (view === 'fotos') {
+    // Vista de fichas/fotos. Para la tienda usa su propia company; para
+    // admin/superadmin se entra eligiendo tienda desde Empresas (boton de
+    // fila), no por este item de menu.
+    if (user.kind === 'company') renderWorkerPhotos(user, user.companyCode, null);
+    else viewTiendas(user);  // admin: elige tienda en Empresas
+  }
 }
 
 /* ---------- Selector de tipo de reporte (admin desde Empresas) ----------

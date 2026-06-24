@@ -806,3 +806,58 @@
   .mo-fstatus { text-align:left; }
   .mo-summary .k { flex-basis:auto; }
 }
+
+/* ===================== FICHAS Y FOTOS DE COLABORADORES =====================
+   Grid de tarjetas (una por persona del roster) con su foto tipo carnet y
+   modal de subida con previsualizacion + guia de encuadre. Usa los tokens
+   del portal; sin onclick inline (la CSP del sitio los bloquea). */
+.wp-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(168px,1fr)); gap:14px; }
+.wp-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
+  overflow:hidden; display:flex; flex-direction:column; transition:border-color .12s, box-shadow .12s; }
+.wp-card:hover { border-color:#cbd9ee; box-shadow:var(--shadow-md); }
+.wp-photo { position:relative; aspect-ratio:1/1; background:var(--border-soft); display:flex;
+  align-items:center; justify-content:center; cursor:pointer; }
+.wp-photo img { width:100%; height:100%; object-fit:cover; display:block; }
+.wp-empty { display:flex; flex-direction:column; align-items:center; gap:6px; color:var(--faint); }
+.wp-empty span { font-size:11.5px; }
+.wp-badge { position:absolute; top:8px; right:8px; font-size:10.5px; font-weight:600; padding:3px 8px; border-radius:20px; }
+.wp-badge.has { background:var(--success-bg); color:var(--success); }
+.wp-badge.no { background:var(--warn-bg); color:var(--warn); }
+.wp-ov { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity .12s; }
+.wp-photo:hover .wp-ov { opacity:1; background:rgba(15,23,42,.42); }
+.wp-ov span { color:#fff; font-size:12px; font-weight:600; background:var(--brand); padding:7px 12px; border-radius:var(--radius-sm); }
+.wp-body { padding:11px 13px 13px; }
+.wp-name { font-size:13.5px; font-weight:600; line-height:1.25; margin:0 0 3px; color:var(--ink); }
+.wp-ced { font-size:12px; color:var(--muted); font-family:ui-monospace,Menlo,monospace; }
+.wp-role { font-size:11.5px; color:var(--faint); margin-top:4px; }
+
+/* Modal (overlay fijo, igual que los demas modales del panel). */
+.wp-modal-vp { position:fixed; inset:0; background:rgba(15,23,42,.45); display:flex;
+  align-items:center; justify-content:center; padding:18px; z-index:1000; }
+.wp-modal { background:var(--surface); border-radius:var(--radius-lg); width:100%; max-width:440px;
+  padding:20px 22px; box-shadow:var(--shadow-lg); max-height:92vh; overflow:auto; }
+.wp-modal h3 { font-size:16px; font-weight:600; margin:0 0 2px; }
+.wp-who { font-size:12.5px; color:var(--muted); margin:0 0 16px; }
+.wp-who b { color:var(--ink); font-weight:600; }
+.wp-help { background:var(--bg); border:1px solid var(--border-soft); border-radius:var(--radius-md);
+  padding:11px 13px; margin-bottom:16px; display:flex; gap:11px; }
+.wp-ex { width:54px; height:54px; border-radius:var(--radius-sm); flex-shrink:0; position:relative;
+  overflow:hidden; border:1px solid var(--border); background:#e8eef6; }
+.wp-help-txt { font-size:11.5px; color:var(--ink-soft); line-height:1.5; }
+.wp-help-txt b { color:var(--ink); }
+.wp-stage { position:relative; width:230px; height:230px; margin:0 auto 14px; border-radius:var(--radius-md);
+  overflow:hidden; background:#0f172a; display:flex; align-items:center; justify-content:center; }
+.wp-stage img { width:100%; height:100%; object-fit:cover; }
+.wp-ph { color:var(--ink-soft); font-size:12px; display:flex; flex-direction:column; align-items:center; gap:8px; }
+.wp-guide { position:absolute; inset:0; pointer-events:none; }
+.wp-guide-lbl { font-size:11px; color:var(--faint); text-align:center; margin:0 0 8px; }
+.wp-guides { display:flex; gap:7px; justify-content:center; margin-bottom:16px; flex-wrap:wrap; }
+.wp-gbtn { font-size:11.5px; border:1px solid var(--border); background:var(--surface); border-radius:var(--radius-sm);
+  padding:6px 10px; cursor:pointer; font-family:inherit; color:var(--ink-soft); }
+.wp-gbtn.on { border-color:var(--brand); background:var(--brand-bg); color:var(--brand-dark); font-weight:600; }
+.wp-meta { font-size:11.5px; color:var(--faint); text-align:center; margin:0 0 16px; min-height:15px; }
+.wp-foot { display:flex; gap:8px; align-items:center; }
+
+@media (max-width:560px) {
+  .wp-stage { width:200px; height:200px; }
+}
