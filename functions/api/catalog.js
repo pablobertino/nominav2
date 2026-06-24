@@ -117,6 +117,28 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
+    // --- Catalogo del wizard de MODIFICACION (campos modificables + cargos/bancos/operadoras) ---
+    // Devuelve los campos activos del catalogo modificacion_fields (que se
+    // pueden cambiar) + los catalogos necesarios para validar cargo/cuenta/
+    // telefono cuando esos campos esten activos. No hay ventana de fechas
+    // (date_rule = none): la modificacion no se ata al corte.
+    if (body.action === 'modificacion_catalogs') {
+      const fields = await sb(env, 'modificacion_fields?is_active=eq.true&select=code,label,ax_column,input_kind,note,sort_order&order=sort_order');
+      const cargos = await sb(env, 'cargos?is_active=eq.true&selectable_on_ingreso=eq.true&select=code,label,ax_code,sort_order&order=sort_order');
+      const bancos = await sb(env, 'bancos?is_active=eq.true&select=code,name,sort_order&order=sort_order');
+      const operadoras = await sb(env, 'operadoras?is_active=eq.true&select=code,name,sort_order&order=sort_order');
+      return json({
+        ok: true,
+        fields: (fields || []).map(f => ({
+          code: f.code, label: f.label, ax_column: f.ax_column,
+          input_kind: f.input_kind, note: f.note || null,
+        })),
+        cargos: (cargos || []).map(c => ({ code: c.code, label: c.label, ax_code: c.ax_code || c.code })),
+        bancos: (bancos || []).map(b => ({ code: b.code, name: b.name })),
+        operadoras: (operadoras || []).map(o => ({ code: o.code, name: o.name })),
+      });
+    }
+
     // --- Catalogo de tipos de ausencia + documentos requeridos (wizard de ausencia) ---
     if (body.action === 'absence_types') {
       const types = await sb(env, 'absence_types?is_active=eq.true&select=code,label,ax_code,allows_future,note,past_window_days,past_uses_cutoff,future_window_days&order=sort_order');

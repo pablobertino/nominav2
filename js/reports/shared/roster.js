@@ -38,7 +38,15 @@ function normHeader(h) {
     .trim();
 }
 
-/* Mapeo tolerante de encabezados del Reporte 10 a nuestras claves. */
+/* Mapeo tolerante de encabezados del Reporte 10 a nuestras claves.
+   El Reporte 10 real trae mas columnas de las que usabamos: ademas de
+   cedula/nombre/cargo/fechas/captahuellas, ahora capturamos cuenta
+   bancaria, TodoTicket y Codigo de Pantalla (Data ID). Esos datos se
+   guardan en store_workers para PRECARGAR el reporte de Modificacion y
+   enriquecer el roster. Telefono, correo, sexo y estado civil aun no
+   vienen en el archivo; sus columnas existen vacias y se llenaran cuando
+   el POS las exporte. El header 'cuenta bancaria' aparece dos veces en el
+   archivo: el primer match gana (normHeader + primer hit), suficiente. */
 const HEADER_MAP = {
   'cedula': 'id_number',
   'nombre': 'full_name',
@@ -46,6 +54,9 @@ const HEADER_MAP = {
   'captahuellas': 'biometric_raw',
   'fecha inicio empleo': 'start_raw',
   'fecha fin empleo': 'end_raw',
+  'cuenta bancaria': 'account_raw',
+  'todoticket': 'todoticket_raw',
+  'codigo de pantalla': 'data_id_raw',
 };
 
 /* Convierte un valor de fecha de Excel a 'YYYY-MM-DD' (o null). */
@@ -92,6 +103,8 @@ export async function parseReport10(file) {
   if (colIdx.id_number != null) columnsFound.push('Cédula');
   if (colIdx.full_name != null) columnsFound.push('Nombre');
   if (colIdx.role != null) columnsFound.push('Cargo');
+  if (colIdx.account_raw != null) columnsFound.push('Cuenta Bancaria');
+  if (colIdx.todoticket_raw != null) columnsFound.push('TodoTicket');
 
   const missing = [];
   if (colIdx.id_number == null) missing.push('Cédula');
@@ -107,10 +120,25 @@ export async function parseReport10(file) {
     const bioRaw = colIdx.biometric_raw != null ? String(row[colIdx.biometric_raw] ?? '').trim() : '';
     const start_date = colIdx.start_raw != null ? excelDateToISO(row[colIdx.start_raw]) : null;
     const end_date = colIdx.end_raw != null ? excelDateToISO(row[colIdx.end_raw]) : null;
+    // Datos personales nuevos (pueden venir o no). Se normalizan:
+    //  - cuenta: solo digitos; se guarda si tiene 20 (si no, null para no
+    //    guardar basura). El POS la trae completa en el Reporte 10 real.
+    //  - todoticket: 'SI'/'SÍ' -> 'S', cualquier otra cosa con valor -> 'N',
+    //    vacio -> null (no sabemos).
+    //  - data_id (Codigo de Pantalla): texto tal cual (suele venir vacio).
+    const accDigits = colIdx.account_raw != null ? String(row[colIdx.account_raw] ?? '').replace(/[^0-9]/g, '') : '';
+    const account_number = accDigits.length === 20 ? accDigits : null;
+    let todo_ticket = null;
+    if (colIdx.todoticket_raw != null) {
+      const t = String(row[colIdx.todoticket_raw] ?? '').trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+      if (t) todo_ticket = (t === 'SI' || t === 'S') ? 'S' : 'N';
+    }
+    const data_id = colIdx.data_id_raw != null ? (String(row[colIdx.data_id_raw] ?? '').trim() || null) : null;
     rows.push({
       id_number, full_name, role,
       has_biometric: bioRaw ? /activ/i.test(bioRaw) : true,
       start_date, end_date,
+      account_number, todo_ticket, data_id,
     });
   }
   return { rows, fileName: file.name, columnsFound, missing };

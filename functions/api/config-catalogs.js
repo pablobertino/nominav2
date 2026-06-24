@@ -51,6 +51,9 @@ async function isSuperadmin(env, adminId) {
 }
 
 const ENFORCEMENTS = ['block', 'warn', 'optional'];
+// Tipos de captura que el FRONT sabe pintar/validar para campos modificables.
+// Crear un campo nuevo solo se permite con uno de estos (no inventar kinds).
+const MODFIELD_KINDS = ['text', 'name', 'cargo', 'account', 'phone', 'email', 'marital', 'birthdate', 'todoticket'];
 
 export async function onRequestPost({ request, env }) {
   let body;
@@ -415,6 +418,77 @@ export async function onRequestPost({ request, env }) {
       const id = parseInt(body.id, 10);
       if (!id) return json({ ok: false, error: 'Falta el id del documento.' }, 400);
       await sb(env, `required_docs?id=eq.${id}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ is_active: !!body.active }),
+      });
+      return json({ ok: true });
+    }
+
+    /* ---------------- CAMPOS MODIFICABLES (reporte Modificacion) ----------------
+       Catalogo configurable de campos que se pueden modificar en un reporte
+       de Modificacion de Datos (accion AX M). Viven en modificacion_fields.
+       Cada campo: id, code (estable), label, ax_column (a que columna del
+       Excel mapea), input_kind (como se captura/valida), note, sort_order,
+       is_active. La cedula y las fechas de ingreso/egreso NO estan aqui a
+       proposito (no se modifican por este flujo). El code y el input_kind
+       quedan FIJOS tras crearse (el front sabe validar cada input_kind); por
+       eso el ABM solo deja editar label, note, orden y activo. Crear campos
+       nuevos con input_kind arbitrario requeriria soporte en el front, asi
+       que la creacion se limita a los input_kind ya soportados.
+
+       Acciones:
+         modfield_list                 -> lista los campos del catalogo
+         modfield_save   {field}       -> crea/actualiza (label, note, kind, activo)
+         modfield_toggle {id, active}  -> activa/desactiva un campo */
+    if (action === 'modfield_list') {
+      const fields = await sb(env,
+        'modificacion_fields?select=id,code,label,ax_column,input_kind,note,is_active,sort_order&order=sort_order');
+      return json({ ok: true, fields: fields || [] });
+    }
+
+    if (action === 'modfield_save') {
+      const f = body.field || {};
+      const label = (f.label || '').trim();
+      if (!label) return json({ ok: false, error: 'Falta el nombre del campo.' }, 400);
+      const id = parseInt(f.id, 10);
+      if (id) {
+        // Editar un campo existente: solo label, note, activo (code/ax_column/
+        // input_kind son estables; el front depende de ellos).
+        const row = {
+          label,
+          note: (f.note || '').trim() || null,
+          is_active: f.is_active !== false,
+        };
+        await sb(env, `modificacion_fields?id=eq.${id}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(row),
+        });
+        return json({ ok: true, id });
+      }
+      // Crear: requiere code + input_kind soportado + ax_column. Esto es
+      // avanzado (el front debe saber pintar el input_kind); por eso se valida
+      // contra la lista de kinds soportados.
+      const code = (f.code || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+      const axColumn = (f.ax_column || '').trim();
+      const kind = (f.input_kind || '').trim();
+      if (!code) return json({ ok: false, error: 'Falta el codigo del campo.' }, 400);
+      if (!axColumn) return json({ ok: false, error: 'Falta la columna AX del campo.' }, 400);
+      if (!MODFIELD_KINDS.includes(kind)) return json({ ok: false, error: 'Tipo de captura no soportado.' }, 400);
+      const exists = await sb(env, `modificacion_fields?code=eq.${encodeURIComponent(code)}&select=id`);
+      if (exists && exists.length) return json({ ok: false, error: 'Ya existe un campo con ese codigo.' }, 400);
+      const last = await sb(env, 'modificacion_fields?select=sort_order&order=sort_order.desc&limit=1');
+      const row = {
+        code, label, ax_column: axColumn, input_kind: kind,
+        note: (f.note || '').trim() || null,
+        is_active: f.is_active !== false,
+        sort_order: ((last && last[0] && last[0].sort_order) || 0) + 10,
+      };
+      const ins = await sb(env, 'modificacion_fields', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
+      return json({ ok: true, id: ins && ins[0] && ins[0].id });
+    }
+
+    if (action === 'modfield_toggle') {
+      const id = parseInt(body.id, 10);
+      if (!id) return json({ ok: false, error: 'Falta el id del campo.' }, 400);
+      await sb(env, `modificacion_fields?id=eq.${id}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ is_active: !!body.active }),
       });
       return json({ ok: true });

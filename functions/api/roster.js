@@ -128,7 +128,15 @@ function normalizeRow(row) {
   const end_date = row.end_date ? String(row.end_date).slice(0, 10) : null;
   const start_date = row.start_date ? String(row.start_date).slice(0, 10) : null;
   const has_biometric = row.has_biometric == null ? true : !!row.has_biometric;
-  return { id_number, full_name, role, end_date, start_date, has_biometric };
+  // Datos personales nuevos del Reporte 10 (el front ya los normalizo).
+  // Pueden venir null si la columna no estaba o el valor no era valido.
+  // Se revalidan defensivamente aqui (no confiar solo en el cliente).
+  const accDigits = String(row.account_number ?? '').replace(/[^0-9]/g, '');
+  const account_number = accDigits.length === 20 ? accDigits : null;
+  const tt = String(row.todo_ticket ?? '').trim().toUpperCase();
+  const todo_ticket = (tt === 'S' || tt === 'N') ? tt : null;
+  const data_id = (row.data_id ?? '').toString().trim() || null;
+  return { id_number, full_name, role, end_date, start_date, has_biometric, account_number, todo_ticket, data_id };
 }
 
 export async function onRequestPost({ request, env }) {
@@ -142,7 +150,7 @@ export async function onRequestPost({ request, env }) {
       if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);
       const workers = await sb(env,
         `store_workers?company_code=eq.${encodeURIComponent(cc)}`
-        + `&select=id_number,full_name,role,has_biometric,start_date,end_date,is_active&order=full_name.asc`);
+        + `&select=id_number,full_name,role,has_biometric,start_date,end_date,is_active,account_number,phone,email,gender,marital_status,birth_date,address,todo_ticket,data_id&order=full_name.asc`);
       // Marcar cada trabajador con su rol de responsable detectado
       // (manager_role: 'Gerente'|'Sub-Gerente'|null) y, si el catalogo de
       // cargos lo resuelve, tambien el cargo canonico (cargo_code/label)
@@ -222,6 +230,12 @@ export async function onRequestPost({ request, env }) {
         start_date: r.start_date,
         end_date: r.end_date,
         is_active: !r.end_date,
+        // Datos personales del Reporte 10 (los que vengan). Las columnas que
+        // el archivo aun no trae (telefono, correo, sexo, estado civil,
+        // nacimiento, direccion) quedan en null hasta que el POS las exporte.
+        account_number: r.account_number,
+        todo_ticket: r.todo_ticket,
+        data_id: r.data_id,
       }));
       await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify(payload) });
 
