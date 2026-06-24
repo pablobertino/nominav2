@@ -11,8 +11,8 @@
    que las sube al Storage privado 'worker-photos' y guarda las rutas en
    workers_master (la tabla maestra por cedula, sin empresa).
 
-   Una guia de encuadre (ovalo/circulo/pasaporte/rejilla) ayuda a centrar
-   el rostro; NO recorta la version completa, es solo visual.
+   Una guia circular punteada ayuda a centrar el rostro; NO recorta la
+   version completa, es solo visual.
 
    Acceso:
      - tienda: ve su propio roster (companyCode de la sesion).
@@ -28,8 +28,6 @@ import { $ } from '../core/dom.js';
 const TARGET = 300;          // lado objetivo (px) de ambas versiones
 const FULL_QUALITY = 0.7;    // calidad JPEG de la version completa
 const THUMB_QUALITY = 0.72;  // calidad JPEG de la miniatura
-
-let GUIDE = 'oval';          // guia de encuadre elegida (persiste en la sesion)
 
 /* ---------- API ---------- */
 async function api(payload) {
@@ -90,18 +88,11 @@ function b64Bytes(dataUrl) {
 }
 function stripPrefix(dataUrl) { return String(dataUrl).split(',')[1] || ''; }
 
-/* ---------- Guias de encuadre (SVG superpuesto, no recorta) ---------- */
-function guideSvg(kind) {
-  if (kind === 'none') return '';
-  if (kind === 'oval')
-    return `<svg class="wp-guide" viewBox="0 0 100 100" preserveAspectRatio="none"><defs><mask id="wpmo"><rect width="100" height="100" fill="white"/><ellipse cx="50" cy="46" rx="27" ry="34" fill="black"/></mask></defs><rect width="100" height="100" fill="rgba(15,23,42,0.34)" mask="url(#wpmo)"/><ellipse cx="50" cy="46" rx="27" ry="34" fill="none" stroke="#fff" stroke-width="0.8" stroke-dasharray="3 2"/></svg>`;
-  if (kind === 'circle')
-    return `<svg class="wp-guide" viewBox="0 0 100 100" preserveAspectRatio="none"><defs><mask id="wpmc"><rect width="100" height="100" fill="white"/><circle cx="50" cy="50" r="32" fill="black"/></mask></defs><rect width="100" height="100" fill="rgba(15,23,42,0.34)" mask="url(#wpmc)"/><circle cx="50" cy="50" r="32" fill="none" stroke="#fff" stroke-width="0.8"/></svg>`;
-  if (kind === 'passport')
-    return `<svg class="wp-guide" viewBox="0 0 100 100" preserveAspectRatio="none"><ellipse cx="50" cy="44" rx="22" ry="30" fill="none" stroke="#5dd0a8" stroke-width="0.9"/><line x1="50" y1="6" x2="50" y2="94" stroke="#fff" stroke-width="0.4" stroke-dasharray="2 3" opacity="0.5"/><line x1="28" y1="44" x2="72" y2="44" stroke="#fff" stroke-width="0.4" stroke-dasharray="2 3" opacity="0.5"/></svg>`;
-  if (kind === 'grid')
-    return `<svg class="wp-guide" viewBox="0 0 100 100" preserveAspectRatio="none"><line x1="33.3" y1="0" x2="33.3" y2="100" stroke="#fff" stroke-width="0.4" opacity="0.45"/><line x1="66.6" y1="0" x2="66.6" y2="100" stroke="#fff" stroke-width="0.4" opacity="0.45"/><line x1="0" y1="33.3" x2="100" y2="33.3" stroke="#fff" stroke-width="0.4" opacity="0.45"/><line x1="0" y1="66.6" x2="100" y2="66.6" stroke="#fff" stroke-width="0.4" opacity="0.45"/><circle cx="50" cy="40" r="20" fill="none" stroke="#fff" stroke-width="0.7" stroke-dasharray="2 2" opacity="0.85"/></svg>`;
-  return '';
+/* ---------- Circulo guia (SVG superpuesto, no recorta la foto) ----------
+   Mascara que oscurece todo menos un circulo central, con su borde. Es solo
+   una ayuda visual para centrar el rostro; la foto se guarda completa. */
+function guideSvg() {
+  return `<svg class="wp-guide" viewBox="0 0 100 100" preserveAspectRatio="none"><defs><mask id="wpmc"><rect width="100" height="100" fill="white"/><circle cx="50" cy="50" r="32" fill="black"/></mask></defs><rect width="100" height="100" fill="rgba(15,23,42,0.34)" mask="url(#wpmc)"/><circle cx="50" cy="50" r="32" fill="none" stroke="#fff" stroke-width="0.8" stroke-dasharray="3 2"/></svg>`;
 }
 
 /* ---------- helpers de UI ---------- */
@@ -203,26 +194,19 @@ function openPhotoModal(ced) {
   host.innerHTML = `
     <div class="wp-modal-vp">
       <div class="wp-modal">
+        <button class="wp-x" id="wpClose" aria-label="Cerrar" title="Cerrar">✕</button>
         <h3>Foto del colaborador</h3>
         <p class="wp-who"><b>${esc(w.full_name)}</b> · <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}</span></p>
 
         <div class="wp-help">
           <div class="wp-ex" id="wpEx"></div>
-          <div class="wp-help-txt"><b>Cómo tomar la foto (tipo carnet):</b> de frente, hombros visibles, fondo claro y liso, buena luz sin sombras. La cara centrada ocupando el óvalo. Sin filtros ni gestos.</div>
+          <div class="wp-help-txt"><b>Cómo tomar la foto (tipo carnet):</b> de frente, hombros visibles, fondo claro y liso, buena luz sin sombras. La cara centrada ocupando el círculo. Sin lentes, gorras ni gestos.</div>
         </div>
 
         <div class="wp-stage" id="wpStage">
           <div class="wp-ph"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg><span>Elige una foto para previsualizar</span></div>
         </div>
-
-        <p class="wp-guide-lbl">Guía de encuadre (no recorta la foto completa, solo ayuda a centrar):</p>
-        <div class="wp-guides" id="wpGuides">
-          <button class="wp-gbtn" data-g="oval">Óvalo carnet</button>
-          <button class="wp-gbtn" data-g="circle">Círculo</button>
-          <button class="wp-gbtn" data-g="passport">Pasaporte</button>
-          <button class="wp-gbtn" data-g="grid">Rejilla</button>
-          <button class="wp-gbtn" data-g="none">Sin guía</button>
-        </div>
+        <p class="wp-guide-lbl">El círculo es solo una guía para centrar el rostro; la foto se guarda completa.</p>
 
         <p class="wp-meta" id="wpMeta"></p>
 
@@ -230,6 +214,7 @@ function openPhotoModal(ced) {
         <div class="wp-foot">
           ${w.has_photo ? '<button class="btn" id="wpDel" style="color:var(--danger);border-color:#f3c2c2">Quitar foto</button>' : ''}
           <span style="flex:1"></span>
+          <button class="btn" id="wpCancel">Cancelar</button>
           <button class="btn" id="wpPick">Elegir foto</button>
           <button class="btn btn-primary" id="wpSave" disabled>Guardar</button>
         </div>
@@ -238,31 +223,31 @@ function openPhotoModal(ced) {
 
   const stage = $('#wpStage'), meta = $('#wpMeta'), fileEl = $('#wpFile'), saveB = $('#wpSave');
 
-  // Ejemplo de encuadre (cara dibujada + guia ovalo).
-  $('#wpEx').innerHTML = guideSvg('oval')
+  // Cerrar el modal: X, boton Cancelar, clic fuera y tecla Escape.
+  const closeModal = () => {
+    document.removeEventListener('keydown', onKey);
+    host.innerHTML = '';
+  };
+  const onKey = (ev) => { if (ev.key === 'Escape') closeModal(); };
+  document.addEventListener('keydown', onKey);
+  $('#wpClose').addEventListener('click', closeModal);
+  $('#wpCancel').addEventListener('click', closeModal);
+  host.querySelector('.wp-modal-vp').addEventListener('click', (ev) => {
+    if (ev.target === ev.currentTarget) closeModal();   // clic en el fondo oscuro
+  });
+
+  // Ejemplo de encuadre (cara dibujada + circulo guia).
+  $('#wpEx').innerHTML = guideSvg()
     + '<svg viewBox="0 0 100 100" style="position:absolute;inset:0"><circle cx="50" cy="40" r="17" fill="#c9b6a0"/><rect x="33" y="62" width="34" height="34" rx="10" fill="#5b6b82"/></svg>';
 
-  function applyGuide() {
-    const ex = stage.querySelector('.wp-guide');
-    if (ex) ex.remove();
-    if (GUIDE !== 'none') stage.insertAdjacentHTML('beforeend', guideSvg(GUIDE));
-  }
   function renderStage() {
     stage.innerHTML = staged
       ? `<img src="${staged.preview}" alt="vista previa">`
       : `<div class="wp-ph"><svg viewBox="0 0 24 24" width="34" height="34" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/></svg><span>Elige una foto para previsualizar</span></div>`;
-    applyGuide();
+    // Circulo guia fijo superpuesto (no recorta la foto completa).
+    stage.insertAdjacentHTML('beforeend', guideSvg());
   }
   renderStage();
-
-  $('#wpGuides').querySelectorAll('.wp-gbtn').forEach(b => {
-    b.classList.toggle('on', b.dataset.g === GUIDE);
-    b.addEventListener('click', () => {
-      GUIDE = b.dataset.g;
-      $('#wpGuides').querySelectorAll('.wp-gbtn').forEach(x => x.classList.toggle('on', x.dataset.g === GUIDE));
-      applyGuide();
-    });
-  });
 
   $('#wpPick').addEventListener('click', () => fileEl.click());
   fileEl.addEventListener('change', async e => {
@@ -308,7 +293,7 @@ function openPhotoModal(ced) {
     w.has_photo = true;
     w.thumb_url = r.thumb_url || w.thumb_url;
     w.photo_uploaded_at = new Date().toISOString();
-    host.innerHTML = '';
+    closeModal();
     updateInfo({});
     paintGrid();
   });
@@ -319,7 +304,7 @@ function openPhotoModal(ced) {
     const r = await api({ action: 'remove', company_code: STATE.cc, user: sessionUserPayload(STATE.user), id_number: w.id_number });
     if (!r.ok) { alert(r.error || 'No se pudo quitar.'); return; }
     w.has_photo = false; w.thumb_url = null; w.photo_uploaded_at = null;
-    host.innerHTML = '';
+    closeModal();
     updateInfo({});
     paintGrid();
   });
