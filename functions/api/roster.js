@@ -143,6 +143,53 @@ function normalizeRow(row) {
   return { id_number, full_name, role, end_date, start_date, has_biometric, account_number, todo_ticket, data_id, first_name, second_name, last_names };
 }
 
+// Deriva V/E de la cedula: >= 80.000.000 -> E, si no V (misma regla que
+// usa el resto del sistema, ej. submitIngreso).
+function cedKind(ced) {
+  return parseInt(ced, 10) >= 80000000 ? 'E' : 'V';
+}
+
+// Upsert por cedula en workers_master (el registro PERMANENTE de la persona,
+// sin empresa). Se llama tras reemplazar store_workers: por cada trabajador
+// del Reporte 10, si su cedula no existe en la maestra se inserta; si existe,
+// se ACTUALIZAN sus datos con los del reporte (el mas reciente gana). Las
+// columnas de foto (photo_*) NO van en el payload, asi el merge de PostgREST
+// las deja intactas -> la foto nunca se pisa. Tampoco se manda created_at
+// (default en insert; en update se conserva). updated_at lo refresca el
+// trigger. last_source_company anota que tienda hizo la ultima carga.
+//
+// No es critico para la carga del roster: si fallara, el roster ya quedo
+// guardado; el upsert se reintenta en la proxima carga. Por eso el llamador
+// lo envuelve en try/catch y solo acumula un warning.
+async function upsertWorkersMaster(env, cc, validRows) {
+  if (!validRows.length) return 0;
+  const payload = validRows.map(r => ({
+    id_number: r.id_number,
+    ced_kind: cedKind(r.id_number),
+    first_name: r.first_name,
+    second_name: r.second_name,
+    last_names: r.last_names,
+    full_name: r.full_name,
+    role: r.role,
+    account_number: r.account_number,
+    bank_code: r.account_number ? r.account_number.slice(0, 4) : null,
+    todo_ticket: r.todo_ticket,
+    data_id: r.data_id,
+    last_source_company: cc,
+    // OJO: no se incluyen birth_date, gender, marital_status, phone, email,
+    // address (el Reporte 10 no los trae) NI las columnas photo_*. Para una
+    // cedula nueva nacen en null; para una existente se conservan tal cual
+    // (merge-duplicates no toca columnas ausentes del payload).
+  }));
+  // on_conflict=id_number + merge-duplicates: inserta o actualiza por cedula.
+  await sb(env, 'workers_master?on_conflict=id_number', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates' },
+    body: JSON.stringify(payload),
+  });
+  return payload.length;
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'JSON invalido' }, 400); }
@@ -246,6 +293,17 @@ export async function onRequestPost({ request, env }) {
       }));
       await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify(payload) });
 
+      // Sincronizar la tabla maestra de colaboradores (workers_master) por
+      // cedula. Es el registro permanente de la persona (sin empresa) que
+      // sobrevive entre tiendas y guarda la foto. No es critico: si falla,
+      // el roster ya quedo guardado y se reintenta en la proxima carga.
+      let masterSynced = 0;
+      try {
+        masterSynced = await upsertWorkersMaster(env, cc, valid);
+      } catch (e) {
+        warnings.push('No se pudo sincronizar el directorio de colaboradores (se reintenta en la proxima carga).');
+      }
+
       // Metadatos del snapshot (upsert)
       await sb(env, 'store_roster_meta', {
         method: 'POST',
@@ -312,6 +370,7 @@ export async function onRequestPost({ request, env }) {
           gerentes: nGer,
           subgerentes: nSub,
           contacts_seeded: contactsSeeded,
+          master_synced: masterSynced,
           warnings,
         },
       });
