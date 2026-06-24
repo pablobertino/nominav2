@@ -140,7 +140,28 @@ function normalizeRow(row) {
   const first_name = (row.first_name ?? '').toString().trim() || null;
   const second_name = (row.second_name ?? '').toString().trim() || null;
   const last_names = (row.last_names ?? '').toString().trim() || null;
-  return { id_number, full_name, role, end_date, start_date, has_biometric, account_number, todo_ticket, data_id, first_name, second_name, last_names };
+  // Datos personales del Reporte 10 ampliado (el front ya los normalizo;
+  // se revalidan aqui para no confiar solo en el cliente).
+  //  - marital_status: 'S'|'C'|'D'|'V' o null.
+  //  - gender: 'M'|'F' o null.
+  //  - phone: 11 digitos 04XXXXXXXXX o null.
+  //  - email: formato valido o null.
+  //  - birth_date / address: tal cual (null si vacio).
+  const ms = String(row.marital_status ?? '').trim().toUpperCase();
+  const marital_status = ['S', 'C', 'D', 'V'].includes(ms) ? ms : null;
+  const gd = String(row.gender ?? '').trim().toUpperCase();
+  const gender = (gd === 'M' || gd === 'F') ? gd : null;
+  const phDigits = String(row.phone ?? '').replace(/[^0-9]/g, '');
+  const phone = (phDigits.length === 11 && phDigits[0] === '0' && phDigits[1] === '4') ? phDigits : null;
+  const em = String(row.email ?? '').trim().toLowerCase();
+  const email = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(em) ? em : null;
+  const birth_date = row.birth_date ? String(row.birth_date).slice(0, 10) : null;
+  const address = (row.address ?? '').toString().trim() || null;
+  return {
+    id_number, full_name, role, end_date, start_date, has_biometric,
+    account_number, todo_ticket, data_id, first_name, second_name, last_names,
+    marital_status, gender, phone, email, birth_date, address,
+  };
 }
 
 // Deriva V/E de la cedula: >= 80.000.000 -> E, si no V (misma regla que
@@ -175,12 +196,25 @@ async function upsertWorkersMaster(env, cc, validRows) {
     bank_code: r.account_number ? r.account_number.slice(0, 4) : null,
     todo_ticket: r.todo_ticket,
     data_id: r.data_id,
+    // Datos personales del Reporte 10 ampliado. Se actualizan con el valor
+    // mas reciente cuando vienen; si NO vienen (null) se omiten del merge
+    // para no pisar un dato bueno previo con un null. Por eso cada clave se
+    // agrega solo si tiene valor (ver construccion condicional abajo).
     last_source_company: cc,
-    // OJO: no se incluyen birth_date, gender, marital_status, phone, email,
-    // address (el Reporte 10 no los trae) NI las columnas photo_*. Para una
-    // cedula nueva nacen en null; para una existente se conservan tal cual
-    // (merge-duplicates no toca columnas ausentes del payload).
+    // Las columnas photo_* NUNCA van en el payload: el merge las deja
+    // intactas y la foto nunca se pisa.
   }));
+  // Agregar condicionalmente los campos personales: solo las claves con
+  // valor, para que merge-duplicates no sobreescriba con null un dato que ya
+  // estaba bien en la maestra (el Reporte 10 de otra tienda podria no traerlo).
+  validRows.forEach((r, i) => {
+    if (r.phone) payload[i].phone = r.phone;
+    if (r.email) payload[i].email = r.email;
+    if (r.gender) payload[i].gender = r.gender;
+    if (r.marital_status) payload[i].marital_status = r.marital_status;
+    if (r.birth_date) payload[i].birth_date = r.birth_date;
+    if (r.address) payload[i].address = r.address;
+  });
   // on_conflict=id_number + merge-duplicates: inserta o actualiza por cedula.
   await sb(env, 'workers_master?on_conflict=id_number', {
     method: 'POST',
@@ -281,15 +315,21 @@ export async function onRequestPost({ request, env }) {
         start_date: r.start_date,
         end_date: r.end_date,
         is_active: !r.end_date,
-        // Datos personales del Reporte 10 (los que vengan). Las columnas que
-        // el archivo aun no trae (telefono, correo, sexo, estado civil,
-        // nacimiento, direccion) quedan en null hasta que el POS las exporte.
+        // Datos personales del Reporte 10 ampliado. El SP nuevo ya trae
+        // telefono, correo, sexo, estado civil, nacimiento y direccion; los
+        // que no vengan (o no validen) quedan en null.
         account_number: r.account_number,
         todo_ticket: r.todo_ticket,
         data_id: r.data_id,
         first_name: r.first_name,
         second_name: r.second_name,
         last_names: r.last_names,
+        phone: r.phone,
+        email: r.email,
+        gender: r.gender,
+        marital_status: r.marital_status,
+        birth_date: r.birth_date,
+        address: r.address,
       }));
       await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify(payload) });
 

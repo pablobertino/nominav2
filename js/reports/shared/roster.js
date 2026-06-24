@@ -39,14 +39,14 @@ function normHeader(h) {
 }
 
 /* Mapeo tolerante de encabezados del Reporte 10 a nuestras claves.
-   El Reporte 10 real trae mas columnas de las que usabamos: ademas de
-   cedula/nombre/cargo/fechas/captahuellas, ahora capturamos cuenta
-   bancaria, TodoTicket y Codigo de Pantalla (Data ID). Esos datos se
-   guardan en store_workers para PRECARGAR el reporte de Modificacion y
-   enriquecer el roster. Telefono, correo, sexo y estado civil aun no
-   vienen en el archivo; sus columnas existen vacias y se llenaran cuando
-   el POS las exporte. El header 'cuenta bancaria' aparece dos veces en el
-   archivo: el primer match gana (normHeader + primer hit), suficiente. */
+   El Reporte 10 NUEVO (SP GC_RP_Employees ampliado) trae TODOS los datos
+   personales que necesita la precarga del reporte de Modificacion:
+   ademas de cedula/nombre/cargo/fechas/captahuellas/cuenta/todoticket/data_id,
+   ahora vienen Fecha de Nacimiento, Direccion, Estado Civil, Telefono, Correo
+   y Genero. El header 'cuenta bancaria'/'todoticket' puede aparecer dos veces
+   en versiones viejas del archivo: el primer match gana (ver mas abajo).
+   El parser es RETROCOMPATIBLE: si el archivo es la version vieja (sin estos
+   campos), esas columnas no se encuentran y quedan null, sin romper nada. */
 const HEADER_MAP = {
   'cedula': 'id_number',
   'nombre': 'full_name',
@@ -57,6 +57,13 @@ const HEADER_MAP = {
   'cuenta bancaria': 'account_raw',
   'todoticket': 'todoticket_raw',
   'codigo de pantalla': 'data_id_raw',
+  // --- Campos personales nuevos (Reporte 10 ampliado) ---
+  'fecha de nacimiento': 'birth_raw',
+  'direccion': 'address_raw',
+  'estado civil': 'marital_raw',
+  'nro telefono': 'phone_raw',
+  'correo electronico': 'email_raw',
+  'genero': 'gender_raw',
 };
 
 /* Convierte un valor de fecha de Excel a 'YYYY-MM-DD' (o null). */
@@ -155,6 +162,82 @@ function accountDigits(cell) {
   }
   // String normal (lo ideal: el POS la exporta como texto).
   return String(cell).replace(/[^0-9]/g, '');
+}
+
+/* Normaliza el ESTADO CIVIL a un codigo S/C/D/V, aceptando CUALQUIER forma
+   en que el Reporte 10 lo presente, para ser compatible con todas las
+   versiones del SP y con datos viejos:
+     - Con numero delante:  '1 - Casada', '2 - Soltera', '3 - Viuda',
+                            '4 - Divorciada' (mapeo del SP GC_RP_Employees).
+     - Sin numero:          'Casado', 'Soltera', 'Viudo', 'Divorciada'...
+     - Masculino o femenino: 'Casado/Casada', 'Soltero/Soltera', etc.
+     - Ya en codigo:        'S', 'C', 'D', 'V'.
+   Devuelve 'S'|'C'|'D'|'V' o null si no se reconoce / viene vacio.
+   NOTA: el numero del SP NO se usa como verdad unica (hay versiones del SP
+   con el mapeo desordenado); se prioriza el TEXTO, y el numero solo se usa
+   como respaldo si no hay texto reconocible. */
+function maritalCode(raw) {
+  if (raw == null) return null;
+  let s = String(raw).trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (!s) return null;
+  // Quitar prefijo numerico tipo '2 - ' o '2-' o '2 '
+  const numMatch = s.match(/^(\d+)\s*[-.)]?\s*/);
+  let num = null;
+  if (numMatch) { num = parseInt(numMatch[1], 10); s = s.slice(numMatch[0].length).trim(); }
+  // Por TEXTO (raiz, sirve para masculino y femenino): SOLTER, CASAD, VIUD,
+  // DIVORCIAD. (CONCUBIN/COHABIT/UNION -> sin codigo propio: lo tratamos como
+  // soltero a efectos de nomina solo si el SP lo mapeara; aqui devolvemos null
+  // para no inventar, salvo que el negocio decida lo contrario.)
+  if (/SOLTER/.test(s)) return 'S';
+  if (/CASAD/.test(s)) return 'C';
+  if (/VIUD/.test(s)) return 'V';
+  if (/DIVORCIAD/.test(s)) return 'D';
+  // Ya venia como codigo de una letra.
+  if (s === 'S' || s === 'C' || s === 'V' || s === 'D') return s;
+  // Respaldo por numero del SP actual (1=Casada,2=Soltera,3=Viuda,4=Divorciada).
+  if (num != null) {
+    if (num === 1) return 'C';
+    if (num === 2) return 'S';
+    if (num === 3) return 'V';
+    if (num === 4) return 'D';
+  }
+  return null;
+}
+
+/* Normaliza el GENERO a 'M'|'F'|null, aceptando 'MASCULINO'/'FEMENINO',
+   'M'/'F', o numeros del SP (1=Masculino, 2=Femenino). Vacio -> null. */
+function genderCode(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (!s) return null;
+  if (/^MASC/.test(s) || s === 'M' || s === '1') return 'M';
+  if (/^FEM/.test(s) || s === 'F' || s === '2') return 'F';
+  return null;
+}
+
+/* Normaliza un TELEFONO venezolano a 11 digitos '04XXXXXXXXX' o null.
+   Acepta: '04122804802' (11 ya ok), '4120981697' (10 sin 0 inicial -> se
+   antepone 0), '+584122804802' / '584122804802' (con codigo pais),
+   con espacios/guiones. Si no encaja en un movil 04XX valido, null. */
+function phoneLocal(raw) {
+  if (raw == null) return null;
+  let d = String(raw).replace(/[^0-9]/g, '');
+  if (!d) return null;
+  if (d.startsWith('58') && d.length === 12) d = '0' + d.slice(2);   // 58 + 10
+  else if (d.length === 10 && d[0] === '4') d = '0' + d;             // sin 0 inicial
+  if (d.length === 11 && d[0] === '0' && d[1] === '4') return d;
+  return null;
+}
+
+/* Normaliza un CORREO: trim + minusculas. Si NO parece un correo valido
+   (el Reporte 10 a veces trae correos sin @ ni puntos por datos sucios del
+   origen, ej. 'leander2525gmailcom'), devuelve null para no precargar basura
+   (el usuario lo escribira bien en el modal si hace falta). */
+function emailClean(raw) {
+  if (raw == null) return null;
+  const s = String(raw).trim().toLowerCase();
+  if (!s) return null;
+  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s) ? s : null;
 }
 
 /**
@@ -259,6 +342,15 @@ export async function parseReport10(file) {
       if (t) todo_ticket = (t === 'SI' || t === 'S') ? 'S' : 'N';
     }
     const data_id = colIdx.data_id_raw != null ? (String(row[colIdx.data_id_raw] ?? '').trim() || null) : null;
+    // Datos personales del Reporte 10 ampliado. Cada uno se normaliza con su
+    // helper y queda null si no viene o no se reconoce (compatibilidad con el
+    // archivo viejo que no traia estas columnas).
+    const birth_date = colIdx.birth_raw != null ? excelDateToISO(row[colIdx.birth_raw]) : null;
+    const address = colIdx.address_raw != null ? (String(row[colIdx.address_raw] ?? '').trim() || null) : null;
+    const marital_status = colIdx.marital_raw != null ? maritalCode(row[colIdx.marital_raw]) : null;
+    const phone = colIdx.phone_raw != null ? phoneLocal(row[colIdx.phone_raw]) : null;
+    const email = colIdx.email_raw != null ? emailClean(row[colIdx.email_raw]) : null;
+    const gender = colIdx.gender_raw != null ? genderCode(row[colIdx.gender_raw]) : null;
     // Dividir el nombre completo en partes (lo que AX necesita): primer
     // nombre, segundo nombre y apellidos. Heuristica 2-apellidos + particulas.
     const np = splitFullName(full_name);
@@ -270,6 +362,7 @@ export async function parseReport10(file) {
       has_biometric: bioRaw ? /activ/i.test(bioRaw) : true,
       start_date, end_date,
       account_number, todo_ticket, data_id,
+      birth_date, address, marital_status, phone, email, gender,
     });
   }
   return { rows, fileName: file.name, columnsFound, missing };
