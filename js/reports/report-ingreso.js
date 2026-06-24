@@ -163,11 +163,10 @@ export const ingresoReport = {
     }
     if (key === 'kind') return '<span class="pill pill-set">A · Alta</span>';
     if (key === 'detalle') {
-      // Boton que abre la ficha completa en solo-lectura. wizard-core no
-      // engancha listeners a las celdas del resumen, asi que usamos onclick
-      // inline -> funcion global registrada por este modulo (ver abajo).
-      // La lista LAST_WORKERS la mantiene renderRows (paso 4) al dia.
-      return `<button type="button" class="btn btn-sm" onclick="window.__nv2VerIngreso &amp;&amp; window.__nv2VerIngreso('${w.ced}')">👁 Ver detalle</button>`;
+      // Boton que abre la ficha completa en solo-lectura. wizard-core
+      // engancha el listener por delegacion (data-detail-ced), sin onclick
+      // inline (la CSP del sitio bloquea los handlers inline).
+      return `<button type="button" class="btn btn-sm" data-detail-ced="${w.ced}">👁 Ver detalle</button>`;
     }
     return '';
   },

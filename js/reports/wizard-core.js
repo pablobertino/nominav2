@@ -726,6 +726,26 @@ export function launchWizard(user, reportDef, onExit) {
       </div>`;
     $('#sumBack').addEventListener('click', () => setStep(4));
     $('#sumSend').addEventListener('click', doSend);
+
+    // "Ver detalle" de cada fila: el modulo del reporte pinta el boton con
+    // data-detail-ced (no onclick inline, que la CSP bloquea) y expone una
+    // funcion global para abrir la ficha. Aqui enganchamos por DELEGACION un
+    // unico listener en la tabla del resumen. Cada reporte registra su propia
+    // funcion (window.__nv2VerModif / __nv2VerIngreso); probamos las que haya.
+    // Se engancha UNA sola vez por nodo #wzPanel (paintStep reescribe su
+    // innerHTML pero conserva el nodo, asi que sin la bandera se duplicaria
+    // al volver Atras y reentrar al Resumen).
+    if (panel && !panel.__detailBound) {
+      panel.__detailBound = true;
+      panel.addEventListener('click', e => {
+        const btn = e.target.closest('[data-detail-ced]');
+        if (!btn) return;
+        const ced = btn.getAttribute('data-detail-ced');
+        const fn = window['__nv2Ver_' + reportDef.code]
+          || window.__nv2VerModif || window.__nv2VerIngreso;
+        if (typeof fn === 'function') fn(ced);
+      });
+    }
   }
 
   async function doSend() {

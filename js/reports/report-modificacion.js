@@ -100,7 +100,7 @@ export const modificacionReport = {
       return s.map(([k]) => `<span class="pill pill-role">${k}</span>`).join(' ');
     }
     if (key === 'detalle') {
-      return `<button type="button" class="btn btn-sm" onclick="window.__nv2VerModif &amp;&amp; window.__nv2VerModif('${w.ced}')">👁 Ver detalle</button>`;
+      return `<button type="button" class="btn btn-sm" data-detail-ced="${w.ced}">👁 Ver detalle</button>`;
     }
     return '';
   },
