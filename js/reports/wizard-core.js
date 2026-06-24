@@ -626,7 +626,13 @@ export function launchWizard(user, reportDef, onExit) {
     paintWorkers(); paintPick();
   }
   function removeWorker(id) {
-    S.workers = S.workers.filter(w => w.id !== id);
+    // Mutar el array EN SITIO (splice), no reasignar. El paso 4 captura
+    // ctx.workers = S.workers (misma referencia) una sola vez; si aqui se
+    // hiciera S.workers = S.workers.filter(...), ctx.workers quedaria
+    // apuntando al array viejo y el modulo del reporte repintaria la lista
+    // sin el cambio. Con splice, ctx.workers ve el cambio al instante.
+    const idx = S.workers.findIndex(w => w.id === id);
+    if (idx !== -1) S.workers.splice(idx, 1);
     // Solo repintar la tabla del paso 3 si estamos en ese paso (sus
     // elementos #wEmpty/#wTbl existen). Desde el paso 4, el modulo del
     // reporte se encarga de repintar su propia vista.
