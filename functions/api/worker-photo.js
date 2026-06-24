@@ -1,40 +1,34 @@
 /* =====================================================================
    functions/api/worker-photo.js  →  /api/worker-photo
-   Directorio de fichas de colaboradores y captura de su foto (tipo carnet).
+   Personal de una empresa: directorio + foto + perfil (workers_master).
 
-   La foto vive en el Storage privado 'worker-photos' (dos versiones por
-   persona: full/ y thumb/). La tabla workers_master (registro PERMANENTE
-   por cedula, sin empresa) guarda solo las RUTAS + metadatos, nunca el
-   binario. Asi la foto sobrevive al movimiento del trabajador entre
-   tiendas y luego alimentara AX.
-
-   El grid de una tienda se arma cruzando store_workers (su gente) con
-   workers_master (la foto). Una tienda solo ve a SU roster; un admin/
-   superadmin elige tienda primero (igual que el wizard) y su acceso se
-   valida server-side contra su alcance.
+   Foto en Storage privado 'worker-photos' (dos versiones cuadradas):
+     - thumb/  300x300  (grid)
+     - full/   800x800  (visor / export a AX)
+   workers_master guarda solo rutas + metadatos, nunca el binario.
 
    Acciones (POST {action}):
-     - directory : lista del roster de una tienda + estado de foto + URL
-                   firmada de la miniatura (para mostrar el grid).
-         { action:'directory', company_code, user:{kind,id,companyCode} }
-     - save      : sube las dos versiones (ya comprimidas en el navegador)
-                   al bucket y guarda rutas/metadatos en workers_master.
-         { action:'save', company_code, user, id_number,
-           full_b64, thumb_b64, mime, width, height, bytes, uploaded_by }
-     - remove    : quita la foto (borra del bucket + limpia workers_master).
-         { action:'remove', company_code, user, id_number }
+     - directory    : roster de la empresa + estado de foto + URL firmada
+                      de la miniatura + datos de la empresa + catalogo de
+                      bancos (para mostrar/validar la cuenta).
+     - save         : sube las dos versiones (ya comprimidas) y graba
+                      rutas/metadatos en workers_master. Devuelve URLs
+                      firmadas (thumb + full).
+     - save_profile : PATCH de los datos de la persona en workers_master
+                      (nombre, nacimiento, genero, banco, contacto...).
+     - remove       : quita la foto (bucket + columnas photo_*).
 
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
 const BUCKET = 'worker-photos';
-const SIGNED_TTL = 60 * 60;   // 1h: vida de la URL firmada de la miniatura
+const SIGNED_TTL = 60 * 60;          // 1h
+const MAX_FULL_BYTES = 400 * 1024;   // tope server-side de la version grande
 
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
 
-// REST de PostgREST (datos). Mismo helper que el resto de endpoints.
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
     ...opts,
@@ -51,10 +45,7 @@ async function sb(env, path, opts = {}) {
   return t ? JSON.parse(t) : null;
 }
 
-/* ---------- Storage (API REST de Supabase Storage) ---------- */
-
-// Sube (o reemplaza) un objeto al bucket. 'bytes' es un Uint8Array. Usa
-// x-upsert para sobreescribir si ya existia (cambiar la foto de alguien).
+/* ---------- Storage ---------- */
 async function storageUpload(env, path, bytes, mime) {
   const res = await fetch(`${env.supabase_url}/storage/v1/object/${BUCKET}/${path}`, {
     method: 'POST',
@@ -70,8 +61,6 @@ async function storageUpload(env, path, bytes, mime) {
   if (!res.ok) throw new Error(`Storage upload ${res.status}: ${await res.text()}`);
   return true;
 }
-
-// Borra una lista de objetos del bucket. No lanza si alguno no existe.
 async function storageRemove(env, paths) {
   if (!paths || !paths.length) return;
   await fetch(`${env.supabase_url}/storage/v1/object/${BUCKET}`, {
@@ -84,9 +73,6 @@ async function storageRemove(env, paths) {
     body: JSON.stringify({ prefixes: paths }),
   }).catch(() => { /* no critico */ });
 }
-
-// Crea una URL firmada (temporal) para un objeto del bucket privado.
-// Devuelve la URL absoluta o null si el objeto no existe / falla.
 async function storageSignedUrl(env, path) {
   if (!path) return null;
   try {
@@ -101,15 +87,12 @@ async function storageSignedUrl(env, path) {
     });
     if (!res.ok) return null;
     const js = await res.json();
-    // La API devuelve { signedURL: '/object/sign/...?token=...' } (relativa).
     const rel = js && (js.signedURL || js.signedUrl);
     return rel ? `${env.supabase_url}/storage/v1${rel}` : null;
   } catch { return null; }
 }
 
 /* ---------- Helpers ---------- */
-
-// Decodifica base64 (sin el prefijo data:) a Uint8Array para subir el binario.
 function b64ToBytes(b64) {
   const clean = String(b64 || '').replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '');
   const bin = atob(clean);
@@ -118,13 +101,7 @@ function b64ToBytes(b64) {
   for (let i = 0; i < len; i++) out[i] = bin.charCodeAt(i);
   return out;
 }
-
-// Deriva V/E de la cedula (misma regla del sistema).
-function cedKind(ced) {
-  return parseInt(ced, 10) >= 80000000 ? 'E' : 'V';
-}
-
-// Extension del archivo segun el MIME (para nombrar el objeto en Storage).
+function cedKind(ced) { return parseInt(ced, 10) >= 80000000 ? 'E' : 'V'; }
 function extFromMime(mime) {
   const m = String(mime || '').toLowerCase();
   if (m.includes('png')) return 'png';
@@ -132,15 +109,9 @@ function extFromMime(mime) {
   return 'jpg';
 }
 
-// ¿el usuario tiene acceso a esta company_code? Tienda: solo la suya.
-// Admin: superadmin = todas; admin normal = las de su alcance
-// (get_admin_companies). Defensa server-side: el front nunca decide el
-// acceso por si solo.
 async function userCanAccess(env, user, cc) {
   if (!user || !cc) return false;
-  if (user.kind === 'company') {
-    return String(user.companyCode || '') === String(cc);
-  }
+  if (user.kind === 'company') return String(user.companyCode || '') === String(cc);
   if (user.kind === 'admin' && user.id) {
     const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
     if (!a || !a.length) return false;
@@ -154,7 +125,6 @@ async function userCanAccess(env, user, cc) {
 }
 
 /* ===================== Handler ===================== */
-
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'JSON invalido' }, 400); }
@@ -164,13 +134,12 @@ export async function onRequestPost({ request, env }) {
   const user = body.user || null;
 
   try {
-    if (!cc) return json({ ok: false, error: 'Falta la tienda.' }, 400);
-    if (!(await userCanAccess(env, user, cc))) {
-      return json({ ok: false, error: 'No tienes acceso a esta tienda.' }, 403);
-    }
+    if (!cc) return json({ ok: false, error: 'Falta la empresa.' }, 400);
+    if (!(await userCanAccess(env, user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
 
     if (action === 'directory') return await directory(env, cc);
     if (action === 'save') return await savePhoto(env, cc, body);
+    if (action === 'save_profile') return await saveProfile(env, cc, body);
     if (action === 'remove') return await removePhoto(env, cc, body);
 
     return json({ ok: false, error: 'Accion no reconocida' }, 400);
@@ -179,48 +148,88 @@ export async function onRequestPost({ request, env }) {
   }
 }
 
-/* Directorio: roster de la tienda (store_workers) cruzado con la foto de
-   workers_master (por cedula). Devuelve por persona: cedula, nombre, cargo,
-   estado de egreso, si tiene foto y la URL firmada de la MINIATURA (para el
-   grid). La foto completa no se firma aqui (se usa al exportar a AX). */
+/* ---------- DIRECTORY ---------- */
 async function directory(env, cc) {
+  // Datos de la empresa (cabecera de la ficha). Zona/subzona/concepto por id.
+  const compRows = await sb(env,
+    `companies?company_code=eq.${encodeURIComponent(cc)}`
+    + `&select=company_code,business_name,tax_id,status,zone_id,subzone_id,concept_id`);
+  const comp = (compRows && compRows[0]) || { company_code: cc };
+  const [zoneR, subR, conR] = await Promise.all([
+    comp.zone_id ? sb(env, `zones?id=eq.${encodeURIComponent(comp.zone_id)}&select=name`) : Promise.resolve(null),
+    comp.subzone_id ? sb(env, `subzones?id=eq.${encodeURIComponent(comp.subzone_id)}&select=name`) : Promise.resolve(null),
+    comp.concept_id ? sb(env, `concepts?id=eq.${encodeURIComponent(comp.concept_id)}&select=name`) : Promise.resolve(null),
+  ]);
+  const company = {
+    code: comp.company_code,
+    business_name: comp.business_name || null,
+    tax_id: comp.tax_id || null,
+    status: comp.status || null,
+    zone: zoneR && zoneR[0] ? zoneR[0].name : null,
+    subzone: subR && subR[0] ? subR[0].name : null,
+    concept: conR && conR[0] ? conR[0].name : null,
+  };
+
+  // Catalogo de bancos activos -> mapa prefijo:nombre (mostrar/validar cuenta).
+  const banks = await sb(env, 'bancos?is_active=eq.true&select=code,name&order=code');
+  const bankMap = {};
+  (banks || []).forEach(b => { bankMap[b.code] = b.name; });
+
+  // Roster de la empresa.
   const workers = await sb(env,
     `store_workers?company_code=eq.${encodeURIComponent(cc)}`
     + `&select=id_number,full_name,role,end_date&order=full_name.asc`);
   const ceds = (workers || []).map(w => w.id_number).filter(Boolean);
 
-  // Traer de la maestra solo los de este roster (filtro IN por cedula).
+  // Maestra de los de este roster.
   let masterByCed = {};
   if (ceds.length) {
-    // PostgREST: in.(a,b,c) con las cedulas escapadas.
     const inList = ceds.map(c => `"${c}"`).join(',');
     const master = await sb(env,
       `workers_master?id_number=in.(${inList})`
-      + `&select=id_number,photo_thumb_path,photo_full_path,photo_uploaded_at`);
+      + `&select=id_number,first_name,second_name,last_names,full_name,role,birth_date,gender,marital_status,`
+      + `account_number,bank_code,phone,email,address,data_id,`
+      + `photo_thumb_path,photo_full_path,photo_uploaded_by,photo_uploaded_at,updated_at`);
     (master || []).forEach(m => { masterByCed[m.id_number] = m; });
   }
 
-  // Firmar la miniatura de quienes tengan foto (en paralelo).
   const items = await Promise.all((workers || []).map(async w => {
     const m = masterByCed[w.id_number] || {};
     const hasPhoto = !!m.photo_thumb_path;
     const thumbUrl = hasPhoto ? await storageSignedUrl(env, m.photo_thumb_path) : null;
+    const fullUrl = m.photo_full_path ? await storageSignedUrl(env, m.photo_full_path) : null;
     return {
       id_number: w.id_number,
       ced_kind: cedKind(w.id_number),
-      full_name: w.full_name,
-      role: w.role || null,
+      // Nombre: el de la maestra si existe; si no, el del roster.
+      full_name: m.full_name || w.full_name,
+      first_name: m.first_name || null,
+      second_name: m.second_name || null,
+      last_names: m.last_names || null,
+      role: m.role || w.role || null,
       end_date: w.end_date || null,
+      birth_date: m.birth_date || null,
+      gender: m.gender || null,
+      marital_status: m.marital_status || null,
+      account_number: m.account_number || null,
+      bank_code: m.bank_code || null,
+      phone: m.phone || null,
+      email: m.email || null,
+      address: m.address || null,
+      data_id: m.data_id || null,
       has_photo: hasPhoto,
       thumb_url: thumbUrl,
-      photo_uploaded_at: m.photo_uploaded_at || null,
+      full_url: fullUrl,
+      photo_uploaded_by: m.photo_uploaded_by || null,
+      updated_at: m.updated_at || null,
     };
   }));
 
   const withPhoto = items.filter(i => i.has_photo).length;
   return json({
     ok: true,
-    company_code: cc,
+    company,
+    bank_map: bankMap,
     total: items.length,
     with_photo: withPhoto,
     pending: items.length - withPhoto,
@@ -228,50 +237,33 @@ async function directory(env, cc) {
   });
 }
 
-/* Guardar foto: sube las dos versiones (ya comprimidas en el navegador) al
-   bucket y graba rutas + metadatos en workers_master por cedula. La persona
-   debe existir en la maestra (se crea al cargar el Reporte 10); si por algun
-   motivo no existe, se inserta minima con el nombre del roster. */
+/* ---------- SAVE (foto) ---------- */
 async function savePhoto(env, cc, body) {
   const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
-  if (!ced || ced.length < 6 || ced.length > 8) {
-    return json({ ok: false, error: 'Cedula invalida.' }, 400);
-  }
-  // La persona debe pertenecer al roster de esta tienda (no subir foto a
-  // alguien de otra tienda desde aqui).
+  if (!ced || ced.length < 6 || ced.length > 8) return json({ ok: false, error: 'Cedula invalida.' }, 400);
+
   const inStore = await sb(env,
     `store_workers?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}&select=id_number,full_name,first_name,second_name,last_names`);
-  if (!inStore || !inStore.length) {
-    return json({ ok: false, error: 'Ese trabajador no esta en la lista de la tienda.' }, 404);
-  }
+  if (!inStore || !inStore.length) return json({ ok: false, error: 'Ese trabajador no esta en la lista de la empresa.' }, 404);
 
   const fullB64 = String(body.full_b64 || '');
   const thumbB64 = String(body.thumb_b64 || '');
-  if (!fullB64 || !thumbB64) {
-    return json({ ok: false, error: 'Faltan las imagenes (completa y miniatura).' }, 400);
-  }
+  if (!fullB64 || !thumbB64) return json({ ok: false, error: 'Faltan las imagenes (grande y miniatura).' }, 400);
+
   const mime = String(body.mime || 'image/jpeg');
   const ext = extFromMime(mime);
-
-  // Validar peso real de la version completa (defensa server-side: el front
-  // ya comprime, pero no se confia). Limite del bucket: 1 MB.
   const fullBytes = b64ToBytes(fullB64);
   const thumbBytes = b64ToBytes(thumbB64);
-  if (fullBytes.length > 1024 * 1024) {
-    return json({ ok: false, error: 'La foto pesa mas de 1 MB. Reintenta (deberia comprimirse sola).' }, 413);
+  if (fullBytes.length > MAX_FULL_BYTES) {
+    return json({ ok: false, error: 'La foto pesa demasiado. Reintenta (deberia comprimirse sola).' }, 413);
   }
 
-  // Rutas estables por cedula (con tipo V/E para legibilidad). Mismo nombre
-  // siempre -> al cambiar la foto se sobreescribe (x-upsert).
   const tag = `${cedKind(ced)}-${ced}`;
   const fullPath = `full/${tag}.${ext}`;
   const thumbPath = `thumb/${tag}.${ext}`;
-
-  // Subir ambas versiones.
   await storageUpload(env, fullPath, fullBytes, mime);
   await storageUpload(env, thumbPath, thumbBytes, mime);
 
-  // Metadatos de la foto.
   const photoPatch = {
     photo_full_path: fullPath,
     photo_thumb_path: thumbPath,
@@ -283,48 +275,88 @@ async function savePhoto(env, cc, body) {
     last_source_company: cc,
   };
 
-  // Upsert por cedula: si ya existe en la maestra, solo actualiza la foto;
-  // si no existe (caso raro), la crea con el nombre del roster.
   const exists = await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=id_number`);
   if (exists && exists.length) {
-    await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
-      method: 'PATCH', body: JSON.stringify(photoPatch),
-    });
+    await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, { method: 'PATCH', body: JSON.stringify(photoPatch) });
   } else {
     const w = inStore[0];
     await sb(env, 'workers_master', {
       method: 'POST',
       body: JSON.stringify({
-        id_number: ced,
-        ced_kind: cedKind(ced),
-        full_name: w.full_name,
-        first_name: w.first_name || null,
-        second_name: w.second_name || null,
-        last_names: w.last_names || null,
+        id_number: ced, ced_kind: cedKind(ced), full_name: w.full_name,
+        first_name: w.first_name || null, second_name: w.second_name || null, last_names: w.last_names || null,
         ...photoPatch,
       }),
     });
   }
 
-  // Devolver la URL firmada de la miniatura recien subida (para refrescar el
-  // grid sin recargar todo).
-  const thumbUrl = await storageSignedUrl(env, thumbPath);
-  return json({
-    ok: true,
-    id_number: ced,
-    thumb_url: thumbUrl,
-    bytes: fullBytes.length,
-  });
+  const [thumbUrl, fullUrl] = await Promise.all([storageSignedUrl(env, thumbPath), storageSignedUrl(env, fullPath)]);
+  return json({ ok: true, id_number: ced, thumb_url: thumbUrl, full_url: fullUrl, bytes: fullBytes.length });
 }
 
-/* Quitar foto: borra del bucket y limpia las columnas photo_* en la maestra.
-   El registro de la persona (y sus demas datos) se conserva. */
+/* ---------- SAVE_PROFILE (datos de la persona) ---------- */
+async function saveProfile(env, cc, body) {
+  const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
+  if (!ced || ced.length < 6 || ced.length > 8) return json({ ok: false, error: 'Cedula invalida.' }, 400);
+  const p = body.profile || {};
+
+  // La persona debe pertenecer al roster de esta empresa.
+  const inStore = await sb(env,
+    `store_workers?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}&select=id_number,full_name`);
+  if (!inStore || !inStore.length) return json({ ok: false, error: 'Ese trabajador no esta en la lista de la empresa.' }, 404);
+
+  // Validaciones server-side (defensa).
+  const acc = p.account_number ? String(p.account_number).replace(/\D/g, '') : null;
+  if (acc) {
+    if (acc.length !== 20) return json({ ok: false, error: 'La cuenta debe tener 20 digitos.' }, 400);
+    const bk = await sb(env, `bancos?code=eq.${encodeURIComponent(acc.slice(0, 4))}&is_active=eq.true&select=code`);
+    if (!bk || !bk.length) return json({ ok: false, error: `Prefijo de banco ${acc.slice(0, 4)} no valido.` }, 400);
+  }
+  let phone = p.phone ? String(p.phone).replace(/[^\d+]/g, '') : null;
+  if (phone) {
+    let nat = phone.startsWith('+58') ? '0' + phone.slice(3) : phone;
+    if (!/^0\d{10}$/.test(nat)) return json({ ok: false, error: 'Telefono no valido (04XX-XXXXXXX).' }, 400);
+    phone = '+58' + nat.slice(1);
+  }
+  if (p.gender && !['M', 'F'].includes(p.gender)) return json({ ok: false, error: 'Genero invalido.' }, 400);
+  if (p.marital_status && !['S', 'C', 'D', 'V'].includes(p.marital_status)) return json({ ok: false, error: 'Estado civil invalido.' }, 400);
+  if (p.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email)) return json({ ok: false, error: 'Correo invalido.' }, 400);
+
+  const patch = {
+    first_name: p.first_name || null,
+    second_name: p.second_name || null,
+    last_names: p.last_names || null,
+    full_name: p.full_name || null,
+    role: p.role || null,
+    birth_date: p.birth_date || null,
+    gender: p.gender || null,
+    marital_status: p.marital_status || null,
+    account_number: acc,
+    bank_code: acc ? acc.slice(0, 4) : null,
+    phone: phone,
+    email: p.email || null,
+    address: p.address || null,
+    last_source_company: cc,
+  };
+
+  const exists = await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=id_number`);
+  if (exists && exists.length) {
+    await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, { method: 'PATCH', body: JSON.stringify(patch) });
+  } else {
+    await sb(env, 'workers_master', {
+      method: 'POST',
+      body: JSON.stringify({ id_number: ced, ced_kind: cedKind(ced), ...patch }),
+    });
+  }
+  return json({ ok: true, id_number: ced });
+}
+
+/* ---------- REMOVE (foto) ---------- */
 async function removePhoto(env, cc, body) {
   const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
   if (!ced) return json({ ok: false, error: 'Cedula invalida.' }, 400);
 
-  const rows = await sb(env,
-    `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=photo_full_path,photo_thumb_path`);
+  const rows = await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=photo_full_path,photo_thumb_path`);
   const m = rows && rows[0];
   if (m) {
     await storageRemove(env, [m.photo_full_path, m.photo_thumb_path].filter(Boolean));

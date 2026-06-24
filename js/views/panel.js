@@ -65,7 +65,7 @@ function shell(user) {
 
   // Navegación según rol: la tienda ve "Mi empresa" y su "Historial".
   const navItems = isCompany
-    ? [['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Fichas y fotos'], ['historial', I.history, 'Historial']]
+    ? [['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['historial', I.history, 'Historial']]
     : NAV.filter(n => n[3] !== 'superonly' || isSuper);
 
   return `
@@ -73,7 +73,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.73</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.82</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -279,7 +279,7 @@ function viewTiendas(user) {
         <td>${contacto}</td>
         <td>${statusPill(c.status)}</td>
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
-        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" style="margin-right:4px">Fotos</button><button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button></td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" style="margin-right:4px">Personal</button><button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button></td>
       </tr>`;
     }).join('') || '<tr><td colspan="8" class="empty">Sin resultados.</td></tr>';
 
