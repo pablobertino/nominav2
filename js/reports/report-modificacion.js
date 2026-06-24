@@ -51,6 +51,9 @@ async function loadCatalogs() {
 function maritalLabel(v) {
   return ({ S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a' })[v] || v;
 }
+function genderLabel(v) {
+  return ({ M: 'Masculino', F: 'Femenino' })[v] || v;
+}
 
 /* ¿el trabajador ya tiene al menos un cambio configurado? */
 function modifComplete(w) {
@@ -71,6 +74,7 @@ function changesSummary(w) {
   if ('correo' in ch) out.push(['Correo', ch.correo]);
   if ('direccion' in ch) out.push(['Dirección', ch.direccion]);
   if ('estCivil' in ch) out.push(['Estado civil', maritalLabel(ch.estCivil)]);
+  if ('sexo' in ch) out.push(['Sexo', genderLabel(ch.sexo)]);
   if ('fechaNac' in ch) out.push(['Fecha de nacimiento', ch.fechaNac]);
   if ('todoTicket' in ch) out.push(['TodoTicket', ch.todoTicket === 'S' ? 'Sí' : 'No']);
   return out;
@@ -245,6 +249,9 @@ function validateField(kind, raw) {
       return { ok: true, val: v.toUpperCase() };
     case 'nameopt':
       return { ok: true, val: v.toUpperCase() };
+    case 'gender':
+      if (v !== 'M' && v !== 'F') return { ok: false, msg: 'Selecciona M o F.' };
+      return { ok: true, val: v };
     case 'birthdate': {
       if (!/^\d{4}-\d{2}-\d{2}$/.test(v)) return { ok: false, msg: 'Fecha inválida.' };
       const age = (Date.now() - new Date(v)) / (365.25 * 864e5);
@@ -278,6 +285,7 @@ function currentValue(w, code) {
     case 'correo': return r.email || '';
     case 'direccion': return r.address || '';
     case 'estCivil': return r.marital_status || '';
+    case 'sexo': return r.gender || '';
     case 'fechaNac': return r.birth_date ? String(r.birth_date).slice(0, 10) : '';
     case 'todoTicket': return r.todo_ticket || '';
     default: return '';
@@ -360,6 +368,10 @@ function openModifModal(ctx, id) {
           ${nameInput('first_name', 'Primer nombre', draft.first_name)}
           ${nameInput('second_name', 'Segundo nombre', draft.second_name, true)}
           ${nameInput('last_names', 'Apellidos', draft.last_names)}
+          <div class="mo-fullname">
+            <span class="l">Nombre completo</span>
+            <span class="v" data-fullname>${esc(joinName(draft))}</span>
+          </div>
         </div>`;
     }
     const cur = draft[code];
@@ -374,6 +386,15 @@ function openModifModal(ctx, id) {
       const MAR = [['S', 'Soltero/a'], ['C', 'Casado/a'], ['D', 'Divorciado/a'], ['V', 'Viudo/a']];
       let o = `<option value="">— sin seleccionar —</option>`;
       MAR.forEach(([v, t]) => { o += `<option value="${v}" ${cur === v ? 'selected' : ''}>${t}</option>`; });
+      return `<select data-code="${code}">${o}</select>`;
+    }
+    if (f.input_kind === 'gender') {
+      // Sexo: combo M/F. SIN preseleccion si el roster no lo conoce (sale
+      // vacio al modificar, no marca cambio falso). Si el dato existe, viene
+      // ya seleccionado para que se vea el actual.
+      const GEN = [['M', 'Masculino'], ['F', 'Femenino']];
+      let o = `<option value="">— sin seleccionar —</option>`;
+      GEN.forEach(([v, t]) => { o += `<option value="${v}" ${cur === v ? 'selected' : ''}>${t}</option>`; });
       return `<select data-code="${code}">${o}</select>`;
     }
     if (f.input_kind === 'todoticket') {
@@ -393,6 +414,10 @@ function openModifModal(ctx, id) {
       <label class="flabel">${label}${opt ? ' <span class="opt">(opcional)</span>' : ''}</label>
       <input type="text" data-code="${key}" value="${esc(val)}">
     </div>`;
+  }
+  // Nombre completo armado a partir del draft (primer + segundo + apellidos).
+  function joinName(d) {
+    return [d.first_name, d.second_name, d.last_names].map(s => String(s || '').trim()).filter(Boolean).join(' ');
   }
 
   function renderFields() {
@@ -414,6 +439,11 @@ function openModifModal(ctx, id) {
   function onEdit(e) {
     const code = e.target.dataset.code;
     draft[code] = e.target.value;
+    // Refrescar el nombre completo armado en vivo cuando cambia una de sus partes.
+    if (code === 'first_name' || code === 'second_name' || code === 'last_names') {
+      const fn = q('[data-fullname]');
+      if (fn) fn.textContent = joinName(draft);
+    }
     refresh();
   }
 
@@ -500,6 +530,7 @@ function openModifModal(ctx, id) {
       else if (code === 'correo') out.push(['Correo', draft.correo]);
       else if (code === 'direccion') out.push(['Dirección', draft.direccion]);
       else if (code === 'estCivil') out.push(['Estado civil', maritalLabel(draft.estCivil)]);
+      else if (code === 'sexo') out.push(['Sexo', genderLabel(draft.sexo)]);
       else if (code === 'fechaNac') out.push(['Fecha de nacimiento', draft.fechaNac]);
       else if (code === 'todoTicket') out.push(['TodoTicket', draft.todoTicket === 'S' ? 'Sí' : 'No']);
     });

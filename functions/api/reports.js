@@ -2130,6 +2130,16 @@ async function submitModificacion(env, body) {
       }
     }
 
+    // --- Sexo / Genero (input_kind 'gender'): M/F ---
+    if ('sexo' in changes) {
+      if (!hasField('sexo')) { errors.push(`${tag}: el sexo no es modificable.`); lineErr = true; }
+      else {
+        const sx = String(changes.sexo || '').trim().toUpperCase();
+        if (!['M', 'F'].includes(sx)) { errors.push(`${tag}: sexo invalido (M/F).`); lineErr = true; }
+        else push('sexo', sx);
+      }
+    }
+
     // --- Fecha de nacimiento (input_kind 'birthdate'): mayor de 18 ---
     if ('fechaNac' in changes) {
       if (!hasField('fechaNac')) { errors.push(`${tag}: la fecha de nacimiento no es modificable.`); lineErr = true; }
@@ -2284,6 +2294,7 @@ async function submitModificacion(env, body) {
     if ('correo' in ch) parts.push(['Correo', ch.correo]);
     if ('direccion' in ch) parts.push(['Direccion', ch.direccion]);
     if ('estCivil' in ch) parts.push(['Estado civil', maritalLbl[ch.estCivil] || ch.estCivil]);
+    if ('sexo' in ch) parts.push(['Sexo', ch.sexo === 'M' ? 'Masculino' : (ch.sexo === 'F' ? 'Femenino' : ch.sexo)]);
     if ('fechaNac' in ch) parts.push(['Fecha de nacimiento', dmy(ch.fechaNac)]);
     if ('todoTicket' in ch) parts.push(['TodoTicket', ch.todoTicket === 'S' ? 'Si' : 'No']);
     return parts;
@@ -2352,7 +2363,7 @@ async function submitModificacion(env, body) {
             fechaNac: ('fechaNac' in ch) ? ch.fechaNac : '',
             estCivil: ('estCivil' in ch) ? ch.estCivil : '',
             telefono: ('telefono' in ch) ? ch.telefono : '',
-            genero: '',   // el genero no es modificable
+            genero: ('sexo' in ch) ? ch.sexo : '',   // solo va si se modifico
             cuenta: ('cuenta' in ch) ? ch.cuenta : '',
             todoTicket: ('todoTicket' in ch) ? ch.todoTicket : '',
           };

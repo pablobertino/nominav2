@@ -768,9 +768,20 @@
 /* el nombre se despliega en 3 sub-campos: ocupa todo el ancho de la fila */
 .mo-frow[data-row="nombre"] { grid-template-columns:150px 1fr; grid-template-areas:"name ctrl" ". err"; }
 .mo-frow[data-row="nombre"] .mo-fstatus { display:none; }
-.mo-namegrid { display:grid; grid-template-columns:1fr 1fr 1fr; gap:10px; align-items:start; }
-.mo-namegrid > div { display:flex; flex-direction:column; }
-.mo-namegrid .flabel { font-size:11px; min-height:30px; display:flex; align-items:flex-start; line-height:1.3; }
+/* el nombre se despliega en 3 sub-campos APILADOS (uno por linea) para que
+   se lean y editen completos (los apellidos no caben en columna). Debajo,
+   el nombre completo armado en una banda NO editable. */
+.mo-namegrid { display:flex; flex-direction:column; gap:9px; }
+.mo-namegrid > div { display:flex; flex-direction:column; gap:3px; }
+.mo-namegrid .flabel { font-size:11px; line-height:1.3; color:var(--muted); }
+/* nombre completo armado (solo lectura) bajo los 3 campos */
+.mo-fullname { display:flex; align-items:baseline; gap:8px; margin-top:2px;
+  background:#f1f5f9; border:1px solid var(--border); border-radius:var(--radius-sm);
+  padding:7px 11px; }
+.mo-fullname .l { font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.04em;
+  color:var(--faint); flex-shrink:0; }
+.mo-fullname .v { font-size:13.5px; font-weight:600; color:var(--ink); word-break:break-word; }
+.mo-fullname .v:empty::after { content:'—'; color:var(--faint); font-weight:400; }
 /* estado "sin cambio" / "sin dato" (texto tenue, no pill) */
 .mo-same { font-size:11px; color:var(--faint); }
 .mo-empty { font-size:11px; color:var(--muted); font-style:italic; }
@@ -793,6 +804,5 @@
 @media (max-width:560px) {
   .mo-frow { grid-template-columns:1fr; grid-template-areas:"name" "ctrl" "status" "err"; }
   .mo-fstatus { text-align:left; }
-  .mo-namegrid { grid-template-columns:1fr; }
   .mo-summary .k { flex-basis:auto; }
 }
