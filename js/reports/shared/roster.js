@@ -79,6 +79,58 @@ function excelDateToISO(v) {
   return null;
 }
 
+/* Particulas de apellido/nombre venezolano que se pegan a la palabra
+   SIGUIENTE para no romper apellidos compuestos (DEL VALLE, DE LOS ANGELES,
+   LA CRUZ). En mayusculas, sin acentos (el nombre ya se normaliza asi). */
+const NAME_PARTICLES = new Set(['DE', 'DEL', 'LA', 'LAS', 'LOS', 'SAN', 'SANTA', 'Y']);
+
+/* Divide un nombre completo en { first_name, second_name, last_names }.
+   Regla acordada (2 apellidos + particulas), pensada para el formato
+   venezolano [nombre] [2do nombre] [apellido1] [apellido2]:
+     1) Se agrupan las particulas con la palabra siguiente -> tokens.
+     2) Segun cuantos tokens queden:
+          1 token  -> solo first.
+          2 tokens -> first + un apellido.
+          3 tokens -> first + dos apellidos (sin segundo nombre).
+          4+ tokens-> first = tok[0]; apellidos = los DOS ultimos tokens;
+                      second = lo del medio (unido).
+   No es perfecto con nombres de 3 palabras (ambiguos) ni compuestos raros;
+   por eso first/second/last quedan EDITABLES en BD. Acierta ~80%+ del
+   formato real, que es lo esperable sin un diccionario de apellidos. */
+export function splitFullName(full) {
+  const norm = String(full || '')
+    .toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\s+/g, ' ').trim();
+  if (!norm) return { first_name: '', second_name: '', last_names: '' };
+  const raw = norm.split(' ');
+  // Agrupar particulas (incluye particulas consecutivas: DE LOS ANGELES).
+  const toks = [];
+  let i = 0;
+  while (i < raw.length) {
+    const w = raw[i];
+    if (NAME_PARTICLES.has(w) && i + 1 < raw.length) {
+      let part = w;
+      let j = i + 1;
+      while (j + 1 < raw.length && NAME_PARTICLES.has(raw[j])) { part += ' ' + raw[j]; j++; }
+      part += ' ' + raw[j];
+      toks.push(part);
+      i = j + 1;
+    } else {
+      toks.push(w);
+      i++;
+    }
+  }
+  const n = toks.length;
+  if (n === 1) return { first_name: toks[0], second_name: '', last_names: '' };
+  if (n === 2) return { first_name: toks[0], second_name: '', last_names: toks[1] };
+  if (n === 3) return { first_name: toks[0], second_name: '', last_names: `${toks[1]} ${toks[2]}` };
+  return {
+    first_name: toks[0],
+    second_name: toks.slice(1, -2).join(' '),
+    last_names: `${toks[n - 2]} ${toks[n - 1]}`,
+  };
+}
+
 /**
  * Parsea un File del Reporte 10. Devuelve { rows, fileName, columnsFound,
  * missing } donde rows son objetos {id_number, full_name, role,
@@ -134,8 +186,14 @@ export async function parseReport10(file) {
       if (t) todo_ticket = (t === 'SI' || t === 'S') ? 'S' : 'N';
     }
     const data_id = colIdx.data_id_raw != null ? (String(row[colIdx.data_id_raw] ?? '').trim() || null) : null;
+    // Dividir el nombre completo en partes (lo que AX necesita): primer
+    // nombre, segundo nombre y apellidos. Heuristica 2-apellidos + particulas.
+    const np = splitFullName(full_name);
     rows.push({
       id_number, full_name, role,
+      first_name: np.first_name || null,
+      second_name: np.second_name || null,
+      last_names: np.last_names || null,
       has_biometric: bioRaw ? /activ/i.test(bioRaw) : true,
       start_date, end_date,
       account_number, todo_ticket, data_id,

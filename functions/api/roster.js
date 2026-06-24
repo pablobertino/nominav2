@@ -136,7 +136,11 @@ function normalizeRow(row) {
   const tt = String(row.todo_ticket ?? '').trim().toUpperCase();
   const todo_ticket = (tt === 'S' || tt === 'N') ? tt : null;
   const data_id = (row.data_id ?? '').toString().trim() || null;
-  return { id_number, full_name, role, end_date, start_date, has_biometric, account_number, todo_ticket, data_id };
+  // Nombre dividido (el front ya lo separo con la heuristica 2-apellidos).
+  const first_name = (row.first_name ?? '').toString().trim() || null;
+  const second_name = (row.second_name ?? '').toString().trim() || null;
+  const last_names = (row.last_names ?? '').toString().trim() || null;
+  return { id_number, full_name, role, end_date, start_date, has_biometric, account_number, todo_ticket, data_id, first_name, second_name, last_names };
 }
 
 export async function onRequestPost({ request, env }) {
@@ -150,7 +154,7 @@ export async function onRequestPost({ request, env }) {
       if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);
       const workers = await sb(env,
         `store_workers?company_code=eq.${encodeURIComponent(cc)}`
-        + `&select=id_number,full_name,role,has_biometric,start_date,end_date,is_active,account_number,phone,email,gender,marital_status,birth_date,address,todo_ticket,data_id&order=full_name.asc`);
+        + `&select=id_number,full_name,role,has_biometric,start_date,end_date,is_active,account_number,phone,email,gender,marital_status,birth_date,address,todo_ticket,data_id,first_name,second_name,last_names&order=full_name.asc`);
       // Marcar cada trabajador con su rol de responsable detectado
       // (manager_role: 'Gerente'|'Sub-Gerente'|null) y, si el catalogo de
       // cargos lo resuelve, tambien el cargo canonico (cargo_code/label)
@@ -236,6 +240,9 @@ export async function onRequestPost({ request, env }) {
         account_number: r.account_number,
         todo_ticket: r.todo_ticket,
         data_id: r.data_id,
+        first_name: r.first_name,
+        second_name: r.second_name,
+        last_names: r.last_names,
       }));
       await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify(payload) });
 
