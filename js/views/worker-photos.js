@@ -102,6 +102,26 @@ function phoneDisplay(e164) { const s = phoneNat(e164); return /^\d{11}$/.test(s
 const GEN = { M: 'Masculino', F: 'Femenino' };
 const CIV = { S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a' };
 
+/* Iniciales para el avatar "sin foto": primera letra del primer nombre y
+   primera del primer apellido. Si solo hay una palabra, usa sus dos primeras
+   letras. Sirve para dar identidad visual aunque falte la foto. */
+function initialsOf(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+/* Color de fondo suave estable por cedula (mismo color siempre para la misma
+   persona). Paleta clara y discreta, en armonia con los tokens del portal. */
+const AVATAR_BG = ['#dbeafe', '#fae8ff', '#dcfce7', '#fef9c3', '#fee2e2', '#e0e7ff', '#ccfbf1', '#ffedd5'];
+const AVATAR_FG = ['#1e40af', '#86198f', '#166534', '#854d0e', '#991b1b', '#3730a3', '#0f766e', '#9a3412'];
+function avatarColor(seed) {
+  const s = String(seed || '');
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % AVATAR_BG.length;
+}
+
 /* ===================== ESTADO ===================== */
 let STATE = null;   // { user, cc, onExit, workers, q, company, banks, bankMap }
 
@@ -164,9 +184,13 @@ function paintGrid() {
     !q || (w.full_name || '').toLowerCase().includes(q) || (w.id_number || '').includes(q));
 
   grid.innerHTML = list.map(w => {
+    const ci = avatarColor(w.id_number);
     const photo = w.thumb_url
       ? `<img src="${w.thumb_url}" alt="${esc(w.full_name)}" loading="lazy">`
-      : `<div class="wp-empty"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg><span>Sin foto</span></div>`;
+      : `<div class="wp-empty">`
+        + `<div class="wp-initials" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>`
+        + `<span class="wp-nophoto"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>Sin foto</span>`
+        + `</div>`;
     const badge = w.has_photo
       ? '<span class="wp-badge has">✓ cargada</span>'
       : '<span class="wp-badge no">pendiente</span>';

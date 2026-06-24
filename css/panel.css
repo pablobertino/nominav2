@@ -818,8 +818,13 @@
 .wp-photo { position:relative; aspect-ratio:1/1; background:var(--border-soft); display:flex;
   align-items:center; justify-content:center; cursor:pointer; }
 .wp-photo img { width:100%; height:100%; object-fit:cover; display:block; }
-.wp-empty { display:flex; flex-direction:column; align-items:center; gap:6px; color:var(--faint); }
+.wp-empty { display:flex; flex-direction:column; align-items:center; gap:8px; color:var(--faint); }
 .wp-empty span { font-size:11.5px; }
+/* avatar de iniciales cuando no hay foto (combina con el texto "Sin foto") */
+.wp-initials { width:60px; height:60px; border-radius:50%; display:flex; align-items:center; justify-content:center;
+  font-size:22px; font-weight:700; letter-spacing:.02em; line-height:1; }
+.wp-nophoto { display:inline-flex; align-items:center; gap:4px; font-size:11px; color:var(--faint); }
+.wp-nophoto svg { opacity:.85; }
 .wp-badge { position:absolute; top:8px; right:8px; font-size:10.5px; font-weight:600; padding:3px 8px; border-radius:20px; }
 .wp-badge.has { background:var(--success-bg); color:var(--success); }
 .wp-badge.no { background:var(--warn-bg); color:var(--warn); }
