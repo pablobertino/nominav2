@@ -89,6 +89,38 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
+    // 3) Intentar como Usuario de Empresa (username o email). Una persona que
+    //    reporta para una o varias combinaciones Empresa+Departamento.
+    const euFilter = isEmail
+      ? `email=eq.${encodeURIComponent(identifier)}`
+      : `username=eq.${encodeURIComponent(identifier)}`;
+    const eus = await sb(env, `enterprise_users?${euFilter}&is_active=eq.true&select=id,name,username,email,role:cargo_code,password_hash,must_change_password`);
+
+    if (eus.length) {
+      const u = eus[0];
+      if (u.password_hash !== hash) return json({ ok: false, error: 'Credenciales incorrectas.' }, 401);
+      // Cargar su alcance: pares Empresa+Departamento (con nombres legibles).
+      const scope = await sb(env,
+        `enterprise_user_scope?enterprise_user_id=eq.${u.id}`
+        + `&select=company_code,department_id,`
+        + `companies(business_name,tax_id,company_type),`
+        + `departments(name)`);
+      const combos = (scope || []).map(s => ({
+        companyCode: s.company_code,
+        departmentId: s.department_id,
+        companyName: s.companies ? s.companies.business_name : null,
+        companyType: s.companies ? s.companies.company_type : null,
+        departmentName: s.departments ? s.departments.name : null,
+      }));
+      return json({
+        ok: true,
+        user: { kind: 'enterprise', id: u.id, name: u.name, username: u.username,
+                email: u.email || null, cargo: u.role || null,
+                mustChangePassword: u.must_change_password,
+                combos },
+      });
+    }
+
     return json({ ok: false, error: 'Credenciales incorrectas.' }, 401);
   } catch (err) {
     return json({ ok: false, error: 'Error del servidor: ' + err.message }, 500);

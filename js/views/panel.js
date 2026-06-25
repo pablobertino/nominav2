@@ -16,6 +16,7 @@ import { modificacionReport } from '../reports/report-modificacion.js';
 import { renderHistory } from '../reports/history.js';
 import { renderWorkerPhotos } from './worker-photos.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
+import { renderDepartmentCargos } from './department-cargos.js';
 
 let CATALOG = null;       // { companies, zones, subzones, concepts }
 let currentView = 'tiendas';
@@ -76,7 +77,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.89</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.90</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1642,6 +1643,8 @@ async function viewConfig(user) {
         <button class="cfg-side-item" data-tab="car"><span class="cfg-side-ic">👔</span> Cargos</button>
         <button class="cfg-side-item" data-tab="ban"><span class="cfg-side-ic">🏦</span> Bancos</button>
         <button class="cfg-side-item" data-tab="ope"><span class="cfg-side-ic">📱</span> Operadoras</button>
+        <div class="cfg-side-group">Empresas</div>
+        <button class="cfg-side-item" data-tab="depcargos"><span class="cfg-side-ic">🏷️</span> Cargos de departamento</button>
         <div class="cfg-side-group">Documentos</div>
         <button class="cfg-side-item" data-tab="dingreso"><span class="cfg-side-ic">➕</span> Ingresos</button>
         <button class="cfg-side-item" data-tab="degreso"><span class="cfg-side-ic">🔴</span> Egresos</button>
@@ -1666,6 +1669,7 @@ function cfgRenderTab(user) {
   else if (CFG_TAB === 'car') cfgRenderCargos(user, body);
   else if (CFG_TAB === 'ban') cfgRenderBancos(user, body);
   else if (CFG_TAB === 'ope') cfgRenderOperadoras(user, body);
+  else if (CFG_TAB === 'depcargos') renderDepartmentCargos(user, body);
   else if (CFG_TAB === 'dingreso') cfgRenderIncDocs(user, body, 'ingreso');
   else if (CFG_TAB === 'degreso') cfgRenderIncDocs(user, body, 'egreso');
   else if (CFG_TAB === 'cor') cfgRenderCorte(user, body);
