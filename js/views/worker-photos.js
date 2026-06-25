@@ -55,6 +55,26 @@ function fileToImage(file) {
     fr.readAsDataURL(file);
   });
 }
+/* ---------- Recorte cuadrado desde un viewport (arrastrar + zoom) ----------
+   Dado el <img> original, una escala y un offset (x,y) en pixeles relativos a
+   un stage cuadrado de lado STAGE, genera la version cuadrada de lado `side`.
+   Es la misma matematica del recortador: que porcion de la imagen original
+   cae dentro del stage segun la escala y el desplazamiento elegidos. */
+function cropFromViewport(img, view, side, quality) {
+  const cv = document.createElement('canvas');
+  cv.width = side; cv.height = side;
+  const cx = cv.getContext('2d');
+  cx.fillStyle = '#ffffff'; cx.fillRect(0, 0, side, side);
+  // porcion de la imagen original visible en el stage
+  const sx = -view.x / view.scale;
+  const sy = -view.y / view.scale;
+  const sw = view.stage / view.scale;
+  const sh = view.stage / view.scale;
+  cx.imageSmoothingQuality = 'high';
+  cx.drawImage(img, sx, sy, sw, sh, 0, 0, side, side);
+  return cv.toDataURL('image/jpeg', quality);
+}
+
 // Recorte cuadrado centrado a sidexside (mantiene la cara del centro).
 function squareCrop(img, side, quality) {
   const s = Math.min(img.width, img.height);
@@ -613,11 +633,14 @@ function closeLightbox() {
   lbCurrent = null;
 }
 
-/* ===================== MODAL DE FOTO (anterior al lado) ===================== */
+/* ===================== MODAL DE FOTO (recortador arrastrar + zoom) ===================== */
 function openPhotoModal(ced) {
   const w = STATE.workers.find(x => String(x.id_number) === String(ced));
   if (!w) return;
-  let staged = null;
+  let staged = null;          // resultado listo para guardar
+  let srcImg = null;          // Image() original cargada
+  const STAGE = 300;          // lado del area de recorte en pantalla
+  const view = { scale: 1, baseScale: 1, x: 0, y: 0, stage: STAGE, dragging: false, sx: 0, sy: 0 };
   const host = $('#wpModalHost');
 
   host.innerHTML = `
@@ -626,13 +649,28 @@ function openPhotoModal(ced) {
         <button class="wp-x" id="pmX" title="Cerrar">✕</button>
         <h3>Foto del colaborador</h3>
         <p class="wp-who"><b>${esc(w.full_name)}</b> · <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}</span></p>
-        <div class="pm-two">
+
+        <div class="pm-crop-wrap" id="pmCropWrap" style="display:none">
+          <div class="pm-stage" id="pmStage" style="position:relative;width:${STAGE}px;height:${STAGE}px;max-width:100%;margin:0 auto;border-radius:14px;overflow:hidden;background:#0f172a;touch-action:none;user-select:none;cursor:grab">
+            <img id="pmImg" alt="" style="position:absolute;transform-origin:0 0;will-change:transform;pointer-events:none;max-width:none">
+            <div style="position:absolute;inset:0;pointer-events:none;background:rgba(15,23,42,.5);-webkit-mask:radial-gradient(circle at center, transparent 0 47%, #000 47.5%);mask:radial-gradient(circle at center, transparent 0 47%, #000 47.5%)"></div>
+            <div style="position:absolute;left:50%;top:50%;width:94%;height:94%;transform:translate(-50%,-50%);border:2px dashed rgba(255,255,255,.85);border-radius:50%;pointer-events:none"></div>
+          </div>
+          <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
+            <span style="font-size:16px">🔍</span>
+            <input type="range" id="pmZoom" min="100" max="300" value="100" style="flex:1;accent-color:var(--brand)">
+          </div>
+          <p class="wp-meta" id="pmMeta" style="margin:8px 0 0"></p>
+        </div>
+
+        <div class="pm-two" id="pmInitial">
           <div class="pm-col"><div class="pm-col-lbl">Foto actual</div><div class="pm-prev" id="pmCur"><div class="empty">Sin foto aún</div></div></div>
           <div class="pm-arrow">→</div>
           <div class="pm-col"><div class="pm-col-lbl">Nueva foto</div><div class="pm-prev" id="pmNew"><div class="empty">Elegí una foto para previsualizar</div></div></div>
         </div>
-        <div class="pm-help"><b>Foto tipo carnet:</b> de frente, hombros visibles, fondo claro y liso, buena luz sin sombras. La cara centrada ocupando el círculo. Sin lentes, gorras ni gestos. El círculo es solo guía.</div>
-        <p class="wp-meta" id="pmMeta"></p>
+
+        <div class="pm-help"><b>Foto tipo carnet:</b> de frente, hombros visibles, fondo claro y liso, buena luz sin sombras. Arrastrá la imagen y usá el zoom para centrar la cara en el círculo. Sin lentes, gorras ni gestos.</div>
+
         <input type="file" id="pmFile" accept="image/*" hidden>
         <div class="wp-foot">
           ${w.thumb_url ? '<button class="btn" id="pmDel" style="color:var(--danger);border-color:#f3c2c2">Quitar foto</button>' : ''}
@@ -645,14 +683,14 @@ function openPhotoModal(ced) {
     </div>`;
 
   const q = s => host.querySelector(s);
-  const closeModal = () => { document.removeEventListener('keydown', onKey); host.innerHTML = ''; };
+  const closeModal = () => { document.removeEventListener('keydown', onKey); window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); host.innerHTML = ''; };
   const onKey = ev => { if (ev.key === 'Escape') closeModal(); };
   document.addEventListener('keydown', onKey);
   q('#pmX').addEventListener('click', closeModal);
   q('#pmCancel').addEventListener('click', closeModal);
   host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) closeModal(); });
 
-  // Columna izquierda: foto actual + circulo guia.
+  // Columna izquierda: foto actual + circulo guia (mientras no se elige nueva).
   const cur = q('#pmCur');
   if (w.thumb_url) {
     cur.innerHTML = `<img src="${w.thumb_url}" alt="actual">` + guideSvg();
@@ -660,27 +698,80 @@ function openPhotoModal(ced) {
   }
 
   q('#pmPick').addEventListener('click', () => q('#pmFile').click());
+
+  /* --- aplicar transform y refrescar preview --- */
+  function clampView() {
+    const wpx = srcImg.width * view.scale, hpx = srcImg.height * view.scale;
+    view.x = Math.min(0, Math.max(STAGE - wpx, view.x));
+    view.y = Math.min(0, Math.max(STAGE - hpx, view.y));
+  }
+  function applyView() {
+    if (!srcImg) return;
+    clampView();
+    const im = q('#pmImg');
+    im.style.width = (srcImg.width * view.scale) + 'px';
+    im.style.height = (srcImg.height * view.scale) + 'px';
+    im.style.transform = `translate(${view.x}px,${view.y}px)`;
+  }
+
+  /* --- arrastre (mouse + touch) --- */
+  const onMove = e => {
+    if (!view.dragging) return;
+    view.x = e.clientX - view.sx; view.y = e.clientY - view.sy; applyView();
+  };
+  const onUp = () => { view.dragging = false; const st = q('#pmStage'); if (st) st.style.cursor = 'grab'; };
+  window.addEventListener('mousemove', onMove);
+  window.addEventListener('mouseup', onUp);
+
+  function wireStage() {
+    const st = q('#pmStage');
+    st.addEventListener('mousedown', e => { view.dragging = true; view.sx = e.clientX - view.x; view.sy = e.clientY - view.y; st.style.cursor = 'grabbing'; });
+    st.addEventListener('touchstart', e => { const t = e.touches[0]; view.dragging = true; view.sx = t.clientX - view.x; view.sy = t.clientY - view.y; }, { passive: true });
+    st.addEventListener('touchmove', e => { if (!view.dragging) return; const t = e.touches[0]; view.x = t.clientX - view.sx; view.y = t.clientY - view.sy; applyView(); }, { passive: true });
+    st.addEventListener('touchend', () => { view.dragging = false; });
+    q('#pmZoom').addEventListener('input', () => {
+      const prevScale = view.scale;
+      view.scale = view.baseScale * (parseInt(q('#pmZoom').value, 10) / 100);
+      // zoom hacia el centro del stage
+      const cx = STAGE / 2, cy = STAGE / 2;
+      view.x = cx - (cx - view.x) * (view.scale / prevScale);
+      view.y = cy - (cy - view.y) * (view.scale / prevScale);
+      applyView();
+    });
+  }
+
   q('#pmFile').addEventListener('change', async e => {
     const f = e.target.files && e.target.files[0];
     if (!f) return;
     const origKB = Math.round(f.size / 1024);
     try {
-      const img = await fileToImage(f);
-      const thumbUrl = squareCrop(img, THUMB, THUMB_QUALITY);
-      const fullUrl = squareCrop(img, FULL, FULL_QUALITY);
-      staged = {
-        thumb: stripPrefix(thumbUrl), full: stripPrefix(fullUrl),
-        previewThumb: thumbUrl, bytes: b64Bytes(fullUrl) + b64Bytes(thumbUrl),
-        fullBytes: b64Bytes(fullUrl),
-      };
-      q('#pmNew').innerHTML = `<img src="${thumbUrl}" alt="nueva">` + guideSvg();
-      q('#pmMeta').innerHTML = `Original ${origKB} KB → <b style="color:var(--success)">comprimida ${Math.round(staged.bytes / 1024)} KB</b> · ${FULL}×${FULL} (grande) + ${THUMB}×${THUMB} (miniatura)`;
+      srcImg = await fileToImage(f);
+      // mostrar recortador, ocultar el bloque inicial de dos columnas
+      q('#pmInitial').style.display = 'none';
+      q('#pmCropWrap').style.display = 'block';
+      const im = q('#pmImg'); im.src = srcImg.src;
+      // baseScale: la imagen CUBRE el stage (cover)
+      view.baseScale = Math.max(STAGE / srcImg.width, STAGE / srcImg.height);
+      view.scale = view.baseScale;
+      view.x = (STAGE - srcImg.width * view.scale) / 2;
+      view.y = (STAGE - srcImg.height * view.scale) / 2;
+      q('#pmZoom').value = 100;
+      wireStage();
+      applyView();
+      q('#pmMeta').innerHTML = `Original ${origKB} KB · arrastrá y ajustá el zoom, luego Guardar`;
       q('#pmSave').disabled = false;
     } catch { q('#pmMeta').textContent = 'No se pudo leer la imagen. Probá con otra.'; }
   });
 
   q('#pmSave').addEventListener('click', async () => {
-    if (!staged) return;
+    if (!srcImg) return;
+    // Generar las dos versiones desde el encuadre elegido.
+    const thumbUrl = cropFromViewport(srcImg, view, THUMB, THUMB_QUALITY);
+    const fullUrl = cropFromViewport(srcImg, view, FULL, FULL_QUALITY);
+    staged = {
+      thumb: stripPrefix(thumbUrl), full: stripPrefix(fullUrl),
+      bytes: b64Bytes(fullUrl) + b64Bytes(thumbUrl), fullBytes: b64Bytes(fullUrl),
+    };
     const saveB = q('#pmSave'); saveB.disabled = true; saveB.textContent = 'Guardando…';
     const uploadedBy = STATE.user.kind === 'company' ? STATE.user.companyCode : (STATE.user.name || STATE.user.username || 'admin');
     const r = await api({
