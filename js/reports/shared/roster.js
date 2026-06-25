@@ -30,7 +30,7 @@ export function ensureXLSX() {
 }
 
 /* Normaliza un encabezado: minusculas, sin acentos, sin espacios extra. */
-function normHeader(h) {
+export function normHeader(h) {
   return String(h || '')
     .toLowerCase()
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
@@ -67,7 +67,7 @@ const HEADER_MAP = {
 };
 
 /* Convierte un valor de fecha de Excel a 'YYYY-MM-DD' (o null). */
-function excelDateToISO(v) {
+export function excelDateToISO(v) {
   if (v == null || v === '') return null;
   if (v instanceof Date) return v.toISOString().slice(0, 10);
   // numero serial de Excel

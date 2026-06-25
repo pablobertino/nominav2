@@ -82,7 +82,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.92</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.93</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -306,11 +306,14 @@ function viewTiendas(user) {
       }));
     $('#tBody').querySelectorAll('[data-photos-code]').forEach(b =>
       b.addEventListener('click', () => {
-        // Admin/superadmin entra a las fichas/fotos de la tienda elegida.
-        // El "Volver" regresa a la lista de Empresas.
+        // Admin/superadmin entra a las fichas/fotos de la empresa elegida.
+        // El "Volver" regresa a la lista de Empresas. Si la empresa NO es
+        // tienda, se entra en modo 'enterprise' (carga por Reporte AX).
+        const c = CATALOG.companies.find(x => x.code === b.dataset.photosCode);
+        const mode = c && NON_STORE_TYPES.has(c.type) ? 'enterprise' : 'store';
         currentView = 'fotos';
         document.querySelectorAll('#pnlNav button').forEach(x => x.classList.remove('active'));
-        renderWorkerPhotos(user, b.dataset.photosCode, () => { currentView = 'tiendas'; navigate('tiendas', user); });
+        renderWorkerPhotos(user, b.dataset.photosCode, () => { currentView = 'tiendas'; navigate('tiendas', user); }, { mode });
       }));
     $('#tBody').querySelectorAll('[data-dep-code]').forEach(b =>
       b.addEventListener('click', () => {

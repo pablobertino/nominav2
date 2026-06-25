@@ -26,6 +26,7 @@
 
 import { $ } from '../core/dom.js';
 import { parseReport10, validateParsed, rosterReplace, rosterClear, rosterAddManual, rosterAgeDays, splitFullName } from '../reports/shared/roster.js';
+import { parseReporteAX, validateReporteAX, enterpriseRosterReplace, enterpriseRosterClear } from '../reports/shared/roster-ax.js';
 
 const THUMB = 300;           // miniatura cuadrada (grid)
 const FULL = 800;            // version grande cuadrada (visor / AX)
@@ -145,11 +146,17 @@ function companyBarHtml(c) {
 }
 
 /* ===================== ESTADO ===================== */
-let STATE = null;   // { user, cc, onExit, workers, q, company, banks, bankMap }
+let STATE = null;   // { user, cc, onExit, workers, q, company, banks, bankMap, mode, adminId }
 
 /* ===================== ENTRADA ===================== */
-export async function renderWorkerPhotos(user, companyCode, onExit) {
-  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {} };
+/* opts.mode: 'store' (tienda, Reporte 10) | 'enterprise' (empresa no-tienda,
+   Reporte AX). En modo enterprise la carga de lista usa /api/enterprise-roster
+   (solo admin/superadmin) y se manda el adminId. La foto y la ficha van igual
+   a /api/worker-photo (workers_master por cedula), que ya es tabla-aware. */
+export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
+  const mode = (opts && opts.mode) === 'enterprise' ? 'enterprise' : 'store';
+  const adminId = user && user.kind === 'admin' ? (user.id || null) : null;
+  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId };
 
   const back = onExit
     ? `<button class="btn" id="wpBack" style="margin-bottom:14px">← Volver</button>`
@@ -163,7 +170,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit) {
         <div><h1>Personal</h1><p id="wpInfo">Cargando personal de ${esc(companyCode)}…</p></div>
         <div class="head-actions">
           <button class="btn" id="wpReporte"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Actualizar lista</button>
-          <button class="btn btn-primary" id="wpAddManual"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>
+          ${mode === 'enterprise' ? '' : `<button class="btn btn-primary" id="wpAddManual"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>`}
           <button class="btn wp-btn-danger" id="wpClear"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Limpiar lista</button>
         </div>
       </div>
@@ -178,8 +185,9 @@ export async function renderWorkerPhotos(user, companyCode, onExit) {
 
   if (onExit) $('#wpBack').addEventListener('click', onExit);
   $('#wpSearch').addEventListener('input', e => { STATE.q = e.target.value; paintGrid(); });
-  $('#wpReporte').addEventListener('click', openReporteModal);
-  $('#wpAddManual').addEventListener('click', openAddManualModal);
+  $('#wpReporte').addEventListener('click', STATE.mode === 'enterprise' ? openReporteAXModal : openReporteModal);
+  const addBtn = $('#wpAddManual');
+  if (addBtn) addBtn.addEventListener('click', openAddManualModal);
   $('#wpClear').addEventListener('click', openClearModal);
 
   await load();
@@ -237,9 +245,10 @@ function paintRosterBar() {
     }
   }
   bar.style.display = 'flex';
+  const repName = STATE.mode === 'enterprise' ? 'Reporte AX' : 'Reporte 10';
   bar.innerHTML = `
     <span class="rb-ic">📋</span>
-    <span>Lista cargada del <b>Reporte 10</b> el <b>${when}</b> · <b>${report}</b> del reporte${manual ? ` + <b>${manual}</b> manual${manual === 1 ? '' : 'es'}` : ''}</span>
+    <span>Lista cargada del <b>${repName}</b> el <b>${when}</b> · <b>${report}</b> del reporte${manual ? ` + <b>${manual}</b> manual${manual === 1 ? '' : 'es'}` : ''}</span>
     ${ageTxt ? `<span class="rb-sep"></span>${ageTxt}` : ''}`;
 }
 
@@ -786,6 +795,99 @@ function openReporteModal() {
   });
 }
 
+/* ---- Actualizar lista (cargar Reporte AX) — modo empresa ---- */
+function openReporteAXModal() {
+  const host = wpModalHost();
+  host.innerHTML = `
+    <div class="wp-modal-vp">
+      <div class="wp-modal">
+        <button class="wp-x" id="axX" title="Cerrar">✕</button>
+        <h3>Actualizar lista de personal</h3>
+        <p class="wp-who">${esc(STATE.cc)} · Carga el <b>Reporte AX</b> (Excel de AX) para refrescar el personal de la empresa.</p>
+
+        <div class="wp-drop" id="axDrop">
+          <svg class="wp-di" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <b id="axDropName">Elegir el archivo .xlsx</b>
+          <small id="axDropHint">Se lee en tu navegador, no se sube el archivo</small>
+        </div>
+        <input type="file" id="axFile" accept=".xlsx,.xls" hidden>
+
+        <div id="axPreview" class="wp-prev" style="display:none"></div>
+
+        <div class="wp-foot">
+          <span style="flex:1"></span>
+          <button class="btn" id="axCancel">Cancelar</button>
+          <button class="btn" id="axPick">Elegir archivo</button>
+          <button class="btn btn-primary" id="axSave" disabled>Actualizar lista</button>
+        </div>
+      </div>
+    </div>`;
+
+  let parsed = null, valid = null;
+  const q = s => host.querySelector(s);
+  const close = () => { document.removeEventListener('keydown', onKey); host.innerHTML = ''; };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  q('#axX').addEventListener('click', close);
+  q('#axCancel').addEventListener('click', close);
+  host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) close(); });
+  q('#axDrop').addEventListener('click', () => q('#axFile').click());
+  q('#axPick').addEventListener('click', () => q('#axFile').click());
+
+  q('#axFile').addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    q('#axDropName').textContent = f.name;
+    q('#axDropHint').textContent = 'Leyendo…';
+    try {
+      parsed = await parseReporteAX(f);
+      valid = validateReporteAX(parsed, STATE.cc);
+      const prev = q('#axPreview');
+      prev.style.display = 'block';
+      if (parsed.missing.length) {
+        prev.className = 'wp-prev warn';
+        prev.innerHTML = `⚠ Falta(n) la(s) columna(s): <b>${parsed.missing.join(', ')}</b>. Revisa que sea el Reporte AX correcto.`;
+        q('#axSave').disabled = true;
+        q('#axDropHint').textContent = 'Archivo con columnas faltantes';
+        return;
+      }
+      if (!valid.total) {
+        prev.className = 'wp-prev warn';
+        prev.innerHTML = `⚠ El archivo no trae personal para <b>${esc(STATE.cc)}</b>.`
+          + (valid.foreignCompanies.length ? ` Trae datos de: <b>${valid.foreignCompanies.join(', ')}</b>.` : '')
+          + ` Verifica que sea el Reporte AX de esta empresa.`;
+        q('#axSave').disabled = true;
+        q('#axDropHint').textContent = 'Sin filas para esta empresa';
+        return;
+      }
+      prev.className = 'wp-prev ok';
+      prev.innerHTML = `✓ <b>${valid.total} trabajadores</b> (${valid.active} vigentes · ${valid.terminated} egresados)`
+        + (valid.hasAccountCol ? ` · ${valid.withAccount} con cuenta` : '')
+        + `<div style="margin-top:6px;font-size:11.5px">El AX actualiza identidad, nacimiento, género, estado civil${valid.hasAccountCol ? ', cuenta y TodoTicket' : ''}. Se conservan cargo, teléfono, correo y dirección capturados aquí.</div>`
+        + (valid.warnings.length ? `<div style="margin-top:6px;font-size:11.5px;color:var(--warn)">${valid.warnings.join(' ')}</div>` : '');
+      q('#axDropHint').textContent = `${valid.total} filas válidas`;
+      q('#axSave').disabled = !valid.okToUpload;
+    } catch (err) {
+      const prev = q('#axPreview');
+      prev.style.display = 'block'; prev.className = 'wp-prev warn';
+      prev.innerHTML = `No se pudo leer el archivo: ${esc(String(err.message || err))}`;
+      q('#axSave').disabled = true;
+    }
+  });
+
+  q('#axSave').addEventListener('click', async () => {
+    if (!valid || !valid.okToUpload) return;
+    const saveB = q('#axSave'); saveB.disabled = true; saveB.textContent = 'Actualizando…';
+    const uploadedBy = STATE.user.name || STATE.user.username || 'admin';
+    const r = await enterpriseRosterReplace(STATE.cc, valid.validRows, {
+      uploadedBy, sourceFile: parsed.fileName, adminId: STATE.adminId,
+    });
+    if (!r.ok) { saveB.disabled = false; saveB.textContent = 'Actualizar lista'; alert(r.error || 'No se pudo actualizar.'); return; }
+    close();
+    await load();
+  });
+}
+
 /* ---- Agregar colaborador manual ---- */
 function openAddManualModal() {
   const host = wpModalHost();
@@ -872,21 +974,24 @@ function openAddManualModal() {
 function openClearModal() {
   const host = wpModalHost();
   const total = STATE.workers.length;
+  const isEnt = STATE.mode === 'enterprise';
+  const entidad = isEnt ? 'la empresa' : 'la tienda';
+  const repName = isEnt ? 'Reporte AX' : 'Reporte 10';
   host.innerHTML = `
     <div class="wp-modal-vp">
       <div class="wp-modal">
         <button class="wp-x" id="clX" title="Cerrar">✕</button>
         <h3 style="color:var(--danger)">Limpiar lista de personal</h3>
-        <p class="wp-who">${esc(STATE.cc)} · Esta acción vacía <b>toda</b> la lista de la tienda.</p>
+        <p class="wp-who">${esc(STATE.cc)} · Esta acción vacía <b>toda</b> la lista de ${entidad}.</p>
 
         <div class="wp-dangerbox">
-          <b>Se quitarán los ${total} colaboradores</b> de la lista de la tienda (los del Reporte 10 <u>y</u> los manuales).
+          <b>Se quitarán los ${total} colaboradores</b> de la lista de ${entidad}${isEnt ? '' : ' (los del Reporte 10 <u>y</u> los manuales)'}.
         </div>
         <div class="wp-okbox">
-          ✓ <b>Las fotos y fichas NO se borran.</b> Quedan guardadas en el directorio por cédula. Si la persona vuelve a la lista —por Reporte 10 o manual— su foto y datos reaparecen automáticamente.
+          ✓ <b>Las fotos y fichas NO se borran.</b> Quedan guardadas en el directorio por cédula. Si la persona vuelve a la lista —por ${repName}${isEnt ? '' : ' o manual'}— su foto y datos reaparecen automáticamente.
         </div>
 
-        <label class="flabel">Para confirmar, escribe el código de la tienda: <b>${esc(STATE.cc)}</b></label>
+        <label class="flabel">Para confirmar, escribe el código de ${entidad}: <b>${esc(STATE.cc)}</b></label>
         <input id="clConfirm" autocomplete="off" placeholder="${esc(STATE.cc)}">
 
         <div class="wp-foot">
@@ -909,7 +1014,9 @@ function openClearModal() {
   });
   q('#clOk').addEventListener('click', async () => {
     const okB = q('#clOk'); okB.disabled = true; okB.textContent = 'Vaciando…';
-    const r = await rosterClear(STATE.cc);
+    const r = isEnt
+      ? await enterpriseRosterClear(STATE.cc, STATE.adminId)
+      : await rosterClear(STATE.cc);
     if (!r.ok) { okB.disabled = false; okB.textContent = 'Sí, vaciar la lista'; alert(r.error || 'No se pudo limpiar.'); return; }
     close();
     await load();

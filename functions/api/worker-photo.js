@@ -25,6 +25,8 @@ const BUCKET = 'worker-photos';
 const SIGNED_TTL = 60 * 60;          // 1h
 const MAX_FULL_BYTES = 400 * 1024;   // tope server-side de la version grande
 
+const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -124,6 +126,17 @@ async function userCanAccess(env, user, cc) {
   return false;
 }
 
+/* Resuelve la TABLA de roster segun el tipo de empresa: las no-tienda usan
+   enterprise_workers; las tiendas (o cualquier otra) usan store_workers.
+   Asi el mismo endpoint (foto/ficha sobre workers_master por cedula) sirve
+   para ambos mundos. La foto y el perfil viven en workers_master (global);
+   solo cambia donde se valida la pertenencia al roster. */
+async function rosterTable(env, cc) {
+  const rows = await sb(env, `companies?company_code=eq.${encodeURIComponent(cc)}&select=company_type`);
+  const type = rows && rows[0] ? rows[0].company_type : null;
+  return NON_STORE_TYPES.has(type) ? 'enterprise_workers' : 'store_workers';
+}
+
 /* ===================== Handler ===================== */
 export async function onRequestPost({ request, env }) {
   let body;
@@ -137,9 +150,11 @@ export async function onRequestPost({ request, env }) {
     if (!cc) return json({ ok: false, error: 'Falta la empresa.' }, 400);
     if (!(await userCanAccess(env, user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
 
-    if (action === 'directory') return await directory(env, cc);
-    if (action === 'save') return await savePhoto(env, cc, body);
-    if (action === 'save_profile') return await saveProfile(env, cc, body);
+    const table = await rosterTable(env, cc);
+
+    if (action === 'directory') return await directory(env, cc, table);
+    if (action === 'save') return await savePhoto(env, cc, body, table);
+    if (action === 'save_profile') return await saveProfile(env, cc, body, table);
     if (action === 'remove') return await removePhoto(env, cc, body);
 
     return json({ ok: false, error: 'Accion no reconocida' }, 400);
@@ -149,7 +164,9 @@ export async function onRequestPost({ request, env }) {
 }
 
 /* ---------- DIRECTORY ---------- */
-async function directory(env, cc) {
+async function directory(env, cc, table) {
+  table = table || 'store_workers';
+  const isEnterprise = table === 'enterprise_workers';
   // Datos de la empresa (cabecera de la ficha). Zona/subzona/concepto por id.
   const compRows = await sb(env,
     `companies?company_code=eq.${encodeURIComponent(cc)}`
@@ -175,17 +192,35 @@ async function directory(env, cc) {
   const bankMap = {};
   (banks || []).forEach(b => { bankMap[b.code] = b.name; });
 
-  // Roster de la empresa.
+  // Roster de la empresa (tabla segun tipo).
   const workers = await sb(env,
-    `store_workers?company_code=eq.${encodeURIComponent(cc)}`
+    `${table}?company_code=eq.${encodeURIComponent(cc)}`
     + `&select=id_number,full_name,role,end_date,source&order=full_name.asc`);
   const ceds = (workers || []).map(w => w.id_number).filter(Boolean);
 
-  // Metadatos del snapshot (cuando se cargo el Reporte 10, cuantos).
-  const metaArr = await sb(env,
-    `store_roster_meta?company_code=eq.${encodeURIComponent(cc)}`
-    + `&select=uploaded_at,uploaded_by,total_count,source_file`);
-  const meta = metaArr && metaArr[0] ? metaArr[0] : null;
+  // Metadatos del snapshot. store_roster_meta (tiendas) o
+  // enterprise_roster_meta (empresas). Se normaliza a {uploaded_at,
+  // uploaded_by, total_count, source_file} para el front.
+  let meta = null;
+  if (isEnterprise) {
+    const metaArr = await sb(env,
+      `enterprise_roster_meta?company_code=eq.${encodeURIComponent(cc)}`
+      + `&select=uploaded_at,uploaded_by,row_count,source_file,source`);
+    if (metaArr && metaArr[0]) {
+      meta = {
+        uploaded_at: metaArr[0].uploaded_at,
+        uploaded_by: metaArr[0].uploaded_by,
+        total_count: metaArr[0].row_count,
+        source_file: metaArr[0].source_file,
+        source: metaArr[0].source,
+      };
+    }
+  } else {
+    const metaArr = await sb(env,
+      `store_roster_meta?company_code=eq.${encodeURIComponent(cc)}`
+      + `&select=uploaded_at,uploaded_by,total_count,source_file`);
+    meta = metaArr && metaArr[0] ? metaArr[0] : null;
+  }
 
   // Maestra de los de este roster.
   let masterByCed = {};
@@ -249,12 +284,13 @@ async function directory(env, cc) {
 }
 
 /* ---------- SAVE (foto) ---------- */
-async function savePhoto(env, cc, body) {
+async function savePhoto(env, cc, body, table) {
+  table = table || 'store_workers';
   const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
   if (!ced || ced.length < 6 || ced.length > 8) return json({ ok: false, error: 'Cedula invalida.' }, 400);
 
   const inStore = await sb(env,
-    `store_workers?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}&select=id_number,full_name,first_name,second_name,last_names`);
+    `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}&select=id_number,full_name,first_name,second_name,last_names`);
   if (!inStore || !inStore.length) return json({ ok: false, error: 'Ese trabajador no esta en la lista de la empresa.' }, 404);
 
   const fullB64 = String(body.full_b64 || '');
@@ -306,14 +342,15 @@ async function savePhoto(env, cc, body) {
 }
 
 /* ---------- SAVE_PROFILE (datos de la persona) ---------- */
-async function saveProfile(env, cc, body) {
+async function saveProfile(env, cc, body, table) {
+  table = table || 'store_workers';
   const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
   if (!ced || ced.length < 6 || ced.length > 8) return json({ ok: false, error: 'Cedula invalida.' }, 400);
   const p = body.profile || {};
 
   // La persona debe pertenecer al roster de esta empresa.
   const inStore = await sb(env,
-    `store_workers?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}&select=id_number,full_name`);
+    `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}&select=id_number,full_name`);
   if (!inStore || !inStore.length) return json({ ok: false, error: 'Ese trabajador no esta en la lista de la empresa.' }, 404);
 
   // Validaciones server-side (defensa).
