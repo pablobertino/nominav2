@@ -123,6 +123,27 @@ function avatarColor(seed) {
   return h % AVATAR_BG.length;
 }
 
+/* Barra de contexto de empresa (codigo + razon social + RIF/zona/subzona/
+   concepto + estado). Compartida por la LISTA y la FICHA para que en ambas
+   se vea siempre a que empresa pertenece el personal. */
+function companyBarHtml(c) {
+  c = c || {};
+  const statusPill = /abier/i.test(c.status || '')
+    ? '<span class="pill pill-open">Abierta</span>'
+    : (c.status ? `<span class="pill pill-gray">${esc(c.status)}</span>` : '');
+  return `<div class="ff-emp">
+      <div class="ff-emp-main">
+        <span class="ff-emp-code">${esc(c.code || '')}</span>
+        <span class="ff-emp-name">${esc(c.business_name || '')}</span>
+      </div>
+      ${c.tax_id ? `<span class="ff-emp-item"><span class="k">RIF</span>${esc(c.tax_id)}</span>` : ''}
+      ${c.zone ? `<span class="ff-emp-item"><span class="k">Zona</span>${esc(c.zone)}</span>` : ''}
+      ${c.subzone ? `<span class="ff-emp-item"><span class="k">Subzona</span>${esc(c.subzone)}</span>` : ''}
+      ${c.concept ? `<span class="ff-emp-item"><span class="k">Concepto</span>${esc(c.concept)}</span>` : ''}
+      ${statusPill}
+    </div>`;
+}
+
 /* ===================== ESTADO ===================== */
 let STATE = null;   // { user, cc, onExit, workers, q, company, banks, bankMap }
 
@@ -137,6 +158,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit) {
   $('#pnlMain').innerHTML = `
     <div id="wpGridView">
       ${back}
+      <div id="wpEmpBar"></div>
       <div class="pnl-head">
         <div><h1>Personal</h1><p id="wpInfo">Cargando personal de ${esc(companyCode)}…</p></div>
         <div class="head-actions">
@@ -179,6 +201,8 @@ async function load() {
   STATE.meta = d.meta || null;
   STATE.manualCount = d.manual_count || 0;
   STATE.reportCount = d.report_count != null ? d.report_count : (STATE.workers.length - STATE.manualCount);
+  const empBar = $('#wpEmpBar');
+  if (empBar) empBar.innerHTML = companyBarHtml(STATE.company);
   updateInfo(d);
   paintRosterBar();
   paintGrid();
@@ -309,9 +333,6 @@ function openFicha(ced) {
 }
 
 function fichaHtml(w, c) {
-  const statusPill = /abier/i.test(c.status || '')
-    ? '<span class="pill pill-open">Abierta</span>'
-    : (c.status ? `<span class="pill pill-gray">${esc(c.status)}</span>` : '');
   const back = STATE.onExit ? 'Volver' : 'Volver a Personal';
   return `
   <div class="wp-ficha" id="wpFicha">
@@ -320,17 +341,7 @@ function fichaHtml(w, c) {
       ${back}
     </button>
 
-    <div class="ff-emp">
-      <div class="ff-emp-main">
-        <span class="ff-emp-code">${esc(c.code || '')}</span>
-        <span class="ff-emp-name">${esc(c.business_name || '')}</span>
-      </div>
-      ${c.tax_id ? `<span class="ff-emp-item"><span class="k">RIF</span>${esc(c.tax_id)}</span>` : ''}
-      ${c.zone ? `<span class="ff-emp-item"><span class="k">Zona</span>${esc(c.zone)}</span>` : ''}
-      ${c.subzone ? `<span class="ff-emp-item"><span class="k">Subzona</span>${esc(c.subzone)}</span>` : ''}
-      ${c.concept ? `<span class="ff-emp-item"><span class="k">Concepto</span>${esc(c.concept)}</span>` : ''}
-      ${statusPill}
-    </div>
+    ${companyBarHtml(c)}
 
     <div class="ff-card">
       <div class="ff-top">
