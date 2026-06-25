@@ -82,7 +82,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.91</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.92</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -258,9 +258,14 @@ function viewTiendas(user) {
   function render() {
     const n = fName.value.toLowerCase();
     const rows = CATALOG.companies.filter(c => {
+      // El filtro de estados aplica a TIENDAS (Abierta/Cerrada/etc.). Las
+      // empresas no-tienda tienen estado "Nulo" y no deben quedar ocultas
+      // por ese filtro pensado para tiendas.
+      const isStore = c.type === 'Tienda';
+      const passStatus = !isStore || selStatus.size === 0 || selStatus.has(c.status);
       return (`${c.code} ${c.name || ''}`.toLowerCase().includes(n))
         && (fType.value === 'ALL' || c.type === fType.value)
-        && (selStatus.size === 0 || selStatus.has(c.status))
+        && passStatus
         && (fZone.value === 'ALL' || c.zoneId === fZone.value)
         && (fSub.value === 'ALL' || c.subzoneId === fSub.value)
         && (fConcept.value === 'ALL' || c.concept === fConcept.value);
