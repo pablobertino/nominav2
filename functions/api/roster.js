@@ -303,8 +303,27 @@ export async function onRequestPost({ request, env }) {
       const nGer = managers.filter(m => m.mrole === 'Gerente').length;
       const nSub = managers.filter(m => m.mrole === 'Sub-Gerente').length;
 
-      // --- Reemplazo del snapshot (borra e inserta) ---
-      await sb(env, `store_workers?company_code=eq.${encodeURIComponent(cc)}`, { method: 'DELETE' });
+      // --- Reemplazo del snapshot ---
+      // Se reemplazan SOLO las filas de origen Reporte 10 (source 'report10'
+      // o legado null). Las filas MANUALES (source 'manual') se CONSERVAN,
+      // salvo que el propio Reporte 10 ya traiga esa cedula (entonces el
+      // reporte manda y la manual se reemplaza para no duplicar).
+      const cedsReporte = new Set(valid.map(r => r.id_number));
+      // 1) Manuales actuales de la tienda.
+      const manualNow = await sb(env,
+        `store_workers?company_code=eq.${encodeURIComponent(cc)}&source=eq.manual&select=id_number`);
+      const manualKeep = (manualNow || []).filter(m => !cedsReporte.has(m.id_number)).map(m => m.id_number);
+      // 2) Borrar todo lo que NO sea manual-a-conservar:
+      //    - las filas report10/legado (se reemplazan), y
+      //    - las manuales cuya cedula ahora viene en el Reporte 10.
+      if (manualKeep.length) {
+        const inList = manualKeep.map(c => `"${c}"`).join(',');
+        await sb(env,
+          `store_workers?company_code=eq.${encodeURIComponent(cc)}&id_number=not.in.(${inList})`,
+          { method: 'DELETE' });
+      } else {
+        await sb(env, `store_workers?company_code=eq.${encodeURIComponent(cc)}`, { method: 'DELETE' });
+      }
 
       const payload = valid.map(r => ({
         company_code: cc,
@@ -330,6 +349,7 @@ export async function onRequestPost({ request, env }) {
         marital_status: r.marital_status,
         birth_date: r.birth_date,
         address: r.address,
+        source: 'report10',
       }));
       await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify(payload) });
 
@@ -429,6 +449,80 @@ export async function onRequestPost({ request, env }) {
         contactsWiped = true;
       }
       return json({ ok: true, cleared: true, contacts_wiped: contactsWiped });
+    }
+
+    if (action === 'add_manual') {
+      // Alta MANUAL de un colaborador: una cedula que aun no esta en el
+      // Reporte 10 del POS. Entra a store_workers (lista de la tienda) y se
+      // sincroniza a workers_master (directorio permanente por cedula).
+      // Pide lo minimo (cedula + nombre dividido + cargo opcional + estado);
+      // el resto de la ficha se completa luego desde Personal.
+      const cc = (body.company_code || '').trim();
+      if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);
+
+      const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
+      if (!ced || ced.length < 6 || ced.length > 8) {
+        return json({ ok: false, error: 'Cedula invalida (6 a 8 digitos).' }, 400);
+      }
+      // No duplicar dentro de la misma tienda.
+      const dup = await sb(env,
+        `store_workers?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}&select=id_number`);
+      if (dup && dup.length) {
+        return json({ ok: false, error: 'Esa cedula ya esta en la lista de esta tienda.' }, 409);
+      }
+
+      const first = String(body.first_name || '').trim().toUpperCase();
+      const second = String(body.second_name || '').trim().toUpperCase();
+      const last = String(body.last_names || '').trim().toUpperCase();
+      if (!first) return json({ ok: false, error: 'Falta el primer nombre.' }, 400);
+      if (!last) return json({ ok: false, error: 'Faltan los apellidos.' }, 400);
+      const full_name = [first, second, last].filter(Boolean).join(' ');
+      const role = String(body.role || '').trim().toUpperCase() || null;
+      const isEgresado = !!body.egresado;
+      const today = new Date().toISOString().slice(0, 10);
+
+      // Insertar en store_workers. source='manual' marca que se cargo a mano
+      // (lo usa la futura logica de conservar manuales al actualizar).
+      const wRow = {
+        company_code: cc,
+        id_number: ced,
+        full_name,
+        first_name: first,
+        second_name: second || null,
+        last_names: last,
+        role,
+        has_biometric: false,
+        start_date: today,
+        end_date: isEgresado ? today : null,
+        is_active: !isEgresado,
+        source: 'manual',
+      };
+      try {
+        await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify([wRow]) });
+      } catch (e) {
+        // Si la columna 'source' aun no existe en store_workers, reintentar
+        // sin ella (compatibilidad: la migracion de 'source' puede no estar).
+        const msg = String(e.message || e);
+        if (/source/i.test(msg)) {
+          delete wRow.source;
+          await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify([wRow]) });
+        } else {
+          throw e;
+        }
+      }
+
+      // Sincronizar a la maestra por cedula (sin pisar foto ni datos buenos).
+      try {
+        await upsertWorkersMaster(env, cc, [{
+          id_number: ced, full_name, role,
+          first_name: first, second_name: second || null, last_names: last,
+          account_number: null, todo_ticket: null, data_id: null,
+          phone: null, email: null, gender: null, marital_status: null,
+          birth_date: null, address: null,
+        }]);
+      } catch { /* no critico: se reintenta al cargar Reporte 10 */ }
+
+      return json({ ok: true, id_number: ced, full_name, added: true });
     }
 
     return json({ ok: false, error: 'Accion no reconocida' }, 400);

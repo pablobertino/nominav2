@@ -428,6 +428,22 @@ export async function rosterClear(companyCode, { wipeContacts = false } = {}) {
   return res.json();
 }
 
+/* Alta MANUAL de un colaborador (cedula que aun no esta en el Reporte 10).
+   Entra a store_workers + workers_master. Pide lo minimo; el resto de la
+   ficha se completa luego desde Personal. */
+export async function rosterAddManual(companyCode, data) {
+  const res = await fetch('/api/roster', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'add_manual', company_code: companyCode,
+      id_number: data.id_number,
+      first_name: data.first_name, second_name: data.second_name, last_names: data.last_names,
+      role: data.role, egresado: !!data.egresado,
+    }),
+  });
+  return res.json();
+}
+
 /* Antiguedad del snapshot en dias (para la advertencia de lista antigua). */
 export function rosterAgeDays(meta) {
   if (!meta || !meta.uploaded_at) return null;

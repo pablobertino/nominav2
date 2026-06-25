@@ -178,8 +178,14 @@ async function directory(env, cc) {
   // Roster de la empresa.
   const workers = await sb(env,
     `store_workers?company_code=eq.${encodeURIComponent(cc)}`
-    + `&select=id_number,full_name,role,end_date&order=full_name.asc`);
+    + `&select=id_number,full_name,role,end_date,source&order=full_name.asc`);
   const ceds = (workers || []).map(w => w.id_number).filter(Boolean);
+
+  // Metadatos del snapshot (cuando se cargo el Reporte 10, cuantos).
+  const metaArr = await sb(env,
+    `store_roster_meta?company_code=eq.${encodeURIComponent(cc)}`
+    + `&select=uploaded_at,uploaded_by,total_count,source_file`);
+  const meta = metaArr && metaArr[0] ? metaArr[0] : null;
 
   // Maestra de los de este roster.
   let masterByCed = {};
@@ -222,10 +228,12 @@ async function directory(env, cc) {
       full_url: fullUrl,
       photo_uploaded_by: m.photo_uploaded_by || null,
       updated_at: m.updated_at || null,
+      source: w.source || 'report10',
     };
   }));
 
   const withPhoto = items.filter(i => i.has_photo).length;
+  const manualCount = items.filter(i => i.source === 'manual').length;
   return json({
     ok: true,
     company,
@@ -233,6 +241,9 @@ async function directory(env, cc) {
     total: items.length,
     with_photo: withPhoto,
     pending: items.length - withPhoto,
+    manual_count: manualCount,
+    report_count: items.length - manualCount,
+    meta,
     workers: items,
   });
 }

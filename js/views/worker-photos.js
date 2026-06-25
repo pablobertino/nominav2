@@ -25,6 +25,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { parseReport10, validateParsed, rosterReplace, rosterClear, rosterAddManual, rosterAgeDays, splitFullName } from '../reports/shared/roster.js';
 
 const THUMB = 300;           // miniatura cuadrada (grid)
 const FULL = 800;            // version grande cuadrada (visor / AX)
@@ -138,7 +139,13 @@ export async function renderWorkerPhotos(user, companyCode, onExit) {
       ${back}
       <div class="pnl-head">
         <div><h1>Personal</h1><p id="wpInfo">Cargando personal de ${esc(companyCode)}…</p></div>
+        <div class="head-actions">
+          <button class="btn" id="wpReporte"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Actualizar lista</button>
+          <button class="btn btn-primary" id="wpAddManual"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>
+          <button class="btn wp-btn-danger" id="wpClear"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Limpiar lista</button>
+        </div>
       </div>
+      <div id="wpRosterBar" class="wp-rosterbar" style="display:none"></div>
       <div class="pnl-filters">
         <div class="search"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input id="wpSearch" placeholder="Buscar por nombre o cédula…"></div>
       </div>
@@ -149,18 +156,67 @@ export async function renderWorkerPhotos(user, companyCode, onExit) {
 
   if (onExit) $('#wpBack').addEventListener('click', onExit);
   $('#wpSearch').addEventListener('input', e => { STATE.q = e.target.value; paintGrid(); });
+  $('#wpReporte').addEventListener('click', openReporteModal);
+  $('#wpAddManual').addEventListener('click', openAddManualModal);
+  $('#wpClear').addEventListener('click', openClearModal);
 
-  const d = await api({ action: 'directory', company_code: companyCode, user: sessionUserPayload(user) });
+  await load();
+}
+
+/* Carga (o recarga) el directorio de la empresa y repinta grid + barra.
+   Se llama al entrar y despues de cada accion de gestion (actualizar lista,
+   agregar manual, limpiar). */
+async function load() {
+  const d = await api({ action: 'directory', company_code: STATE.cc, user: sessionUserPayload(STATE.user) });
   if (!d.ok) {
     $('#wpGrid').innerHTML = `<div class="card"><p class="muted" style="margin:0">No se pudo cargar: ${esc(d.error || 'error')}</p></div>`;
     $('#wpInfo').textContent = 'Error al cargar';
     return;
   }
   STATE.workers = d.workers || [];
-  STATE.company = d.company || { code: companyCode };
+  STATE.company = d.company || { code: STATE.cc };
   STATE.bankMap = d.bank_map || {};
+  STATE.meta = d.meta || null;
+  STATE.manualCount = d.manual_count || 0;
+  STATE.reportCount = d.report_count != null ? d.report_count : (STATE.workers.length - STATE.manualCount);
   updateInfo(d);
+  paintRosterBar();
   paintGrid();
+}
+
+/* Barra de estado del roster: cuando se cargo el Reporte 10, cuantos del
+   reporte + cuantos manuales, y aviso si la lista esta vieja. */
+function paintRosterBar() {
+  const bar = $('#wpRosterBar');
+  if (!bar) return;
+  const meta = STATE.meta;
+  const manual = STATE.manualCount || 0;
+  const report = STATE.reportCount || 0;
+  if (!meta && !STATE.workers.length) {
+    bar.style.display = 'none';
+    return;
+  }
+  let when = 'sin registro de carga';
+  let ageTxt = '';
+  if (meta && meta.uploaded_at) {
+    const d = new Date(meta.uploaded_at);
+    if (!isNaN(d)) {
+      const c = new Date(d.getTime() - 4 * 3600 * 1000);
+      const z = n => String(n).padStart(2, '0');
+      when = `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${c.getUTCFullYear()}`;
+    }
+    const age = rosterAgeDays(meta);
+    if (age != null) {
+      if (age <= 0) ageTxt = '<span class="rb-ok">al día</span>';
+      else if (age <= 7) ageTxt = `<span class="rb-ok">hace ${age} día${age === 1 ? '' : 's'}</span>`;
+      else ageTxt = `<span class="rb-old">⚠ hace ${age} días — conviene actualizar</span>`;
+    }
+  }
+  bar.style.display = 'flex';
+  bar.innerHTML = `
+    <span class="rb-ic">📋</span>
+    <span>Lista cargada del <b>Reporte 10</b> el <b>${when}</b> · <b>${report}</b> del reporte${manual ? ` + <b>${manual}</b> manual${manual === 1 ? '' : 'es'}` : ''}</span>
+    ${ageTxt ? `<span class="rb-sep"></span>${ageTxt}` : ''}`;
 }
 
 function updateInfo(d) {
@@ -195,13 +251,14 @@ function paintGrid() {
       ? '<span class="wp-badge has">✓ cargada</span>'
       : '<span class="wp-badge no">pendiente</span>';
     const egr = w.end_date ? `<span class="pill pill-out" style="margin-top:4px;display:inline-block">egresó ${fmtDate(w.end_date)}</span>` : '';
+    const manualTag = w.source === 'manual' ? '<span class="pill wp-pill-manual" style="margin-top:4px;display:inline-block">manual</span>' : '';
     return `<div class="wp-card" data-ced="${w.id_number}">
       <div class="wp-photo">${photo}${badge}<div class="wp-ov"><span>Ver ficha</span></div></div>
       <div class="wp-body">
         <p class="wp-name">${esc(w.full_name)}</p>
         <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}</span>
         ${w.role ? `<div class="wp-role">${esc(w.role)}</div>` : ''}
-        ${egr}
+        ${egr}${manualTag}
       </div>
     </div>`;
   }).join('') || '<div class="card"><p class="muted" style="margin:0">Sin coincidencias.</p></div>';
@@ -627,5 +684,223 @@ function openPhotoModal(ced) {
     closeModal();
     paintGrid();
     if (CUR && CUR.id_number === w.id_number) openFicha(w.id_number);
+  });
+}
+
+/* ===================== GESTION DE LA LISTA ===================== */
+function wpModalHost() { return $('#wpModalHost'); }
+function wpCloseModal() { wpModalHost().innerHTML = ''; }
+
+/* ---- Actualizar lista (cargar Reporte 10) ---- */
+function openReporteModal() {
+  const host = wpModalHost();
+  host.innerHTML = `
+    <div class="wp-modal-vp">
+      <div class="wp-modal">
+        <button class="wp-x" id="rmX" title="Cerrar">✕</button>
+        <h3>Actualizar lista de personal</h3>
+        <p class="wp-who">${esc(STATE.cc)} · Carga el <b>Reporte 10</b> del POS para refrescar el personal.</p>
+
+        <div class="wp-drop" id="rmDrop">
+          <svg class="wp-di" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <b id="rmDropName">Elegir el archivo .xlsx</b>
+          <small id="rmDropHint">Hoja "Datos" · se lee en tu navegador, no se sube el archivo</small>
+        </div>
+        <input type="file" id="rmFile" accept=".xlsx,.xls" hidden>
+
+        <div id="rmPreview" class="wp-prev" style="display:none"></div>
+
+        <div class="wp-foot">
+          <span style="flex:1"></span>
+          <button class="btn" id="rmCancel">Cancelar</button>
+          <button class="btn" id="rmPick">Elegir archivo</button>
+          <button class="btn btn-primary" id="rmSave" disabled>Actualizar lista</button>
+        </div>
+      </div>
+    </div>`;
+
+  let parsed = null, valid = null;
+  const q = s => host.querySelector(s);
+  const close = () => { document.removeEventListener('keydown', onKey); host.innerHTML = ''; };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  q('#rmX').addEventListener('click', close);
+  q('#rmCancel').addEventListener('click', close);
+  host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) close(); });
+  q('#rmDrop').addEventListener('click', () => q('#rmFile').click());
+  q('#rmPick').addEventListener('click', () => q('#rmFile').click());
+
+  q('#rmFile').addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    q('#rmDropName').textContent = f.name;
+    q('#rmDropHint').textContent = 'Leyendo…';
+    try {
+      parsed = await parseReport10(f);
+      valid = validateParsed(parsed);
+      const prev = q('#rmPreview');
+      prev.style.display = 'block';
+      if (parsed.missing.length) {
+        prev.className = 'wp-prev warn';
+        prev.innerHTML = `⚠ Falta(n) la(s) columna(s): <b>${parsed.missing.join(', ')}</b>. Revisa que sea el Reporte 10 correcto (hoja "Datos").`;
+        q('#rmSave').disabled = true;
+        q('#rmDropHint').textContent = 'Archivo con columnas faltantes';
+        return;
+      }
+      prev.className = 'wp-prev ok';
+      const manual = STATE.manualCount || 0;
+      prev.innerHTML = `✓ <b>${valid.total} trabajadores</b> (${valid.active} vigentes · ${valid.terminated} egresados)`
+        + ` · ${valid.gerentes} gerente(s), ${valid.subgerentes} sub-gerente(s)`
+        + (parsed.columnsFound.includes('Cuenta Bancaria') ? ' · cuentas incluidas' : '')
+        + (manual ? `<div style="margin-top:6px;font-size:11.5px">Los <b>${manual}</b> colaborador(es) manual(es) que no estén en el reporte se conservan.</div>` : '')
+        + (valid.warnings.length ? `<div style="margin-top:6px;font-size:11.5px;color:var(--warn)">${valid.warnings.join(' ')}</div>` : '');
+      q('#rmDropHint').textContent = `${valid.total} filas válidas`;
+      q('#rmSave').disabled = !valid.okToUpload;
+    } catch (err) {
+      const prev = q('#rmPreview');
+      prev.style.display = 'block'; prev.className = 'wp-prev warn';
+      prev.innerHTML = `No se pudo leer el archivo: ${esc(String(err.message || err))}`;
+      q('#rmSave').disabled = true;
+    }
+  });
+
+  q('#rmSave').addEventListener('click', async () => {
+    if (!valid || !valid.okToUpload) return;
+    const saveB = q('#rmSave'); saveB.disabled = true; saveB.textContent = 'Actualizando…';
+    const uploadedBy = STATE.user.kind === 'company' ? STATE.user.companyCode : (STATE.user.name || STATE.user.username || 'admin');
+    const r = await rosterReplace(STATE.cc, valid.validRows, { uploadedBy, sourceFile: parsed.fileName });
+    if (!r.ok) { saveB.disabled = false; saveB.textContent = 'Actualizar lista'; alert(r.error || 'No se pudo actualizar.'); return; }
+    close();
+    await load();
+  });
+}
+
+/* ---- Agregar colaborador manual ---- */
+function openAddManualModal() {
+  const host = wpModalHost();
+  host.innerHTML = `
+    <div class="wp-modal-vp">
+      <div class="wp-modal">
+        <button class="wp-x" id="amX" title="Cerrar">✕</button>
+        <h3>Agregar colaborador</h3>
+        <p class="wp-who">${esc(STATE.cc)} · Alta manual de una persona que aún no está en el Reporte 10.</p>
+
+        <div class="wp-ced-anchor">
+          <span class="l">🪪 Cédula</span>
+          <input id="amCed" inputmode="numeric" placeholder="12345678" maxlength="8">
+          <span class="hint-side">identifica · no se podrá cambiar luego</span>
+        </div>
+
+        <label class="flabel">Nombre y apellidos</label>
+        <input id="amFull" type="text" placeholder="Escribe el nombre completo…">
+        <div class="wp-namesplit" id="amSplit" style="display:none"></div>
+
+        <div class="wp-grid2">
+          <div><label class="flabel">Cargo</label>
+            <input id="amRole" type="text" placeholder="ej. VENDEDOR"></div>
+          <div><label class="flabel">Estado</label>
+            <select id="amStatus"><option value="vigente">Vigente</option><option value="egresado">Egresado</option></select></div>
+        </div>
+
+        <p class="wp-help">Se pide lo mínimo para crearlo en la lista. El resto de la ficha (nacimiento, género, cuenta, contacto, foto) se completa luego abriendo su tarjeta. Entra a la lista de la tienda marcado como <b>manual</b>.</p>
+
+        <div class="wp-foot">
+          <span style="flex:1"></span>
+          <button class="btn" id="amCancel">Cancelar</button>
+          <button class="btn btn-primary" id="amSave" disabled>Crear colaborador</button>
+        </div>
+      </div>
+    </div>`;
+
+  const q = s => host.querySelector(s);
+  const close = () => { document.removeEventListener('keydown', onKey); host.innerHTML = ''; };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  q('#amX').addEventListener('click', close);
+  q('#amCancel').addEventListener('click', close);
+  host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) close(); });
+
+  let split = { first_name: '', second_name: '', last_names: '' };
+  function refresh() {
+    const ced = q('#amCed').value.replace(/\D/g, '');
+    const full = q('#amFull').value.trim();
+    if (full) {
+      split = splitFullName(full);
+      q('#amSplit').style.display = 'block';
+      q('#amSplit').innerHTML = `Se guardará dividido — <b>Nombre:</b> ${esc(split.first_name)}`
+        + (split.second_name ? ` · <b>2do:</b> ${esc(split.second_name)}` : '')
+        + ` · <b>Apellidos:</b> ${esc(split.last_names || '—')}`;
+    } else {
+      q('#amSplit').style.display = 'none';
+    }
+    const ok = ced.length >= 6 && ced.length <= 8 && split.first_name && split.last_names;
+    q('#amSave').disabled = !ok;
+  }
+  q('#amCed').addEventListener('input', e => { e.target.value = e.target.value.replace(/\D/g, ''); refresh(); });
+  q('#amFull').addEventListener('input', refresh);
+
+  q('#amSave').addEventListener('click', async () => {
+    const ced = q('#amCed').value.replace(/\D/g, '');
+    if (!split.last_names) { alert('Escribe nombre y apellidos.'); return; }
+    const saveB = q('#amSave'); saveB.disabled = true; saveB.textContent = 'Creando…';
+    const r = await rosterAddManual(STATE.cc, {
+      id_number: ced,
+      first_name: split.first_name, second_name: split.second_name, last_names: split.last_names,
+      role: q('#amRole').value.trim(),
+      egresado: q('#amStatus').value === 'egresado',
+    });
+    if (!r.ok) { saveB.disabled = false; saveB.textContent = 'Crear colaborador'; alert(r.error || 'No se pudo crear.'); return; }
+    close();
+    await load();
+    // Abrir su ficha para completar el resto de datos.
+    if (r.id_number) openFicha(r.id_number);
+  });
+}
+
+/* ---- Limpiar lista (destructivo) ---- */
+function openClearModal() {
+  const host = wpModalHost();
+  const total = STATE.workers.length;
+  host.innerHTML = `
+    <div class="wp-modal-vp">
+      <div class="wp-modal">
+        <button class="wp-x" id="clX" title="Cerrar">✕</button>
+        <h3 style="color:var(--danger)">Limpiar lista de personal</h3>
+        <p class="wp-who">${esc(STATE.cc)} · Esta acción vacía <b>toda</b> la lista de la tienda.</p>
+
+        <div class="wp-dangerbox">
+          <b>Se quitarán los ${total} colaboradores</b> de la lista de la tienda (los del Reporte 10 <u>y</u> los manuales).
+        </div>
+        <div class="wp-okbox">
+          ✓ <b>Las fotos y fichas NO se borran.</b> Quedan guardadas en el directorio por cédula. Si la persona vuelve a la lista —por Reporte 10 o manual— su foto y datos reaparecen automáticamente.
+        </div>
+
+        <label class="flabel">Para confirmar, escribe el código de la tienda: <b>${esc(STATE.cc)}</b></label>
+        <input id="clConfirm" autocomplete="off" placeholder="${esc(STATE.cc)}">
+
+        <div class="wp-foot">
+          <span style="flex:1"></span>
+          <button class="btn" id="clCancel">Cancelar</button>
+          <button class="btn wp-btn-danger" id="clOk" disabled>Sí, vaciar la lista</button>
+        </div>
+      </div>
+    </div>`;
+
+  const q = s => host.querySelector(s);
+  const close = () => { document.removeEventListener('keydown', onKey); host.innerHTML = ''; };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  q('#clX').addEventListener('click', close);
+  q('#clCancel').addEventListener('click', close);
+  host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) close(); });
+  q('#clConfirm').addEventListener('input', e => {
+    q('#clOk').disabled = e.target.value.trim().toUpperCase() !== String(STATE.cc).toUpperCase();
+  });
+  q('#clOk').addEventListener('click', async () => {
+    const okB = q('#clOk'); okB.disabled = true; okB.textContent = 'Vaciando…';
+    const r = await rosterClear(STATE.cc);
+    if (!r.ok) { okB.disabled = false; okB.textContent = 'Sí, vaciar la lista'; alert(r.error || 'No se pudo limpiar.'); return; }
+    close();
+    await load();
   });
 }

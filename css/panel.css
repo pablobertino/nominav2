@@ -807,6 +807,85 @@
   .mo-summary .k { flex-basis:auto; }
 }
 
+/* ===================== DOCUMENTOS DEL PERSONAL =====================
+   Biblioteca global de modelos/formatos. Lista de tarjetas horizontales
+   con icono por tipo, pills de estado/categoria/version y acciones segun
+   rol (admin gestiona; tienda solo descarga). Reusa .modal-ov/.modal,
+   .pill, .flabel, .btn del resto. */
+.pd-list { display:flex; flex-direction:column; gap:11px; }
+.pd-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
+  padding:16px 18px; display:flex; gap:16px; align-items:flex-start; transition:border-color .12s, box-shadow .12s; }
+.pd-card:hover { border-color:#cbd9ee; box-shadow:var(--shadow-md); }
+.pd-card.arch { opacity:.72; background:#fbfcfd; }
+.pd-ic { width:46px; height:46px; border-radius:var(--radius-md); flex-shrink:0; display:flex;
+  align-items:center; justify-content:center; background:var(--brand-bg); color:var(--brand); }
+.pd-ic.word { background:#e8f0fe; color:#1d4ed8; }
+.pd-ic.pdf { background:var(--danger-bg); color:var(--danger); }
+.pd-ic.xls { background:var(--success-bg); color:var(--success); }
+.pd-main { flex:1; min-width:0; }
+.pd-title { font-size:15px; font-weight:650; margin:0 0 3px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.pd-desc { font-size:12.5px; color:var(--ink-soft); margin:2px 0 9px; line-height:1.5; }
+.pd-meta { display:flex; flex-wrap:wrap; gap:5px 16px; font-size:11.5px; color:var(--muted); }
+.pd-meta .m { display:inline-flex; align-items:center; gap:5px; }
+.pd-meta .m b { color:var(--ink-soft); font-weight:600; }
+.pd-file { font-size:11.5px; color:var(--faint); font-family:ui-monospace,Menlo,monospace; margin-top:7px; }
+.pd-acts { display:flex; flex-direction:column; gap:6px; align-items:flex-end; flex-shrink:0; }
+.pd-arow { display:flex; gap:6px; flex-wrap:wrap; justify-content:flex-end; }
+.pd-danger { color:var(--danger); border-color:#f3c2c2; }
+.pd-danger:hover { background:#fef2f2; }
+/* pills propias */
+.pd-active { background:var(--success-bg); color:var(--success); }
+.pd-arch { background:#f1f5f9; color:var(--muted); }
+.pd-ver { background:var(--brand-bg); color:var(--brand); }
+.pd-cat { background:#f3e8ff; color:#7e22ce; }
+/* aviso solo lectura (tienda) */
+.pd-ro { background:var(--brand-bg); border:1px solid #bcd8fb; border-radius:var(--radius-md);
+  padding:11px 15px; font-size:12.5px; color:#1e40af; margin-bottom:16px; display:flex; align-items:center; gap:9px; }
+/* subtitulo de modal */
+.pd-sub { font-size:12.5px; color:var(--muted); margin:0 0 18px; }
+.modal-ov .modal.wide { max-width:600px; }
+.modal-ov .modal textarea { width:100%; border:1px solid var(--border); border-radius:var(--radius-sm);
+  padding:10px 11px; font-family:inherit; font-size:13px; color:var(--ink); background:var(--surface);
+  outline:none; resize:vertical; min-height:70px; box-sizing:border-box; margin-bottom:2px; }
+.modal-ov .modal textarea:focus { border-color:var(--brand); box-shadow:0 0 0 3px var(--brand-bg); }
+/* caja informativa de version actual (modal nueva version) */
+.pd-curbox { background:var(--brand-bg); border:1px solid #bcd8fb; border-radius:var(--radius-md);
+  padding:11px 14px; margin-bottom:14px; font-size:12px; color:#1e40af; }
+.pd-warnbox { background:var(--warn-bg); border:1px solid #f5d98a; border-radius:var(--radius-md);
+  padding:12px 14px; margin-bottom:16px; font-size:12.5px; color:#7a5a12; line-height:1.5; }
+/* dropzone */
+.pd-drop { border:2px dashed #cbd9ee; border-radius:var(--radius-md); padding:22px; text-align:center;
+  color:var(--muted); background:var(--bg); margin-bottom:14px; cursor:pointer; transition:.12s; }
+.pd-drop:hover { border-color:var(--brand); background:var(--brand-bg); }
+.pd-di { width:38px; height:38px; color:var(--brand); margin:0 auto 8px; }
+.pd-drop b { color:var(--ink); font-size:13.5px; display:block; }
+.pd-drop small { display:block; font-size:11.5px; margin-top:4px; }
+/* historial de versiones */
+.pd-ver-row { display:flex; gap:12px; align-items:flex-start; padding:12px 0; border-bottom:1px solid var(--border-soft); }
+.pd-ver-row:last-of-type { border-bottom:0; }
+.pd-ver-num { width:34px; height:34px; border-radius:50%; background:var(--brand-bg); color:var(--brand);
+  font-weight:700; font-size:13px; display:flex; align-items:center; justify-content:center; flex-shrink:0; }
+.pd-ver-num.old { background:#f1f5f9; color:var(--muted); }
+.pd-ver-body { flex:1; min-width:0; }
+.pd-ver-file { font-size:13px; font-weight:600; color:var(--ink); }
+.pd-ver-cmt { font-size:12px; color:var(--ink-soft); margin:3px 0; }
+.pd-ver-who { font-size:11px; color:var(--muted); }
+/* auditoria */
+.pd-aud-row { display:flex; gap:11px; align-items:baseline; padding:9px 0; border-bottom:1px solid var(--border-soft); font-size:12.5px; }
+.pd-aud-row:last-of-type { border-bottom:0; }
+.pd-aud-dot { width:8px; height:8px; border-radius:50%; flex-shrink:0; align-self:flex-start; margin-top:5px; }
+.pd-a-create { background:var(--success); } .pd-a-edit { background:var(--brand); }
+.pd-a-ver { background:#7e22ce; } .pd-a-arch { background:var(--warn); }
+.pd-a-rest { background:var(--success); } .pd-a-dl { background:var(--faint); }
+.pd-aud-txt { flex:1; } .pd-aud-txt b { color:var(--ink); }
+.pd-aud-when { color:var(--faint); font-size:11px; white-space:nowrap; }
+
+@media (max-width:640px) {
+  .pd-card { flex-direction:column; }
+  .pd-acts { align-items:stretch; width:100%; }
+  .pd-arow { justify-content:flex-start; }
+}
+
 /* ===================== FICHAS Y FOTOS DE COLABORADORES =====================
    Grid de tarjetas (una por persona del roster) con su foto tipo carnet y
    modal de subida con previsualizacion + guia de encuadre. Usa los tokens
@@ -985,4 +1064,66 @@
   .ff-row, .ff-row.full { grid-template-columns:130px 1fr; }
   .pm-two { flex-direction:column; }
   .pm-arrow { transform:rotate(90deg); }
+}
+
+/* ===================== GESTION DE LA LISTA DE PERSONAL =====================
+   Botones de cabecera (Actualizar lista / Agregar / Limpiar), barra de
+   estado del roster, marca "manual", y los modales de carga/alta/limpieza.
+   Reusa .wp-modal/.wp-modal-vp/.wp-x/.wp-who/.wp-foot/.wp-help del modal de
+   foto y .flabel/.btn del resto. */
+.head-actions { display:flex; gap:8px; flex-shrink:0; flex-wrap:wrap; }
+.wp-btn-danger { color:var(--danger); border-color:#f3c2c2; }
+.wp-btn-danger:hover { background:#fef2f2; border-color:#e9a8a8; }
+/* barra de estado del roster */
+.wp-rosterbar { display:flex; align-items:center; gap:12px; flex-wrap:wrap; background:var(--surface);
+  border:1px solid var(--border); border-radius:var(--radius-md); padding:10px 15px; margin-bottom:14px;
+  font-size:12.5px; color:var(--ink-soft); }
+.wp-rosterbar .rb-ic { color:var(--faint); }
+.wp-rosterbar b { color:var(--ink); }
+.wp-rosterbar .rb-sep { width:1px; height:16px; background:var(--border); }
+.wp-rosterbar .rb-ok { color:var(--success); font-weight:600; }
+.wp-rosterbar .rb-old { color:var(--warn); font-weight:600; }
+/* marca "manual" en las tarjetas */
+.wp-pill-manual { background:#f3e8ff; color:#7e22ce; }
+/* dropzone de carga del Reporte 10 */
+.wp-drop { border:2px dashed #cbd9ee; border-radius:var(--radius-md); padding:22px; text-align:center;
+  color:var(--muted); background:var(--bg); margin-bottom:14px; cursor:pointer; transition:.12s; }
+.wp-drop:hover { border-color:var(--brand); background:var(--brand-bg); }
+.wp-di { width:38px; height:38px; color:var(--brand); margin:0 auto 8px; }
+.wp-drop b { color:var(--ink); font-size:13.5px; display:block; }
+.wp-drop small { display:block; font-size:11.5px; margin-top:4px; }
+/* previsualizacion del parseo */
+.wp-prev { border-radius:var(--radius-sm); padding:11px 13px; font-size:12.5px; margin-bottom:14px; line-height:1.5; }
+.wp-prev.ok { background:var(--success-bg); border:1px solid #b6e3c8; color:#15803d; }
+.wp-prev.warn { background:var(--danger-bg); border:1px solid #f3c2c2; color:#991b1b; }
+/* banda ancla de cedula (alta manual) */
+.wp-ced-anchor { display:flex; align-items:center; gap:10px; background:#f0f7ff; border:1px solid #bcd8fb;
+  border-radius:var(--radius-md); padding:10px 14px; margin-bottom:14px; flex-wrap:wrap; }
+.wp-ced-anchor .l { font-size:12.5px; font-weight:700; color:#1e40af; white-space:nowrap; }
+.wp-ced-anchor input { width:140px; height:38px; border:1px solid var(--border); border-radius:var(--radius-sm);
+  padding:0 11px; font-family:ui-monospace,Menlo,monospace; font-size:14px; outline:none; background:#fff; }
+.wp-ced-anchor input:focus { border-color:var(--brand); box-shadow:0 0 0 3px var(--brand-bg); }
+.wp-ced-anchor .hint-side { font-size:11px; color:#1e40af; margin-left:auto; }
+/* alta manual: inputs y grid */
+.wp-modal .flabel { font-size:12px; font-weight:600; color:var(--ink-soft); margin-bottom:5px; display:block; }
+.wp-modal .flabel .opt { font-weight:400; color:var(--faint); }
+.wp-modal > .wp-modal-vp, .wp-modal input[type=text], .wp-modal select { font-family:inherit; }
+.wp-modal input[type=text], .wp-modal select { width:100%; height:40px; border:1px solid var(--border);
+  border-radius:var(--radius-sm); padding:0 11px; font-size:13px; color:var(--ink); background:var(--surface);
+  outline:none; margin-bottom:12px; box-sizing:border-box; }
+.wp-modal input[type=text]:focus, .wp-modal select:focus { border-color:var(--brand); box-shadow:0 0 0 3px var(--brand-bg); }
+.wp-grid2 { display:grid; grid-template-columns:1fr 1fr; gap:0 14px; }
+.wp-namesplit { font-size:11.5px; color:var(--brand); background:var(--brand-bg); border-radius:var(--radius-sm);
+  padding:8px 11px; margin:-6px 0 12px; line-height:1.5; }
+/* cajas de aviso del modal limpiar */
+.wp-dangerbox { background:var(--danger-bg); border:1px solid #f3c2c2; border-radius:var(--radius-md);
+  padding:12px 14px; margin-bottom:12px; font-size:12.5px; color:#991b1b; line-height:1.5; }
+.wp-okbox { background:var(--success-bg); border:1px solid #b6e3c8; border-radius:var(--radius-md);
+  padding:12px 14px; margin-bottom:16px; font-size:12.5px; color:#15803d; line-height:1.5; }
+
+@media (max-width:600px) {
+  .head-actions { width:100%; }
+  .head-actions .btn { flex:1; justify-content:center; }
+  .wp-grid2 { grid-template-columns:1fr; }
+  .wp-ced-anchor .hint-side { margin-left:0; width:100%; }
 }
