@@ -192,10 +192,17 @@ async function directory(env, cc, table) {
   const bankMap = {};
   (banks || []).forEach(b => { bankMap[b.code] = b.name; });
 
-  // Roster de la empresa (tabla segun tipo).
+  // Roster de la empresa (tabla segun tipo). En modo empresa traemos TODOS
+  // los datos personales desde enterprise_workers (el Reporte AX los tiene),
+  // para no depender de que workers_master este poblado: la ficha usa el
+  // dato del roster como respaldo del master. En tiendas el roster solo
+  // aporta lo basico (los datos personales viven en el master/Reporte 10).
+  const rosterSelect = isEnterprise
+    ? `id_number,full_name,role,end_date,source,first_name,second_name,last_names,`
+      + `birth_date,gender,marital_status,account_number,bank_code,todo_ticket,phone,email,address,data_id`
+    : `id_number,full_name,role,end_date,source`;
   const workers = await sb(env,
-    `${table}?company_code=eq.${encodeURIComponent(cc)}`
-    + `&select=id_number,full_name,role,end_date,source&order=full_name.asc`);
+    `${table}?company_code=eq.${encodeURIComponent(cc)}&select=${rosterSelect}&order=full_name.asc`);
   const ceds = (workers || []).map(w => w.id_number).filter(Boolean);
 
   // Metadatos del snapshot. store_roster_meta (tiendas) o
@@ -239,25 +246,28 @@ async function directory(env, cc, table) {
     const hasPhoto = !!m.photo_thumb_path;
     const thumbUrl = hasPhoto ? await storageSignedUrl(env, m.photo_thumb_path) : null;
     const fullUrl = m.photo_full_path ? await storageSignedUrl(env, m.photo_full_path) : null;
+    // Para cada dato personal: gana el master si lo tiene; si no, el del
+    // roster (en empresa el Reporte AX lo trae). Asi la ficha muestra los
+    // datos aunque workers_master aun no este sincronizado.
+    const pick = (key) => (m[key] != null && m[key] !== '') ? m[key] : (w[key] != null && w[key] !== '' ? w[key] : null);
     return {
       id_number: w.id_number,
       ced_kind: cedKind(w.id_number),
-      // Nombre: el de la maestra si existe; si no, el del roster.
       full_name: m.full_name || w.full_name,
-      first_name: m.first_name || null,
-      second_name: m.second_name || null,
-      last_names: m.last_names || null,
-      role: m.role || w.role || null,
+      first_name: pick('first_name'),
+      second_name: pick('second_name'),
+      last_names: pick('last_names'),
+      role: pick('role'),
       end_date: w.end_date || null,
-      birth_date: m.birth_date || null,
-      gender: m.gender || null,
-      marital_status: m.marital_status || null,
-      account_number: m.account_number || null,
-      bank_code: m.bank_code || null,
-      phone: m.phone || null,
-      email: m.email || null,
-      address: m.address || null,
-      data_id: m.data_id || null,
+      birth_date: pick('birth_date'),
+      gender: pick('gender'),
+      marital_status: pick('marital_status'),
+      account_number: pick('account_number'),
+      bank_code: pick('bank_code'),
+      phone: pick('phone'),
+      email: pick('email'),
+      address: pick('address'),
+      data_id: pick('data_id'),
       has_photo: hasPhoto,
       thumb_url: thumbUrl,
       full_url: fullUrl,

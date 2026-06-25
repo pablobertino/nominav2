@@ -155,6 +155,10 @@ export async function onRequestPost({ request, env }) {
       const workers = await sb(env,
         `enterprise_workers?company_code=eq.${encodeURIComponent(cc)}`
         + `&select=id_number,full_name,role,department_id,has_biometric,start_date,end_date,is_active,account_number,bank_code,todo_ticket,phone,email,gender,marital_status,birth_date,address,data_id,first_name,second_name,last_names,source&order=full_name.asc`);
+      // Red de seguridad: asegurar que workers_master (de donde la ficha lee
+      // los datos personales) tenga a estas personas. Si una carga previa no
+      // alcanzo a poblar la maestra, esto la repara al abrir la vista.
+      try { await upsertWorkersMaster(env, cc, (workers || [])); } catch (e) { /* no critico */ }
       const metaArr = await sb(env,
         `enterprise_roster_meta?company_code=eq.${encodeURIComponent(cc)}&select=uploaded_at,uploaded_by,row_count,source,source_file`);
       const meta = metaArr && metaArr[0] ? metaArr[0] : null;
