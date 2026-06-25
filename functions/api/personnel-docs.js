@@ -39,6 +39,54 @@ const MIME_EXT = {
   'application/vnd.ms-excel': 'xls',
 };
 
+// Paleta para autoasignar color a categorias nuevas. Se elige el primer
+// color que aun no este en uso; si todos estan usados, rota por indice.
+const CAT_PALETTE = [
+  '#2b6cff', '#d3322f', '#b45309', '#0ea5a5', '#7e22ce',
+  '#0e7490', '#15803d', '#be185d', '#4f46e5', '#0891b2',
+  '#ca8a04', '#9333ea', '#e11d48', '#0d9488', '#64748b',
+];
+function pickColor(usedColors, seed) {
+  const used = new Set((usedColors || []).map(c => String(c || '').toLowerCase()));
+  const free = CAT_PALETTE.find(c => !used.has(c.toLowerCase()));
+  if (free) return free;
+  // todos usados: rota deterministicamente por cantidad existente
+  return CAT_PALETTE[(seed || used.size) % CAT_PALETTE.length];
+}
+
+/* Sanitiza el HTML de la descripcion: allowlist estricta de etiquetas de
+   formato (negrita, listas, enlaces, saltos). Todo lo demas se elimina.
+   Defensa en profundidad: aunque el editor del cliente solo produzca estas
+   etiquetas, no confiamos en el cliente (alguien podria postear al endpoint
+   directo). NO permite <script>, on*=, style=, iframe, javascript:, etc. */
+const HTML_ALLOWED = new Set(['b', 'strong', 'i', 'em', 'u', 'ul', 'ol', 'li', 'br', 'p', 'a']);
+function sanitizeDescHtml(raw) {
+  let s = String(raw == null ? '' : raw);
+  if (!s.trim()) return null;
+  // 1) Fuera bloques peligrosos completos (con su contenido).
+  s = s.replace(/<\s*(script|style|iframe|object|embed|svg|math)[\s\S]*?<\s*\/\s*\1\s*>/gi, '');
+  // 2) Recorre cada etiqueta; conserva solo las permitidas y limpia atributos.
+  s = s.replace(/<\/?[a-z][^>]*>/gi, (tag) => {
+    const m = tag.match(/^<\s*\/?\s*([a-z0-9]+)/i);
+    const name = m ? m[1].toLowerCase() : '';
+    if (!HTML_ALLOWED.has(name)) return '';
+    const closing = /^<\s*\//.test(tag);
+    if (closing) return `</${name}>`;
+    if (name === 'a') {
+      const hm = tag.match(/href\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))/i);
+      let href = hm ? (hm[2] || hm[3] || hm[4] || '') : '';
+      if (!/^https?:\/\//i.test(href)) return '<a>';
+      href = href.replace(/"/g, '&quot;');
+      return `<a href="${href}" target="_blank" rel="noopener noreferrer">`;
+    }
+    return `<${name}>`;
+  });
+  // 3) Neutraliza on*= residual y javascript:.
+  s = s.replace(/\son\w+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '').replace(/javascript:/gi, '');
+  s = s.trim();
+  return s || null;
+}
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -194,25 +242,36 @@ export async function onRequestPost({ request, env }) {
 
 /* ---------- Categorias ---------- */
 async function catList(env) {
-  const cats = await sb(env, 'personnel_doc_categories?order=sort_order.asc&select=id,code,label,sort_order,is_active');
+  // Orden alfabetico por etiqueta (decision de UX). sort_order se conserva
+  // en BD pero ya no gobierna el orden visible.
+  const cats = await sb(env, 'personnel_doc_categories?order=label.asc&select=id,code,label,color,sort_order,is_active');
   return json({ ok: true, categories: cats || [] });
 }
 async function catSave(env, body) {
   const c = body.category || {};
   const label = String(c.label || '').trim();
   if (!label) return json({ ok: false, error: 'Falta el nombre de la categoria.' }, 400);
+  // color: opcional; si viene, validar formato hex corto/largo.
+  const colorIn = String(c.color || '').trim();
+  const validColor = /^#[0-9a-fA-F]{6}$/.test(colorIn) ? colorIn.toLowerCase() : null;
   if (c.id) {
+    // Editar: actualiza label y (si vino) color. No toca sort_order.
+    const patch = { label };
+    if (validColor) patch.color = validColor;
     await sb(env, `personnel_doc_categories?id=eq.${encodeURIComponent(c.id)}`, {
-      method: 'PATCH', body: JSON.stringify({ label, sort_order: parseInt(c.sort_order, 10) || 100 }),
+      method: 'PATCH', body: JSON.stringify(patch),
     });
     return json({ ok: true, id: c.id });
   }
+  // Crear: autoasignar color libre de la paleta si no lo eligio el usuario.
+  const existing = await sb(env, 'personnel_doc_categories?select=color');
+  const color = validColor || pickColor((existing || []).map(x => x.color), (existing || []).length);
   const code = slug(c.code || label).toLowerCase();
   const row = await sb(env, 'personnel_doc_categories', {
     method: 'POST', headers: { Prefer: 'return=representation' },
-    body: JSON.stringify({ code, label, sort_order: parseInt(c.sort_order, 10) || 100 }),
+    body: JSON.stringify({ code, label, color, sort_order: parseInt(c.sort_order, 10) || 100 }),
   });
-  return json({ ok: true, id: row && row[0] && row[0].id });
+  return json({ ok: true, id: row && row[0] && row[0].id, color });
 }
 async function catToggle(env, body) {
   const id = parseInt(body.id, 10);
@@ -237,7 +296,7 @@ async function listDocs(env, body, u) {
     + `archived_at,archived_by,archive_reason,created_by,created_at,updated_by,updated_at`
     + `${filter}&order=is_archived.asc,title.asc`);
 
-  const cats = await sb(env, 'personnel_doc_categories?select=id,code,label');
+  const cats = await sb(env, 'personnel_doc_categories?select=id,code,label,color');
   const catById = {};
   (cats || []).forEach(c => { catById[c.id] = c; });
 
@@ -267,6 +326,7 @@ async function listDocs(env, body, u) {
       category_id: d.category_id || null,
       category: cat ? cat.label : null,
       category_code: cat ? cat.code : null,
+      category_color: cat ? (cat.color || null) : null,
       current_version: d.current_version || 0,
       is_archived: !!d.is_archived,
       archived_at: d.archived_at || null,
@@ -370,7 +430,7 @@ async function createDoc(env, body, u) {
   if (bytes.length > MAX_BYTES) return json({ ok: false, error: 'El archivo supera 10 MB.' }, 413);
 
   const categoryId = body.category_id ? parseInt(body.category_id, 10) : null;
-  const description = (body.description || '').trim() || null;
+  const description = sanitizeDescHtml(body.description);
   const comment = (body.comment || '').trim() || 'Version inicial';
 
   // 1) crear el documento (current_version 0 hasta subir el archivo)
@@ -452,7 +512,7 @@ async function updateDoc(env, body, u) {
   if (!title) return json({ ok: false, error: 'Falta el titulo.' }, 400);
   const patch = {
     title,
-    description: (body.description || '').trim() || null,
+    description: sanitizeDescHtml(body.description),
     category_id: body.category_id ? parseInt(body.category_id, 10) : null,
     updated_by: u.actor, updated_at: new Date().toISOString(),
   };
