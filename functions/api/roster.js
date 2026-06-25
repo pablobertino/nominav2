@@ -361,7 +361,9 @@ export async function onRequestPost({ request, env }) {
       try {
         masterSynced = await upsertWorkersMaster(env, cc, valid);
       } catch (e) {
-        warnings.push('No se pudo sincronizar el directorio de colaboradores (se reintenta en la proxima carga).');
+        // Incluir el mensaje real para diagnosticar (temporal). Si esto vuelve
+        // a fallar, el texto del error aparece en el resumen de la carga.
+        warnings.push('Directorio (workers_master) no sincronizado: ' + String(e.message || e));
       }
 
       // Metadatos del snapshot (upsert)
