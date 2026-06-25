@@ -270,3 +270,18 @@ export async function enterpriseRosterClear(companyCode, adminId) {
   });
   return res.json();
 }
+
+/* --- Carga de Reporte AX en una TIENDA (escribe en store_workers) ---
+   Solo admin/superadmin. Usa /api/roster con accion 'replace_ax'. Regla
+   "el ultimo reporte manda": el AX define el roster y pisa los campos que
+   trae; el cargo (que el AX no trae) se conserva del registro previo. */
+export async function storeRosterReplaceAX(companyCode, rows, { uploadedBy, sourceFile, adminId } = {}) {
+  const res = await fetch('/api/roster', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      action: 'replace_ax', company_code: companyCode, rows,
+      uploaded_by: uploadedBy, source_file: sourceFile, adminId,
+    }),
+  });
+  return res.json();
+}

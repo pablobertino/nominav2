@@ -26,7 +26,7 @@
 
 import { $ } from '../core/dom.js';
 import { parseReport10, validateParsed, rosterReplace, rosterClear, rosterAddManual, rosterAgeDays, splitFullName } from '../reports/shared/roster.js';
-import { parseReporteAX, validateReporteAX, enterpriseRosterReplace, enterpriseRosterClear } from '../reports/shared/roster-ax.js';
+import { parseReporteAX, validateReporteAX, enterpriseRosterReplace, enterpriseRosterClear, storeRosterReplaceAX } from '../reports/shared/roster-ax.js';
 
 const THUMB = 300;           // miniatura cuadrada (grid)
 const FULL = 800;            // version grande cuadrada (visor / AX)
@@ -156,7 +156,8 @@ let STATE = null;   // { user, cc, onExit, workers, q, company, banks, bankMap, 
 export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   const mode = (opts && opts.mode) === 'enterprise' ? 'enterprise' : 'store';
   const adminId = user && user.kind === 'admin' ? (user.id || null) : null;
-  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId };
+  const isAdmin = !!(user && user.kind === 'admin');
+  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin };
 
   const back = onExit
     ? `<button class="btn" id="wpBack" style="margin-bottom:14px">← Volver</button>`
@@ -169,7 +170,8 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
       <div class="pnl-head">
         <div><h1>Personal</h1><p id="wpInfo">Cargando personal de ${esc(companyCode)}…</p></div>
         <div class="head-actions">
-          <button class="btn" id="wpReporte"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Actualizar lista</button>
+          <button class="btn" id="wpReporte"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> ${mode === 'enterprise' ? 'Actualizar lista' : 'Reporte 10'}</button>
+          ${(mode === 'store' && isAdmin) ? `<button class="btn" id="wpReporteAX"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Reporte AX</button>` : ''}
           ${mode === 'enterprise' ? '' : `<button class="btn btn-primary" id="wpAddManual"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>`}
           <button class="btn wp-btn-danger" id="wpClear"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Limpiar lista</button>
         </div>
@@ -186,6 +188,8 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   if (onExit) $('#wpBack').addEventListener('click', onExit);
   $('#wpSearch').addEventListener('input', e => { STATE.q = e.target.value; paintGrid(); });
   $('#wpReporte').addEventListener('click', STATE.mode === 'enterprise' ? openReporteAXModal : openReporteModal);
+  const axBtn = $('#wpReporteAX');
+  if (axBtn) axBtn.addEventListener('click', openReporteAXModalStore);
   const addBtn = $('#wpAddManual');
   if (addBtn) addBtn.addEventListener('click', openAddManualModal);
   $('#wpClear').addEventListener('click', openClearModal);
@@ -880,6 +884,104 @@ function openReporteAXModal() {
     const saveB = q('#axSave'); saveB.disabled = true; saveB.textContent = 'Actualizando…';
     const uploadedBy = STATE.user.name || STATE.user.username || 'admin';
     const r = await enterpriseRosterReplace(STATE.cc, valid.validRows, {
+      uploadedBy, sourceFile: parsed.fileName, adminId: STATE.adminId,
+    });
+    if (!r.ok) { saveB.disabled = false; saveB.textContent = 'Actualizar lista'; alert(r.error || 'No se pudo actualizar.'); return; }
+    close();
+    await load();
+  });
+}
+
+/* ---- Actualizar lista por Reporte AX en una TIENDA (solo admin) ----
+   Escribe en store_workers via /api/roster (accion replace_ax). Regla
+   "el ultimo reporte manda": el AX define el roster y pisa lo que trae;
+   el cargo (que el AX no trae) se conserva del registro previo. */
+function openReporteAXModalStore() {
+  const host = wpModalHost();
+  host.innerHTML = `
+    <div class="wp-modal-vp">
+      <div class="wp-modal">
+        <button class="wp-x" id="axsX" title="Cerrar">✕</button>
+        <h3>Actualizar lista por Reporte AX</h3>
+        <p class="wp-who">${esc(STATE.cc)} · Carga el <b>Reporte AX</b> (Excel de AX) para refrescar el personal de la tienda.</p>
+
+        <div class="wp-drop" id="axsDrop">
+          <svg class="wp-di" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+          <b id="axsDropName">Elegir el archivo .xlsx</b>
+          <small id="axsDropHint">Se lee en tu navegador, no se sube el archivo</small>
+        </div>
+        <input type="file" id="axsFile" accept=".xlsx,.xls" hidden>
+
+        <div id="axsPreview" class="wp-prev" style="display:none"></div>
+
+        <div class="wp-foot">
+          <span style="flex:1"></span>
+          <button class="btn" id="axsCancel">Cancelar</button>
+          <button class="btn" id="axsPick">Elegir archivo</button>
+          <button class="btn btn-primary" id="axsSave" disabled>Actualizar lista</button>
+        </div>
+      </div>
+    </div>`;
+
+  let parsed = null, valid = null;
+  const q = s => host.querySelector(s);
+  const close = () => { document.removeEventListener('keydown', onKey); host.innerHTML = ''; };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  q('#axsX').addEventListener('click', close);
+  q('#axsCancel').addEventListener('click', close);
+  host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) close(); });
+  q('#axsDrop').addEventListener('click', () => q('#axsFile').click());
+  q('#axsPick').addEventListener('click', () => q('#axsFile').click());
+
+  q('#axsFile').addEventListener('change', async e => {
+    const f = e.target.files && e.target.files[0];
+    if (!f) return;
+    q('#axsDropName').textContent = f.name;
+    q('#axsDropHint').textContent = 'Leyendo…';
+    try {
+      parsed = await parseReporteAX(f);
+      // En tienda el codigo de empresa del AX (ALIAS tipo AA01) debe coincidir
+      // con el de la tienda. Validamos contra STATE.cc igual que en empresa.
+      valid = validateReporteAX(parsed, STATE.cc);
+      const prev = q('#axsPreview');
+      prev.style.display = 'block';
+      if (parsed.missing.length) {
+        prev.className = 'wp-prev warn';
+        prev.innerHTML = `⚠ Falta(n) la(s) columna(s): <b>${parsed.missing.join(', ')}</b>. Revisa que sea el Reporte AX correcto.`;
+        q('#axsSave').disabled = true;
+        q('#axsDropHint').textContent = 'Archivo con columnas faltantes';
+        return;
+      }
+      if (!valid.total) {
+        prev.className = 'wp-prev warn';
+        prev.innerHTML = `⚠ El archivo no trae personal para <b>${esc(STATE.cc)}</b>.`
+          + (valid.foreignCompanies.length ? ` Trae datos de: <b>${valid.foreignCompanies.join(', ')}</b>.` : '')
+          + ` Verifica que sea el Reporte AX de esta tienda.`;
+        q('#axsSave').disabled = true;
+        q('#axsDropHint').textContent = 'Sin filas para esta tienda';
+        return;
+      }
+      prev.className = 'wp-prev ok';
+      prev.innerHTML = `✓ <b>${valid.total} trabajadores</b> (${valid.active} vigentes · ${valid.terminated} egresados)`
+        + (valid.hasAccountCol ? ` · ${valid.withAccount} con cuenta` : '')
+        + `<div style="margin-top:6px;font-size:11.5px"><b>El ultimo reporte manda:</b> el Reporte AX redefine la lista y actualiza identidad, nacimiento, genero, estado civil${valid.hasAccountCol ? ', cuenta y TodoTicket' : ''}. El cargo (que el AX no trae) se conserva.</div>`
+        + (valid.warnings.length ? `<div style="margin-top:6px;font-size:11.5px;color:var(--warn)">${valid.warnings.join(' ')}</div>` : '');
+      q('#axsDropHint').textContent = `${valid.total} filas validas`;
+      q('#axsSave').disabled = !valid.okToUpload;
+    } catch (err) {
+      const prev = q('#axsPreview');
+      prev.style.display = 'block'; prev.className = 'wp-prev warn';
+      prev.innerHTML = `No se pudo leer el archivo: ${esc(String(err.message || err))}`;
+      q('#axsSave').disabled = true;
+    }
+  });
+
+  q('#axsSave').addEventListener('click', async () => {
+    if (!valid || !valid.okToUpload) return;
+    const saveB = q('#axsSave'); saveB.disabled = true; saveB.textContent = 'Actualizando…';
+    const uploadedBy = STATE.user.name || STATE.user.username || 'admin';
+    const r = await storeRosterReplaceAX(STATE.cc, valid.validRows, {
       uploadedBy, sourceFile: parsed.fileName, adminId: STATE.adminId,
     });
     if (!r.ok) { saveB.disabled = false; saveB.textContent = 'Actualizar lista'; alert(r.error || 'No se pudo actualizar.'); return; }

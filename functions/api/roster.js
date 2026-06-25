@@ -43,6 +43,22 @@ async function sb(env, path, opts = {}) {
   return t ? JSON.parse(t) : null;
 }
 
+// --- Auth helpers (para la carga por Reporte AX en tienda, solo admin) ---
+// El Reporte AX en tienda lo cargan SOLO admin/superadmin. Estos helpers
+// validan el adminId y su alcance (igual patron que enterprise-roster.js).
+async function getAdmin(env, adminId) {
+  if (!adminId) return null;
+  const rows = await sb(env, `admin_users?id=eq.${encodeURIComponent(adminId)}&is_active=eq.true&select=id,role`);
+  return rows && rows.length ? rows[0] : null;
+}
+async function allowedCompanies(env, admin) {
+  if (admin.role === 'superadmin') return null; // todas
+  const rows = await sb(env, 'rpc/get_admin_companies', {
+    method: 'POST', body: JSON.stringify({ p_admin_id: admin.id }),
+  });
+  return new Set((rows || []).map(r => r.company_code));
+}
+
 // Normaliza texto de cargo para comparar con patrones: mayusculas, sin
 // acentos, espacios colapsados. Igual que guarda el ABM (cargo_save).
 function normCargo(s) {
@@ -161,6 +177,36 @@ function normalizeRow(row) {
     id_number, full_name, role, end_date, start_date, has_biometric,
     account_number, todo_ticket, data_id, first_name, second_name, last_names,
     marital_status, gender, phone, email, birth_date, address,
+  };
+}
+
+// Normaliza una fila del REPORTE AX para store_workers. A diferencia del
+// Reporte 10, el AX NO trae cargo (role), telefono, correo ni direccion;
+// SI trae identidad, nacimiento, genero, estado civil, cuenta, todoticket,
+// fechas y data_id. Los campos que el AX no trae quedan undefined aqui y se
+// resuelven en el handler (el cargo se conserva del registro previo).
+function normalizeRowAX(row) {
+  const id_number = String(row.id_number ?? '').replace(/[^0-9]/g, '');
+  const full_name = String(row.full_name ?? '').trim();
+  const first_name = (row.first_name ?? '').toString().trim() || null;
+  const second_name = (row.second_name ?? '').toString().trim() || null;
+  const last_names = (row.last_names ?? '').toString().trim() || null;
+  const birth_date = row.birth_date ? String(row.birth_date).slice(0, 10) : null;
+  const start_date = row.start_date ? String(row.start_date).slice(0, 10) : null;
+  const end_date = row.end_date ? String(row.end_date).slice(0, 10) : null;
+  const gd = String(row.gender ?? '').trim().toUpperCase();
+  const gender = (gd === 'M' || gd === 'F') ? gd : null;
+  const ms = String(row.marital_status ?? '').trim().toUpperCase();
+  const marital_status = ['S', 'C', 'D', 'V'].includes(ms) ? ms : null;
+  const accDigits = String(row.account_number ?? '').replace(/[^0-9]/g, '');
+  const account_number = accDigits.length === 20 ? accDigits : null;
+  const tt = String(row.todo_ticket ?? '').trim().toUpperCase();
+  const todo_ticket = (tt === 'S' || tt === 'N') ? tt : null;
+  const data_id = (row.data_id ?? '').toString().trim() || null;
+  return {
+    id_number, full_name, first_name, second_name, last_names,
+    birth_date, start_date, end_date, gender, marital_status,
+    account_number, todo_ticket, data_id,
   };
 }
 
@@ -525,6 +571,139 @@ export async function onRequestPost({ request, env }) {
       } catch { /* no critico: se reintenta al cargar Reporte 10 */ }
 
       return json({ ok: true, id_number: ced, full_name, added: true });
+    }
+
+    if (action === 'replace_ax') {
+      // Carga del REPORTE AX en una TIENDA. Solo admin/superadmin. Escribe en
+      // store_workers con la regla "el ultimo reporte manda": el AX redefine
+      // el roster y pisa los campos que trae (identidad, nacimiento, genero,
+      // estado civil, cuenta, todoticket, fechas, data_id). El CARGO (que el
+      // AX no trae) se CONSERVA del registro previo por cedula. Los manuales
+      // cuya cedula no venga en el AX se conservan (igual que en replace).
+      const cc = (body.company_code || '').trim();
+      if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);
+
+      // Autorizacion: solo admin/superadmin con alcance sobre la tienda.
+      const admin = await getAdmin(env, body.adminId);
+      if (!admin) return json({ ok: false, error: 'El Reporte AX solo lo carga un administrador.' }, 401);
+      const allowed = await allowedCompanies(env, admin);
+      if (allowed !== null && !allowed.has(cc)) {
+        return json({ ok: false, error: 'No tienes alcance sobre esa tienda.' }, 403);
+      }
+
+      const rawRows = Array.isArray(body.rows) ? body.rows : [];
+      if (!rawRows.length) return json({ ok: false, error: 'El Reporte AX no trae filas.' }, 400);
+
+      // Validacion + dedup.
+      const warnings = [];
+      const seen = new Set();
+      const valid = [];
+      for (const raw of rawRows) {
+        const r = normalizeRowAX(raw);
+        if (!r.id_number || r.id_number.length < 6 || r.id_number.length > 8) continue;
+        if (!r.full_name) continue;
+        if (seen.has(r.id_number)) continue;
+        seen.add(r.id_number);
+        valid.push(r);
+      }
+      if (!valid.length) return json({ ok: false, error: 'Ninguna fila valida (revisa Numero de personal y Nombre).' }, 400);
+
+      const activos = valid.filter(r => !r.end_date);
+      const egresados = valid.filter(r => r.end_date);
+
+      // El AX NO trae cargo: leemos el cargo previo por cedula para conservarlo.
+      const prev = await sb(env,
+        `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,role`);
+      const roleByCed = {};
+      (prev || []).forEach(p => { roleByCed[p.id_number] = p.role || null; });
+
+      // --- Reemplazo del roster (igual politica que replace) ---
+      // Se conservan los manuales cuya cedula NO venga en el AX; el resto se
+      // reemplaza. Si el AX trae una cedula que estaba manual, el AX manda.
+      const cedsReporte = new Set(valid.map(r => r.id_number));
+      const manualNow = await sb(env,
+        `store_workers?company_code=eq.${encodeURIComponent(cc)}&source=eq.manual&select=id_number`);
+      const manualKeep = (manualNow || []).filter(m => !cedsReporte.has(m.id_number)).map(m => m.id_number);
+      if (manualKeep.length) {
+        const inList = manualKeep.map(c => `"${c}"`).join(',');
+        await sb(env,
+          `store_workers?company_code=eq.${encodeURIComponent(cc)}&id_number=not.in.(${inList})`,
+          { method: 'DELETE' });
+      } else {
+        await sb(env, `store_workers?company_code=eq.${encodeURIComponent(cc)}`, { method: 'DELETE' });
+      }
+
+      const payload = valid.map(r => ({
+        company_code: cc,
+        id_number: r.id_number,
+        full_name: r.full_name,
+        first_name: r.first_name,
+        second_name: r.second_name,
+        last_names: r.last_names,
+        // El AX MANDA (se toman del reporte):
+        birth_date: r.birth_date,
+        gender: r.gender,
+        marital_status: r.marital_status,
+        account_number: r.account_number,
+        todo_ticket: r.todo_ticket,
+        start_date: r.start_date,
+        end_date: r.end_date,
+        data_id: r.data_id,
+        is_active: !r.end_date,
+        has_biometric: true,
+        // El AX NO trae cargo -> se conserva el previo por cedula:
+        role: roleByCed[r.id_number] || null,
+        // El AX no trae telefono/correo/direccion: no son columnas del
+        // reporte, asi que quedan null en la fila nueva (no hay con que
+        // pisarlos y la fila se reemplaza). Si se requiere conservarlos,
+        // se haria como con el cargo; por ahora la regla acordada es que
+        // esos campos viven en la ficha (workers_master) y alli se conservan.
+        source: 'reporte_ax',
+      }));
+      await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify(payload) });
+
+      // Sincronizar workers_master por cedula. Reusa el upsert del Reporte 10
+      // (no pisa foto; agrega datos personales solo si vienen con valor).
+      let masterSynced = 0;
+      try {
+        masterSynced = await upsertWorkersMaster(env, cc, valid.map(r => ({
+          id_number: r.id_number, full_name: r.full_name,
+          first_name: r.first_name, second_name: r.second_name, last_names: r.last_names,
+          role: roleByCed[r.id_number] || null,
+          account_number: r.account_number, todo_ticket: r.todo_ticket, data_id: r.data_id,
+          gender: r.gender, marital_status: r.marital_status, birth_date: r.birth_date,
+          phone: null, email: null, address: null,
+        })));
+      } catch (e) {
+        warnings.push('Directorio (workers_master) no sincronizado: ' + String(e.message || e));
+      }
+
+      // Metadatos del snapshot. source='reporte_ax' deja constancia de la
+      // fuente de la ultima carga de esta tienda.
+      await sb(env, 'store_roster_meta', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates' },
+        body: JSON.stringify({
+          company_code: cc,
+          uploaded_at: new Date().toISOString(),
+          uploaded_by: (body.uploaded_by || '').trim() || null,
+          total_count: valid.length,
+          active_count: activos.length,
+          source_file: (body.source_file || '').trim() || null,
+        }),
+      });
+
+      return json({
+        ok: true,
+        summary: {
+          total: valid.length,
+          active: activos.length,
+          terminated: egresados.length,
+          master_synced: masterSynced,
+          source: 'reporte_ax',
+          warnings,
+        },
+      });
     }
 
     return json({ ok: false, error: 'Accion no reconocida' }, 400);
