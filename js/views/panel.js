@@ -17,6 +17,11 @@ import { renderHistory } from '../reports/history.js';
 import { renderWorkerPhotos } from './worker-photos.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
+import { renderDepartments } from './departments.js';
+
+/* Tipos de empresa que NO son tienda: pueden tener departamentos y usuarios
+   de empresa. (companies.company_type) */
+const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
 
 let CATALOG = null;       // { companies, zones, subzones, concepts }
 let currentView = 'tiendas';
@@ -77,7 +82,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.90</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.91</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -283,7 +288,7 @@ function viewTiendas(user) {
         <td>${contacto}</td>
         <td>${statusPill(c.status)}</td>
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
-        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" style="margin-right:4px">Personal</button><button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button></td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" style="margin-right:4px">Personal</button>${NON_STORE_TYPES.has(c.type) ? `<button class="btn btn-mini" data-dep-code="${c.code}" style="margin-right:4px">Departamentos</button>` : ''}<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button></td>
       </tr>`;
     }).join('') || '<tr><td colspan="8" class="empty">Sin resultados.</td></tr>';
 
@@ -301,6 +306,12 @@ function viewTiendas(user) {
         currentView = 'fotos';
         document.querySelectorAll('#pnlNav button').forEach(x => x.classList.remove('active'));
         renderWorkerPhotos(user, b.dataset.photosCode, () => { currentView = 'tiendas'; navigate('tiendas', user); });
+      }));
+    $('#tBody').querySelectorAll('[data-dep-code]').forEach(b =>
+      b.addEventListener('click', () => {
+        const c = CATALOG.companies.find(x => x.code === b.dataset.depCode);
+        if (!c) return;
+        renderDepartments(user, c, () => { navigate('tiendas', user); });
       }));
   }
 
