@@ -104,13 +104,19 @@ function descText(html) {
   return (t.textContent || '').toLowerCase();
 }
 
-/* Lee un File a base64 (sin el prefijo data:). */
+/* Lee un File a base64 (sin el prefijo data:). Rechaza con un Error legible
+   (no con el ProgressEvent crudo) para poder mostrar un mensaje claro. */
 function fileToB64(file) {
   return new Promise((resolve, reject) => {
     const fr = new FileReader();
     fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
-    fr.onerror = reject;
-    fr.readAsDataURL(file);
+    fr.onerror = () => reject(new Error((fr.error && fr.error.message) || 'No se pudo leer el archivo.'));
+    fr.onabort = () => reject(new Error('La lectura del archivo se canceló.'));
+    try {
+      fr.readAsDataURL(file);
+    } catch (e) {
+      reject(new Error('No se pudo abrir el archivo: ' + (e && e.message ? e.message : e)));
+    }
   });
 }
 
@@ -487,20 +493,38 @@ function openUploadModal(id) {
     if (!staged) { alert('Elige un archivo.'); return; }
     if (isNew && !q('#pmTitle').value.trim()) { alert('Falta el título.'); return; }
     const saveB = q('#pmSave'); saveB.disabled = true; const lbl = saveB.textContent; saveB.textContent = 'Subiendo…';
-    const b64 = await fileToB64(staged.file);
+    let b64;
+    try {
+      b64 = await fileToB64(staged.file);
+    } catch (err) {
+      saveB.disabled = false; saveB.textContent = lbl;
+      alert('No se pudo leer el archivo seleccionado. Es posible que se haya movido, renombrado o que esté abierto en otro programa. Vuelve a elegirlo e inténtalo de nuevo.\n\nDetalle: ' + (err && err.message ? err.message : err));
+      return;
+    }
+    if (!b64) {
+      saveB.disabled = false; saveB.textContent = lbl;
+      alert('El archivo quedó vacío al leerlo. Vuelve a elegirlo e inténtalo de nuevo.');
+      return;
+    }
     const payload = {
       user: sessionUser(STATE.user),
       file_b64: b64, file_name: staged.name, mime: staged.mime,
       comment: q('#pmComment').value.trim(),
     };
     let r;
-    if (isNew) {
-      r = await api({ action: 'create', ...payload,
-        title: q('#pmTitle').value.trim(),
-        category_id: q('#pmCat').value || null,
-        description: rteValue(modalHost()) });
-    } else {
-      r = await api({ action: 'upload_version', document_id: id, ...payload });
+    try {
+      if (isNew) {
+        r = await api({ action: 'create', ...payload,
+          title: q('#pmTitle').value.trim(),
+          category_id: q('#pmCat').value || null,
+          description: rteValue(modalHost()) });
+      } else {
+        r = await api({ action: 'upload_version', document_id: id, ...payload });
+      }
+    } catch (err) {
+      saveB.disabled = false; saveB.textContent = lbl;
+      alert('Hubo un problema de red al guardar. Revisa tu conexión e inténtalo de nuevo.');
+      return;
     }
     if (!r.ok) { saveB.disabled = false; saveB.textContent = lbl; alert(r.error || 'No se pudo guardar.'); return; }
     closeModal();
