@@ -96,7 +96,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.09</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.10</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1147,7 +1147,7 @@ async function viewEquipo(user) {
     </tr></thead><tbody>
       ${rows.map(a => `<tr>
         <td class="code">${a.username}</td><td>${a.name || '—'}</td><td style="font-size:12px" class="muted">${a.email || '—'}</td>
-        <td><span class="pill ${a.role === 'superadmin' ? 'pill-proj' : 'pill-gray'}">${a.role}</span></td>
+        <td><span class="pill ${a.role === 'superadmin' ? 'pill-proj' : 'pill-gray'}">${ROLE_LABELS[a.role] || a.role}</span></td>
         <td>${a.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>'}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>
@@ -1161,11 +1161,11 @@ async function viewEquipo(user) {
 function auCreateModal(user) {
   openModal(`
     <div class="modal-head"><span>Nuevo miembro</span><button class="modal-x" id="mX">✕</button></div>
-    <label class="flabel">Usuario</label><input id="auU" placeholder="ej. yanmira.salazar" style="margin-bottom:12px">
+    <label class="flabel">Usuario</label><input id="auU" placeholder="ej. nombre.apellido" style="margin-bottom:12px">
     <label class="flabel">Nombre</label><input id="auN" placeholder="Nombre completo" style="margin-bottom:12px">
     <label class="flabel">Correo <span class="muted">(opcional)</span></label><input id="auE" placeholder="correo@grupocanaima.com" style="margin-bottom:12px">
     <label class="flabel">Rol</label>
-    <select id="auR" style="margin-bottom:14px;width:100%"><option value="admin">admin</option><option value="superadmin">superadmin</option></select>
+    <select id="auR" style="margin-bottom:14px;width:100%"><option value="admin">admin</option><option value="editor_personal">Editor de personal</option><option value="superadmin">superadmin</option></select>
     ${pwdBlockHtml()}
     <div class="modal-actions"><button class="btn" id="mCancel">Cancelar</button><button class="btn btn-primary" id="mOk">Crear</button></div>`);
   wirePwdBlock();
