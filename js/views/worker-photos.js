@@ -1018,7 +1018,14 @@ function openAxApiModal() {
     </div>`;
 
   const q = s => host.querySelector(s);
-  const close = () => { document.removeEventListener('keydown', onKey); host.innerHTML = ''; };
+  // done=true cuando la sincronizacion termino OK: al cerrar, recargamos.
+  // El modal NUNCA se cierra solo; solo a peticion (X / Cerrar / fondo / Esc).
+  let done = false;
+  const close = () => {
+    document.removeEventListener('keydown', onKey);
+    host.innerHTML = '';
+    if (done) load();   // refresca la lista recien al cerrar
+  };
   const onKey = ev => { if (ev.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
   q('#apX').addEventListener('click', close);
@@ -1029,10 +1036,18 @@ function openAxApiModal() {
     const goB = q('#apGo'); goB.disabled = true; goB.textContent = 'Sincronizando…';
     const res = q('#apResult'); res.style.display = 'block'; res.className = 'wp-prev'; res.textContent = 'Conectando con AX y trayendo el personal…';
     const uploadedBy = STATE.user.name || STATE.user.username || 'admin';
-    const r = await axRosterPull(STATE.cc, { uploadedBy, adminId: STATE.adminId });
-    if (!r.ok) {
+    let r;
+    try {
+      r = await axRosterPull(STATE.cc, { uploadedBy, adminId: STATE.adminId });
+    } catch (err) {
       res.className = 'wp-prev warn';
-      res.innerHTML = `⚠ ${esc(r.error || 'No se pudo sincronizar con AX.')}`;
+      res.innerHTML = `⚠ Error de conexion: ${esc(String(err && err.message || err))}`;
+      goB.disabled = false; goB.textContent = 'Reintentar';
+      return;
+    }
+    if (!r || !r.ok) {
+      res.className = 'wp-prev warn';
+      res.innerHTML = `⚠ ${esc((r && r.error) || 'No se pudo sincronizar con AX.')}`;
       goB.disabled = false; goB.textContent = 'Reintentar';
       return;
     }
@@ -1041,8 +1056,12 @@ function openAxApiModal() {
     res.innerHTML = `✓ <b>${s.total} trabajadores</b> sincronizados (${s.active} vigentes · ${s.terminated} egresados)`
       + ` · ${s.with_role} con cargo · ${s.with_account} con cuenta`
       + (s.warnings && s.warnings.length ? `<div style="margin-top:6px;font-size:11.5px;color:var(--warn)">${s.warnings.join(' ')}</div>` : '');
-    goB.textContent = 'Listo';
-    setTimeout(async () => { close(); await load(); }, 900);
+    // Termino bien: marcamos done y dejamos el modal abierto. El boton pasa a
+    // "Cerrar" (que recarga la lista al salir). NO se cierra solo.
+    done = true;
+    goB.disabled = false;
+    goB.textContent = 'Cerrar';
+    goB.onclick = close;
   });
 }
 
