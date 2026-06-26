@@ -115,6 +115,35 @@ export async function onRequestPost({ request, env }) {
     }
     upcoming.forEach(b => { b.ced_kind = cedKind(b.id_number); });
 
+    // Enriquecer cada cumpleanero con datos de su empresa (nombre, zona,
+    // subzona, concepto) para poder ubicar de donde es; con solo el alias se
+    // hace dificil identificarlo, sobre todo en la vista de admin.
+    const codeset = [...new Set([...today, ...upcoming].map(b => b.company_code).filter(Boolean))];
+    if (codeset.length) {
+      const inC = codeset.map(c => `"${c}"`).join(',');
+      const [comps, zs, ss, cs] = await Promise.all([
+        sb(env, `companies?company_code=in.(${inC})&select=company_code,business_name,zone_id,subzone_id,concept_id`),
+        sb(env, 'zones?select=id,name'),
+        sb(env, 'subzones?select=id,name'),
+        sb(env, 'concepts?select=id,name'),
+      ]);
+      const zMap = {}, sMap = {}, cMap = {}, compMap = {};
+      (zs || []).forEach(z => { zMap[z.id] = z.name; });
+      (ss || []).forEach(s => { sMap[s.id] = s.name; });
+      (cs || []).forEach(c => { cMap[c.id] = c.name; });
+      (comps || []).forEach(c => {
+        compMap[c.company_code] = {
+          company_name: c.business_name || null,
+          zone: c.zone_id ? (zMap[c.zone_id] || null) : null,
+          subzone: c.subzone_id ? (sMap[c.subzone_id] || null) : null,
+          concept: c.concept_id ? (cMap[c.concept_id] || null) : null,
+        };
+      });
+      const attach = b => { const m = compMap[b.company_code]; if (m) Object.assign(b, m); };
+      today.forEach(attach);
+      upcoming.forEach(attach);
+    }
+
     return json({
       ok: true,
       scope: role === 'superadmin' ? 'all' : 'scoped',

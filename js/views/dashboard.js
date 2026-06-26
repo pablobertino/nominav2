@@ -3,13 +3,14 @@
 
    Dos caras segun el rol:
    - company (tienda/empresa): identificacion + accesos rapidos + stats
-     (sexo/edades/estado civil) + cumpleanos (hoy con foto + proximos).
-     Se arma en el cliente con /api/worker-photo (directory).
+     (sexo/edades/estado civil) + cumpleanos (hoy + proximos). Se arma en el
+     cliente con /api/worker-photo (directory).
    - admin/superadmin/editor: saludo + KPIs (empresas/empleados/zonas/
      subzonas) + personal por tipo de empresa + empresas por tipo +
-     cumpleaneros del alcance (hoy con foto + proximos). Datos de
-     /api/dashboard.
+     cumpleaneros del alcance, con su empresa/zona/subzona para ubicarlos.
+     Datos de /api/dashboard.
 
+   Estetica alineada a la vista Empresas: liviana, poca negrita.
    Exporta renderDashboard(user) que pinta dentro de #pnlMain.
    ===================================================================== */
 
@@ -70,11 +71,6 @@ const TYPE_COLORS = {
 };
 function typeColor(t) { return TYPE_COLORS[t] || '#64748b'; }
 
-function confettiHtml() {
-  const D = [['8%', '14%', '#ec4899'], ['26%', '52%', '#f59e0b'], ['46%', '8%', '#2563eb'], ['62%', '58%', '#10b981'], ['82%', '18%', '#db2777'], ['90%', '48%', '#6366f1'], ['16%', '76%', '#10b981'], ['72%', '80%', '#ec4899']];
-  return `<div class="dash-confetti">${D.map(d => `<i style="left:${d[0]};top:${d[1]};background:${d[2]}"></i>`).join('')}</div>`;
-}
-
 /* Salta a otra seccion del menu reutilizando el wiring del sidebar. */
 function clickNav(view) {
   const b = document.querySelector(`#pnlNav button[data-view="${view}"]`);
@@ -87,141 +83,163 @@ function ensureStyles() {
   const st = document.createElement('style');
   st.id = 'dashStyles';
   st.textContent = `
-  .dash-greet h1 { margin:0; font-size:22px; }
+  .dash-greet h1 { margin:0; font-size:21px; font-weight:700; color:var(--ink); }
   .dash-greet p { margin:3px 0 0; color:var(--muted); font-size:13px; }
 
-  /* KPIs */
+  /* KPIs (estilo Empresas: etiqueta arriba, numero, subtexto) */
   .dash-kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:16px 0 6px; }
   .dash-kpi { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
-    padding:14px 16px; box-shadow:var(--shadow-sm); }
-  .dash-kpi .n { font-size:26px; font-weight:800; color:var(--ink); line-height:1.1; }
-  .dash-kpi .l { font-size:11.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); margin-top:3px; }
-  .dash-kpi .ic { float:right; opacity:.5; }
+    padding:15px 17px; box-shadow:var(--shadow-sm); }
+  .dash-kpi .l { font-size:12px; color:var(--muted); margin-bottom:7px; }
+  .dash-kpi .n { font-size:27px; font-weight:700; color:var(--ink); line-height:1; }
+  .dash-kpi .sub { font-size:11px; color:var(--faint); margin-top:6px; }
   @media (max-width:760px){ .dash-kpis { grid-template-columns:repeat(2,1fr); } }
 
-  .dash-sec { margin:22px 0 10px; font-size:15px; font-weight:700; color:var(--ink); }
-  .dash-sec small { font-weight:500; color:var(--muted); font-size:12px; margin-left:6px; }
+  .dash-sec { margin:22px 0 10px; font-size:14px; font-weight:600; color:var(--ink); }
+  .dash-sec small { font-weight:400; color:var(--muted); font-size:12px; margin-left:6px; }
 
   /* Personal por tipo (barras) */
-  .dash-bars { display:flex; flex-direction:column; gap:9px; }
-  .dash-brow { display:grid; grid-template-columns:120px 1fr 52px; align-items:center; gap:10px; }
+  .dash-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
+    padding:16px 18px; box-shadow:var(--shadow-sm); }
+  .dash-bars { display:flex; flex-direction:column; gap:10px; }
+  .dash-brow { display:grid; grid-template-columns:118px 1fr 56px; align-items:center; gap:10px; }
   .dash-bl { font-size:12.5px; color:var(--ink-soft); text-align:right; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .dash-bt { height:14px; border-radius:7px; background:var(--border-soft); overflow:hidden; }
-  .dash-bt i { display:block; height:100%; border-radius:7px; }
-  .dash-bn { font-size:12.5px; font-weight:700; color:var(--ink); text-align:right; }
+  .dash-bt { height:13px; border-radius:7px; background:var(--border-soft); overflow:hidden; }
+  .dash-bt i { display:block; height:100%; border-radius:7px; opacity:.9; }
+  .dash-bn { font-size:12.5px; font-weight:600; color:var(--ink); text-align:right; }
 
   /* Empresas por tipo (mini cards) */
   .dash-types { display:grid; grid-template-columns:repeat(auto-fill,minmax(120px,1fr)); gap:10px; }
-  .dash-tc { border:1px solid var(--border); border-left-width:4px; border-radius:var(--radius-md);
-    padding:10px 12px; background:var(--surface); }
-  .dash-tc .n { font-size:20px; font-weight:800; color:var(--ink); }
-  .dash-tc .l { font-size:11.5px; color:var(--muted); margin-top:1px; }
+  .dash-tc { border:1px solid var(--border); border-left-width:3px; border-radius:var(--radius-md);
+    padding:11px 13px; background:var(--surface); }
+  .dash-tc .n { font-size:19px; font-weight:700; color:var(--ink); }
+  .dash-tc .l { font-size:11.5px; color:var(--muted); margin-top:2px; }
 
   /* Identificacion (empresa) */
   .dash-idcard { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
     padding:18px 20px; box-shadow:var(--shadow-sm); }
-  .dash-idcode { display:inline-block; font-family:ui-monospace,Menlo,monospace; font-weight:700; font-size:13px;
+  .dash-idcode { display:inline-block; font-family:ui-monospace,Menlo,monospace; font-weight:600; font-size:13px;
     color:var(--brand); background:var(--brand-bg); border-radius:6px; padding:2px 9px; }
-  .dash-idname { margin:8px 0 14px; font-size:20px; font-weight:800; color:var(--ink); }
-  .dash-idgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:12px 18px; }
-  .dash-idgrid > div { display:flex; flex-direction:column; gap:2px; }
-  .dash-idlbl { font-size:10.5px; text-transform:uppercase; letter-spacing:.04em; color:var(--muted); }
+  .dash-idname { margin:9px 0 15px; font-size:19px; font-weight:700; color:var(--ink); }
+  .dash-idgrid { display:grid; grid-template-columns:repeat(3,1fr); gap:13px 18px; }
+  .dash-idgrid > div { display:flex; flex-direction:column; gap:3px; }
+  .dash-idlbl { font-size:10.5px; text-transform:uppercase; letter-spacing:.03em; color:var(--muted); }
   .dash-idval { font-size:13.5px; color:var(--ink); }
   @media (max-width:680px){ .dash-idgrid { grid-template-columns:repeat(2,1fr); } }
 
   /* Accesos rapidos */
   .dash-quick { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-top:12px; }
-  .dash-qbtn { display:flex; align-items:center; gap:11px; text-align:left; cursor:pointer;
+  .dash-qbtn { display:flex; align-items:center; gap:12px; text-align:left; cursor:pointer;
     background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
     padding:14px 16px; box-shadow:var(--shadow-sm); transition:border-color .12s, box-shadow .12s; font:inherit; }
   .dash-qbtn:hover { border-color:var(--brand); box-shadow:var(--shadow-md); }
   .dash-qic { width:38px; height:38px; flex:0 0 auto; border-radius:10px; display:flex; align-items:center;
-    justify-content:center; font-size:19px; }
-  .dash-qt { font-size:14px; font-weight:700; color:var(--ink); }
-  .dash-qd { font-size:11.5px; color:var(--muted); margin-top:1px; }
+    justify-content:center; font-size:18px; }
+  .dash-qtext { display:flex; flex-direction:column; min-width:0; }
+  .dash-qt { font-size:14px; font-weight:600; color:var(--ink); }
+  .dash-qd { font-size:11.5px; color:var(--muted); margin-top:2px; }
   @media (max-width:680px){ .dash-quick { grid-template-columns:1fr; } }
 
-  /* Demografia (sexo/edades/civil) reutiliza cards */
+  /* Demografia (sexo/edades/civil) */
   .dash-demo { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; }
   .dash-dcard { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
-    padding:14px 16px; box-shadow:var(--shadow-sm); }
-  .dash-dhead { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:10px; }
-  .dash-dhead .t { font-size:13px; font-weight:700; color:var(--ink); }
+    padding:15px 17px; box-shadow:var(--shadow-sm); }
+  .dash-dhead { display:flex; justify-content:space-between; align-items:baseline; margin-bottom:11px; }
+  .dash-dhead .t { font-size:13px; font-weight:600; color:var(--ink); }
   .dash-dhead .n { font-size:11px; color:var(--muted); }
-  .dash-sexbar { display:flex; height:14px; border-radius:7px; overflow:hidden; background:var(--border-soft); }
-  .dash-sexbar i { display:block; height:100%; }
-  .dash-sexleg { display:flex; justify-content:space-between; margin-top:8px; }
-  .dash-sexleg .lab { font-weight:700; font-size:11px; padding:1px 6px; border-radius:5px; }
+  .dash-sexbar { display:flex; height:13px; border-radius:7px; overflow:hidden; background:var(--border-soft); }
+  .dash-sexbar i { display:block; height:100%; opacity:.9; }
+  .dash-sexleg { display:flex; justify-content:space-between; margin-top:9px; }
+  .dash-sexleg .lab { font-weight:600; font-size:11px; padding:1px 6px; border-radius:5px; }
   .dash-sexleg .lab.m { color:#1e40af; background:#dbeafe; } .dash-sexleg .lab.f { color:#9d174d; background:#fce7f3; }
-  .dash-sexleg .pct { font-weight:800; margin:0 4px; } .dash-sexleg .cnt { color:var(--muted); font-size:11px; }
+  .dash-sexleg .pct { font-weight:700; margin:0 4px; } .dash-sexleg .cnt { color:var(--muted); font-size:11px; }
   .dash-dbar { display:grid; grid-template-columns:46px 1fr 24px; align-items:center; gap:8px; margin:5px 0; }
   .dash-dbl { font-size:11px; color:var(--muted); text-align:right; }
   .dash-dbt { height:9px; border-radius:5px; background:var(--border-soft); overflow:hidden; }
-  .dash-dbt i { display:block; height:100%; border-radius:5px; }
-  .dash-dbn { font-size:11px; font-weight:700; text-align:right; color:var(--ink); }
+  .dash-dbt i { display:block; height:100%; border-radius:5px; opacity:.9; }
+  .dash-dbn { font-size:11px; font-weight:600; text-align:right; color:var(--ink); }
   .dash-dempty { font-size:11.5px; color:var(--faint); font-style:italic; text-align:center; padding:10px; }
   @media (max-width:760px){ .dash-demo { grid-template-columns:1fr; } }
 
-  /* Cumpleanos */
-  .dash-bdays { display:grid; grid-template-columns:repeat(auto-fill,minmax(150px,1fr)); gap:12px; }
-  .dash-bcard { position:relative; background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
-    padding:16px 12px 13px; text-align:center; overflow:hidden;
-    box-shadow:0 0 0 2px #fde68a inset, var(--shadow-sm); }
-  .dash-bflag { position:absolute; top:0; left:0; right:0; font-size:10px; font-weight:800; color:#fff;
-    padding:3px 0; background:linear-gradient(90deg,#ec4899,#f59e0b); }
-  .dash-bava { width:74px; height:74px; border-radius:50%; margin:16px auto 9px; overflow:hidden; position:relative;
-    box-shadow:0 0 0 3px #f59e0b; }
+  /* Cumpleanos — tarjetas limpias (estilo Personal, sin sobrecarga) */
+  .dash-bdays { display:grid; grid-template-columns:repeat(auto-fill,minmax(158px,1fr)); gap:12px; }
+  .dash-bcard { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg);
+    padding:14px 12px 13px; text-align:center; box-shadow:var(--shadow-sm); }
+  .dash-btoday { display:inline-flex; align-items:center; gap:4px; font-size:10.5px; font-weight:600;
+    color:#b45309; background:#fef3c7; border-radius:999px; padding:2px 9px; margin-bottom:11px; }
+  .dash-bava { width:62px; height:62px; border-radius:50%; margin:0 auto 10px; overflow:hidden; position:relative;
+    box-shadow:0 0 0 2px #fcd34d; }
   .dash-bava img { width:100%; height:100%; object-fit:cover; display:block; }
-  .dash-bava .ini { width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-size:24px; font-weight:800; }
-  .dash-bname { font-size:13px; font-weight:700; color:var(--ink); line-height:1.25; }
-  .dash-btag { font-size:11px; color:var(--muted); margin-top:2px; }
-  .dash-bage { display:inline-block; margin-top:7px; font-size:11px; font-weight:700; color:#b45309;
-    background:#fef3c7; border-radius:999px; padding:2px 9px; }
-  .dash-confetti { position:absolute; inset:0; pointer-events:none; z-index:1; }
-  .dash-confetti i { position:absolute; width:6px; height:6px; border-radius:1px; opacity:.9; transform:rotate(20deg); }
-  .dash-bcard > *:not(.dash-confetti) { position:relative; z-index:2; }
+  .dash-bava .ini { width:100%; height:100%; display:flex; align-items:center; justify-content:center; font-size:21px; font-weight:700; }
+  .dash-bname { font-size:13px; font-weight:600; color:var(--ink); line-height:1.25; }
+  .dash-bcargo { font-size:11px; color:var(--muted); margin-top:3px; }
+  .dash-bcomp { font-size:11.5px; color:var(--ink-soft); margin-top:6px; line-height:1.3; }
+  .dash-bloc { font-size:10.5px; color:var(--muted); margin-top:1px; line-height:1.3; }
+  .dash-bage { display:inline-block; margin-top:9px; font-size:11px; font-weight:600; color:#b45309; }
 
   /* Proximos (lista) */
-  .dash-up { display:flex; flex-direction:column; gap:1px; background:var(--surface);
+  .dash-up { display:flex; flex-direction:column; background:var(--surface);
     border:1px solid var(--border); border-radius:var(--radius-lg); overflow:hidden; box-shadow:var(--shadow-sm); }
-  .dash-urow { display:flex; align-items:center; gap:11px; padding:9px 14px; border-top:1px solid var(--border-soft); }
+  .dash-urow { display:flex; align-items:center; gap:11px; padding:10px 14px; border-top:1px solid var(--border-soft); }
   .dash-urow:first-child { border-top:none; }
   .dash-uava { width:34px; height:34px; flex:0 0 auto; border-radius:50%; display:flex; align-items:center;
-    justify-content:center; font-size:12px; font-weight:800; }
-  .dash-uname { font-size:13px; color:var(--ink); font-weight:600; flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-  .dash-utag { font-size:11px; color:var(--muted); margin-left:6px; }
+    justify-content:center; font-size:12px; font-weight:700; }
+  .dash-umain { flex:1; min-width:0; }
+  .dash-uname { font-size:13px; color:var(--ink); font-weight:600; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dash-usub { font-size:11px; color:var(--muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; margin-top:1px; }
   .dash-uwhen { font-size:11.5px; color:var(--ink-soft); text-align:right; white-space:nowrap; }
-  .dash-uwhen b { color:var(--brand); }
+  .dash-uwhen b { color:var(--brand); font-weight:600; }
   .dash-empty { background:var(--surface); border:1px dashed var(--border); border-radius:var(--radius-lg);
     padding:18px; text-align:center; color:var(--muted); font-size:13px; }
   `;
   document.head.appendChild(st);
 }
 
-/* ---------- markup compartido de cumpleanos ---------- */
-function bcardHtml(p, tag) {
+/* ---------- markup de cumpleanos ---------- */
+function bcardHtml(p, showCompany) {
   const ci = avatarColor(p.id_number);
   const ava = p.thumb_url
     ? `<img src="${p.thumb_url}" alt="${esc(p.full_name)}">`
     : `<div class="ini" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(p.full_name))}</div>`;
   const age = ageFrom(p.birth_date);
+  const loc = [p.zone, p.subzone, p.concept].filter(Boolean).join(' · ');
   return `<div class="dash-bcard">
-    ${confettiHtml()}
-    <div class="dash-bflag">🎂 ¡Cumple hoy!</div>
+    <span class="dash-btoday">🎂 Cumple hoy</span>
     <div class="dash-bava">${ava}</div>
     <div class="dash-bname">${esc(p.full_name)}</div>
-    ${tag ? `<div class="dash-btag">${esc(tag)}</div>` : ''}
+    ${p.role ? `<div class="dash-bcargo">${esc(p.role)}</div>` : ''}
+    ${showCompany && p.company_name ? `<div class="dash-bcomp">${esc(p.company_name)}</div>` : ''}
+    ${showCompany && loc ? `<div class="dash-bloc">${esc(loc)}</div>` : ''}
     ${age != null ? `<span class="dash-bage">cumple ${age}</span>` : ''}
   </div>`;
 }
-function urowHtml(p, tag) {
+function urowHtml(p, showCompany) {
   const ci = avatarColor(p.id_number);
   const du = p.days_until != null ? p.days_until : daysUntilBd(p.birth_date);
+  const sub = showCompany
+    ? [p.role, p.company_name].filter(Boolean).join(' · ')
+    : (p.role || '');
   return `<div class="dash-urow">
     <div class="dash-uava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(p.full_name))}</div>
-    <div class="dash-uname">${esc(p.full_name)}${tag ? `<span class="dash-utag">${esc(tag)}</span>` : ''}</div>
+    <div class="dash-umain">
+      <div class="dash-uname">${esc(p.full_name)}</div>
+      ${sub ? `<div class="dash-usub">${esc(sub)}</div>` : ''}
+    </div>
     <div class="dash-uwhen">${bdDateLabel(p.birth_date)} · <b>${inDaysLabel(du)}</b></div>
   </div>`;
+}
+function bdaysSectionHtml(today, upcoming, showCompany) {
+  let html = '';
+  if (today.length) {
+    html += `<div class="dash-bdays">${today.map(p => bcardHtml(p, showCompany)).join('')}</div>`;
+  } else {
+    html += `<div class="dash-empty">Nadie cumple años hoy.</div>`;
+  }
+  if (upcoming.length) {
+    html += `<div class="dash-sec" style="font-size:13px;margin:16px 0 8px;color:var(--muted);font-weight:500">Próximos cumpleaños</div>`;
+    html += `<div class="dash-up">${upcoming.map(p => urowHtml(p, showCompany)).join('')}</div>`;
+  }
+  return html;
 }
 
 /* ===================== ENTRADA ===================== */
@@ -251,11 +269,10 @@ async function renderCompanyDash(user) {
   const withBd = workers.filter(w => w.birth_date);
   const today = withBd.filter(w => daysUntilBd(w.birth_date) === 0);
   const upcoming = withBd
-    .map(w => ({ ...w, _du: daysUntilBd(w.birth_date) }))
-    .filter(w => w._du != null && w._du > 0)
-    .sort((a, b) => a._du - b._du)
-    .slice(0, 6)
-    .map(w => ({ ...w, days_until: w._du }));
+    .map(w => ({ ...w, days_until: daysUntilBd(w.birth_date) }))
+    .filter(w => w.days_until != null && w.days_until > 0)
+    .sort((a, b) => a.days_until - b.days_until)
+    .slice(0, 6);
 
   const statusPill = /abier/i.test(c.status || '')
     ? '<span class="pill pill-open">Abierta</span>'
@@ -278,9 +295,9 @@ async function renderCompanyDash(user) {
     </div>
 
     <div class="dash-quick">
-      <button class="dash-qbtn" data-go="reportar"><span class="dash-qic" style="background:#eff6ff;color:#2563eb">📝</span><span><span class="dash-qt">Reportar a Nómina</span><span class="dash-qd">Marcaje, ausencia, ingreso…</span></span></button>
-      <button class="dash-qbtn" data-go="fotos"><span class="dash-qic" style="background:#f5f3ff;color:#7c3aed">👥</span><span><span class="dash-qt">Personal</span><span class="dash-qd">Fichas y fotos del equipo</span></span></button>
-      <button class="dash-qbtn" data-go="documentos"><span class="dash-qic" style="background:#ecfdf5;color:#059669">📁</span><span><span class="dash-qt">Documentos</span><span class="dash-qd">Recaudos y archivos</span></span></button>
+      <button class="dash-qbtn" data-go="reportar"><span class="dash-qic" style="background:#eff6ff;color:#2563eb">📝</span><span class="dash-qtext"><span class="dash-qt">Reportar a Nómina</span><span class="dash-qd">Marcaje, ausencia, ingreso…</span></span></button>
+      <button class="dash-qbtn" data-go="fotos"><span class="dash-qic" style="background:#f5f3ff;color:#7c3aed">👥</span><span class="dash-qtext"><span class="dash-qt">Personal</span><span class="dash-qd">Fichas y fotos del equipo</span></span></button>
+      <button class="dash-qbtn" data-go="documentos"><span class="dash-qic" style="background:#ecfdf5;color:#059669">📁</span><span class="dash-qtext"><span class="dash-qt">Documentos</span><span class="dash-qd">Recaudos y archivos</span></span></button>
     </div>
 
     <div class="dash-sec">Personal de la empresa</div>
@@ -289,7 +306,6 @@ async function renderCompanyDash(user) {
     <div class="dash-sec">Cumpleaños 🎂</div>
     <div id="dashBdays"></div>`;
 
-  // Accesos rapidos -> reusa el menu lateral.
   $('#pnlMain').querySelectorAll('[data-go]').forEach(b =>
     b.addEventListener('click', () => {
       const go = b.dataset.go;
@@ -297,7 +313,7 @@ async function renderCompanyDash(user) {
     }));
 
   $('#dashDemo').innerHTML = demoHtml(workers);
-  $('#dashBdays').innerHTML = bdaysSectionHtml(today, upcoming, { tagKind: 'role' });
+  $('#dashBdays').innerHTML = bdaysSectionHtml(today, upcoming, false);
 }
 
 /* ===================== DASHBOARD ADMIN ===================== */
@@ -320,24 +336,31 @@ async function renderAdminDash(user) {
   const name = user.name || user.username || 'admin';
   const scopeNote = d.scope === 'scoped' ? 'Tu alcance' : 'Todo el grupo';
 
+  // Subtextos de los KPIs (tiendas vs otras), como en la vista Empresas.
+  const pbt = (s.personal_by_type || []);
+  const cbt = (s.companies_by_type || []);
+  const find = (arr, t, k) => { const x = arr.find(o => o.tipo === t); return x ? x[k] : 0; };
+  const empTotal = s.empresas || 0, tiendasN = find(cbt, 'Tienda', 'n'), otrasN = empTotal - tiendasN;
+  const persTotal = s.empleados || 0, persTienda = find(pbt, 'Tienda', 'personal'), persOtras = persTotal - persTienda;
+
   const kpis = [
-    ['empresas', 'Empresas', '🏢'], ['empleados', 'Empleados', '👥'],
-    ['zonas', 'Zonas', '🗺️'], ['subzonas', 'Subzonas', '📍'],
-  ].map(([k, l, ic]) =>
-    `<div class="dash-kpi"><span class="ic">${ic}</span><div class="n">${fmt(s[k])}</div><div class="l">${l}</div></div>`).join('');
+    ['Empresas', fmt(s.empresas), `${fmt(tiendasN)} tiendas · ${fmt(otrasN)} otras`],
+    ['Empleados', fmt(s.empleados), `${fmt(persTienda)} en tiendas · ${fmt(persOtras)} en otras`],
+    ['Zonas', fmt(s.zonas), 'con empresas'],
+    ['Subzonas', fmt(s.subzonas), 'con empresas'],
+  ].map(([l, n, sub]) => `<div class="dash-kpi"><div class="l">${l}</div><div class="n">${n}</div><div class="sub">${sub}</div></div>`).join('');
 
   // Personal por tipo (barras)
-  const pbt = (s.personal_by_type || []).filter(x => x.personal > 0);
-  const maxP = Math.max(1, ...pbt.map(x => x.personal));
-  const barsHtml = pbt.length
-    ? pbt.map(x => `<div class="dash-brow">
+  const pbtPos = pbt.filter(x => x.personal > 0);
+  const maxP = Math.max(1, ...pbtPos.map(x => x.personal));
+  const barsHtml = pbtPos.length
+    ? pbtPos.map(x => `<div class="dash-brow">
         <span class="dash-bl">${esc(x.tipo)}</span>
         <div class="dash-bt"><i style="width:${Math.round(x.personal / maxP * 100)}%;background:${typeColor(x.tipo)}"></i></div>
         <span class="dash-bn">${fmt(x.personal)}</span></div>`).join('')
     : '<div class="dash-dempty">Sin personal cargado.</div>';
 
   // Empresas por tipo (mini cards)
-  const cbt = (s.companies_by_type || []);
   const typesHtml = cbt.map(x =>
     `<div class="dash-tc" style="border-left-color:${typeColor(x.tipo)}"><div class="n">${fmt(x.n)}</div><div class="l">${esc(x.tipo)}</div></div>`).join('');
 
@@ -347,7 +370,7 @@ async function renderAdminDash(user) {
     <div class="dash-kpis">${kpis}</div>
 
     <div class="dash-sec">Personal por tipo de empresa</div>
-    <div class="card"><div class="dash-bars">${barsHtml}</div></div>
+    <div class="dash-card"><div class="dash-bars">${barsHtml}</div></div>
 
     <div class="dash-sec">Empresas por tipo <small>${fmt(s.empresas)} en total</small></div>
     <div class="dash-types">${typesHtml}</div>
@@ -355,26 +378,10 @@ async function renderAdminDash(user) {
     <div class="dash-sec">Cumpleaños 🎂 <small>${scopeNote}</small></div>
     <div id="dashBdays"></div>`;
 
-  $('#dashBdays').innerHTML = bdaysSectionHtml(d.today || [], (d.upcoming || []).slice(0, 12), { tagKind: 'company' });
+  $('#dashBdays').innerHTML = bdaysSectionHtml(d.today || [], (d.upcoming || []).slice(0, 12), true);
 }
 
-/* ===================== bloques compartidos ===================== */
-function bdaysSectionHtml(today, upcoming, opts) {
-  const tagOf = (p) => opts.tagKind === 'company' ? p.company_code : (p.role || '');
-  let html = '';
-  if (today.length) {
-    html += `<div class="dash-bdays">${today.map(p => bcardHtml(p, tagOf(p))).join('')}</div>`;
-  } else {
-    html += `<div class="dash-empty">Nadie cumple años hoy.</div>`;
-  }
-  if (upcoming.length) {
-    html += `<div class="dash-sec" style="font-size:13px;margin:16px 0 8px;color:var(--muted)">Próximos cumpleaños</div>`;
-    html += `<div class="dash-up">${upcoming.map(p => urowHtml(p, tagOf(p))).join('')}</div>`;
-  }
-  return html;
-}
-
-/* Demografia (sexo / edades / estado civil) a partir del roster. */
+/* ===================== demografia (sexo / edades / estado civil) ===================== */
 function demoHtml(workers) {
   if (!workers || !workers.length) return '<div class="dash-empty">Sin personal cargado.</div>';
   const m = workers.filter(w => w.gender === 'M').length;
