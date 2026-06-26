@@ -103,33 +103,30 @@ function normalizeRow(row) {
   return { id_number, full_name, first_name, second_name, last_names, birth_date, gender, marital_status, account_number, bank_code, todo_ticket, start_date, end_date, data_id };
 }
 
-/* Upsert por cedula en workers_master. Igual semantica que el de tiendas:
-   las claves se agregan solo si tienen valor (no pisar con null), y las
-   columnas photo_* NUNCA van en el payload (la foto se conserva). */
+/* Upsert por cedula en workers_master. IMPORTANTE: PostgREST (PGRST102)
+   exige que TODAS las filas del lote tengan el MISMO conjunto de claves.
+   Por eso cada fila incluye SIEMPRE las mismas columnas (null si no hay
+   valor). El Reporte AX trae estos campos, asi que pisar con null respeta
+   "el AX manda". Las columnas photo_* y role/phone/email/address NO van en
+   el payload (la foto y lo que el AX no trae se conservan). */
 async function upsertWorkersMaster(env, cc, validRows) {
   if (!validRows.length) return 0;
-  const payload = validRows.map(r => {
-    const base = {
-      id_number: r.id_number,
-      ced_kind: cedKind(r.id_number),
-      first_name: r.first_name,
-      second_name: r.second_name,
-      last_names: r.last_names,
-      full_name: r.full_name,
-      last_source_company: cc,
-    };
-    // Campos que el Reporte AX SI trae (el AX manda): agregar solo si traen
-    // valor, para no pisar con null un dato bueno previo en la maestra.
-    if (r.birth_date) base.birth_date = r.birth_date;
-    if (r.gender) base.gender = r.gender;
-    if (r.marital_status) base.marital_status = r.marital_status;
-    if (r.account_number) { base.account_number = r.account_number; base.bank_code = r.bank_code; }
-    if (r.todo_ticket) base.todo_ticket = r.todo_ticket;
-    if (r.data_id) base.data_id = r.data_id;
-    // NO se tocan: role, phone, email, address, photo_* -> se preservan los
-    // que ya estaban en la maestra (el AX no los trae).
-    return base;
-  });
+  const payload = validRows.map(r => ({
+    id_number: r.id_number,
+    ced_kind: cedKind(r.id_number),
+    first_name: r.first_name || null,
+    second_name: r.second_name || null,
+    last_names: r.last_names || null,
+    full_name: r.full_name,
+    birth_date: r.birth_date || null,
+    gender: r.gender || null,
+    marital_status: r.marital_status || null,
+    account_number: r.account_number || null,
+    bank_code: r.bank_code || null,
+    todo_ticket: r.todo_ticket || null,
+    data_id: r.data_id || null,
+    last_source_company: cc,
+  }));
   await sb(env, 'workers_master?on_conflict=id_number', {
     method: 'POST',
     headers: { Prefer: 'resolution=merge-duplicates' },

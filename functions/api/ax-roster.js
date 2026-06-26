@@ -134,27 +134,30 @@ function mapApiEmployee(e) {
    "El ultimo reporte manda" en lo que la API trae con valor. */
 async function upsertWorkersMaster(env, cc, rows) {
   if (!rows.length) return 0;
-  const payload = rows.map(r => {
-    const base = {
-      id_number: r.id_number,
-      ced_kind: (/^\d+$/.test(r.id_number) && Number(r.id_number) >= 80000000) ? 'E' : 'V',
-      full_name: r.full_name,
-      first_name: r.first_name,
-      second_name: r.second_name,
-      last_names: r.last_names,
-      first_lastname: r.first_lastname,
-      role: r.role,
-      last_source_company: cc,
-    };
-    if (r.birth_date) base.birth_date = r.birth_date;
-    if (r.gender) base.gender = r.gender;
-    if (r.marital_status) base.marital_status = r.marital_status;
-    if (r.account_number) { base.account_number = r.account_number; base.bank_code = r.bank_code; }
-    if (r.todo_ticket) base.todo_ticket = r.todo_ticket;
-    if (r.data_id) base.data_id = r.data_id;
-    // NO se tocan: phone, email, address, photo_* -> se preservan.
-    return base;
-  });
+  // IMPORTANTE: PostgREST (PGRST102) exige que TODAS las filas del lote
+  // tengan EXACTAMENTE el mismo conjunto de claves. Por eso aqui cada fila
+  // incluye SIEMPRE las mismas columnas (con null cuando no hay valor), en
+  // vez de agregarlas condicionalmente. Como la regla es "el ultimo reporte
+  // manda" y la API trae todos estos campos, pisar con null es lo correcto.
+  // phone/email/address y photo_* NO se incluyen nunca -> se preservan.
+  const payload = rows.map(r => ({
+    id_number: r.id_number,
+    ced_kind: (/^\d+$/.test(r.id_number) && Number(r.id_number) >= 80000000) ? 'E' : 'V',
+    full_name: r.full_name,
+    first_name: r.first_name || null,
+    second_name: r.second_name || null,
+    last_names: r.last_names || null,
+    first_lastname: r.first_lastname || null,
+    role: r.role || null,
+    birth_date: r.birth_date || null,
+    gender: r.gender || null,
+    marital_status: r.marital_status || null,
+    account_number: r.account_number || null,
+    bank_code: r.bank_code || null,
+    todo_ticket: r.todo_ticket || null,
+    data_id: r.data_id || null,
+    last_source_company: cc,
+  }));
   const res = await fetch(`${env.supabase_url}/rest/v1/workers_master?on_conflict=id_number`, {
     method: 'POST',
     headers: {

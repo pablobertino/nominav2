@@ -230,37 +230,32 @@ function cedKind(ced) {
 // lo envuelve en try/catch y solo acumula un warning.
 async function upsertWorkersMaster(env, cc, validRows) {
   if (!validRows.length) return 0;
+  // IMPORTANTE: PostgREST (PGRST102) exige que TODAS las filas del lote
+  // tengan EXACTAMENTE el mismo conjunto de claves. Por eso cada fila
+  // incluye SIEMPRE las mismas columnas (null si no hay valor). Las columnas
+  // photo_* NUNCA van en el payload: el merge las deja intactas y la foto
+  // nunca se pisa. Con la politica "el ultimo reporte manda", enviar null
+  // cuando el reporte no trae el dato es el comportamiento correcto.
   const payload = validRows.map(r => ({
     id_number: r.id_number,
     ced_kind: cedKind(r.id_number),
-    first_name: r.first_name,
-    second_name: r.second_name,
-    last_names: r.last_names,
+    first_name: r.first_name || null,
+    second_name: r.second_name || null,
+    last_names: r.last_names || null,
     full_name: r.full_name,
-    role: r.role,
-    account_number: r.account_number,
+    role: r.role || null,
+    account_number: r.account_number || null,
     bank_code: r.account_number ? r.account_number.slice(0, 4) : null,
-    todo_ticket: r.todo_ticket,
-    data_id: r.data_id,
-    // Datos personales del Reporte 10 ampliado. Se actualizan con el valor
-    // mas reciente cuando vienen; si NO vienen (null) se omiten del merge
-    // para no pisar un dato bueno previo con un null. Por eso cada clave se
-    // agrega solo si tiene valor (ver construccion condicional abajo).
+    todo_ticket: r.todo_ticket || null,
+    data_id: r.data_id || null,
+    phone: r.phone || null,
+    email: r.email || null,
+    gender: r.gender || null,
+    marital_status: r.marital_status || null,
+    birth_date: r.birth_date || null,
+    address: r.address || null,
     last_source_company: cc,
-    // Las columnas photo_* NUNCA van en el payload: el merge las deja
-    // intactas y la foto nunca se pisa.
   }));
-  // Agregar condicionalmente los campos personales: solo las claves con
-  // valor, para que merge-duplicates no sobreescriba con null un dato que ya
-  // estaba bien en la maestra (el Reporte 10 de otra tienda podria no traerlo).
-  validRows.forEach((r, i) => {
-    if (r.phone) payload[i].phone = r.phone;
-    if (r.email) payload[i].email = r.email;
-    if (r.gender) payload[i].gender = r.gender;
-    if (r.marital_status) payload[i].marital_status = r.marital_status;
-    if (r.birth_date) payload[i].birth_date = r.birth_date;
-    if (r.address) payload[i].address = r.address;
-  });
   // on_conflict=id_number + merge-duplicates: inserta o actualiza por cedula.
   await sb(env, 'workers_master?on_conflict=id_number', {
     method: 'POST',
