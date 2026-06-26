@@ -173,7 +173,7 @@ export async function onRequestPost({ request, env }) {
     const allowed = await allowedSet(env, user); // null=todas | Set
 
     const [companies, zones, subzones, concepts, users,
-           storeMeta, entMeta, storeCounts, entCounts] = await Promise.all([
+           storeMeta, entMeta, staffCounts] = await Promise.all([
       sb(env, 'companies?select=company_code,business_name,tax_id,data_area,zone_id,subzone_id,concept_id,company_type,status,is_active,email,phone,phone2&order=company_code'),
       sb(env, 'zones?select=id,name,letter&order=name'),
       sb(env, 'subzones?select=id,name,letter,zone_id&order=name'),
@@ -182,10 +182,11 @@ export async function onRequestPost({ request, env }) {
       // Metadatos de la ultima carga de personal (tienda / empresa no-tienda).
       sb(env, 'store_roster_meta?select=company_code,uploaded_at,uploaded_by,total_count,source'),
       sb(env, 'enterprise_roster_meta?select=company_code,uploaded_at,uploaded_by,row_count,source'),
-      // Conteo de personal y cuantos con foto, por empresa. workers_master
-      // guarda la foto (photo_thumb_path); se cruza por cedula.
-      sb(env, 'store_workers?select=company_code,id_number'),
-      sb(env, 'enterprise_workers?select=company_code,id_number'),
+      // Conteo de personal por empresa, AGREGADO en la BD (vista). Antes se
+      // traia todo store_workers para contar en el cliente, pero PostgREST
+      // corta en 1000 filas y hay >1000, asi que muchas empresas quedaban
+      // sub-contadas o en cero. La vista devuelve una fila por empresa.
+      sb(env, 'v_company_staff_count?select=company_code,n'),
     ]);
 
     const withAccess = new Set(users.map(u => u.company_code));
@@ -194,10 +195,9 @@ export async function onRequestPost({ request, env }) {
     const conName  = Object.fromEntries(concepts.map(c => [c.id, c.name]));
 
     // --- Indice de personal por empresa (cantidad + meta de carga) ---
-    // Total de personal: filas en store_workers/enterprise_workers por empresa.
+    // Total de personal: una fila por empresa desde la vista agregada.
     const countByCompany = {};
-    (storeCounts || []).forEach(w => { countByCompany[w.company_code] = (countByCompany[w.company_code] || 0) + 1; });
-    (entCounts || []).forEach(w => { countByCompany[w.company_code] = (countByCompany[w.company_code] || 0) + 1; });
+    (staffCounts || []).forEach(r => { countByCompany[r.company_code] = (countByCompany[r.company_code] || 0) + (r.n || 0); });
 
     // Meta (fecha, quien, metodo) por empresa. Cada empresa esta en UNA de las
     // dos tablas segun su tipo, asi que no hay colision.
