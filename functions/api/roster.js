@@ -59,6 +59,26 @@ async function allowedCompanies(env, admin) {
   return new Set((rows || []).map(r => r.company_code));
 }
 
+// Valida que el usuario (de la sesion del cliente) tenga acceso a la empresa.
+// Sirve para tienda (su propia empresa) y para admin (superadmin = todas;
+// resto = get_admin_companies). Mismo criterio que worker-photo.js. Cierra
+// las acciones de gestion de lista (replace/clear/add_manual) para que un
+// rol con alcance (ej. editor_personal) no toque empresas fuera del suyo.
+async function userCanAccess(env, user, cc) {
+  if (!user || !cc) return false;
+  if (user.kind === 'company') return String(user.companyCode || '') === String(cc);
+  if (user.kind === 'admin' && user.id) {
+    const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
+    if (!a || !a.length) return false;
+    if (a[0].role === 'superadmin') return true;
+    const rows = await sb(env, 'rpc/get_admin_companies', {
+      method: 'POST', body: JSON.stringify({ p_admin_id: a[0].id }),
+    });
+    return (rows || []).some(r => r.company_code === cc);
+  }
+  return false;
+}
+
 // Normaliza texto de cargo para comparar con patrones: mayusculas, sin
 // acentos, espacios colapsados. Igual que guarda el ABM (cargo_save).
 function normCargo(s) {
@@ -305,6 +325,7 @@ export async function onRequestPost({ request, env }) {
     if (action === 'replace') {
       const cc = (body.company_code || '').trim();
       if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);
+      if (!(await userCanAccess(env, body.user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
       const rawRows = Array.isArray(body.rows) ? body.rows : [];
       if (!rawRows.length) return json({ ok: false, error: 'El Reporte 10 no trae filas.' }, 400);
 
@@ -483,6 +504,7 @@ export async function onRequestPost({ request, env }) {
     if (action === 'clear') {
       const cc = (body.company_code || '').trim();
       if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);
+      if (!(await userCanAccess(env, body.user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
       // Borra la lista y sus metadatos. mark_report_lines NO se toca:
       // los reportes ya enviados conservan su detalle historico.
       await sb(env, `store_workers?company_code=eq.${encodeURIComponent(cc)}`, { method: 'DELETE' });
@@ -503,6 +525,7 @@ export async function onRequestPost({ request, env }) {
       // el resto de la ficha se completa luego desde Personal.
       const cc = (body.company_code || '').trim();
       if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);
+      if (!(await userCanAccess(env, body.user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
 
       const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
       if (!ced || ced.length < 6 || ced.length > 8) {

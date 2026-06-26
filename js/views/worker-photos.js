@@ -959,7 +959,7 @@ function openReporteModal() {
     if (!valid || !valid.okToUpload) return;
     const saveB = q('#rmSave'); saveB.disabled = true; saveB.textContent = 'Actualizando…';
     const uploadedBy = STATE.user.kind === 'company' ? STATE.user.companyCode : (STATE.user.name || STATE.user.username || 'admin');
-    const r = await rosterReplace(STATE.cc, valid.validRows, { uploadedBy, sourceFile: parsed.fileName });
+    const r = await rosterReplace(STATE.cc, valid.validRows, { uploadedBy, sourceFile: parsed.fileName, user: sessionUserPayload(STATE.user) });
     if (!r.ok) { saveB.disabled = false; saveB.textContent = 'Actualizar lista'; alert(r.error || 'No se pudo actualizar.'); return; }
     close();
     await load();
@@ -1309,7 +1309,7 @@ function openAddManualModal() {
       first_name: split.first_name, second_name: split.second_name, last_names: split.last_names,
       role: q('#amRole').value.trim(),
       egresado: q('#amStatus').value === 'egresado',
-    });
+    }, sessionUserPayload(STATE.user));
     if (!r.ok) { saveB.disabled = false; saveB.textContent = 'Crear colaborador'; alert(r.error || 'No se pudo crear.'); return; }
     close();
     await load();
@@ -1364,7 +1364,7 @@ function openClearModal() {
     const okB = q('#clOk'); okB.disabled = true; okB.textContent = 'Vaciando…';
     const r = isEnt
       ? await enterpriseRosterClear(STATE.cc, STATE.adminId)
-      : await rosterClear(STATE.cc);
+      : await rosterClear(STATE.cc, { user: sessionUserPayload(STATE.user) });
     if (!r.ok) { okB.disabled = false; okB.textContent = 'Sí, vaciar la lista'; alert(r.error || 'No se pudo limpiar.'); return; }
     close();
     await load();

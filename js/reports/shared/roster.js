@@ -411,19 +411,19 @@ export async function rosterGet(companyCode) {
   return res.json();
 }
 
-export async function rosterReplace(companyCode, rows, { uploadedBy, sourceFile } = {}) {
+export async function rosterReplace(companyCode, rows, { uploadedBy, sourceFile, user } = {}) {
   const res = await fetch('/api/roster', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'replace', company_code: companyCode, rows, uploaded_by: uploadedBy, source_file: sourceFile }),
+    body: JSON.stringify({ action: 'replace', company_code: companyCode, rows, uploaded_by: uploadedBy, source_file: sourceFile, user }),
   });
   return res.json();
 }
 
 /* Borra COMPLETAMENTE la lista de la tienda (y opcionalmente responsables). */
-export async function rosterClear(companyCode, { wipeContacts = false } = {}) {
+export async function rosterClear(companyCode, { wipeContacts = false, user } = {}) {
   const res = await fetch('/api/roster', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'clear', company_code: companyCode, wipe_contacts: wipeContacts }),
+    body: JSON.stringify({ action: 'clear', company_code: companyCode, wipe_contacts: wipeContacts, user }),
   });
   return res.json();
 }
@@ -431,14 +431,14 @@ export async function rosterClear(companyCode, { wipeContacts = false } = {}) {
 /* Alta MANUAL de un colaborador (cedula que aun no esta en el Reporte 10).
    Entra a store_workers + workers_master. Pide lo minimo; el resto de la
    ficha se completa luego desde Personal. */
-export async function rosterAddManual(companyCode, data) {
+export async function rosterAddManual(companyCode, data, user) {
   const res = await fetch('/api/roster', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       action: 'add_manual', company_code: companyCode,
       id_number: data.id_number,
       first_name: data.first_name, second_name: data.second_name, last_names: data.last_names,
-      role: data.role, egresado: !!data.egresado,
+      role: data.role, egresado: !!data.egresado, user,
     }),
   });
   return res.json();
