@@ -245,6 +245,21 @@ function openCfg(mode, ctx) {
     ov.querySelector('#timeErr').textContent = bad ? 'La hora de entrada debe ser menor que la de salida.' : '';
     return !bad;
   }
+  // Marca en rojo (borde punteado + rayitas) los campos REQUERIDOS que aun
+  // estan vacios, para que se vea que falta llenarlos. Se limpia solo al
+  // completarlos. Las horas solo se exigen en dia Laborable (no Descanso);
+  // "otros" solo cuando la causa lo requiere.
+  function setNeed(el, need) { if (el) el.classList.toggle('needfill', !!need); }
+  function markRequired() {
+    const isRest = dtEl.value === 'D';
+    const c = (CAUSES || []).find(x => x.code === causeEl.value);
+    const needOther = !!(c && c.is_other);
+    setNeed(dEl, !dEl.value);
+    setNeed(causeEl, !causeEl.value);
+    setNeed(inEl, !isRest && !inEl.value);
+    setNeed(outEl, !isRest && !outEl.value);
+    setNeed(otherEl, needOther && !otherEl.value.trim());
+  }
   // El boton Aplicar exige que TODO este completo: fecha, causa y ambas horas
   // (y el texto de "Otros" si esa causa lo requiere).
   function recheck() {
@@ -253,11 +268,18 @@ function openCfg(mode, ctx) {
     const dateOk = !!dEl.value && validateDate();
     const timesOk = validateTimes();
     applyB.disabled = !(dateOk && causeOk && timesOk);
+    markRequired();
   }
 
   dEl.addEventListener('input', recheck);
   inEl.addEventListener('input', recheck);
   outEl.addEventListener('input', recheck);
+  // Al ENFOCAR una hora vacia, posicionar el selector nativo en el horario
+  // tipico (entrada 08:00 / salida 18:00) en vez de la hora actual del
+  // sistema. El render deja las horas vacias (no se preselecciona nada);
+  // esto solo afecta donde abre el picker cuando el usuario lo toca.
+  inEl.addEventListener('focus', () => { if (!inEl.value) { inEl.value = '08:00'; recheck(); } });
+  outEl.addEventListener('focus', () => { if (!outEl.value) { outEl.value = '18:00'; recheck(); } });
   dtEl.addEventListener('change', () => { toggleHoras(); recheck(); });
   causeEl.addEventListener('change', () => { toggleOther(); recheck(); });
   otherEl.addEventListener('input', recheck);

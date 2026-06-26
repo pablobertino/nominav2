@@ -1320,3 +1320,20 @@
 .sa-row .c { font-family:ui-monospace,Menlo,monospace; font-weight:600; }
 .sa-row.ok .r { color:var(--success); }
 .sa-row.fail .r { color:var(--danger); }
+
+/* ===================== CAMPOS REQUERIDOS SIN LLENAR ==================== */
+/* Marca suave para indicar que el campo es obligatorio y aun esta vacio:
+   borde rojo punteado (+ rayitas tenues en los inputs). Se quita via JS al
+   completarlo. Usado en el modal de marcaje manual. */
+input.needfill, select.needfill {
+  border:1.5px dashed var(--danger);
+}
+input.needfill {
+  background-image:repeating-linear-gradient(45deg,
+    rgba(220,38,38,.07), rgba(220,38,38,.07) 6px,
+    transparent 6px, transparent 12px);
+}
+input.needfill:focus, select.needfill:focus {
+  outline:none; border-color:var(--danger);
+  box-shadow:0 0 0 3px rgba(220,38,38,.12);
+}
