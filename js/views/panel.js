@@ -89,7 +89,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.03</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.04</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -310,6 +310,11 @@ function viewTiendas(user) {
       <select id="fZone"><option value="ALL">Todas las zonas</option>${CATALOG.zones.map(z => `<option value="${z.id}">${z.name}</option>`).join('')}</select>
       <select id="fSub"><option value="ALL">Todas las subzonas</option></select>
       <select id="fConcept"><option value="ALL">Todos los conceptos</option>${concepts.map(c => `<option>${c}</option>`).join('')}</select>
+      <select id="fSort">
+        <option value="code">Orden: Código</option>
+        <option value="sync_recent">Sinc.: reciente primero</option>
+        <option value="sync_old">Sinc.: antigua / nunca primero</option>
+      </select>
     </div>
     <div class="tablebox">
       <table><thead><tr>
@@ -322,7 +327,7 @@ function viewTiendas(user) {
     </div>`;
 
   const fName = $('#fName'), fType = $('#fType'),
-        fZone = $('#fZone'), fSub = $('#fSub'), fConcept = $('#fConcept');
+        fZone = $('#fZone'), fSub = $('#fSub'), fConcept = $('#fConcept'), fSort = $('#fSort');
 
   // Restaurar los valores de los selects/buscador desde los filtros guardados
   // (volviendo de una empresa). Las subzonas se rellenan segun la zona elegida.
@@ -330,6 +335,7 @@ function viewTiendas(user) {
     fName.value = TIENDAS_FILTERS.name || '';
     if ([...fType.options].some(o => o.value === TIENDAS_FILTERS.type)) fType.value = TIENDAS_FILTERS.type;
     if ([...fZone.options].some(o => o.value === TIENDAS_FILTERS.zone)) fZone.value = TIENDAS_FILTERS.zone;
+    if (TIENDAS_FILTERS.sort && [...fSort.options].some(o => o.value === TIENDAS_FILTERS.sort)) fSort.value = TIENDAS_FILTERS.sort;
   }
 
   // Persiste el estado actual de los filtros a nivel de modulo.
@@ -341,6 +347,7 @@ function viewTiendas(user) {
       zone: fZone.value,
       sub: fSub.value,
       concept: fConcept.value,
+      sort: fSort.value,
     };
   }
 
@@ -408,6 +415,25 @@ function viewTiendas(user) {
         && (fSub.value === 'ALL' || c.subzoneId === fSub.value)
         && (fConcept.value === 'ALL' || c.concept === fConcept.value);
     });
+    // Orden por sincronizacion (por dias) o por codigo (default). Empresas
+    // sin carga (rosterAt nulo) van al final en "reciente" y al principio en
+    // "antigua/nunca" (son las que mas necesitan sincronizarse).
+    const sortMode = fSort.value;
+    if (sortMode === 'sync_recent' || sortMode === 'sync_old') {
+      const ts = c => { const t = c.rosterAt ? Date.parse(c.rosterAt) : NaN; return isNaN(t) ? null : t; };
+      rows.sort((a, b) => {
+        const ta = ts(a), tb = ts(b);
+        if (ta == null && tb == null) return a.code < b.code ? -1 : 1;
+        if (sortMode === 'sync_recent') {
+          if (ta == null) return 1;
+          if (tb == null) return -1;
+          return tb - ta;
+        }
+        if (ta == null) return -1;
+        if (tb == null) return 1;
+        return ta - tb;
+      });
+    }
     $('#tCount').textContent = `${rows.length} de ${CATALOG.companies.length} entidades`;
     visibleRows = rows;
     $('#tBody').innerHTML = rows.map(c => {
@@ -452,7 +478,7 @@ function viewTiendas(user) {
         const mode = c && NON_STORE_TYPES.has(c.type) ? 'enterprise' : 'store';
         currentView = 'fotos';
         document.querySelectorAll('#pnlNav button').forEach(x => x.classList.remove('active'));
-        renderWorkerPhotos(user, b.dataset.photosCode, () => { currentView = 'tiendas'; navigate('tiendas', user); }, { mode });
+        renderWorkerPhotos(user, b.dataset.photosCode, () => { currentView = 'tiendas'; CATALOG = null; navigate('tiendas', user); }, { mode });
       }));
     $('#tBody').querySelectorAll('[data-dep-code]').forEach(b =>
       b.addEventListener('click', () => {
@@ -465,6 +491,7 @@ function viewTiendas(user) {
   fZone.addEventListener('change', () => { fillSubs(); render(); });
   [fName, fSub, fConcept].forEach(e => e.addEventListener('input', render));
   fType.addEventListener('change', render);
+  fSort.addEventListener('change', render);
   // Cerrar el menú de estados al hacer clic fuera
   document.addEventListener('click', () => {
     if (!msMenu.hidden) { msMenu.hidden = true; msWrap.classList.remove('open'); }
