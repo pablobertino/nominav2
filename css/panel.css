@@ -1288,12 +1288,11 @@
 .wpd-sexbar i { display:block; height:100%; }
 .wpd-sexleg { display:flex; justify-content:space-between; align-items:center; margin-top:11px; font-size:13px; }
 .wpd-sexleg .side { display:flex; align-items:center; gap:6px; }
-.wpd-sexleg .sym { font-size:17px; line-height:1; font-weight:700; }
-.wpd-sexleg .sym.m { color:#2563eb; }
-.wpd-sexleg .sym.f { color:#ec4899; }
-.wpd-sexleg .lab { font-size:13px; font-weight:750; color:var(--ink); }
-.wpd-sexleg b { font-weight:750; font-size:15px; }
-.wpd-sexleg .pc { color:var(--muted); font-size:12px; }
+.wpd-sexleg .lab { font-size:13px; font-weight:750; }
+.wpd-sexleg .lab.m { color:#2563eb; }
+.wpd-sexleg .lab.f { color:#ec4899; }
+.wpd-sexleg .pct { font-size:16px; font-weight:750; color:var(--ink); }
+.wpd-sexleg .cnt { font-size:12.5px; color:var(--muted); }
 .wpd-bars { display:flex; flex-direction:column; gap:8px; margin-top:2px; }
 .wpd-bar { display:grid; grid-template-columns:54px 1fr 26px; align-items:center; gap:9px; }
 .wpd-bl { font-size:11.5px; color:var(--muted); text-align:right; white-space:nowrap; }
@@ -1303,3 +1302,17 @@
 .wpd-empty { font-size:11.5px; color:var(--faint); font-style:italic; margin:auto 0; text-align:center; padding:8px; }
 @media (max-width:1000px) { .wpd-stats, .wpd-stats.cols3 { grid-template-columns:repeat(2,1fr); } }
 @media (max-width:600px)  { .wpd-stats, .wpd-stats.cols3 { grid-template-columns:1fr; } }
+
+/* ===================== SINCRONIZAR TODO (modal de progreso) ============ */
+.sa-okbox { background:var(--success-bg); border:1px solid #b6e3c8; color:#15803d;
+  border-radius:var(--radius-md); padding:10px 13px; font-size:12.5px; line-height:1.5; }
+.sa-bar { height:10px; border-radius:6px; background:var(--border-soft); overflow:hidden; }
+.sa-fill { height:100%; width:0%; background:var(--brand); border-radius:6px; transition:width .2s; }
+.sa-log { max-height:200px; overflow:auto; border:1px solid var(--border-soft); border-radius:var(--radius-sm);
+  padding:4px 8px; margin-top:6px; }
+.sa-row { display:flex; justify-content:space-between; gap:10px; padding:3px 2px; font-size:12px;
+  border-bottom:1px solid var(--border-soft); }
+.sa-row:last-child { border-bottom:none; }
+.sa-row .c { font-family:ui-monospace,Menlo,monospace; font-weight:600; }
+.sa-row.ok .r { color:var(--success); }
+.sa-row.fail .r { color:var(--danger); }

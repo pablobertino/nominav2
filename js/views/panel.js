@@ -18,6 +18,7 @@ import { renderWorkerPhotos } from './worker-photos.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { renderDepartments } from './departments.js';
+import { axRosterPull } from '../reports/shared/roster-ax.js';
 
 /* Tipos de empresa que NO son tienda: pueden tener departamentos y usuarios
    de empresa. (companies.company_type) */
@@ -89,7 +90,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.05</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.06</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -264,6 +265,7 @@ function empStatsHtml(companies) {
 
 /* ---------- VISTA: TIENDAS ---------- */
 function viewTiendas(user) {
+  const isAdmin = user.kind === 'admin';
   const types = [...new Set(CATALOG.companies.map(c => c.type).filter(Boolean))].sort();
   const statuses = [...new Set(CATALOG.companies.map(c => c.status).filter(Boolean))].sort();
   const concepts = CATALOG.concepts.map(c => c.name);
@@ -279,12 +281,15 @@ function viewTiendas(user) {
   $('#pnlMain').innerHTML = `
     <div class="pnl-head">
       <div><h1>Empresas</h1><p id="tCount"></p></div>
-      <div class="export-wrap">
-        <button class="btn" id="exportBtn">Exportar ▾</button>
-        <div class="export-menu" id="exportMenu" hidden>
-          <button data-fmt="xlsx">Excel (.xlsx)</button>
-          <button data-fmt="csv">CSV (.csv)</button>
-          <button data-fmt="txt">Texto (.txt)</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        ${isAdmin ? `<button class="btn btn-primary" id="syncAllBtn">${I.sync} Sincronizar todo</button>` : ''}
+        <div class="export-wrap">
+          <button class="btn" id="exportBtn">Exportar ▾</button>
+          <div class="export-menu" id="exportMenu" hidden>
+            <button data-fmt="xlsx">Excel (.xlsx)</button>
+            <button data-fmt="csv">CSV (.csv)</button>
+            <button data-fmt="txt">Texto (.txt)</button>
+          </div>
         </div>
       </div>
     </div>
@@ -508,6 +513,10 @@ function viewTiendas(user) {
   document.addEventListener('click', () => { exportMenu.hidden = true; }, { once: false });
   exportMenu.querySelectorAll('button').forEach(b =>
     b.addEventListener('click', () => { exportMenu.hidden = true; exportTiendas(b.dataset.fmt, visibleRows); }));
+
+  // Sincronizar todo (solo admin): recorre las empresas visibles.
+  const syncAllBtn = $('#syncAllBtn');
+  if (syncAllBtn) syncAllBtn.addEventListener('click', () => openSyncAllModal(user, visibleRows));
 }
 
 /* ---------- Exportación de Tiendas (xlsx / csv / txt) ---------- */
@@ -619,6 +628,82 @@ function contactEditModal(user, ds) {
     const c = CATALOG.companies.find(x => x.code === ds.code);
     if (c) { c.email = d.email; c.phone = d.phone; c.phone2 = d.phone2; }
     viewTiendas(user);
+  });
+}
+
+/* ---------- Sincronizar todo (admin): recorre las empresas visibles ----------
+   La API de AX exige alias, asi que no hay un llamado masivo: se itera empresa
+   por empresa (axRosterPull por alias) en secuencia, con barra de progreso y
+   bitacora. "El ultimo reporte manda": la lista de AX reemplaza el roster de
+   cada empresa; fotos y contacto se conservan. Al cerrar, refresca la grilla. */
+function openSyncAllModal(user, rows) {
+  const list = (rows || []).slice();
+  const total = list.length;
+
+  openModal(`
+    <div class="modal-head"><span>Sincronizar personal desde AX</span><button class="modal-x" id="mX">✕</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 12px">Trae el personal de AX para las <b>${total}</b> empresa(s) visibles (según el filtro actual), una por una. Tip: ordená por “Sinc.: antigua / nunca primero” y filtrá para actualizar solo las pendientes.</p>
+    <div class="sa-okbox">✓ <b>El último reporte manda:</b> la lista de AX reemplaza el roster de cada empresa. Las fotos y los datos de contacto (teléfono/correo/dirección) se conservan.</div>
+    <div id="saProg" style="display:none;margin-top:14px">
+      <div class="sa-bar"><div class="sa-fill" id="saFill"></div></div>
+      <p id="saStat" class="muted" style="font-size:12.5px;margin:8px 0 6px"></p>
+      <div id="saLog" class="sa-log"></div>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="saCancel">Cancelar</button>
+      <button class="btn btn-primary" id="saStart"${total ? '' : ' disabled'}>Comenzar (${total})</button>
+    </div>`);
+
+  let phase = 'idle';   // idle | running | done
+  let stopped = false;
+  let anySynced = false;
+
+  const fillEl = $('#saFill'), statEl = $('#saStat'), logEl = $('#saLog');
+  const setFill = p => { if (fillEl) fillEl.style.width = Math.round(p) + '%'; };
+  const logRow = (code, ok, info) => {
+    if (!logEl) return;
+    const row = document.createElement('div');
+    row.className = 'sa-row ' + (ok ? 'ok' : 'fail');
+    row.innerHTML = `<span class="c">${code}</span><span class="r">${ok ? '✓ ' + info : '✕ ' + info}</span>`;
+    logEl.appendChild(row); logEl.scrollTop = logEl.scrollHeight;
+  };
+  const closeAndMaybeRefresh = () => {
+    closeModal();
+    if (anySynced) { CATALOG = null; navigate('tiendas', user); }
+  };
+
+  $('#mX').addEventListener('click', () => { if (phase !== 'running') closeAndMaybeRefresh(); });
+  $('#saCancel').addEventListener('click', () => {
+    if (phase === 'running') { stopped = true; const b = $('#saCancel'); b.textContent = 'Deteniendo…'; b.disabled = true; }
+    else closeAndMaybeRefresh();
+  });
+
+  $('#saStart').addEventListener('click', async () => {
+    if (!total || phase === 'running') return;
+    phase = 'running';
+    $('#saStart').style.display = 'none';
+    $('#saCancel').textContent = 'Detener';
+    $('#saProg').style.display = 'block';
+    const uploadedBy = user.name || user.username || 'admin';
+    let ok = 0, fail = 0;
+    for (let i = 0; i < list.length; i++) {
+      if (stopped) break;
+      const c = list[i];
+      if (statEl) statEl.textContent = `(${i + 1}/${total}) ${c.code} — ${c.name || ''}…`;
+      setFill(i / total * 100);
+      let r;
+      try { r = await axRosterPull(c.code, { uploadedBy, adminId: user.id }); }
+      catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+      if (r && r.ok) { ok++; anySynced = true; const s = r.summary || {}; logRow(c.code, true, `${s.total != null ? s.total : '?'} personas`); }
+      else { fail++; logRow(c.code, false, (r && r.error) || 'error'); }
+      setFill((i + 1) / total * 100);
+    }
+    phase = 'done';
+    setFill(100);
+    if (statEl) statEl.innerHTML = stopped
+      ? `Detenido · <b>${ok}</b> sincronizada(s), <b>${fail}</b> con error.`
+      : `Listo · <b>${ok}</b> sincronizada(s), <b>${fail}</b> con error de ${total}.`;
+    const b = $('#saCancel'); b.disabled = false; b.textContent = 'Cerrar';
   });
 }
 
