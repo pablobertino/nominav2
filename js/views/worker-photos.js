@@ -119,6 +119,58 @@ function ageFrom(ymd) {
   if (m < 0 || (m === 0 && t.getDate() < b.getDate())) a--;
   return a;
 }
+/* ¿hoy es el cumpleanos? Compara dia-mes de nacimiento con hoy en hora de
+   Caracas (no depende de la zona del navegador). */
+function caracasMD() {
+  const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Caracas', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const mo = (p.find(x => x.type === 'month') || {}).value || '01';
+  const da = (p.find(x => x.type === 'day') || {}).value || '01';
+  return `${mo}-${da}`;
+}
+function isBirthday(ymd) {
+  if (!ymd) return false;
+  return String(ymd).slice(5, 10) === caracasMD();
+}
+/* Antiguedad desde la fecha de ingreso: "Xa Ym" / "Ym" / "nuevo". Devuelve ''
+   si falta el dato o la fecha es futura. */
+function tenureLabel(ymd) {
+  if (!ymd) return '';
+  const s = new Date(String(ymd).slice(0, 10) + 'T00:00:00');
+  if (isNaN(s)) return '';
+  const t = new Date();
+  let y = t.getFullYear() - s.getFullYear();
+  let m = t.getMonth() - s.getMonth();
+  if (t.getDate() < s.getDate()) m--;
+  if (m < 0) { y--; m += 12; }
+  if (y < 0) return '';
+  if (y === 0 && m === 0) return 'nuevo';
+  if (y === 0) return `${m} m`;
+  return m > 0 ? `${y}a ${m}m` : `${y}a`;
+}
+/* Mini-fila SEXO / EDAD / ANT bajo el cargo. Solo muestra los datos que
+   existen: si falta uno, esa columna no aparece; si faltan todos, no se
+   muestra la fila (no inventamos lo que no sabemos). */
+function miniRowHtml(w) {
+  const items = [];
+  if (w.gender === 'M' || w.gender === 'F') {
+    items.push(`<div class="wp-mini-c"><div class="wp-mini-l">Sexo</div><div class="wp-mini-v ${w.gender === 'M' ? 'm' : 'f'}">${w.gender}</div></div>`);
+  }
+  const age = ageFrom(w.birth_date);
+  if (age != null && age >= 0 && age <= 120) {
+    const bday = isBirthday(w.birth_date);
+    items.push(`<div class="wp-mini-c"><div class="wp-mini-l">Edad</div><div class="wp-mini-v${bday ? ' bday' : ''}">${age}${bday ? ' \uD83C\uDF82' : ''}</div></div>`);
+  }
+  const ant = tenureLabel(w.start_date);
+  if (ant) items.push(`<div class="wp-mini-c"><div class="wp-mini-l">Ant</div><div class="wp-mini-v">${ant}</div></div>`);
+  if (!items.length) return '';
+  return `<div class="wp-mini" style="grid-template-columns:repeat(${items.length},1fr)">${items.join('')}</div>`;
+}
+/* Confeti para el detalle de cumpleanos sobre la foto. */
+function confettiHtml() {
+  const D = [['8%', '16%', '#ec4899'], ['24%', '54%', '#f59e0b'], ['44%', '10%', '#2563eb'], ['60%', '60%', '#10b981'], ['80%', '20%', '#db2777'], ['90%', '52%', '#6366f1'], ['16%', '78%', '#10b981'], ['70%', '82%', '#ec4899']];
+  return `<div class="wp-confetti">${D.map(d => `<i style="left:${d[0]};top:${d[1]};background:${d[2]}"></i>`).join('')}</div>`;
+}
+
 function phoneNat(e164) { if (!e164) return ''; let s = String(e164).replace(/[^\d+]/g, ''); if (s.startsWith('+58')) s = '0' + s.slice(3); return s; }
 function phoneDisplay(e164) { const s = phoneNat(e164); return /^\d{11}$/.test(s) ? s.slice(0, 4) + '-' + s.slice(4) : (e164 || ''); }
 const GEN = { M: 'Masculino', F: 'Femenino' };
@@ -398,12 +450,16 @@ function paintGrid() {
     const chk = sel
       ? `<span class="wp-selchk" style="position:absolute;top:8px;left:8px;width:22px;height:22px;border-radius:6px;border:2px solid #fff;box-shadow:0 0 0 1px rgba(15,23,42,.18);background:${checked ? 'var(--brand)' : 'rgba(255,255,255,.9)'};display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;z-index:3">${checked ? '✓' : ''}</span>`
       : '';
+    const bday = isBirthday(w.birth_date);
+    const bflag = (bday && !sel) ? '<span class="wp-bflag">\uD83C\uDF82 \u00a1Cumple hoy!</span>' : '';
+    const conf = bday ? confettiHtml() : '';
     return `<div class="wp-card" data-ced="${w.id_number}"${sel && checked ? ' style="outline:2px solid var(--brand);outline-offset:2px;border-radius:14px"' : ''}>
-      <div class="wp-photo">${chk}${photo}${badge}<div class="wp-ov"><span>${sel ? (checked ? 'Quitar' : 'Seleccionar') : 'Ver ficha'}</span></div></div>
+      <div class="wp-photo${bday ? ' wp-bday' : ''}">${chk}${conf}${photo}${badge}${bflag}<div class="wp-ov"><span>${sel ? (checked ? 'Quitar' : 'Seleccionar') : 'Ver ficha'}</span></div></div>
       <div class="wp-body">
         <p class="wp-name">${esc(w.full_name)}</p>
         <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}</span>
         ${w.role ? `<div class="wp-role">${esc(w.role)}</div>` : ''}
+        ${miniRowHtml(w)}
         ${dept}${egr}${manualTag}
       </div>
     </div>`;

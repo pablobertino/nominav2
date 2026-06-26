@@ -241,8 +241,8 @@ async function directory(env, cc, table, deptScope) {
   // aporta lo basico (los datos personales viven en el master/Reporte 10).
   const rosterSelect = isEnterprise
     ? `id_number,full_name,role,end_date,source,department_id,first_name,second_name,last_names,`
-      + `birth_date,gender,marital_status,account_number,bank_code,todo_ticket,phone,email,address,data_id`
-    : `id_number,full_name,role,end_date,source,department_id`;
+      + `birth_date,gender,marital_status,start_date,account_number,bank_code,todo_ticket,phone,email,address,data_id`
+    : `id_number,full_name,role,end_date,source,department_id,birth_date,gender,marital_status,start_date`;
   const workersAll = await sb(env,
     `${table}?company_code=eq.${encodeURIComponent(cc)}&select=${rosterSelect}&order=full_name.asc`);
   // Alcance por departamento: si el admin esta restringido, solo su(s)
@@ -309,6 +309,7 @@ async function directory(env, cc, table, deptScope) {
       birth_date: pick('birth_date'),
       gender: pick('gender'),
       marital_status: pick('marital_status'),
+      start_date: w.start_date || null,
       account_number: pick('account_number'),
       bank_code: pick('bank_code'),
       phone: pick('phone'),
