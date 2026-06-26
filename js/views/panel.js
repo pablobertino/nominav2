@@ -89,7 +89,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.01</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.02</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -215,6 +215,53 @@ function personalCell(c) {
     + `</div>`;
 }
 
+/* Color por tipo de empresa (mismos hex que los tokens .ty-* del alias).
+   Se usa para el punto/borde de las stat cards y la pildora de Tipo. */
+const TYPE_COLORS = {
+  'Tienda': '#2563eb', 'Importadora': '#9333ea', 'Externa': '#0d9488',
+  'Administrativa': '#d97706', 'Servicio': '#dc2626', 'Tienda en línea': '#db2777',
+};
+const TYPE_ORDER = ['Tienda', 'Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea'];
+
+/* Pildora de tipo de empresa para la grilla (punto de color + etiqueta). */
+function typePill(type) {
+  const color = TYPE_COLORS[type] || 'var(--muted)';
+  return `<span class="tpill" style="--tc:${color}"><span class="d"></span>${type || '—'}</span>`;
+}
+
+/* Stat cards de Estructura (solo principal): linea 1 con totales
+   (Empresas / Zonas / Subzonas / Tipos) + linea 2 con el desglose por tipo.
+   Se calcula del catalogo visible (ya filtrado por alcance en el backend). */
+function empStatsHtml(companies) {
+  const total = companies.length;
+  const zones = new Set(companies.map(c => c.zoneId).filter(Boolean)).size;
+  const subs = new Set(companies.map(c => c.subzoneId).filter(Boolean)).size;
+  const byType = {};
+  companies.forEach(c => { const t = c.type || '—'; byType[t] = (byType[t] || 0) + 1; });
+  const present = Object.keys(byType);
+  const ordered = TYPE_ORDER.filter(t => present.includes(t))
+    .concat(present.filter(t => !TYPE_ORDER.includes(t)).sort());
+  const tienda = byType['Tienda'] || 0;
+  const otras = total - tienda;
+  const hint = otras > 0 ? `${tienda} tiendas · ${otras} otras` : `${tienda} tiendas`;
+  const tcards = ordered.map(t => {
+    const color = TYPE_COLORS[t] || 'var(--muted)';
+    return `<div class="emp-tcard" style="--tc:${color}">`
+      + `<div class="nm"><span class="d"></span>${t}</div>`
+      + `<div class="v">${byType[t]}</div></div>`;
+  }).join('');
+  return `
+    <div class="emp-stats">
+      <div class="emp-srow">
+        <div class="emp-stat"><div class="k">Empresas</div><div class="v">${total}</div><div class="hint">${hint}</div></div>
+        <div class="emp-stat"><div class="k">Zonas</div><div class="v">${zones}</div><div class="hint">con empresas</div></div>
+        <div class="emp-stat"><div class="k">Subzonas</div><div class="v">${subs}</div><div class="hint">con empresas</div></div>
+        <div class="emp-stat"><div class="k">Tipos de empresa</div><div class="v">${ordered.length}</div><div class="hint">desglose abajo</div></div>
+      </div>
+      <div class="emp-types">${tcards}</div>
+    </div>`;
+}
+
 /* ---------- VISTA: TIENDAS ---------- */
 function viewTiendas(user) {
   const types = [...new Set(CATALOG.companies.map(c => c.type).filter(Boolean))].sort();
@@ -241,6 +288,7 @@ function viewTiendas(user) {
         </div>
       </div>
     </div>
+    ${empStatsHtml(CATALOG.companies)}
     <div class="pnl-filters">
       <div class="search">${I.search}<input id="fName" type="text" placeholder="Buscar nombre o código…"></div>
       <select id="fType"><option value="ALL" selected>Todos los tipos</option>${types.map(t => `<option>${t}</option>`).join('')}</select>
@@ -265,7 +313,7 @@ function viewTiendas(user) {
     </div>
     <div class="tablebox">
       <table><thead><tr>
-        <th>Código</th><th>Razón social</th><th>Ubicación / Concepto</th><th>Contacto</th><th>Personal</th><th>Estado</th><th>Acceso</th><th style="text-align:right">Reportar</th>
+        <th>Código</th><th>Razón social</th><th>Tipo</th><th>Ubicación / Concepto</th><th>Contacto</th><th>Personal</th><th>Estado</th><th>Acceso</th><th style="text-align:right">Reportar</th>
       </tr></thead><tbody id="tBody"></tbody></table>
     </div>
     <div class="legend">
@@ -378,6 +426,7 @@ function viewTiendas(user) {
       <tr>
         <td class="code-cell"><div class="alias ${tyClass(c.type)}">${c.code}</div>${c.dataArea ? `<div class="darea">${c.dataArea}</div>` : ''}</td>
         <td class="name-cell"><div class="nm">${c.name || '—'}</div>${c.taxId ? `<div class="rif">RIF ${c.taxId}</div>` : ''}</td>
+        <td>${typePill(c.type)}</td>
         <td class="zc-cell"><div class="zc1">${c.zone || '—'}${c.subzone ? ' · ' + c.subzone : ''}</div><div class="zc2">${c.concept || '—'}</div></td>
         <td>${contacto}</td>
         <td>${personalCell(c)}</td>
@@ -385,7 +434,7 @@ function viewTiendas(user) {
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
         <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" style="margin-right:4px">Personal</button>${NON_STORE_TYPES.has(c.type) ? `<button class="btn btn-mini" data-dep-code="${c.code}" style="margin-right:4px">Departamentos</button>` : ''}<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="8" class="empty">Sin resultados.</td></tr>';
+    }).join('') || '<tr><td colspan="9" class="empty">Sin resultados.</td></tr>';
 
     $('#tBody').querySelectorAll('.email-edit').forEach(b =>
       b.addEventListener('click', () => contactEditModal(user, b.dataset)));
