@@ -126,6 +126,33 @@ async function userCanAccess(env, user, cc) {
   return false;
 }
 
+/* Alcance por DEPARTAMENTO del que llama, dentro de una empresa.
+   Devuelve null = sin restriccion (usuario de compania, superadmin, o admin
+   con acceso a la empresa completa). Array = solo esos department_id
+   (los trabajadores sin departamento quedan fuera). Fuente: RPC
+   get_admin_dept_ids. */
+async function allowedDeptIds(env, user, cc) {
+  if (!user) return null;
+  if (user.kind === 'company') return null;
+  if (user.kind === 'admin' && user.id) {
+    const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
+    if (!a || !a.length) return null;
+    if (a[0].role === 'superadmin') return null;
+    const res = await sb(env, 'rpc/get_admin_dept_ids', {
+      method: 'POST', body: JSON.stringify({ p_admin_id: a[0].id, p_company_code: cc }),
+    });
+    return Array.isArray(res) ? res.map(Number) : null;  // null = empresa completa
+  }
+  return null;
+}
+
+/* true si el departamento depId esta permitido por el alcance (null = sin
+   restriccion). Un alcance por departamento NO incluye a los sin asignar. */
+function deptOk(deptScope, depId) {
+  if (!Array.isArray(deptScope)) return true;
+  return depId != null && deptScope.includes(Number(depId));
+}
+
 /* Resuelve la TABLA de roster segun el tipo de empresa: las no-tienda usan
    enterprise_workers; las tiendas (o cualquier otra) usan store_workers.
    Asi el mismo endpoint (foto/ficha sobre workers_master por cedula) sirve
@@ -151,12 +178,14 @@ export async function onRequestPost({ request, env }) {
     if (!(await userCanAccess(env, user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
 
     const table = await rosterTable(env, cc);
+    // Alcance por departamento del que llama (null = sin restriccion).
+    const deptScope = await allowedDeptIds(env, user, cc);
 
-    if (action === 'directory') return await directory(env, cc, table);
-    if (action === 'save') return await savePhoto(env, cc, body, table);
-    if (action === 'save_profile') return await saveProfile(env, cc, body, table);
-    if (action === 'set_department') return await setDepartment(env, cc, body, table);
-    if (action === 'remove') return await removePhoto(env, cc, body);
+    if (action === 'directory') return await directory(env, cc, table, deptScope);
+    if (action === 'save') return await savePhoto(env, cc, body, table, deptScope);
+    if (action === 'save_profile') return await saveProfile(env, cc, body, table, deptScope);
+    if (action === 'set_department') return await setDepartment(env, cc, body, table, deptScope);
+    if (action === 'remove') return await removePhoto(env, cc, body, table, deptScope);
 
     return json({ ok: false, error: 'Accion no reconocida' }, 400);
   } catch (e) {
@@ -165,7 +194,7 @@ export async function onRequestPost({ request, env }) {
 }
 
 /* ---------- DIRECTORY ---------- */
-async function directory(env, cc, table) {
+async function directory(env, cc, table, deptScope) {
   table = table || 'store_workers';
   const isEnterprise = table === 'enterprise_workers';
   // Datos de la empresa (cabecera de la ficha). Zona/subzona/concepto por id.
@@ -197,9 +226,13 @@ async function directory(env, cc, table) {
   // masiva). En tiendas existe "Tiendas" sembrado; en no-tiendas los crea el
   // admin. Se devuelve la lista y se mapea id->nombre para cada trabajador.
   const depts = await sb(env, `departments?company_code=eq.${encodeURIComponent(cc)}&is_active=eq.true&select=id,name&order=sort_order.asc,name.asc`);
-  const deptList = (depts || []).map(d => ({ id: d.id, name: d.name }));
   const deptMap = {};
   (depts || []).forEach(d => { deptMap[d.id] = d.name; });
+  // El catalogo que se ofrece para asignar respeta el alcance: un admin
+  // restringido por departamento solo ve/asigna los suyos.
+  const deptList = (depts || [])
+    .filter(d => !Array.isArray(deptScope) || deptScope.includes(Number(d.id)))
+    .map(d => ({ id: d.id, name: d.name }));
 
   // Roster de la empresa (tabla segun tipo). En modo empresa traemos TODOS
   // los datos personales desde enterprise_workers (el Reporte AX los tiene),
@@ -210,9 +243,14 @@ async function directory(env, cc, table) {
     ? `id_number,full_name,role,end_date,source,department_id,first_name,second_name,last_names,`
       + `birth_date,gender,marital_status,account_number,bank_code,todo_ticket,phone,email,address,data_id`
     : `id_number,full_name,role,end_date,source,department_id`;
-  const workers = await sb(env,
+  const workersAll = await sb(env,
     `${table}?company_code=eq.${encodeURIComponent(cc)}&select=${rosterSelect}&order=full_name.asc`);
-  const ceds = (workers || []).map(w => w.id_number).filter(Boolean);
+  // Alcance por departamento: si el admin esta restringido, solo su(s)
+  // departamento(s) (los no asignados quedan fuera).
+  const workers = Array.isArray(deptScope)
+    ? (workersAll || []).filter(w => w.department_id != null && deptScope.includes(Number(w.department_id)))
+    : (workersAll || []);
+  const ceds = workers.map(w => w.id_number).filter(Boolean);
 
   // Metadatos del snapshot. store_roster_meta (tiendas) o
   // enterprise_roster_meta (empresas). Se normaliza a {uploaded_at,
@@ -306,14 +344,15 @@ async function directory(env, cc, table) {
 }
 
 /* ---------- SAVE (foto) ---------- */
-async function savePhoto(env, cc, body, table) {
+async function savePhoto(env, cc, body, table, deptScope) {
   table = table || 'store_workers';
   const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
   if (!ced || ced.length < 6 || ced.length > 8) return json({ ok: false, error: 'Cedula invalida.' }, 400);
 
   const inStore = await sb(env,
-    `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}&select=id_number,full_name,first_name,second_name,last_names`);
+    `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}&select=id_number,full_name,first_name,second_name,last_names,department_id`);
   if (!inStore || !inStore.length) return json({ ok: false, error: 'Ese trabajador no esta en la lista de la empresa.' }, 404);
+  if (!deptOk(deptScope, inStore[0].department_id)) return json({ ok: false, error: 'Ese trabajador esta fuera de tu alcance (departamento).' }, 403);
 
   const fullB64 = String(body.full_b64 || '');
   const thumbB64 = String(body.thumb_b64 || '');
@@ -364,7 +403,7 @@ async function savePhoto(env, cc, body, table) {
 }
 
 /* ---------- SAVE_PROFILE (datos de la persona) ---------- */
-async function saveProfile(env, cc, body, table) {
+async function saveProfile(env, cc, body, table, deptScope) {
   table = table || 'store_workers';
   const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
   if (!ced || ced.length < 6 || ced.length > 8) return json({ ok: false, error: 'Cedula invalida.' }, 400);
@@ -372,8 +411,9 @@ async function saveProfile(env, cc, body, table) {
 
   // La persona debe pertenecer al roster de esta empresa.
   const inStore = await sb(env,
-    `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}&select=id_number,full_name`);
+    `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}&select=id_number,full_name,department_id`);
   if (!inStore || !inStore.length) return json({ ok: false, error: 'Ese trabajador no esta en la lista de la empresa.' }, 404);
+  if (!deptOk(deptScope, inStore[0].department_id)) return json({ ok: false, error: 'Ese trabajador esta fuera de tu alcance (departamento).' }, 403);
 
   // Validaciones server-side (defensa).
   const acc = p.account_number ? String(p.account_number).replace(/\D/g, '') : null;
@@ -428,6 +468,9 @@ async function saveProfile(env, cc, body, table) {
       const d = await sb(env, `departments?id=eq.${depId}&company_code=eq.${encodeURIComponent(cc)}&select=id`);
       if (!d || !d.length) return json({ ok: false, error: 'Ese departamento no pertenece a esta empresa.' }, 400);
     }
+    if (Array.isArray(deptScope) && !deptOk(deptScope, depId)) {
+      return json({ ok: false, error: 'No puedes asignar a un departamento fuera de tu alcance.' }, 403);
+    }
     await sb(env, `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}`, {
       method: 'PATCH', headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({ department_id: depId }),
@@ -440,9 +483,9 @@ async function saveProfile(env, cc, body, table) {
    Asigna (o quita, con department_id null) un departamento a varios
    trabajadores del roster de ESTA empresa. El departamento debe pertenecer a
    la empresa. userCanAccess ya valido el alcance del que llama. */
-async function setDepartment(env, cc, body, table) {
+async function setDepartment(env, cc, body, table, deptScope) {
   table = table || 'store_workers';
-  const ids = Array.isArray(body.id_numbers)
+  let ids = Array.isArray(body.id_numbers)
     ? [...new Set(body.id_numbers.map(x => String(x).replace(/[^0-9]/g, '')).filter(Boolean))]
     : [];
   if (!ids.length) return json({ ok: false, error: 'No hay trabajadores seleccionados.' }, 400);
@@ -451,6 +494,19 @@ async function setDepartment(env, cc, body, table) {
   if (depId != null) {
     const d = await sb(env, `departments?id=eq.${depId}&company_code=eq.${encodeURIComponent(cc)}&select=id`);
     if (!d || !d.length) return json({ ok: false, error: 'Ese departamento no pertenece a esta empresa.' }, 400);
+  }
+  // Alcance por departamento: solo se asigna a un departamento propio y solo
+  // sobre trabajadores que ya esten en el alcance del admin.
+  if (Array.isArray(deptScope)) {
+    if (depId == null || !deptScope.includes(Number(depId))) {
+      return json({ ok: false, error: 'Solo puedes asignar a departamentos de tu alcance.' }, 403);
+    }
+    const curList = ids.map(c => `"${c}"`).join(',');
+    const cur = await sb(env,
+      `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=in.(${curList})&select=id_number,department_id`);
+    const allow = new Set(deptScope.map(Number));
+    ids = (cur || []).filter(w => w.department_id != null && allow.has(Number(w.department_id))).map(w => w.id_number);
+    if (!ids.length) return json({ ok: false, error: 'Ninguno de los seleccionados esta en tu alcance.' }, 403);
   }
   const inList = ids.map(c => `"${c}"`).join(',');
   await sb(env, `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=in.(${inList})`, {
@@ -461,9 +517,16 @@ async function setDepartment(env, cc, body, table) {
 }
 
 /* ---------- REMOVE (foto) ---------- */
-async function removePhoto(env, cc, body) {
+async function removePhoto(env, cc, body, table, deptScope) {
+  table = table || 'store_workers';
   const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
   if (!ced) return json({ ok: false, error: 'Cedula invalida.' }, 400);
+
+  // La persona debe pertenecer al roster de esta empresa y a tu alcance.
+  const inStore = await sb(env,
+    `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}&select=id_number,department_id`);
+  if (!inStore || !inStore.length) return json({ ok: false, error: 'Ese trabajador no esta en la lista de la empresa.' }, 404);
+  if (!deptOk(deptScope, inStore[0].department_id)) return json({ ok: false, error: 'Ese trabajador esta fuera de tu alcance (departamento).' }, 403);
 
   const rows = await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=photo_full_path,photo_thumb_path`);
   const m = rows && rows[0];

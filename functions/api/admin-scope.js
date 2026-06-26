@@ -5,8 +5,10 @@
              (zones, subzones, companies) para poblar el buscador.
      - save: reemplaza por completo el include/exclude del admin.
 
-   scope_type ∈ {zone, subzone, company}
-   scope_value = zone.id | subzone.id | company.company_code
+   scope_type ∈ {zone, subzone, company, department}
+   scope_value = zone.id | subzone.id | company.company_code | department.id
+   (department: solo para empresas no-tienda; concede acceso a la empresa
+    dueña del departamento y restringe el personal a ese departamento)
 
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
@@ -84,14 +86,15 @@ export async function onRequestPost({ request, env }) {
     if (!targetId) return json({ ok: false, error: 'Falta el admin objetivo.' }, 400);
 
     if (action === 'get') {
-      const [inc, exc, zones, subzones, companies] = await Promise.all([
+      const [inc, exc, zones, subzones, companies, departments] = await Promise.all([
         sb(env, `admin_scope_include?admin_id=eq.${targetId}&select=scope_type,scope_value`),
         sb(env, `admin_scope_exclude?admin_id=eq.${targetId}&select=scope_type,scope_value`),
         sb(env, 'zones?select=id,name&order=name'),
         sb(env, 'subzones?select=id,name,zone_id&order=name'),
         sb(env, 'companies?select=company_code,business_name,zone_id,subzone_id,company_type&order=company_code'),
+        sb(env, 'departments?select=id,company_code,name&is_active=eq.true&order=company_code,name'),
       ]);
-      return json({ ok: true, include: inc || [], exclude: exc || [], zones, subzones, companies });
+      return json({ ok: true, include: inc || [], exclude: exc || [], zones, subzones, companies, departments: departments || [] });
     }
 
     if (action === 'resolve') {
@@ -205,7 +208,7 @@ export async function onRequestPost({ request, env }) {
       const { include, exclude } = body; // arrays de {scope_type, scope_value}
       // Validación básica de tipos
       const valid = (arr) => Array.isArray(arr) && arr.every(x =>
-        ['zone', 'subzone', 'company'].includes(x.scope_type) && x.scope_value);
+        ['zone', 'subzone', 'company', 'department'].includes(x.scope_type) && x.scope_value);
       if (!valid(include) || !valid(exclude)) return json({ ok: false, error: 'Datos de alcance inválidos.' }, 400);
 
       // Reemplazo total: borrar lo existente y reinsertar

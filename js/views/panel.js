@@ -96,7 +96,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.19</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.20</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1277,17 +1277,18 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store') {
     include: d.include.map(x => ({ ...x })),
     exclude: d.exclude.map(x => ({ ...x })),
     zones: d.zones, subzones: d.subzones, companies: d.companies,
+    departments: d.departments || [],
   };
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Alcance de ${SCOPE.isEnt ? 'Empresas' : 'Tiendas'} · ${targetUser}</h1>
-      <p>${SCOPE.isEnt ? 'Define qué empresas (no tiendas) puede gestionar. Alcance final = incluidos − excluidos.' : 'Define qué tiendas puede gestionar. Alcance final = incluidos − excluidos.'}</p></div>
+      <p>${SCOPE.isEnt ? 'Define qué empresas (no tiendas) o departamentos puede gestionar. Alcance final = incluidos − excluidos.' : 'Define qué tiendas puede gestionar. Alcance final = incluidos − excluidos.'}</p></div>
       <button class="btn" id="scBack">← Volver</button></div>
     <div class="card">
       <div class="sc-add">
         <select id="scLevel">
           ${SCOPE.isEnt
-            ? '<option value="company">Empresa</option>'
+            ? '<option value="company">Empresa (todo)</option><option value="department">Departamento</option>'
             : '<option value="zone">Zona</option><option value="subzone">Subzona</option><option value="company">Tienda</option>'}
         </select>
         <div class="search" style="flex:1">${I.search}<input id="scSearch" placeholder="Buscar…" autocomplete="off"></div>
@@ -1331,6 +1332,12 @@ function scopeLabel(type, value) {
     const s = SCOPE.subzones.find(s => String(s.id) === String(value));
     return `Subzona: ${s ? s.name : value}`;
   }
+  if (type === 'department') {
+    const dep = SCOPE.departments.find(d => String(d.id) === String(value));
+    const cc = dep ? dep.company_code : '';
+    const comp = SCOPE.companies.find(c => c.company_code === cc);
+    return `Depto: ${dep ? dep.name : value}${cc ? ' · ' + cc : ''}${comp ? ' (' + comp.business_name + ')' : ''}`;
+  }
   const c = SCOPE.companies.find(c => c.company_code === value);
   const noun = (c && NON_STORE_TYPES.has(c.company_type)) ? 'Empresa' : 'Tienda';
   return `${noun}: ${value}${c ? ' · ' + c.business_name : ''}`;
@@ -1342,6 +1349,13 @@ function renderScResults() {
   let opts = [];
   if (level === 'zone') opts = SCOPE.zones.map(z => ({ value: String(z.id), label: z.name }));
   else if (level === 'subzone') opts = SCOPE.subzones.map(s => ({ value: String(s.id), label: s.name }));
+  else if (level === 'department') {
+    const nonStore = new Set(SCOPE.companies.filter(c => NON_STORE_TYPES.has(c.company_type)).map(c => c.company_code));
+    opts = SCOPE.departments.filter(d => nonStore.has(d.company_code)).map(d => {
+      const comp = SCOPE.companies.find(c => c.company_code === d.company_code);
+      return { value: String(d.id), label: `${d.company_code} · ${d.name}${comp ? ' — ' + comp.business_name : ''}` };
+    });
+  }
   else {
     const comps = SCOPE.companies.filter(c => SCOPE.isEnt
       ? NON_STORE_TYPES.has(c.company_type)
@@ -1382,10 +1396,13 @@ function removeScope(bucket, type, value) {
 // editor de Empresas no pisa el alcance de Tiendas ni viceversa.
 function scopeMatchesMode(x) {
   if (SCOPE.isEnt) {
+    if (x.scope_type === 'department') return true;
     if (x.scope_type !== 'company') return false;
     const c = SCOPE.companies.find(c => c.company_code === x.scope_value);
     return !!(c && NON_STORE_TYPES.has(c.company_type));
   }
+  // modo Tiendas: los departamentos pertenecen a Empresas, no se muestran aqui
+  if (x.scope_type === 'department') return false;
   if (x.scope_type !== 'company') return true;
   const c = SCOPE.companies.find(c => c.company_code === x.scope_value);
   return !c || !NON_STORE_TYPES.has(c.company_type);
@@ -1413,14 +1430,17 @@ function estimateScope() {
     ? NON_STORE_TYPES.has(c.company_type)
     : !NON_STORE_TYPES.has(c.company_type));
   const inSet = new Set();
+  const deptCompany = (val) => { const d = SCOPE.departments.find(d => String(d.id) === String(val)); return d ? d.company_code : null; };
   SCOPE.include.filter(scopeMatchesMode).forEach(x => {
     if (x.scope_type === 'zone') universe.filter(c => String(c.zone_id) === String(x.scope_value)).forEach(c => inSet.add(c.company_code));
     else if (x.scope_type === 'subzone') universe.filter(c => String(c.subzone_id) === String(x.scope_value)).forEach(c => inSet.add(c.company_code));
+    else if (x.scope_type === 'department') { const cc = deptCompany(x.scope_value); if (cc) inSet.add(cc); }
     else inSet.add(x.scope_value);
   });
   SCOPE.exclude.filter(scopeMatchesMode).forEach(x => {
     if (x.scope_type === 'zone') universe.filter(c => String(c.zone_id) === String(x.scope_value)).forEach(c => inSet.delete(c.company_code));
     else if (x.scope_type === 'subzone') universe.filter(c => String(c.subzone_id) === String(x.scope_value)).forEach(c => inSet.delete(c.company_code));
+    else if (x.scope_type === 'department') { /* excluir un depto no quita la empresa del conteo */ }
     else inSet.delete(x.scope_value);
   });
   return inSet.size;
