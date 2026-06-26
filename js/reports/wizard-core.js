@@ -24,7 +24,6 @@
 import { $ } from '../core/dom.js';
 import * as DW from './shared/date-window.js';
 import * as Roster from './shared/roster.js';
-import { enterpriseRosterGet } from './shared/roster-ax.js';
 import * as Resp from './shared/responsables.js';
 import * as Pick from './shared/workers-picker.js';
 
@@ -37,10 +36,12 @@ export function launchWizard(user, reportDef, onExit) {
   // omite el paso 2 y el reporte se marca con origen 'admin'.
   const isAdmin = user.kind !== 'company';
   // El roster de las empresas NO-tienda vive en enterprise_workers, no en
-  // store_workers. Sin esto, "Reportar" en una no-tienda salia con la lista
-  // vacia. isEnterprise decide el endpoint de carga del roster (paso 1).
+  // store_workers. isEnterprise decide el endpoint de carga del roster
+  // (paso 1). Aplica tanto al admin que reporta por una empresa como al
+  // USUARIO DE COMPANIA cuya propia empresa es no-tienda (ej. 0A01).
   const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
-  const isEnterprise = isAdmin && NON_STORE_TYPES.has(user.pickedCompanyType);
+  const companyType = user.kind === 'company' ? (user.companyType || null) : (user.pickedCompanyType || null);
+  const isEnterprise = NON_STORE_TYPES.has(companyType);
   const wizAdminId = user.id || null;
   const entidad = isEnterprise ? 'la empresa' : 'la tienda';
 
@@ -139,20 +140,28 @@ export function launchWizard(user, reportDef, onExit) {
 
   /* ---------- PASO 1: lista de la tienda ---------- */
   async function loadRoster() {
-    // No-tienda: el roster esta en enterprise_workers -> endpoint enterprise
-    // (tabla-aware y con validacion de alcance por adminId). Tienda: store.
+    // No-tienda: el roster esta en enterprise_workers. Se lee por el
+    // DIRECTORIO (/api/worker-photo), que es type-aware y valida por usuario:
+    // sirve para el admin (alcance) Y para el usuario de empresa que reporta
+    // por su propia empresa. enterprise-roster es solo-admin, por eso no se
+    // usa aqui (rompia el caso del usuario de compania, ej. 0A01).
     if (isEnterprise) {
-      const r = await enterpriseRosterGet(companyCode, wizAdminId);
-      if (r.ok) {
-        S.roster = r.workers || [];
+      const res = await fetch('/api/worker-photo', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'directory', company_code: companyCode,
+          user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null } }),
+      }).then(r => r.json()).catch(() => ({ ok: false }));
+      if (res && res.ok) {
+        S.roster = res.workers || [];
         // Normalizar meta al shape que usa la vista (total_count/active_count).
-        if (r.meta) {
-          const total = (r.workers || []).length;
-          const active = (r.workers || []).filter(w => !w.end_date).length;
-          S.meta = { ...r.meta, total_count: r.meta.row_count != null ? r.meta.row_count : total, active_count: active };
+        const m = res.meta;
+        if (m) {
+          const total = (res.workers || []).length;
+          const active = (res.workers || []).filter(w => !w.end_date).length;
+          S.meta = { ...m, total_count: m.total_count != null ? m.total_count : total, active_count: active };
         } else S.meta = null;
       }
-      return r;
+      return res;
     }
     const r = await Roster.rosterGet(companyCode);
     if (r.ok) { S.roster = r.workers || []; S.meta = r.meta || null; }

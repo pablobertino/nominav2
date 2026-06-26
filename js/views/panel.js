@@ -72,7 +72,7 @@ const NAV = [
 ];
 
 /* Etiquetas legibles de rol para la topbar. */
-const ROLE_LABELS = { superadmin: 'superadmin', admin: 'admin', editor_personal: 'Editor de personal' };
+const ROLE_LABELS = { superadmin: 'superadmin', admin: 'admin', editor_personal: 'editor_personal' };
 
 /* ---------- shell ---------- */
 function shell(user) {
@@ -96,7 +96,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.14</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.16</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -878,7 +878,8 @@ async function usuariosPortalTab(user, body) {
         ? (u.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>')
         : '<span class="pill pill-gray">Sin acceso</span>';
       const actions = u
-        ? `<button class="btn btn-mini" data-act="reset" data-code="${r.code}">${I.key} Resetear</button>
+        ? `<button class="btn btn-mini" data-act="email" data-code="${r.code}" data-name="${(r.name||'').replace(/"/g,'')}" data-email="${(u.email||'').replace(/"/g,'')}">${I.pencil} Correo</button>
+           <button class="btn btn-mini" data-act="reset" data-code="${r.code}">${I.key} Resetear</button>
            <button class="btn btn-mini" data-act="toggle" data-code="${r.code}" data-active="${u.is_active}">${u.is_active ? 'Desactivar' : 'Activar'}</button>`
         : `<button class="btn btn-mini btn-primary" data-act="create" data-code="${r.code}" data-name="${(r.name||'').replace(/"/g,'')}" data-type="${r.type||''}" data-email="${r.companyEmail||''}">${I.plus} Crear acceso</button>`;
       return `<tr><td class="code">${r.code}</td><td>${r.name || '—'}</td>
@@ -1098,6 +1099,27 @@ function cuAction(ds, user) {
       .then(() => viewUsuarios(user));
     return;
   }
+  if (ds.act === 'email') {
+    openModal(`
+      <div class="modal-head"><span>Editar correo del usuario</span><button class="modal-x" id="mX">✕</button></div>
+      <p class="muted" style="font-size:12.5px;margin:0 0 16px">${ds.code}${ds.name ? ' · ' + ds.name : ''}</p>
+      <label class="flabel">Correo del usuario <span class="muted">(acceso al portal)</span></label>
+      <input type="text" id="cuEmailEdit" value="${ds.email || ''}" placeholder="usuario@grupocanaima.com" style="margin-bottom:8px">
+      <p class="muted" style="font-size:11.5px;margin:0">Es uno de los identificadores de inicio de sesión (la compañía también puede entrar con su código ${ds.code}). Déjalo vacío para quitarlo.</p>
+      <div class="modal-actions">
+        <button class="btn" id="mCancel">Cancelar</button>
+        <button class="btn btn-primary" id="mOk">Guardar</button>
+      </div>`);
+    $('#mX').addEventListener('click', closeModal);
+    $('#mCancel').addEventListener('click', closeModal);
+    $('#mOk').addEventListener('click', async () => {
+      const d = await cuApi({ action: 'update_email', adminId: user.id, companyCode: ds.code, email: $('#cuEmailEdit').value });
+      if (!d.ok) { alert(d.error); return; }
+      closeModal();
+      viewUsuarios(user);
+    });
+    return;
+  }
   const isCreate = ds.act === 'create';
   openModal(`
     <div class="modal-head"><span>${isCreate ? 'Crear acceso' : 'Resetear contraseña'}</span><button class="modal-x" id="mX">✕</button></div>
@@ -1224,10 +1246,11 @@ async function viewPermisos(user) {
     <div class="pnl-head"><div><h1>Permisos</h1><p>Alcance de cada admin · Tiendas y Empresas por separado · el superadmin ve todo</p></div></div>
     ${admins.length === 0 ? '<div class="card"><p class="muted" style="margin:0">No hay admins (no superadmin) aún. Crea uno en la sección Equipo.</p></div>' : `
     <div class="tablebox"><table><thead><tr>
-      <th>Usuario</th><th>Nombre</th><th>Estado</th><th style="text-align:right">Alcance</th>
+      <th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th><th style="text-align:right">Alcance</th>
     </tr></thead><tbody>
       ${admins.map(a => `<tr>
         <td class="code">${a.username}</td><td>${a.name || '—'}</td>
+        <td><span class="pill pill-gray">${ROLE_LABELS[a.role] || a.role}</span></td>
         <td>${a.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>'}</td>
         <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-id="${a.id}" data-u="${a.username}" data-kind="store" style="margin-right:4px">${I.sliders} Tiendas</button><button class="btn btn-mini" data-id="${a.id}" data-u="${a.username}" data-kind="enterprise">${I.sliders} Empresas</button></td>
       </tr>`).join('')}
@@ -2610,8 +2633,9 @@ async function navigate(view, user) {
   else if (view === 'fotos') {
     // Vista de fichas/fotos. Para la tienda usa su propia company; para
     // admin/superadmin se entra eligiendo tienda desde Empresas (boton de
-    // fila), no por este item de menu.
-    if (user.kind === 'company') renderWorkerPhotos(user, user.companyCode, null);
+    // fila), no por este item de menu. Si la empresa del usuario de compania
+    // es no-tienda (ej. 0A01), se entra en modo 'enterprise' (enterprise_workers).
+    if (user.kind === 'company') renderWorkerPhotos(user, user.companyCode, null, { mode: NON_STORE_TYPES.has(user.companyType) ? 'enterprise' : 'store' });
     else viewTiendas(user);  // admin: elige tienda en Empresas
   }
 }

@@ -82,9 +82,16 @@ export async function onRequestPost({ request, env }) {
     if (users.length) {
       const u = users[0];
       if (u.password_hash !== hash) return json({ ok: false, error: 'Credenciales incorrectas.' }, 401);
+      // Tipo de empresa: define si su Personal/Reportes operan sobre el mundo
+      // tienda (store_workers) o empresa no-tienda (enterprise_workers).
+      let companyType = null;
+      try {
+        const cc = await sb(env, `companies?company_code=eq.${encodeURIComponent(u.company_code)}&select=company_type`);
+        companyType = cc && cc[0] ? cc[0].company_type : null;
+      } catch { /* no critico */ }
       return json({
         ok: true,
-        user: { kind: 'company', id: u.id, companyCode: u.company_code,
+        user: { kind: 'company', id: u.id, companyCode: u.company_code, companyType,
                 email: u.email || null, mustChangePassword: u.must_change_password },
       });
     }

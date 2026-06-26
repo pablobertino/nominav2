@@ -120,6 +120,22 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, tempPassword: useTemp ? pwd : null });
     }
 
+    if (action === 'update_email') {
+      const { companyCode, email } = body;
+      if (!companyCode) return json({ ok: false, error: 'Falta la compañía.' }, 400);
+      if (!canTouch(companyCode)) return json({ ok: false, error: 'Fuera de tu alcance.' }, 403);
+      const clean = (email || '').trim().toLowerCase();
+      if (clean && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(clean)) return json({ ok: false, error: 'Correo inválido.' }, 400);
+      const ex = await sb(env, `company_users?company_code=eq.${encodeURIComponent(companyCode)}&select=company_code`);
+      if (!ex || !ex.length) return json({ ok: false, error: 'Esa compañía no tiene acceso al portal creado.' }, 404);
+      await sb(env, `company_users?company_code=eq.${encodeURIComponent(companyCode)}`, {
+        method: 'PATCH',
+        headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ email: clean || null }),
+      });
+      return json({ ok: true, email: clean || null });
+    }
+
     if (action === 'toggle') {
       const { companyCode, isActive } = body;
       if (!canTouch(companyCode)) return json({ ok: false, error: 'Fuera de tu alcance.' }, 403);
