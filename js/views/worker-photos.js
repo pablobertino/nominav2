@@ -198,6 +198,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
         </div>
       </div>
       <div id="wpRosterBar" class="wp-rosterbar" style="display:none"></div>
+      <div id="wpDemo"></div>
       <div class="pnl-filters">
         <div class="search"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input id="wpSearch" placeholder="Buscar por nombre o cédula…"></div>
       </div>
@@ -240,6 +241,7 @@ async function load() {
   if (empBar) empBar.innerHTML = companyBarHtml(STATE.company);
   updateInfo(d);
   paintRosterBar();
+  paintDemo();
   paintGrid();
 }
 
@@ -289,6 +291,79 @@ function updateInfo(d) {
 function bankName(acc) {
   if (!acc) return null;
   return STATE.bankMap[String(acc).slice(0, 4)] || null;
+}
+
+/* ===================== DEMOGRAFIA (cards del detalle) =====================
+   Sexo / Edades / Estado civil / Cargos del roster cargado. Se ocultan si no
+   hay personal. En empresas NO-tienda no se muestra Cargos (muy diversos).
+   Todo se calcula del roster que ya devuelve /api/worker-photo (directory). */
+function demoBars(arr, color) {
+  const max = Math.max(1, ...arr.map(x => x[1]));
+  return arr.map(([l, v]) =>
+    `<div class="wpd-bar"><span class="wpd-bl">${l}</span>`
+    + `<div class="wpd-bt"><i style="width:${Math.round(v / max * 100)}%;background:${color}"></i></div>`
+    + `<span class="wpd-bn">${v}</span></div>`).join('');
+}
+function demoStatsHtml(workers, mode) {
+  if (!workers || !workers.length) return '';
+  // Sexo (solo M/F con dato). Hombre azul ♂, mujer rosado ♀.
+  const m = workers.filter(w => w.gender === 'M').length;
+  const f = workers.filter(w => w.gender === 'F').length;
+  const sexTot = m + f;
+  const mp = sexTot ? Math.round(m / sexTot * 100) : 0;
+  const fp = sexTot ? 100 - mp : 0;
+  const sexBody = sexTot
+    ? `<div class="wpd-sexbar"><i style="width:${mp}%;background:#2563eb"></i><i style="width:${fp}%;background:#ec4899"></i></div>`
+      + `<div class="wpd-sexleg">`
+      + `<span class="side"><span class="sym m">♂</span><b>${m}</b> <span class="pc">${mp}%</span></span>`
+      + `<span class="side"><b>${f}</b> <span class="pc">${fp}%</span> <span class="sym f">♀</span></span>`
+      + `</div>`
+    : '<div class="wpd-empty">Sin datos de sexo</div>';
+  // Edades (guarda 15-75; fechas imposibles cuentan como sin dato).
+  const ages = workers.map(w => ageFrom(w.birth_date)).filter(a => a != null && a >= 15 && a <= 75);
+  const ageBuckets = [
+    ['< 20', ages.filter(a => a < 20).length],
+    ['20–24', ages.filter(a => a >= 20 && a <= 24).length],
+    ['25–29', ages.filter(a => a >= 25 && a <= 29).length],
+    ['30–34', ages.filter(a => a >= 30 && a <= 34).length],
+    ['35–44', ages.filter(a => a >= 35 && a <= 44).length],
+    ['45+', ages.filter(a => a >= 45).length],
+  ];
+  const ageBody = ages.length
+    ? `<div class="wpd-bars">${demoBars(ageBuckets, '#4f46e5')}</div>`
+    : '<div class="wpd-empty">Sin fechas de nacimiento</div>';
+  // Estado civil
+  const civDefs = [['Soltero', 'S'], ['Casado', 'C'], ['Divorc.', 'D'], ['Viudo', 'V']];
+  const civBuckets = civDefs.map(([lbl, code]) => [lbl, workers.filter(w => w.marital_status === code).length]);
+  const civWith = civBuckets.reduce((a, x) => a + x[1], 0);
+  const civBody = civWith
+    ? `<div class="wpd-bars">${demoBars(civBuckets, '#0d9488')}</div>`
+    : '<div class="wpd-empty">Sin estado civil</div>';
+  // Cargos: solo tiendas (en no-tienda los cargos son muy diversos).
+  let cargoCard = '';
+  if (mode !== 'enterprise') {
+    const rc = {};
+    workers.forEach(w => { if (w.role) rc[w.role] = (rc[w.role] || 0) + 1; });
+    const cargos = Object.entries(rc).sort((a, b) => b[1] - a[1]).slice(0, 8);
+    const cargoBody = cargos.length
+      ? `<div class="wpd-bars">${demoBars(cargos, '#d97706')}</div>`
+      : '<div class="wpd-empty">Sin cargos</div>';
+    cargoCard = `<div class="wpd-card"><div class="wpd-head"><span class="t">Cargos</span>`
+      + `<span class="n">${cargos.length} tipo${cargos.length === 1 ? '' : 's'}</span></div>${cargoBody}</div>`;
+  }
+  const cols3 = mode === 'enterprise' ? ' cols3' : '';
+  return `
+    <div class="wpd-stats${cols3}">
+      <div class="wpd-card"><div class="wpd-head"><span class="t">Sexo</span><span class="n">${sexTot} con dato</span></div>${sexBody}</div>
+      <div class="wpd-card"><div class="wpd-head"><span class="t">Edades</span><span class="n">${ages.length} con fecha</span></div>${ageBody}</div>
+      <div class="wpd-card"><div class="wpd-head"><span class="t">Estado civil</span><span class="n">${civWith} con dato</span></div>${civBody}</div>
+      ${cargoCard}
+    </div>`;
+}
+function paintDemo() {
+  const host = $('#wpDemo');
+  if (!host) return;
+  host.innerHTML = demoStatsHtml(STATE.workers, STATE.mode);
 }
 
 /* ===================== GRID ===================== */

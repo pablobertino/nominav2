@@ -1273,3 +1273,32 @@
 .tpill { display:inline-flex; align-items:center; gap:6px; font-size:11.5px; font-weight:600;
   color:var(--ink-soft); padding:3px 9px; border-radius:999px; background:var(--border-soft); white-space:nowrap; }
 .tpill .d { width:7px; height:7px; border-radius:50%; background:var(--tc,var(--muted)); }
+
+/* ===================== PERSONAL — CARDS DEMOGRAFICAS (detalle empresa) ===
+   Sexo / Edades / Estado civil / Cargos sobre el roster cargado. En no-tienda
+   se omite Cargos (3 columnas con .cols3). */
+.wpd-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:14px; }
+.wpd-stats.cols3 { grid-template-columns:repeat(3,1fr); }
+.wpd-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md);
+  padding:13px 15px 15px; display:flex; flex-direction:column; min-height:150px; }
+.wpd-head { display:flex; align-items:baseline; justify-content:space-between; margin-bottom:11px; }
+.wpd-head .t { font-size:12.5px; font-weight:700; color:var(--ink); }
+.wpd-head .n { font-size:11px; color:var(--faint); }
+.wpd-sexbar { height:26px; border-radius:8px; overflow:hidden; display:flex; background:var(--border-soft); }
+.wpd-sexbar i { display:block; height:100%; }
+.wpd-sexleg { display:flex; justify-content:space-between; align-items:center; margin-top:11px; font-size:13px; }
+.wpd-sexleg .side { display:flex; align-items:center; gap:6px; }
+.wpd-sexleg .sym { font-size:17px; line-height:1; font-weight:700; }
+.wpd-sexleg .sym.m { color:#2563eb; }
+.wpd-sexleg .sym.f { color:#ec4899; }
+.wpd-sexleg b { font-weight:750; font-size:15px; }
+.wpd-sexleg .pc { color:var(--muted); font-size:12px; }
+.wpd-bars { display:flex; flex-direction:column; gap:8px; margin-top:2px; }
+.wpd-bar { display:grid; grid-template-columns:54px 1fr 26px; align-items:center; gap:9px; }
+.wpd-bl { font-size:11.5px; color:var(--muted); text-align:right; white-space:nowrap; }
+.wpd-bt { height:9px; border-radius:6px; background:var(--border-soft); overflow:hidden; }
+.wpd-bt i { display:block; height:100%; border-radius:6px; }
+.wpd-bn { font-size:11.5px; font-weight:600; text-align:right; color:var(--ink); }
+.wpd-empty { font-size:11.5px; color:var(--faint); font-style:italic; margin:auto 0; text-align:center; padding:8px; }
+@media (max-width:1000px) { .wpd-stats, .wpd-stats.cols3 { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:600px)  { .wpd-stats, .wpd-stats.cols3 { grid-template-columns:1fr; } }
