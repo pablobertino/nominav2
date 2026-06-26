@@ -24,6 +24,7 @@
 import { $ } from '../core/dom.js';
 import * as DW from './shared/date-window.js';
 import * as Roster from './shared/roster.js';
+import { enterpriseRosterGet } from './shared/roster-ax.js';
 import * as Resp from './shared/responsables.js';
 import * as Pick from './shared/workers-picker.js';
 
@@ -35,6 +36,13 @@ export function launchWizard(user, reportDef, onExit) {
   // propia central (el admin), no un gerente de la tienda. En ese caso se
   // omite el paso 2 y el reporte se marca con origen 'admin'.
   const isAdmin = user.kind !== 'company';
+  // El roster de las empresas NO-tienda vive en enterprise_workers, no en
+  // store_workers. Sin esto, "Reportar" en una no-tienda salia con la lista
+  // vacia. isEnterprise decide el endpoint de carga del roster (paso 1).
+  const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
+  const isEnterprise = isAdmin && NON_STORE_TYPES.has(user.pickedCompanyType);
+  const wizAdminId = user.id || null;
+  const entidad = isEnterprise ? 'la empresa' : 'la tienda';
 
   // Algunos reportes (Ingreso) capturan TODO en el paso 4 y no usan el paso
   // 3 (Trabajadores), porque la persona es nueva y no sale del roster. El
@@ -65,12 +73,12 @@ export function launchWizard(user, reportDef, onExit) {
   // panel. Asi "Volver a reportes" solo repinta la vista anterior.
   function render() {
     const steps = isAdmin ? [
-      [1, 'Lista de la tienda'],
+      [1, 'Lista de ' + entidad],
       [3, 'Trabajadores'],
       [4, reportDef.step4Label || 'Detalle'],
       [5, 'Resumen'],
     ] : [
-      [1, 'Lista de la tienda'],
+      [1, 'Lista de ' + entidad],
       [2, 'Responsable'],
       [3, 'Trabajadores'],
       [4, reportDef.step4Label || 'Detalle'],
@@ -131,6 +139,21 @@ export function launchWizard(user, reportDef, onExit) {
 
   /* ---------- PASO 1: lista de la tienda ---------- */
   async function loadRoster() {
+    // No-tienda: el roster esta en enterprise_workers -> endpoint enterprise
+    // (tabla-aware y con validacion de alcance por adminId). Tienda: store.
+    if (isEnterprise) {
+      const r = await enterpriseRosterGet(companyCode, wizAdminId);
+      if (r.ok) {
+        S.roster = r.workers || [];
+        // Normalizar meta al shape que usa la vista (total_count/active_count).
+        if (r.meta) {
+          const total = (r.workers || []).length;
+          const active = (r.workers || []).filter(w => !w.end_date).length;
+          S.meta = { ...r.meta, total_count: r.meta.row_count != null ? r.meta.row_count : total, active_count: active };
+        } else S.meta = null;
+      }
+      return r;
+    }
     const r = await Roster.rosterGet(companyCode);
     if (r.ok) { S.roster = r.workers || []; S.meta = r.meta || null; }
     return r;
@@ -138,8 +161,8 @@ export function launchWizard(user, reportDef, onExit) {
 
   function stepRoster() {
     const panel = $('#wzPanel');
-    panel.innerHTML = `<h2>Lista de trabajadores de la tienda</h2>
-      <p class="hint">El reporte parte de la lista de personal (Reporte 10 del POS). De aquí salen los trabajadores y los responsables (Gerente / Sub-Gerente).</p>
+    panel.innerHTML = `<h2>Lista de trabajadores de ${entidad}</h2>
+      <p class="hint">${isEnterprise ? 'El reporte parte de la lista de personal de la empresa (sincronizada desde AX).' : 'El reporte parte de la lista de personal (Reporte 10 del POS). De aquí salen los trabajadores y los responsables (Gerente / Sub-Gerente).'}</p>
       <div class="pnl-loading">Cargando lista…</div>`;
     loadRoster().then(() => renderRosterStep());
   }
@@ -151,11 +174,11 @@ export function launchWizard(user, reportDef, onExit) {
     const showWarn = ageDays != null && ageDays > margin;
     const metaLine = S.meta
       ? `Lista cargada el ${fmtDate(S.meta.uploaded_at)} · ${S.meta.total_count} trabajadores (${S.meta.active_count} vigentes · ${S.meta.total_count - S.meta.active_count} egresados)`
-      : 'Esta tienda aún no tiene lista cargada. Sube el Reporte 10 para empezar.';
+      : `Esta ${isEnterprise ? 'empresa' : 'tienda'} aún no tiene lista cargada.`;
 
     panel.innerHTML = `
-      <h2>Lista de trabajadores de la tienda</h2>
-      <p class="hint">El reporte parte de la lista de personal (Reporte 10 del POS). De aquí salen los trabajadores y los responsables (Gerente / Sub-Gerente).</p>
+      <h2>Lista de trabajadores de ${entidad}</h2>
+      <p class="hint">${isEnterprise ? 'El reporte parte de la lista de personal de la empresa (sincronizada desde AX).' : 'El reporte parte de la lista de personal (Reporte 10 del POS). De aquí salen los trabajadores y los responsables (Gerente / Sub-Gerente).'}</p>
 
       ${showWarn ? `<div class="warn-banner">⚠ <div>Esta lista se cargó hace <b>${ageDays} días</b> y podría estar desactualizada. Considera subir el <b>Reporte 10</b> más reciente para evitar reportar a alguien que ya egresó.</div></div>` : ''}
 
@@ -230,6 +253,16 @@ export function launchWizard(user, reportDef, onExit) {
     const goNext = () => setStep(isAdmin ? (skipWorkers ? 4 : 3) : 2);
     if ($('#rNext')) $('#rNext').addEventListener('click', goNext);
     if ($('#rNoList')) $('#rNoList').addEventListener('click', goNext);
+
+    // No-tienda: el roster se gestiona desde Personal (Reporte AX / Sync), no
+    // desde aqui. Se oculta la subtab de subir Reporte 10 (que escribiria en
+    // store_workers, tabla equivocada) y se deja solo la vista de la lista.
+    if (isEnterprise) {
+      const upTab = panel.querySelector('#rTabs .subtab[data-tab="upload"]');
+      if (upTab) upTab.remove();
+      const upPanel = panel.querySelector('[data-tp="upload"]');
+      if (upPanel) upPanel.remove();
+    }
 
     paintRosterTable();
   }

@@ -96,7 +96,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.11</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.12</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -479,7 +479,8 @@ function viewTiendas(user) {
       b.addEventListener('click', () => contactEditModal(user, b.dataset)));
     $('#tBody').querySelectorAll('[data-report-code]').forEach(b =>
       b.addEventListener('click', () => {
-        const u = { ...user, pickedCompany: b.dataset.reportCode, pickedCompanyName: b.dataset.reportName };
+        const rc = CATALOG.companies.find(x => x.code === b.dataset.reportCode);
+        const u = { ...user, pickedCompany: b.dataset.reportCode, pickedCompanyName: b.dataset.reportName, pickedCompanyType: rc ? rc.type : null };
         openReportPicker(u, () => viewTiendas(user));
       }));
     $('#tBody').querySelectorAll('[data-photos-code]').forEach(b =>
