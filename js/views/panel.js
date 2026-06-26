@@ -15,6 +15,7 @@ import { ingresoReport } from '../reports/report-ingreso.js';
 import { modificacionReport } from '../reports/report-modificacion.js';
 import { renderHistory } from '../reports/history.js';
 import { renderWorkerPhotos } from './worker-photos.js';
+import { renderDashboard } from './dashboard.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { renderDepartments } from './departments.js';
@@ -56,9 +57,11 @@ const I = {
   history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>',
   photo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>',
   docs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg>',
+  grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>',
 };
 
 const NAV = [
+  ['dashboard', I.grid, 'Inicio'],
   ['tiendas', I.store, 'Empresas'],
   ['catalogos', I.catalog, 'Catálogos'],
   ['usuarios', I.users, 'Usuarios'],
@@ -86,9 +89,9 @@ function shell(user) {
 
   // Navegación según rol: la tienda ve "Mi empresa" y su "Historial".
   const navItems = isCompany
-    ? [['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['historial', I.history, 'Historial']]
+    ? [['dashboard', I.grid, 'Inicio'], ['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['historial', I.history, 'Historial']]
     : isEditorPersonal
-      ? NAV.filter(n => n[0] === 'tiendas')
+      ? NAV.filter(n => n[0] === 'dashboard' || n[0] === 'tiendas')
       : NAV.filter(n => n[3] !== 'superonly' || isSuper);
 
   return `
@@ -96,7 +99,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.21</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.22</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -2639,6 +2642,7 @@ async function navigate(view, user) {
   currentView = view;
   document.querySelectorAll('#pnlNav button').forEach(b =>
     b.classList.toggle('active', b.dataset.view === view));
+  if (view === 'dashboard') { renderDashboard(user); return; }
   if (view === 'tiendas' || view === 'catalogos') {
     await ensureCatalog(user);
     if (!CATALOG) return;
@@ -2811,13 +2815,12 @@ export function renderPanel() {
   if (!user) { go('/login'); return; }
   // Limpiar estado en memoria de cualquier sesión previa (evita que datos
   // de un usuario anterior "se filtren" si se cambia de sesión sin recargar).
-  CATALOG = null; CU_ROWS = null; SCOPE = null; OU_USER = null; TIENDAS_FILTERS = null; currentView = 'tiendas';
+  CATALOG = null; CU_ROWS = null; SCOPE = null; OU_USER = null; TIENDAS_FILTERS = null; currentView = 'dashboard';
   mount(shell(user));
   loadAvatar((user.email || '').trim().toLowerCase());
   $('#logoutBtn').addEventListener('click', () => { clearSession(); go('/login'); });
   document.querySelectorAll('#pnlNav button').forEach(b =>
     b.addEventListener('click', () => navigate(b.dataset.view, user)));
-  // Rol tienda: solo su propia empresa. Admin/superadmin: arranca en Empresas.
-  if (user.kind === 'company') navigate('miempresa', user);
-  else navigate('tiendas', user);
+  // Landing unificado: ambos arrancan en el Dashboard (Inicio).
+  navigate('dashboard', user);
 }
