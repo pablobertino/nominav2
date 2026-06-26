@@ -1291,6 +1291,7 @@
 .wpd-sexleg .sym { font-size:17px; line-height:1; font-weight:700; }
 .wpd-sexleg .sym.m { color:#2563eb; }
 .wpd-sexleg .sym.f { color:#ec4899; }
+.wpd-sexleg .lab { font-size:13px; font-weight:750; color:var(--ink); }
 .wpd-sexleg b { font-weight:750; font-size:15px; }
 .wpd-sexleg .pc { color:var(--muted); font-size:12px; }
 .wpd-bars { display:flex; flex-direction:column; gap:8px; margin-top:2px; }

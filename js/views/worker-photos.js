@@ -315,8 +315,8 @@ function demoStatsHtml(workers, mode) {
   const sexBody = sexTot
     ? `<div class="wpd-sexbar"><i style="width:${mp}%;background:#2563eb"></i><i style="width:${fp}%;background:#ec4899"></i></div>`
       + `<div class="wpd-sexleg">`
-      + `<span class="side"><span class="sym m">♂</span><b>${m}</b> <span class="pc">${mp}%</span></span>`
-      + `<span class="side"><b>${f}</b> <span class="pc">${fp}%</span> <span class="sym f">♀</span></span>`
+      + `<span class="side"><span class="sym m">♂</span><span class="lab">M</span> <b>${m}</b> <span class="pc">${mp}%</span></span>`
+      + `<span class="side"><b>${f}</b> <span class="pc">${fp}%</span> <span class="lab">F</span> <span class="sym f">♀</span></span>`
       + `</div>`
     : '<div class="wpd-empty">Sin datos de sexo</div>';
   // Edades (guarda 15-75; fechas imposibles cuentan como sin dato).
