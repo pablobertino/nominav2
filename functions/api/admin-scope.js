@@ -89,7 +89,7 @@ export async function onRequestPost({ request, env }) {
         sb(env, `admin_scope_exclude?admin_id=eq.${targetId}&select=scope_type,scope_value`),
         sb(env, 'zones?select=id,name&order=name'),
         sb(env, 'subzones?select=id,name,zone_id&order=name'),
-        sb(env, 'companies?select=company_code,business_name,zone_id,subzone_id&company_type=eq.Tienda&order=company_code'),
+        sb(env, 'companies?select=company_code,business_name,zone_id,subzone_id,company_type&order=company_code'),
       ]);
       return json({ ok: true, include: inc || [], exclude: exc || [], zones, subzones, companies });
     }

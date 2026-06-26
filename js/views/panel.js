@@ -96,7 +96,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.12</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.13</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1221,7 +1221,7 @@ async function viewPermisos(user) {
   if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
   const admins = d.rows.filter(a => a.role !== 'superadmin'); // superadmin ve todo
   $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Permisos</h1><p>Alcance de cada admin · el superadmin ve todo</p></div></div>
+    <div class="pnl-head"><div><h1>Permisos</h1><p>Alcance de cada admin · Tiendas y Empresas por separado · el superadmin ve todo</p></div></div>
     ${admins.length === 0 ? '<div class="card"><p class="muted" style="margin:0">No hay admins (no superadmin) aún. Crea uno en la sección Equipo.</p></div>' : `
     <div class="tablebox"><table><thead><tr>
       <th>Usuario</th><th>Nombre</th><th>Estado</th><th style="text-align:right">Alcance</th>
@@ -1229,14 +1229,14 @@ async function viewPermisos(user) {
       ${admins.map(a => `<tr>
         <td class="code">${a.username}</td><td>${a.name || '—'}</td>
         <td>${a.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>'}</td>
-        <td style="text-align:right"><button class="btn btn-mini btn-primary" data-id="${a.id}" data-u="${a.username}">${I.sliders} Editar alcance</button></td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-id="${a.id}" data-u="${a.username}" data-kind="store" style="margin-right:4px">${I.sliders} Tiendas</button><button class="btn btn-mini" data-id="${a.id}" data-u="${a.username}" data-kind="enterprise">${I.sliders} Empresas</button></td>
       </tr>`).join('')}
     </tbody></table></div>`}`;
   $('#pnlMain').querySelectorAll('button[data-id]').forEach(b =>
-    b.addEventListener('click', () => openScopeEditor(user, b.dataset.id, b.dataset.u)));
+    b.addEventListener('click', () => openScopeEditor(user, b.dataset.id, b.dataset.u, b.dataset.kind || 'store')));
 }
 
-async function openScopeEditor(user, targetId, targetUser) {
+async function openScopeEditor(user, targetId, targetUser, kind = 'store') {
   $('#pnlMain').innerHTML = `<div class="pnl-loading">Cargando alcance…</div>`;
   const d = await fetch('/api/admin-scope', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1246,21 +1246,22 @@ async function openScopeEditor(user, targetId, targetUser) {
 
   SCOPE = {
     target: targetId, targetUser,
+    kind, isEnt: kind === 'enterprise',
     include: d.include.map(x => ({ ...x })),
     exclude: d.exclude.map(x => ({ ...x })),
     zones: d.zones, subzones: d.subzones, companies: d.companies,
   };
 
   $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Alcance de ${targetUser}</h1>
-      <p>Define qué tiendas puede gestionar. Alcance final = incluidos − excluidos.</p></div>
+    <div class="pnl-head"><div><h1>Alcance de ${SCOPE.isEnt ? 'Empresas' : 'Tiendas'} · ${targetUser}</h1>
+      <p>${SCOPE.isEnt ? 'Define qué empresas (no tiendas) puede gestionar. Alcance final = incluidos − excluidos.' : 'Define qué tiendas puede gestionar. Alcance final = incluidos − excluidos.'}</p></div>
       <button class="btn" id="scBack">← Volver</button></div>
     <div class="card">
       <div class="sc-add">
         <select id="scLevel">
-          <option value="zone">Zona</option>
-          <option value="subzone">Subzona</option>
-          <option value="company">Tienda</option>
+          ${SCOPE.isEnt
+            ? '<option value="company">Empresa</option>'
+            : '<option value="zone">Zona</option><option value="subzone">Subzona</option><option value="company">Tienda</option>'}
         </select>
         <div class="search" style="flex:1">${I.search}<input id="scSearch" placeholder="Buscar…" autocomplete="off"></div>
       </div>
@@ -1304,7 +1305,8 @@ function scopeLabel(type, value) {
     return `Subzona: ${s ? s.name : value}`;
   }
   const c = SCOPE.companies.find(c => c.company_code === value);
-  return `Tienda: ${value}${c ? ' · ' + c.business_name : ''}`;
+  const noun = (c && NON_STORE_TYPES.has(c.company_type)) ? 'Empresa' : 'Tienda';
+  return `${noun}: ${value}${c ? ' · ' + c.business_name : ''}`;
 }
 
 function renderScResults() {
@@ -1313,7 +1315,12 @@ function renderScResults() {
   let opts = [];
   if (level === 'zone') opts = SCOPE.zones.map(z => ({ value: String(z.id), label: z.name }));
   else if (level === 'subzone') opts = SCOPE.subzones.map(s => ({ value: String(s.id), label: s.name }));
-  else opts = SCOPE.companies.map(c => ({ value: c.company_code, label: `${c.company_code} · ${c.business_name}` }));
+  else {
+    const comps = SCOPE.companies.filter(c => SCOPE.isEnt
+      ? NON_STORE_TYPES.has(c.company_type)
+      : !NON_STORE_TYPES.has(c.company_type));
+    opts = comps.map(c => ({ value: c.company_code, label: `${c.company_code} · ${c.business_name}` }));
+  }
   if (q) opts = opts.filter(o => o.label.toLowerCase().includes(q));
   opts = opts.slice(0, 30);
 
@@ -1343,35 +1350,50 @@ function removeScope(bucket, type, value) {
   renderScopeLists();
 }
 
+// Filtra que items de alcance se MUESTRAN segun el modo (Tiendas/Empresas).
+// Los que no matchean siguen en SCOPE (se conservan al guardar): asi el
+// editor de Empresas no pisa el alcance de Tiendas ni viceversa.
+function scopeMatchesMode(x) {
+  if (SCOPE.isEnt) {
+    if (x.scope_type !== 'company') return false;
+    const c = SCOPE.companies.find(c => c.company_code === x.scope_value);
+    return !!(c && NON_STORE_TYPES.has(c.company_type));
+  }
+  if (x.scope_type !== 'company') return true;
+  const c = SCOPE.companies.find(c => c.company_code === x.scope_value);
+  return !c || !NON_STORE_TYPES.has(c.company_type);
+}
+
 function renderScopeLists() {
-  const mk = (bucket) => SCOPE[bucket].map(x =>
+  const mk = (bucket) => SCOPE[bucket].filter(scopeMatchesMode).map(x =>
     `<div class="sc-item"><span>${scopeLabel(x.scope_type, x.scope_value)}</span>
       <button data-b="${bucket}" data-t="${x.scope_type}" data-v="${x.scope_value}" title="Quitar">✕</button></div>`
   ).join('') || '<div class="muted" style="padding:8px">Vacío.</div>';
   $('#scIncList').innerHTML = mk('include');
   $('#scExcList').innerHTML = mk('exclude');
-  $('#scIncN').textContent = SCOPE.include.length;
-  $('#scExcN').textContent = SCOPE.exclude.length;
+  $('#scIncN').textContent = SCOPE.include.filter(scopeMatchesMode).length;
+  $('#scExcN').textContent = SCOPE.exclude.filter(scopeMatchesMode).length;
   document.querySelectorAll('.sc-item button').forEach(b =>
     b.addEventListener('click', () => removeScope(b.dataset.b, b.dataset.t, b.dataset.v)));
 
-  // Resumen estimado de tiendas
   const est = estimateScope();
-  $('#scSummary').innerHTML = `<span class="muted">Resultado estimado:</span> <strong>${est}</strong> tiendas gestionables.`;
+  $('#scSummary').innerHTML = `<span class="muted">Resultado estimado:</span> <strong>${est}</strong> ${SCOPE.isEnt ? 'empresas' : 'tiendas'} gestionables.`;
 }
 
 // Estima cuántas tiendas quedan en el alcance (include − exclude)
 function estimateScope() {
-  const tiendas = SCOPE.companies; // solo tipo Tienda
+  const universe = SCOPE.companies.filter(c => SCOPE.isEnt
+    ? NON_STORE_TYPES.has(c.company_type)
+    : !NON_STORE_TYPES.has(c.company_type));
   const inSet = new Set();
-  SCOPE.include.forEach(x => {
-    if (x.scope_type === 'zone') tiendas.filter(c => String(c.zone_id) === String(x.scope_value)).forEach(c => inSet.add(c.company_code));
-    else if (x.scope_type === 'subzone') tiendas.filter(c => String(c.subzone_id) === String(x.scope_value)).forEach(c => inSet.add(c.company_code));
+  SCOPE.include.filter(scopeMatchesMode).forEach(x => {
+    if (x.scope_type === 'zone') universe.filter(c => String(c.zone_id) === String(x.scope_value)).forEach(c => inSet.add(c.company_code));
+    else if (x.scope_type === 'subzone') universe.filter(c => String(c.subzone_id) === String(x.scope_value)).forEach(c => inSet.add(c.company_code));
     else inSet.add(x.scope_value);
   });
-  SCOPE.exclude.forEach(x => {
-    if (x.scope_type === 'zone') tiendas.filter(c => String(c.zone_id) === String(x.scope_value)).forEach(c => inSet.delete(c.company_code));
-    else if (x.scope_type === 'subzone') tiendas.filter(c => String(c.subzone_id) === String(x.scope_value)).forEach(c => inSet.delete(c.company_code));
+  SCOPE.exclude.filter(scopeMatchesMode).forEach(x => {
+    if (x.scope_type === 'zone') universe.filter(c => String(c.zone_id) === String(x.scope_value)).forEach(c => inSet.delete(c.company_code));
+    else if (x.scope_type === 'subzone') universe.filter(c => String(c.subzone_id) === String(x.scope_value)).forEach(c => inSet.delete(c.company_code));
     else inSet.delete(x.scope_value);
   });
   return inSet.size;
@@ -1482,6 +1504,10 @@ async function saveScope(user) {
       include: SCOPE.include, exclude: SCOPE.exclude }),
   }).then(r => r.json());
   if (!d.ok) { alert(d.error); btn.disabled = false; btn.textContent = 'Guardar alcance'; return; }
+
+  // Las EMPRESAS (no-tienda) no tienen bandeja de tienda en osTicket: el
+  // alcance se guarda en el portal y no se sincroniza con osTicket.
+  if (SCOPE.isEnt) { viewPermisos(user); return; }
 
   // 2) Empujar el alcance a osTicket (agente + bandeja). Reflejo del portal.
   btn.textContent = 'Sincronizando con osTicket…';
