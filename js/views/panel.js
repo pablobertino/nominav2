@@ -71,26 +71,32 @@ const NAV = [
   ['config', I.cog, 'Configuración', 'superonly'],
 ];
 
+/* Etiquetas legibles de rol para la topbar. */
+const ROLE_LABELS = { superadmin: 'superadmin', admin: 'admin', editor_personal: 'Editor de personal' };
+
 /* ---------- shell ---------- */
 function shell(user) {
   const isCompany = user.kind === 'company';
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
+  const isEditorPersonal = user.kind === 'admin' && user.role === 'editor_personal';
   const nameLabel = isCompany ? user.companyCode : (user.name || user.username);
-  const roleLabel = isCompany ? 'tienda' : user.role;
+  const roleLabel = isCompany ? 'tienda' : (ROLE_LABELS[user.role] || user.role);
   const initials = (nameLabel || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   const email = (user.email || '').trim().toLowerCase();
 
   // Navegación según rol: la tienda ve "Mi empresa" y su "Historial".
   const navItems = isCompany
     ? [['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['historial', I.history, 'Historial']]
-    : NAV.filter(n => n[3] !== 'superonly' || isSuper);
+    : isEditorPersonal
+      ? NAV.filter(n => n[0] === 'tiendas')
+      : NAV.filter(n => n[3] !== 'superonly' || isSuper);
 
   return `
   <div class="pnl-layout">
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.07</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.09</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -237,6 +243,7 @@ function empStatsHtml(companies) {
   const total = companies.length;
   const zones = new Set(companies.map(c => c.zoneId).filter(Boolean)).size;
   const subs = new Set(companies.map(c => c.subzoneId).filter(Boolean)).size;
+  const staff = companies.reduce((a, c) => a + (c.staffCount || 0), 0);
   const byType = {};
   companies.forEach(c => { const t = c.type || '—'; byType[t] = (byType[t] || 0) + 1; });
   const present = Object.keys(byType);
@@ -257,7 +264,7 @@ function empStatsHtml(companies) {
         <div class="emp-stat"><div class="k">Empresas</div><div class="v">${total}</div><div class="hint">${hint}</div></div>
         <div class="emp-stat"><div class="k">Zonas</div><div class="v">${zones}</div><div class="hint">con empresas</div></div>
         <div class="emp-stat"><div class="k">Subzonas</div><div class="v">${subs}</div><div class="hint">con empresas</div></div>
-        <div class="emp-stat"><div class="k">Tipos de empresa</div><div class="v">${ordered.length}</div><div class="hint">desglose abajo</div></div>
+        <div class="emp-stat"><div class="k">Empleados</div><div class="v">${staff}</div><div class="hint">en el personal cargado</div></div>
       </div>
       <div class="emp-types">${tcards}</div>
     </div>`;
@@ -266,6 +273,7 @@ function empStatsHtml(companies) {
 /* ---------- VISTA: TIENDAS ---------- */
 function viewTiendas(user) {
   const isAdmin = user.kind === 'admin';
+  const isEditor = user.kind === 'admin' && user.role === 'editor_personal';
   const types = [...new Set(CATALOG.companies.map(c => c.type).filter(Boolean))].sort();
   const statuses = [...new Set(CATALOG.companies.map(c => c.status).filter(Boolean))].sort();
   const concepts = CATALOG.concepts.map(c => c.name);
@@ -451,7 +459,7 @@ function viewTiendas(user) {
             <span class="${c.email ? '' : 'muted'}">${c.email || 'sin correo'}</span>
             <span class="muted" style="font-size:12px">${telLine}</span>
           </div>
-          <button class="email-edit" data-code="${c.code}" data-name="${(c.name||'').replace(/"/g,'')}" data-email="${c.email||''}" data-phone="${c.phone||''}" data-phone2="${c.phone2||''}" title="Editar contacto">${I.pencil}</button>
+          ${isEditor ? '' : `<button class="email-edit" data-code="${c.code}" data-name="${(c.name||'').replace(/"/g,'')}" data-email="${c.email||''}" data-phone="${c.phone||''}" data-phone2="${c.phone2||''}" title="Editar contacto">${I.pencil}</button>`}
         </div>`;
       return `
       <tr>
@@ -463,7 +471,7 @@ function viewTiendas(user) {
         <td>${personalCell(c)}</td>
         <td>${statusPill(c.status)}</td>
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
-        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" style="margin-right:4px">Personal</button>${NON_STORE_TYPES.has(c.type) ? `<button class="btn btn-mini" data-dep-code="${c.code}" style="margin-right:4px">Departamentos</button>` : ''}<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button></td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" style="margin-right:4px">Personal</button>${(!isEditor && NON_STORE_TYPES.has(c.type)) ? `<button class="btn btn-mini" data-dep-code="${c.code}" style="margin-right:4px">Departamentos</button>` : ''}${isEditor ? '' : `<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button>`}</td>
       </tr>`;
     }).join('') || '<tr><td colspan="9" class="empty">Sin resultados.</td></tr>';
 
