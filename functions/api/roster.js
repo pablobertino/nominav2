@@ -418,6 +418,7 @@ export async function onRequestPost({ request, env }) {
           total_count: valid.length,
           active_count: activos.length,
           source_file: (body.source_file || '').trim() || null,
+          source: 'report10',
         }),
       });
 
@@ -685,6 +686,7 @@ export async function onRequestPost({ request, env }) {
           total_count: valid.length,
           active_count: activos.length,
           source_file: (body.source_file || '').trim() || null,
+          source: 'reporte_ax',
         }),
       });
 

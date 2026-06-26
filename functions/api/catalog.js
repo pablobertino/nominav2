@@ -172,12 +172,20 @@ export async function onRequestPost({ request, env }) {
 
     const allowed = await allowedSet(env, user); // null=todas | Set
 
-    const [companies, zones, subzones, concepts, users] = await Promise.all([
-      sb(env, 'companies?select=company_code,business_name,tax_id,zone_id,subzone_id,concept_id,company_type,status,is_active,email,phone,phone2&order=company_code'),
+    const [companies, zones, subzones, concepts, users,
+           storeMeta, entMeta, storeCounts, entCounts] = await Promise.all([
+      sb(env, 'companies?select=company_code,business_name,tax_id,data_area,zone_id,subzone_id,concept_id,company_type,status,is_active,email,phone,phone2&order=company_code'),
       sb(env, 'zones?select=id,name,letter&order=name'),
       sb(env, 'subzones?select=id,name,letter,zone_id&order=name'),
       sb(env, 'concepts?select=id,name&order=name'),
       sb(env, 'company_users?select=company_code'),
+      // Metadatos de la ultima carga de personal (tienda / empresa no-tienda).
+      sb(env, 'store_roster_meta?select=company_code,uploaded_at,uploaded_by,total_count,source'),
+      sb(env, 'enterprise_roster_meta?select=company_code,uploaded_at,uploaded_by,row_count,source'),
+      // Conteo de personal y cuantos con foto, por empresa. workers_master
+      // guarda la foto (photo_thumb_path); se cruza por cedula.
+      sb(env, 'store_workers?select=company_code,id_number'),
+      sb(env, 'enterprise_workers?select=company_code,id_number'),
     ]);
 
     const withAccess = new Set(users.map(u => u.company_code));
@@ -185,23 +193,54 @@ export async function onRequestPost({ request, env }) {
     const subName  = Object.fromEntries(subzones.map(s => [s.id, s.name]));
     const conName  = Object.fromEntries(concepts.map(c => [c.id, c.name]));
 
-    let rows = companies.map(c => ({
-      code: c.company_code,
-      name: c.business_name,
-      taxId: c.tax_id,
-      zone: zoneName[c.zone_id] || null,
-      zoneId: c.zone_id,
-      subzone: subName[c.subzone_id] || null,
-      subzoneId: c.subzone_id,
-      concept: conName[c.concept_id] || null,
-      type: c.company_type,
-      status: c.status,
-      isActive: c.is_active,
-      email: c.email || null,
-      phone: c.phone || null,
-      phone2: c.phone2 || null,
-      hasAccess: withAccess.has(c.company_code),
-    }));
+    // --- Indice de personal por empresa (cantidad + meta de carga) ---
+    // Total de personal: filas en store_workers/enterprise_workers por empresa.
+    const countByCompany = {};
+    (storeCounts || []).forEach(w => { countByCompany[w.company_code] = (countByCompany[w.company_code] || 0) + 1; });
+    (entCounts || []).forEach(w => { countByCompany[w.company_code] = (countByCompany[w.company_code] || 0) + 1; });
+
+    // Meta (fecha, quien, metodo) por empresa. Cada empresa esta en UNA de las
+    // dos tablas segun su tipo, asi que no hay colision.
+    const metaByCompany = {};
+    (storeMeta || []).forEach(m => {
+      metaByCompany[m.company_code] = {
+        count: m.total_count, uploaded_at: m.uploaded_at,
+        uploaded_by: m.uploaded_by, source: m.source || null,
+      };
+    });
+    (entMeta || []).forEach(m => {
+      metaByCompany[m.company_code] = {
+        count: m.row_count, uploaded_at: m.uploaded_at,
+        uploaded_by: m.uploaded_by, source: m.source || null,
+      };
+    });
+
+    let rows = companies.map(c => {
+      const meta = metaByCompany[c.company_code] || null;
+      return {
+        code: c.company_code,
+        name: c.business_name,
+        taxId: c.tax_id,
+        dataArea: c.data_area || null,
+        zone: zoneName[c.zone_id] || null,
+        zoneId: c.zone_id,
+        subzone: subName[c.subzone_id] || null,
+        subzoneId: c.subzone_id,
+        concept: conName[c.concept_id] || null,
+        type: c.company_type,
+        status: c.status,
+        isActive: c.is_active,
+        email: c.email || null,
+        phone: c.phone || null,
+        phone2: c.phone2 || null,
+        hasAccess: withAccess.has(c.company_code),
+        // Personal: cantidad (cuenta real de filas) + meta de la ultima carga.
+        staffCount: countByCompany[c.company_code] || 0,
+        rosterAt: meta ? meta.uploaded_at : null,
+        rosterBy: meta ? meta.uploaded_by : null,
+        rosterSource: meta ? meta.source : null,
+      };
+    });
 
     // Aplicar filtro de alcance (si no es superadmin)
     if (allowed !== null) {

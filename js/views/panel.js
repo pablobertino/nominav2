@@ -82,7 +82,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v1.99</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.00</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -150,8 +150,62 @@ function statusPill(s) {
   if (x.includes('cerrad') && x.includes('temp')) return '<span class="pill pill-temp">Cerrada temp.</span>';
   if (x.includes('cerrad')) return '<span class="pill pill-closed">Cerrada</span>';
   if (x.includes('proyect')) return '<span class="pill pill-proj">Proyectada</span>';
-  if (x.includes('nulo')) return '<span class="pill pill-gray">Nulo</span>';
-  return `<span class="pill pill-gray">${s || '—'}</span>`;
+  // Estado nulo/vacio o sin valor: se muestra como un guion discreto, igual
+  // que zona/subzona/concepto cuando no existen.
+  if (!s || x.includes('nulo') || x.includes('vac')) return '<span class="muted">—</span>';
+  return `<span class="pill pill-gray">${s}</span>`;
+}
+
+/* Color del alias segun el tipo de empresa, para identificarlas de un vistazo
+   en la grilla. Devuelve una clase CSS (ver tokens .ty-* abajo). */
+function tyClass(type) {
+  const t = (type || '').toLowerCase();
+  if (t.includes('tienda en l')) return 'ty-online';
+  if (t.includes('tienda')) return 'ty-tienda';
+  if (t.includes('import')) return 'ty-import';
+  if (t.includes('extern')) return 'ty-externa';
+  if (t.includes('admin')) return 'ty-admin';
+  if (t.includes('servic')) return 'ty-servicio';
+  return 'ty-tienda';
+}
+
+/* Celda "Personal": cantidad + chip de metodo + frescura + quien cargo.
+   Lee staffCount/rosterAt/rosterBy/rosterSource que arma /api/catalog. */
+const ROSTER_METHODS = {
+  ax_api:    { cls: 'm-s',   label: 'S',   full: 'Sincronización (API AX)' },
+  report10:  { cls: 'm-r10', label: 'R10', full: 'Reporte 10 (Excel POS)' },
+  reporte_ax:{ cls: 'm-rax', label: 'RAX', full: 'Reporte AX (Excel)' },
+};
+function methodChip(source) {
+  const m = ROSTER_METHODS[source];
+  if (!m) return '<span class="m m-man" title="Sin carga registrada">—</span>';
+  return `<span class="m ${m.cls}" title="${m.full}">${m.label}</span>`;
+}
+/* Fecha de carga -> 'DD/MM/AAAA' Caracas + frescura (al dia / hace Nd). */
+function rosterFresh(iso) {
+  if (!iso) return '<span class="fresh-mid">sin carga</span>';
+  const dt = new Date(iso);
+  if (isNaN(dt)) return '<span class="fresh-mid">sin carga</span>';
+  const car = new Date(dt.getTime() - 4 * 3600 * 1000);
+  const z = n => String(n).padStart(2, '0');
+  const when = `${z(car.getUTCDate())}/${z(car.getUTCMonth() + 1)}/${car.getUTCFullYear()}`;
+  // dias transcurridos
+  const today = new Date();
+  const days = Math.floor((today - dt) / 86400000);
+  let cls = 'fresh-ok', tail = ` · hace ${days}d`;
+  if (days <= 0) { tail = ' · al día'; cls = 'fresh-ok'; }
+  else if (days <= 7) cls = 'fresh-ok';
+  else if (days <= 15) cls = 'fresh-mid';
+  else cls = 'fresh-old';
+  return `<span class="${cls}">${when}${tail}</span>`;
+}
+function personalCell(c) {
+  if (!c.staffCount) return '<span class="muted">— sin lista —</span>';
+  const by = c.rosterBy ? `<br>${String(c.rosterBy).replace(/</g, '&lt;')}` : '';
+  return `<div class="cell-personal">`
+    + `<div class="l1">${c.staffCount}</div>`
+    + `<div class="l2">${methodChip(c.rosterSource)} ${rosterFresh(c.rosterAt)}${by}</div>`
+    + `</div>`;
 }
 
 /* ---------- VISTA: TIENDAS ---------- */
@@ -201,7 +255,7 @@ function viewTiendas(user) {
     </div>
     <div class="tablebox">
       <table><thead><tr>
-        <th>Código</th><th>Razón social</th><th>Zona / Subzona</th><th>Concepto</th><th>Contacto</th><th>Estado</th><th>Acceso</th><th style="text-align:right">Reportar</th>
+        <th>Código</th><th>Razón social</th><th>Ubicación / Concepto</th><th>Contacto</th><th>Personal</th><th>Estado</th><th>Acceso</th><th style="text-align:right">Reportar</th>
       </tr></thead><tbody id="tBody"></tbody></table>
     </div>
     <div class="legend">
@@ -258,11 +312,16 @@ function viewTiendas(user) {
   function render() {
     const n = fName.value.toLowerCase();
     const rows = CATALOG.companies.filter(c => {
-      // El filtro de estados aplica a TIENDAS (Abierta/Cerrada/etc.). Las
-      // empresas no-tienda tienen estado "Nulo" y no deben quedar ocultas
-      // por ese filtro pensado para tiendas.
+      // El filtro de estados aplica a TIENDAS con estado real (Abierta/
+      // Cerrada/etc.). Las empresas sin estado (no-tienda, o tiendas con
+      // estado vacio/nulo) se muestran como "—" y NO se ocultan por este
+      // filtro pensado para estados de tienda; solo se ocultan si el usuario
+      // elige "Ninguno" (selStatus vacio).
       const isStore = c.type === 'Tienda';
-      const passStatus = !isStore || selStatus.size === 0 || selStatus.has(c.status);
+      const hasStatus = !!(c.status && !/nulo|vac/i.test(c.status));
+      const passStatus = selStatus.size === 0 ? false
+        : !hasStatus ? true
+        : selStatus.has(c.status);
       return (`${c.code} ${c.name || ''}`.toLowerCase().includes(n))
         && (fType.value === 'ALL' || c.type === fType.value)
         && passStatus
@@ -286,11 +345,11 @@ function viewTiendas(user) {
         </div>`;
       return `
       <tr>
-        <td class="code">${c.code}</td>
-        <td>${c.name || '—'}</td>
-        <td>${c.zone || '—'}${c.subzone ? ' · ' + c.subzone : ''}</td>
-        <td>${c.concept || '—'}</td>
+        <td class="code-cell"><div class="alias ${tyClass(c.type)}">${c.code}</div>${c.dataArea ? `<div class="darea">${c.dataArea}</div>` : ''}</td>
+        <td class="name-cell"><div class="nm">${c.name || '—'}</div>${c.taxId ? `<div class="rif">RIF ${c.taxId}</div>` : ''}</td>
+        <td class="zc-cell"><div class="zc1">${c.zone || '—'}${c.subzone ? ' · ' + c.subzone : ''}</div><div class="zc2">${c.concept || '—'}</div></td>
         <td>${contacto}</td>
+        <td>${personalCell(c)}</td>
         <td>${statusPill(c.status)}</td>
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
         <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" style="margin-right:4px">Personal</button>${NON_STORE_TYPES.has(c.type) ? `<button class="btn btn-mini" data-dep-code="${c.code}" style="margin-right:4px">Departamentos</button>` : ''}<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button></td>

@@ -1212,3 +1212,39 @@
   .wp-grid2 { grid-template-columns:1fr; }
   .wp-ced-anchor .hint-side { margin-left:0; width:100%; }
 }
+
+/* ===================== GRILLA DE EMPRESAS — columnas enriquecidas =====
+   Columna Codigo: alias grande coloreado por tipo de empresa + data_area
+   debajo. Razon social + RIF. Zona/Subzona + Concepto combinados. Columna
+   Personal: cantidad + chip de metodo (S/R10/RAX) + frescura + quien. */
+/* Codigo: alias grande + data_area chico */
+.code-cell .alias { font-family:ui-monospace,Menlo,monospace; font-weight:800; font-size:16px; line-height:1.15; }
+.code-cell .darea { font-size:11px; color:var(--faint); font-family:ui-monospace,Menlo,monospace; margin-top:2px; }
+/* color del alias segun tipo de empresa */
+.ty-tienda   { color:#2563eb; }  /* azul   */
+.ty-import   { color:#9333ea; }  /* morado */
+.ty-externa  { color:#0d9488; }  /* teal   */
+.ty-admin    { color:#d97706; }  /* ambar  */
+.ty-servicio { color:#dc2626; }  /* rojo   */
+.ty-online   { color:#db2777; }  /* rosa   */
+/* Razon social + RIF */
+.name-cell .nm { font-weight:500; line-height:1.3; }
+.name-cell .rif { font-size:11px; color:var(--faint); font-family:ui-monospace,Menlo,monospace; margin-top:1px; }
+/* Zona/Subzona + Concepto */
+.zc-cell .zc1 { line-height:1.3; }
+.zc-cell .zc2 { font-size:11.5px; color:var(--muted); margin-top:1px; }
+/* Personal */
+.cell-personal { line-height:1.35; }
+.cell-personal .l1 { font-weight:700; font-size:15px; }
+.cell-personal .l2 { font-size:11px; color:var(--muted); margin-top:1px; line-height:1.5; }
+/* chips de metodo de carga del roster */
+.m { display:inline-flex; align-items:center; gap:4px; padding:1px 7px; border-radius:5px;
+  font-size:10.5px; font-weight:700; }
+.m-s   { background:#ecfdf5; color:#047857; }  /* Sincronizacion API */
+.m-r10 { background:#eff6ff; color:#1d4ed8; }  /* Reporte 10 */
+.m-rax { background:#fef3c7; color:#92400e; }  /* Reporte AX excel */
+.m-man { background:var(--border-soft); color:var(--muted); }  /* sin carga */
+/* frescura de la ultima carga */
+.fresh-ok  { color:var(--success); }
+.fresh-mid { color:var(--muted); }
+.fresh-old { color:var(--warn); }

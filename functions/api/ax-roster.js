@@ -327,6 +327,7 @@ export async function onRequestPost({ request, env }) {
           total_count: valid.length,
           active_count: activos.length,
           source_file: 'API AX (en vivo)',
+          source: 'ax_api',
         }
       : {
           company_code: cc,
