@@ -26,7 +26,7 @@
 
 import { $ } from '../core/dom.js';
 import { parseReport10, validateParsed, rosterReplace, rosterClear, rosterAddManual, rosterAgeDays, splitFullName } from '../reports/shared/roster.js';
-import { parseReporteAX, validateReporteAX, enterpriseRosterReplace, enterpriseRosterClear, storeRosterReplaceAX } from '../reports/shared/roster-ax.js';
+import { parseReporteAX, validateReporteAX, enterpriseRosterReplace, enterpriseRosterClear, storeRosterReplaceAX, axRosterPull } from '../reports/shared/roster-ax.js';
 
 const THUMB = 300;           // miniatura cuadrada (grid)
 const FULL = 800;            // version grande cuadrada (visor / AX)
@@ -190,9 +190,10 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
       <div class="pnl-head">
         <div><h1>Personal</h1><p id="wpInfo">Cargando personal de ${esc(companyCode)}…</p></div>
         <div class="head-actions">
-          <button class="btn" id="wpReporte"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> ${mode === 'enterprise' ? 'Actualizar lista' : 'Reporte 10'}</button>
-          ${(mode === 'store' && isAdmin) ? `<button class="btn" id="wpReporteAX"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Reporte AX</button>` : ''}
-          ${mode === 'enterprise' ? '' : `<button class="btn btn-primary" id="wpAddManual"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>`}
+          <button class="btn" id="wpReporte"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> ${mode === 'enterprise' ? 'Reporte AX (Excel)' : 'Reporte 10'}</button>
+          ${(mode === 'store' && isAdmin) ? `<button class="btn" id="wpReporteAX"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Reporte AX (Excel)</button>` : ''}
+          ${isAdmin ? `<button class="btn btn-primary" id="wpAxApi"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.8 1 6.4 2.6"/><polyline points="21 3 21 9 15 9"/></svg> Sincronizar</button>` : ''}
+          ${mode === 'enterprise' ? '' : `<button class="btn" id="wpAddManual"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>`}
           <button class="btn wp-btn-danger" id="wpClear"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Limpiar lista</button>
         </div>
       </div>
@@ -210,6 +211,8 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   $('#wpReporte').addEventListener('click', STATE.mode === 'enterprise' ? openReporteAXModal : openReporteModal);
   const axBtn = $('#wpReporteAX');
   if (axBtn) axBtn.addEventListener('click', openReporteAXModalStore);
+  const axApiBtn = $('#wpAxApi');
+  if (axApiBtn) axApiBtn.addEventListener('click', openAxApiModal);
   const addBtn = $('#wpAddManual');
   if (addBtn) addBtn.addEventListener('click', openAddManualModal);
   $('#wpClear').addEventListener('click', openClearModal);
@@ -983,7 +986,67 @@ function openReporteAXModal() {
   });
 }
 
-/* ---- Actualizar lista por Reporte AX en una TIENDA (solo admin) ----
+/* ---- TERCERA VIA: Sincronizar personal desde AX (API) ----
+   Llama a /api/ax-roster con el alias. No pide archivo. Escribe en la tabla
+   que corresponda segun el tipo de empresa (lo decide el backend). La API
+   trae el cargo, asi que es la via mas completa. Solo admin/superadmin.
+   Se llama "Sincronizar" para usar la misma terminologia que la sync de
+   empresas. */
+function openAxApiModal() {
+  const host = wpModalHost();
+  const entidad = STATE.mode === 'enterprise' ? 'la empresa' : 'la tienda';
+  host.innerHTML = `
+    <div class="wp-modal-vp">
+      <div class="wp-modal">
+        <button class="wp-x" id="apX" title="Cerrar">✕</button>
+        <h3>Sincronizar personal desde AX</h3>
+        <p class="wp-who">${esc(STATE.cc)} · Trae el personal vigente directo de AX, sin Excel.</p>
+
+        <div class="wp-okbox">
+          ✓ Esta es la vía más completa: AX devuelve también el <b>cargo</b> de cada persona, además de identidad, nacimiento, género, estado civil, cuenta bancaria, TodoTicket y fechas.
+        </div>
+        <div class="pm-help" style="margin-top:12px"><b>El último reporte manda:</b> la lista que devuelve AX reemplaza el personal de ${entidad}. Quien ya no esté en AX sale del roster. Las fotos y datos de contacto (teléfono/correo/dirección) capturados aquí se conservan.</div>
+
+        <div id="apResult" class="wp-prev" style="display:none"></div>
+
+        <div class="wp-foot">
+          <span style="flex:1"></span>
+          <button class="btn" id="apCancel">Cancelar</button>
+          <button class="btn btn-primary" id="apGo">Sincronizar</button>
+        </div>
+      </div>
+    </div>`;
+
+  const q = s => host.querySelector(s);
+  const close = () => { document.removeEventListener('keydown', onKey); host.innerHTML = ''; };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  q('#apX').addEventListener('click', close);
+  q('#apCancel').addEventListener('click', close);
+  host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) close(); });
+
+  q('#apGo').addEventListener('click', async () => {
+    const goB = q('#apGo'); goB.disabled = true; goB.textContent = 'Sincronizando…';
+    const res = q('#apResult'); res.style.display = 'block'; res.className = 'wp-prev'; res.textContent = 'Conectando con AX y trayendo el personal…';
+    const uploadedBy = STATE.user.name || STATE.user.username || 'admin';
+    const r = await axRosterPull(STATE.cc, { uploadedBy, adminId: STATE.adminId });
+    if (!r.ok) {
+      res.className = 'wp-prev warn';
+      res.innerHTML = `⚠ ${esc(r.error || 'No se pudo sincronizar con AX.')}`;
+      goB.disabled = false; goB.textContent = 'Reintentar';
+      return;
+    }
+    const s = r.summary || {};
+    res.className = 'wp-prev ok';
+    res.innerHTML = `✓ <b>${s.total} trabajadores</b> sincronizados (${s.active} vigentes · ${s.terminated} egresados)`
+      + ` · ${s.with_role} con cargo · ${s.with_account} con cuenta`
+      + (s.warnings && s.warnings.length ? `<div style="margin-top:6px;font-size:11.5px;color:var(--warn)">${s.warnings.join(' ')}</div>` : '');
+    goB.textContent = 'Listo';
+    setTimeout(async () => { close(); await load(); }, 900);
+  });
+}
+
+/* ---- Carga de Reporte AX en una TIENDA (solo admin) ----
    Escribe en store_workers via /api/roster (accion replace_ax). Regla
    "el ultimo reporte manda": el AX define el roster y pisa lo que trae;
    el cargo (que el AX no trae) se conserva del registro previo. */

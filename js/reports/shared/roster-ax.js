@@ -271,6 +271,18 @@ export async function enterpriseRosterClear(companyCode, adminId) {
   return res.json();
 }
 
+/* --- TERCERA VIA: carga EN VIVO desde la API de empleados de AX ---
+   No usa Excel. El backend (/api/ax-roster) llama a la API con el alias y
+   escribe en store_workers o enterprise_workers segun el tipo. Solo
+   admin/superadmin. Regla "el ultimo reporte manda"; la API trae cargo. */
+export async function axRosterPull(companyCode, { uploadedBy, adminId } = {}) {
+  const res = await fetch('/api/ax-roster', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ company_code: companyCode, uploaded_by: uploadedBy, adminId }),
+  });
+  return res.json();
+}
+
 /* --- Carga de Reporte AX en una TIENDA (escribe en store_workers) ---
    Solo admin/superadmin. Usa /api/roster con accion 'replace_ax'. Regla
    "el ultimo reporte manda": el AX define el roster y pisa los campos que
