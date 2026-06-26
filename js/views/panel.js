@@ -96,7 +96,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.18</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.19</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -244,6 +244,10 @@ function empStatsHtml(companies) {
   const zones = new Set(companies.map(c => c.zoneId).filter(Boolean)).size;
   const subs = new Set(companies.map(c => c.subzoneId).filter(Boolean)).size;
   const staff = companies.reduce((a, c) => a + (c.staffCount || 0), 0);
+  // Desglose del personal: no-tiendas (enterprise_workers) vs tiendas
+  // (store_workers), segun el tipo de empresa.
+  const staffEnt = companies.reduce((a, c) => a + (NON_STORE_TYPES.has(c.type) ? (c.staffCount || 0) : 0), 0);
+  const staffStore = staff - staffEnt;
   const byType = {};
   companies.forEach(c => { const t = c.type || '—'; byType[t] = (byType[t] || 0) + 1; });
   const present = Object.keys(byType);
@@ -264,7 +268,7 @@ function empStatsHtml(companies) {
         <div class="emp-stat"><div class="k">Empresas</div><div class="v">${total}</div><div class="hint">${hint}</div></div>
         <div class="emp-stat"><div class="k">Zonas</div><div class="v">${zones}</div><div class="hint">con empresas</div></div>
         <div class="emp-stat"><div class="k">Subzonas</div><div class="v">${subs}</div><div class="hint">con empresas</div></div>
-        <div class="emp-stat"><div class="k">Empleados</div><div class="v">${staff}</div><div class="hint">en el personal cargado</div></div>
+        <div class="emp-stat"><div class="k">Empleados</div><div class="v">${staff}</div><div class="hint">${staffStore} en tiendas · ${staffEnt} en otras</div></div>
       </div>
       <div class="emp-types">${tcards}</div>
     </div>`;
