@@ -177,7 +177,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   const mode = (opts && opts.mode) === 'enterprise' ? 'enterprise' : 'store';
   const adminId = user && user.kind === 'admin' ? (user.id || null) : null;
   const isAdmin = !!(user && user.kind === 'admin');
-  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin };
+  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, departments: [], selMode: false, selected: new Set() };
 
   const back = onExit
     ? `<button class="btn" id="wpBack" style="margin-bottom:14px">← Volver</button>`
@@ -194,6 +194,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
           ${(mode === 'store' && isAdmin) ? `<button class="btn" id="wpReporteAX"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Reporte AX (Excel)</button>` : ''}
           ${isAdmin ? `<button class="btn btn-primary" id="wpAxApi"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.8 1 6.4 2.6"/><polyline points="21 3 21 9 15 9"/></svg> Sincronizar</button>` : ''}
           ${mode === 'enterprise' ? '' : `<button class="btn" id="wpAddManual"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>`}
+          <button class="btn" id="wpAssignDept"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg> Asignar depto.</button>
           <button class="btn wp-btn-danger" id="wpClear"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Limpiar lista</button>
         </div>
       </div>
@@ -202,6 +203,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
       <div class="pnl-filters">
         <div class="search"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input id="wpSearch" placeholder="Buscar por nombre o cédula…"></div>
       </div>
+      <div id="wpSelBar" class="wp-rosterbar" style="display:none;align-items:center;gap:10px;flex-wrap:wrap"></div>
       <div id="wpGrid" class="wp-grid"><div class="pnl-loading">Cargando…</div></div>
     </div>
     <div id="wpFichaHost"></div>
@@ -217,6 +219,8 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   const addBtn = $('#wpAddManual');
   if (addBtn) addBtn.addEventListener('click', openAddManualModal);
   $('#wpClear').addEventListener('click', openClearModal);
+  const assignBtn = $('#wpAssignDept');
+  if (assignBtn) assignBtn.addEventListener('click', toggleSelMode);
 
   await load();
 }
@@ -234,6 +238,7 @@ async function load() {
   STATE.workers = d.workers || [];
   STATE.company = d.company || { code: STATE.cc };
   STATE.bankMap = d.bank_map || {};
+  STATE.departments = d.departments || [];
   STATE.meta = d.meta || null;
   STATE.manualCount = d.manual_count || 0;
   STATE.reportCount = d.report_count != null ? d.report_count : (STATE.workers.length - STATE.manualCount);
@@ -373,6 +378,7 @@ function paintGrid() {
   const q = (STATE.q || '').toLowerCase().trim();
   const list = STATE.workers.filter(w =>
     !q || (w.full_name || '').toLowerCase().includes(q) || (w.id_number || '').includes(q));
+  const sel = STATE.selMode;
 
   grid.innerHTML = list.map(w => {
     const ci = avatarColor(w.id_number);
@@ -387,19 +393,95 @@ function paintGrid() {
       : '<span class="wp-badge no">pendiente</span>';
     const egr = w.end_date ? `<span class="pill pill-out" style="margin-top:4px;display:inline-block">egresó ${fmtDate(w.end_date)}</span>` : '';
     const manualTag = w.source === 'manual' ? '<span class="pill wp-pill-manual" style="margin-top:4px;display:inline-block">manual</span>' : '';
-    return `<div class="wp-card" data-ced="${w.id_number}">
-      <div class="wp-photo">${photo}${badge}<div class="wp-ov"><span>Ver ficha</span></div></div>
+    const dept = w.department_name ? `<div class="wp-dept" style="margin-top:4px;font-size:11px;color:var(--muted)">🏷 ${esc(w.department_name)}</div>` : '';
+    const checked = STATE.selected.has(String(w.id_number));
+    const chk = sel
+      ? `<span class="wp-selchk" style="position:absolute;top:8px;left:8px;width:22px;height:22px;border-radius:6px;border:2px solid #fff;box-shadow:0 0 0 1px rgba(15,23,42,.18);background:${checked ? 'var(--brand)' : 'rgba(255,255,255,.9)'};display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;z-index:3">${checked ? '✓' : ''}</span>`
+      : '';
+    return `<div class="wp-card" data-ced="${w.id_number}"${sel && checked ? ' style="outline:2px solid var(--brand);outline-offset:2px;border-radius:14px"' : ''}>
+      <div class="wp-photo">${chk}${photo}${badge}<div class="wp-ov"><span>${sel ? (checked ? 'Quitar' : 'Seleccionar') : 'Ver ficha'}</span></div></div>
       <div class="wp-body">
         <p class="wp-name">${esc(w.full_name)}</p>
         <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}</span>
         ${w.role ? `<div class="wp-role">${esc(w.role)}</div>` : ''}
-        ${egr}${manualTag}
+        ${dept}${egr}${manualTag}
       </div>
     </div>`;
   }).join('') || '<div class="card"><p class="muted" style="margin:0">Sin coincidencias.</p></div>';
 
   grid.querySelectorAll('.wp-card').forEach(el =>
-    el.addEventListener('click', () => openFicha(el.dataset.ced)));
+    el.addEventListener('click', () => {
+      const ced = String(el.dataset.ced);
+      if (STATE.selMode) {
+        if (STATE.selected.has(ced)) STATE.selected.delete(ced); else STATE.selected.add(ced);
+        paintGrid(); paintSelBar();
+      } else openFicha(ced);
+    }));
+}
+
+/* ===================== ASIGNACION DE DEPARTAMENTO (masiva) =====================
+   Modo seleccion: con "Asignar depto." las tarjetas muestran un check y al
+   tocarlas se marcan (en vez de abrir la ficha). La barra permite elegir un
+   departamento de la empresa (o "Quitar") y aplicarlo a todos los marcados de
+   una sola vez via /api/worker-photo accion set_department. */
+function toggleSelMode() {
+  STATE.selMode = !STATE.selMode;
+  STATE.selected = new Set();
+  const btn = $('#wpAssignDept');
+  if (btn) btn.classList.toggle('btn-primary', STATE.selMode);
+  paintSelBar();
+  paintGrid();
+}
+
+function paintSelBar() {
+  const bar = $('#wpSelBar');
+  if (!bar) return;
+  if (!STATE.selMode) { bar.style.display = 'none'; bar.innerHTML = ''; return; }
+  bar.style.display = 'flex';
+  const n = STATE.selected.size;
+  const opts = (STATE.departments || []).map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('');
+  bar.innerHTML = `
+    <span class="rb-ic">🏷</span>
+    <span><b>${n}</b> seleccionado${n === 1 ? '' : 's'}</span>
+    <span class="rb-sep"></span>
+    <select id="wpSelDept" style="min-width:170px;padding:6px 8px">
+      <option value="">— Departamento —</option>
+      ${opts}
+      <option value="__none">— Quitar departamento —</option>
+    </select>
+    <button class="btn btn-sm btn-primary" id="wpSelApply"${n ? '' : ' disabled'}>Asignar a ${n}</button>
+    <span style="flex:1"></span>
+    <button class="btn btn-sm" id="wpSelAll">Marcar todos</button>
+    <button class="btn btn-sm" id="wpSelCancel">Cancelar</button>`;
+  $('#wpSelApply').addEventListener('click', applyBulkDept);
+  $('#wpSelCancel').addEventListener('click', toggleSelMode);
+  $('#wpSelAll').addEventListener('click', () => {
+    const q = (STATE.q || '').toLowerCase().trim();
+    STATE.workers
+      .filter(w => !q || (w.full_name || '').toLowerCase().includes(q) || (w.id_number || '').includes(q))
+      .forEach(w => STATE.selected.add(String(w.id_number)));
+    paintGrid(); paintSelBar();
+  });
+}
+
+async function applyBulkDept() {
+  const selEl = $('#wpSelDept');
+  const raw = selEl ? selEl.value : '';
+  if (!raw) { alert('Elegí un departamento (o “Quitar departamento”).'); return; }
+  const ids = [...STATE.selected];
+  if (!ids.length) { alert('No hay trabajadores seleccionados.'); return; }
+  const department_id = raw === '__none' ? null : parseInt(raw, 10);
+  const btn = $('#wpSelApply'); if (btn) { btn.disabled = true; btn.textContent = 'Asignando…'; }
+  const r = await api({
+    action: 'set_department', company_code: STATE.cc, user: sessionUserPayload(STATE.user),
+    id_numbers: ids, department_id,
+  });
+  if (!r.ok) { if (btn) { btn.disabled = false; btn.textContent = `Asignar a ${ids.length}`; } alert(r.error || 'No se pudo asignar.'); return; }
+  const depName = department_id == null ? null : ((STATE.departments.find(d => d.id === department_id) || {}).name || null);
+  STATE.workers.forEach(w => { if (STATE.selected.has(String(w.id_number))) { w.department_id = department_id; w.department_name = depName; } });
+  STATE.selMode = false; STATE.selected = new Set();
+  const ab = $('#wpAssignDept'); if (ab) ab.classList.remove('btn-primary');
+  paintSelBar(); paintGrid();
 }
 
 /* ===================== FICHA (página) ===================== */
@@ -495,10 +577,12 @@ function fichaHtml(w, c) {
           <div class="ff-field"><label>Estado civil</label><select id="e_marital"><option value="">— Seleccionar —</option><option value="S">S – Soltero/a</option><option value="C">C – Casado/a</option><option value="D">D – Divorciado/a</option><option value="V">V – Viudo/a</option></select></div>
         </div>
 
-        <div class="ff-sec">Cargo</div>
+        <div class="ff-sec">Cargo y departamento</div>
         <div class="ff-grid">
           <div class="ff-row"><span class="ff-lbl">Cargo <span class="src excel"><span class="dot"></span></span></span><span class="ff-val" data-v="role"></span></div>
+          <div class="ff-row"><span class="ff-lbl">Departamento <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="department"></span></div>
           <div class="ff-field"><label>Cargo</label><input id="e_role" type="text"></div>
+          <div class="ff-field"><label>Departamento</label><select id="e_department"><option value="">— Sin departamento —</option>${(STATE.departments || []).map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></div>
         </div>
 
         <div class="ff-sec">Datos bancarios</div>
@@ -537,6 +621,7 @@ function paintFichaValues(host, w) {
   setVal(host, 'gender', w.gender ? (GEN[w.gender] || w.gender) : '');
   setVal(host, 'marital_status', w.marital_status ? (CIV[w.marital_status] || w.marital_status) : '');
   setVal(host, 'role', w.role);
+  setVal(host, 'department', w.department_name);
   setVal(host, 'account_number', w.account_number ? `${w.account_number}${bankName(w.account_number) ? ' · ' + bankName(w.account_number) : ''}` : '');
   setVal(host, 'phone', w.phone ? phoneDisplay(w.phone) : '');
   setVal(host, 'email', w.email);
@@ -598,6 +683,7 @@ function wireFicha(host, w) {
     q('#e_first').value = w.first_name || ''; q('#e_second').value = w.second_name || ''; q('#e_last').value = w.last_names || '';
     q('#e_birth').value = w.birth_date || ''; q('#e_gender').value = w.gender || ''; q('#e_marital').value = w.marital_status || '';
     q('#e_role').value = w.role || ''; q('#e_account').value = w.account_number || ''; q('#e_phone').value = phoneNat(w.phone);
+    if (q('#e_department')) q('#e_department').value = w.department_id || '';
     q('#e_email').value = w.email || ''; q('#e_address').value = w.address || '';
     runValidations();
     window.scrollTo(0, 0);
@@ -633,17 +719,21 @@ function wireFicha(host, w) {
       address: q('#e_address').value.trim() || null,
     };
 
+    const deptVal = q('#e_department') ? (q('#e_department').value || '') : '';
+    const department_id = deptVal === '' ? null : parseInt(deptVal, 10);
+
     const saveB = host.querySelector('#ffSave');
     saveB.disabled = true; saveB.textContent = 'Guardando…';
     const r = await api({
       action: 'save_profile', company_code: STATE.cc, user: sessionUserPayload(STATE.user),
-      id_number: w.id_number, profile,
+      id_number: w.id_number, profile, department_id,
     });
     saveB.disabled = false; saveB.textContent = 'Guardar cambios';
     if (!r.ok) { alert(r.error || 'No se pudo guardar.'); return; }
 
     // Aplicar en memoria y refrescar.
-    Object.assign(w, profile, { updated_at: new Date().toISOString() });
+    const depName = department_id == null ? null : ((STATE.departments.find(d => d.id === department_id) || {}).name || null);
+    Object.assign(w, profile, { department_id, department_name: depName, updated_at: new Date().toISOString() });
     openFicha(w.id_number);   // reabre en modo ver con datos frescos
     paintGrid();
   }

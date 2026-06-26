@@ -155,6 +155,7 @@ export async function onRequestPost({ request, env }) {
     if (action === 'directory') return await directory(env, cc, table);
     if (action === 'save') return await savePhoto(env, cc, body, table);
     if (action === 'save_profile') return await saveProfile(env, cc, body, table);
+    if (action === 'set_department') return await setDepartment(env, cc, body, table);
     if (action === 'remove') return await removePhoto(env, cc, body);
 
     return json({ ok: false, error: 'Accion no reconocida' }, 400);
@@ -192,15 +193,23 @@ async function directory(env, cc, table) {
   const bankMap = {};
   (banks || []).forEach(b => { bankMap[b.code] = b.name; });
 
+  // Catalogo de departamentos de la empresa (para la ficha y la asignacion
+  // masiva). En tiendas existe "Tiendas" sembrado; en no-tiendas los crea el
+  // admin. Se devuelve la lista y se mapea id->nombre para cada trabajador.
+  const depts = await sb(env, `departments?company_code=eq.${encodeURIComponent(cc)}&is_active=eq.true&select=id,name&order=sort_order.asc,name.asc`);
+  const deptList = (depts || []).map(d => ({ id: d.id, name: d.name }));
+  const deptMap = {};
+  (depts || []).forEach(d => { deptMap[d.id] = d.name; });
+
   // Roster de la empresa (tabla segun tipo). En modo empresa traemos TODOS
   // los datos personales desde enterprise_workers (el Reporte AX los tiene),
   // para no depender de que workers_master este poblado: la ficha usa el
   // dato del roster como respaldo del master. En tiendas el roster solo
   // aporta lo basico (los datos personales viven en el master/Reporte 10).
   const rosterSelect = isEnterprise
-    ? `id_number,full_name,role,end_date,source,first_name,second_name,last_names,`
+    ? `id_number,full_name,role,end_date,source,department_id,first_name,second_name,last_names,`
       + `birth_date,gender,marital_status,account_number,bank_code,todo_ticket,phone,email,address,data_id`
-    : `id_number,full_name,role,end_date,source`;
+    : `id_number,full_name,role,end_date,source,department_id`;
   const workers = await sb(env,
     `${table}?company_code=eq.${encodeURIComponent(cc)}&select=${rosterSelect}&order=full_name.asc`);
   const ceds = (workers || []).map(w => w.id_number).filter(Boolean);
@@ -268,6 +277,8 @@ async function directory(env, cc, table) {
       email: pick('email'),
       address: pick('address'),
       data_id: pick('data_id'),
+      department_id: w.department_id || null,
+      department_name: w.department_id ? (deptMap[w.department_id] || null) : null,
       has_photo: hasPhoto,
       thumb_url: thumbUrl,
       full_url: fullUrl,
@@ -288,6 +299,7 @@ async function directory(env, cc, table) {
     pending: items.length - withPhoto,
     manual_count: manualCount,
     report_count: items.length - manualCount,
+    departments: deptList,
     meta,
     workers: items,
   });
@@ -406,7 +418,46 @@ async function saveProfile(env, cc, body, table) {
       body: JSON.stringify({ id_number: ced, ced_kind: cedKind(ced), ...patch }),
     });
   }
+
+  // Departamento: vive en el ROSTER de la empresa (store_workers /
+  // enterprise_workers), no en workers_master. Solo se toca si el cliente lo
+  // envia explicitamente (department_id presente; null = quitarlo).
+  if (Object.prototype.hasOwnProperty.call(body, 'department_id')) {
+    const depId = (body.department_id === null || body.department_id === '') ? null : parseInt(body.department_id, 10);
+    if (depId != null) {
+      const d = await sb(env, `departments?id=eq.${depId}&company_code=eq.${encodeURIComponent(cc)}&select=id`);
+      if (!d || !d.length) return json({ ok: false, error: 'Ese departamento no pertenece a esta empresa.' }, 400);
+    }
+    await sb(env, `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}`, {
+      method: 'PATCH', headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ department_id: depId }),
+    });
+  }
   return json({ ok: true, id_number: ced });
+}
+
+/* ---------- SET_DEPARTMENT (asignacion masiva de departamento) ----------
+   Asigna (o quita, con department_id null) un departamento a varios
+   trabajadores del roster de ESTA empresa. El departamento debe pertenecer a
+   la empresa. userCanAccess ya valido el alcance del que llama. */
+async function setDepartment(env, cc, body, table) {
+  table = table || 'store_workers';
+  const ids = Array.isArray(body.id_numbers)
+    ? [...new Set(body.id_numbers.map(x => String(x).replace(/[^0-9]/g, '')).filter(Boolean))]
+    : [];
+  if (!ids.length) return json({ ok: false, error: 'No hay trabajadores seleccionados.' }, 400);
+  const depId = (body.department_id === null || body.department_id === '' || body.department_id === undefined)
+    ? null : parseInt(body.department_id, 10);
+  if (depId != null) {
+    const d = await sb(env, `departments?id=eq.${depId}&company_code=eq.${encodeURIComponent(cc)}&select=id`);
+    if (!d || !d.length) return json({ ok: false, error: 'Ese departamento no pertenece a esta empresa.' }, 400);
+  }
+  const inList = ids.map(c => `"${c}"`).join(',');
+  await sb(env, `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=in.(${inList})`, {
+    method: 'PATCH', headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify({ department_id: depId }),
+  });
+  return json({ ok: true, count: ids.length, department_id: depId });
 }
 
 /* ---------- REMOVE (foto) ---------- */
