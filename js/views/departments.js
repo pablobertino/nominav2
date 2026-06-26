@@ -44,7 +44,6 @@ function openModal(html) {
   const ov = document.createElement('div');
   ov.className = 'modal-ov'; ov.id = 'depModalOv';
   ov.innerHTML = `<div class="modal-box">${html}</div>`;
-  ov.addEventListener('click', e => { if (e.target === ov) closeModal(); });
   document.body.appendChild(ov);
 }
 function closeModal() {

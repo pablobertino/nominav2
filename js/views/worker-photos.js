@@ -910,7 +910,6 @@ function openPhotoModal(ced) {
   document.addEventListener('keydown', onKey);
   q('#pmX').addEventListener('click', closeModal);
   q('#pmCancel').addEventListener('click', closeModal);
-  host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) closeModal(); });
 
   // Columna izquierda: foto actual + circulo guia (mientras no se elige nueva).
   const cur = q('#pmCur');
@@ -1063,7 +1062,6 @@ function openReporteModal() {
   document.addEventListener('keydown', onKey);
   q('#rmX').addEventListener('click', close);
   q('#rmCancel').addEventListener('click', close);
-  host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) close(); });
   q('#rmDrop').addEventListener('click', () => q('#rmFile').click());
   q('#rmPick').addEventListener('click', () => q('#rmFile').click());
 
@@ -1147,7 +1145,6 @@ function openReporteAXModal() {
   document.addEventListener('keydown', onKey);
   q('#axX').addEventListener('click', close);
   q('#axCancel').addEventListener('click', close);
-  host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) close(); });
   q('#axDrop').addEventListener('click', () => q('#axFile').click());
   q('#axPick').addEventListener('click', () => q('#axFile').click());
 
@@ -1249,7 +1246,6 @@ function openAxApiModal() {
   document.addEventListener('keydown', onKey);
   q('#apX').addEventListener('click', close);
   q('#apCancel').addEventListener('click', close);
-  host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) close(); });
 
   q('#apGo').addEventListener('click', async () => {
     const goB = q('#apGo'); goB.disabled = true; goB.textContent = 'Sincronizando…';
@@ -1322,7 +1318,6 @@ function openReporteAXModalStore() {
   document.addEventListener('keydown', onKey);
   q('#axsX').addEventListener('click', close);
   q('#axsCancel').addEventListener('click', close);
-  host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) close(); });
   q('#axsDrop').addEventListener('click', () => q('#axsFile').click());
   q('#axsPick').addEventListener('click', () => q('#axsFile').click());
 
@@ -1425,7 +1420,6 @@ function openAddManualModal() {
   document.addEventListener('keydown', onKey);
   q('#amX').addEventListener('click', close);
   q('#amCancel').addEventListener('click', close);
-  host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) close(); });
 
   let split = { first_name: '', second_name: '', last_names: '' };
   function refresh() {
@@ -1502,7 +1496,6 @@ function openClearModal() {
   document.addEventListener('keydown', onKey);
   q('#clX').addEventListener('click', close);
   q('#clCancel').addEventListener('click', close);
-  host.querySelector('.wp-modal-vp').addEventListener('click', ev => { if (ev.target === ev.currentTarget) close(); });
   q('#clConfirm').addEventListener('input', e => {
     q('#clOk').disabled = e.target.value.trim().toUpperCase() !== String(STATE.cc).toUpperCase();
   });

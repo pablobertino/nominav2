@@ -99,7 +99,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.23</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.24</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -758,13 +758,15 @@ function viewCatalogos() {
 }
 
 /* ---------- helper: modal ---------- */
+/* Los modales se cierran SOLO con sus botones (X / Cancelar / accion). No se
+   cierran al hacer clic afuera, para evitar perder lo escrito por un clic
+   accidental fuera del recuadro. */
 function openModal(html) {
   closeModal();
   const ov = document.createElement('div');
   ov.className = 'modal-ov';
   ov.id = 'modalOv';
   ov.innerHTML = `<div class="modal-box">${html}</div>`;
-  ov.addEventListener('click', e => { if (e.target === ov) closeModal(); });
   document.body.appendChild(ov);
 }
 function closeModal() {
