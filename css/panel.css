@@ -1055,6 +1055,8 @@
 /* Tarjeta de la ficha */
 .ff-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); overflow:hidden; }
 .ff-top { display:flex; gap:22px; align-items:center; padding:22px 24px; border-bottom:1px solid var(--border-soft); }
+.ff-actions { margin-left:auto; align-self:flex-start; display:flex; gap:9px; align-items:center;
+  flex-shrink:0; flex-wrap:wrap; justify-content:flex-end; }
 .ff-ph { width:104px; height:104px; border-radius:var(--radius-md); flex-shrink:0; overflow:hidden;
   background:var(--bg-soft, #f1f5f9); border:1px solid var(--border); display:flex; align-items:center;
   justify-content:center; position:relative; }
@@ -1149,6 +1151,8 @@
   .ff-row, .ff-row.full { grid-template-columns:130px 1fr; }
   .pm-two { flex-direction:column; }
   .pm-arrow { transform:rotate(90deg); }
+  .ff-top { flex-wrap:wrap; }
+  .ff-actions { margin-left:0; width:100%; justify-content:flex-start; }
 }
 
 /* ===================== GESTION DE LA LISTA DE PERSONAL =====================

@@ -462,6 +462,12 @@ function fichaHtml(w, c) {
           <div class="ced">${w.ced_kind || ''}-${w.id_number}</div>
           <div class="meta"><span class="pill">${esc(w.role || 'Sin cargo')}</span></div>
         </div>
+        <div class="ff-actions">
+          <button class="btn btn-ghost-danger" id="ffDel" style="display:none">Quitar foto</button>
+          <button class="btn" id="ffEdit">Editar</button>
+          <button class="btn" id="ffCancel" style="display:none">Cancelar</button>
+          <button class="btn btn-primary" id="ffSave" style="display:none">Guardar cambios</button>
+        </div>
       </div>
 
       <div class="ff-note" id="ffNote" style="display:none">
@@ -516,14 +522,6 @@ function fichaHtml(w, c) {
           <div class="ff-row"><span class="ff-lbl">Foto cargada por</span><span class="ff-val" data-v="photo_uploaded_by"></span></div>
           <div class="ff-row"><span class="ff-lbl">Última actualización</span><span class="ff-val" data-v="updated_at"></span></div>
         </div>
-      </div>
-
-      <div class="ff-foot">
-        <button class="btn btn-ghost-danger" id="ffDel" style="display:none">Quitar foto</button>
-        <span style="flex:1"></span>
-        <button class="btn" id="ffEdit">Editar</button>
-        <button class="btn" id="ffCancel" style="display:none">Cancelar</button>
-        <button class="btn btn-primary" id="ffSave" style="display:none">Guardar cambios</button>
       </div>
     </div>
 
