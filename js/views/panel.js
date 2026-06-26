@@ -26,6 +26,13 @@ const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Se
 let CATALOG = null;       // { companies, zones, subzones, concepts }
 let currentView = 'tiendas';
 
+/* Filtros de la vista Empresas persistidos a nivel de modulo: al entrar a una
+   empresa (Personal/Departamentos), sincronizar y volver, viewTiendas se
+   re-ejecuta desde cero; guardar aqui lo elegido evita tener que volver a
+   filtrar. Se setea en cada render y se restaura al construir la vista.
+   null = primera vez (usa los defaults). selStatus va como Array. */
+let TIENDAS_FILTERS = null;  // { name, type, statuses:[], zone, sub, concept }
+
 /* ---------- iconos ---------- */
 const I = {
   logo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
@@ -82,7 +89,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.00</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.01</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -216,8 +223,11 @@ function viewTiendas(user) {
 
   // Estados "activos" por defecto: una tienda activa está Abierta o Cerrada temporal.
   const ACTIVE_STATES = statuses.filter(s => /abier/i.test(s) || (/cerrad/i.test(s) && /temp/i.test(s)));
-  // Conjunto seleccionado (arranca en los activos; si no hubiera, todos)
-  const selStatus = new Set(ACTIVE_STATES.length ? ACTIVE_STATES : statuses);
+  // Conjunto seleccionado. Si ya hay filtros guardados (volviendo de una
+  // empresa), se restauran; si no, arranca en los activos (o todos).
+  const selStatus = TIENDAS_FILTERS
+    ? new Set(TIENDAS_FILTERS.statuses.filter(s => statuses.includes(s)))
+    : new Set(ACTIVE_STATES.length ? ACTIVE_STATES : statuses);
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head">
@@ -233,7 +243,7 @@ function viewTiendas(user) {
     </div>
     <div class="pnl-filters">
       <div class="search">${I.search}<input id="fName" type="text" placeholder="Buscar nombre o código…"></div>
-      <select id="fType">${types.map(t => `<option ${t === 'Tienda' ? 'selected' : ''}>${t}</option>`).join('')}<option value="ALL">Todos los tipos</option></select>
+      <select id="fType"><option value="ALL" selected>Todos los tipos</option>${types.map(t => `<option>${t}</option>`).join('')}</select>
       <div class="ms-wrap" id="fStatusWrap">
         <button type="button" class="ms-toggle" id="fStatusBtn">
           <span class="ms-label" id="fStatusLabel">Estados</span>
@@ -246,7 +256,7 @@ function viewTiendas(user) {
             <button type="button" data-q="none">Ninguno</button>
           </div>
           <div class="ms-sep"></div>
-          ${statuses.map(s => `<label class="ms-opt"><input type="checkbox" value="${s}" ${selStatus.has(s) ? 'checked' : ''}><span>${s}</span><span class="ms-count">${CATALOG.companies.filter(c => c.status === s).length}</span></label>`).join('')}
+          ${statuses.map(s => `<label class="ms-opt"><input type="checkbox" value="${s}" ${selStatus.has(s) ? 'checked' : ''}><span>${/nulo|vac/i.test(s) ? 'Sin estado' : s}</span><span class="ms-count">${CATALOG.companies.filter(c => c.status === s).length}</span></label>`).join('')}
         </div>
       </div>
       <select id="fZone"><option value="ALL">Todas las zonas</option>${CATALOG.zones.map(z => `<option value="${z.id}">${z.name}</option>`).join('')}</select>
@@ -266,6 +276,26 @@ function viewTiendas(user) {
   const fName = $('#fName'), fType = $('#fType'),
         fZone = $('#fZone'), fSub = $('#fSub'), fConcept = $('#fConcept');
 
+  // Restaurar los valores de los selects/buscador desde los filtros guardados
+  // (volviendo de una empresa). Las subzonas se rellenan segun la zona elegida.
+  if (TIENDAS_FILTERS) {
+    fName.value = TIENDAS_FILTERS.name || '';
+    if ([...fType.options].some(o => o.value === TIENDAS_FILTERS.type)) fType.value = TIENDAS_FILTERS.type;
+    if ([...fZone.options].some(o => o.value === TIENDAS_FILTERS.zone)) fZone.value = TIENDAS_FILTERS.zone;
+  }
+
+  // Persiste el estado actual de los filtros a nivel de modulo.
+  function persistFilters() {
+    TIENDAS_FILTERS = {
+      name: fName.value,
+      type: fType.value,
+      statuses: [...selStatus],
+      zone: fZone.value,
+      sub: fSub.value,
+      concept: fConcept.value,
+    };
+  }
+
   let visibleRows = []; // filas actualmente filtradas (para exportar)
 
   // ----- Multi-select de estados -----
@@ -276,7 +306,7 @@ function viewTiendas(user) {
     else if (n === statuses.length) msLabel.textContent = 'Todos los estados';
     else if (ACTIVE_STATES.length && n === ACTIVE_STATES.length && ACTIVE_STATES.every(s => selStatus.has(s)))
       msLabel.textContent = 'Activas';
-    else if (n === 1) msLabel.textContent = [...selStatus][0];
+    else if (n === 1) msLabel.textContent = /nulo|vac/i.test([...selStatus][0]) ? 'Sin estado' : [...selStatus][0];
     else msLabel.textContent = `${n} estados`;
   }
   msBtn.addEventListener('click', (e) => {
@@ -310,6 +340,7 @@ function viewTiendas(user) {
   }
 
   function render() {
+    persistFilters();
     const n = fName.value.toLowerCase();
     const rows = CATALOG.companies.filter(c => {
       // El filtro de estados aplica a TIENDAS con estado real (Abierta/
@@ -2536,7 +2567,7 @@ export function renderPanel() {
   if (!user) { go('/login'); return; }
   // Limpiar estado en memoria de cualquier sesión previa (evita que datos
   // de un usuario anterior "se filtren" si se cambia de sesión sin recargar).
-  CATALOG = null; CU_ROWS = null; SCOPE = null; OU_USER = null; currentView = 'tiendas';
+  CATALOG = null; CU_ROWS = null; SCOPE = null; OU_USER = null; TIENDAS_FILTERS = null; currentView = 'tiendas';
   mount(shell(user));
   loadAvatar((user.email || '').trim().toLowerCase());
   $('#logoutBtn').addEventListener('click', () => { clearSession(); go('/login'); });
