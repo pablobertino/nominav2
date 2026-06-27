@@ -19,7 +19,7 @@ import { renderDashboard } from './dashboard.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { renderDepartments } from './departments.js';
-import { axRosterPull } from '../reports/shared/roster-ax.js';
+import { axRosterPull, rosterCooldownMessage } from '../reports/shared/roster-ax.js';
 
 /* Tipos de empresa que NO son tienda: pueden tener departamentos y usuarios
    de empresa. (companies.company_type) */
@@ -112,7 +112,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.30</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.31</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -812,7 +812,7 @@ function openSyncAllModal(user, rows) {
         const chg = s.changes ? ` · ${s.changes} cambio${s.changes === 1 ? '' : 's'}` : '';
         logRow(c.code, true, `${s.total != null ? s.total : '?'} personas${chg}`);
       } else if (r && r.error === 'cooldown') {
-        skipped++; logRow(c.code, 'skip', 'omitida (limite)');
+        skipped++; logRow(c.code, 'skip', rosterCooldownMessage(r));
       } else {
         fail++; logRow(c.code, false, (r && r.error) || 'error');
       }

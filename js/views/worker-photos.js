@@ -26,7 +26,7 @@
 
 import { $ } from '../core/dom.js';
 import { parseReport10, validateParsed, rosterReplace, rosterClear, rosterAddManual, rosterAgeDays, splitFullName } from '../reports/shared/roster.js';
-import { parseReporteAX, validateReporteAX, enterpriseRosterReplace, enterpriseRosterClear, storeRosterReplaceAX, axRosterPull } from '../reports/shared/roster-ax.js';
+import { parseReporteAX, validateReporteAX, enterpriseRosterReplace, enterpriseRosterClear, storeRosterReplaceAX, axRosterPull, rosterCooldownMessage } from '../reports/shared/roster-ax.js';
 
 const THUMB = 300;           // miniatura cuadrada (grid)
 const FULL = 800;            // version grande cuadrada (visor / AX)
@@ -1419,7 +1419,7 @@ function openAxApiModal() {
     if (!r || !r.ok) {
       res.className = 'wp-prev warn';
       const msg = (r && r.error === 'cooldown')
-        ? (r.message || 'Esta empresa se sincronizo hace poco. Espera antes de volver a intentar.')
+        ? rosterCooldownMessage(r)
         : ((r && r.error) || 'No se pudo sincronizar con AX.');
       res.innerHTML = `⚠ ${esc(msg)}`;
       goB.disabled = false; goB.textContent = 'Reintentar';

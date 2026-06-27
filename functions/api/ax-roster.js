@@ -286,7 +286,8 @@ export async function onRequestPost({ request, env }) {
           if (elapsed < cdMs) {
             const retryAt = new Date(new Date(last).getTime() + cdMs).toISOString();
             return json({
-              ok: false, error: 'cooldown', company_code: cc, retry_at: retryAt,
+              ok: false, error: 'cooldown', company_code: cc,
+              last_at: last, retry_at: retryAt,
               message: 'Esta empresa se sincronizo hace poco. Espera antes de volver a intentar.',
             }, 429);
           }

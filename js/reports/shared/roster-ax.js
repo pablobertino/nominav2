@@ -283,6 +283,37 @@ export async function axRosterPull(companyCode, { uploadedBy, adminId, source } 
   return res.json();
 }
 
+/* Mensaje UNIFICADO de limite (cooldown) para las sincronizaciones de
+   personal. Recibe la respuesta 429 de /api/ax-roster ({ last_at, retry_at })
+   y arma un texto con la ultima sincronizacion (HH:MM hora Caracas) y cuanto
+   falta para volver a intentar. Lo usan la sync por empresa y "Sincronizar
+   todo" para que el mensaje sea identico en ambas. */
+export function rosterCooldownMessage(resp) {
+  const hhmm = (iso) => {
+    const d = new Date(iso);
+    if (isNaN(d)) return null;
+    const c = new Date(d.getTime() - 4 * 3600 * 1000); // Caracas GMT-4
+    const z = n => String(n).padStart(2, '0');
+    return `${z(c.getUTCHours())}:${z(c.getUTCMinutes())}`;
+  };
+  const fmtLeft = (ms) => {
+    const s = Math.max(0, Math.ceil(ms / 1000));
+    const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+    if (d > 0) return `${d}d ${h}h`;
+    if (h > 0) return `${h}h ${m}m`;
+    if (m > 0) return `${m}m ${ss}s`;
+    return `${ss}s`;
+  };
+  const lastTxt = resp && resp.last_at ? hhmm(resp.last_at) : null;
+  const retryTxt = resp && resp.retry_at ? hhmm(resp.retry_at) : null;
+  const left = resp && resp.retry_at ? (new Date(resp.retry_at).getTime() - Date.now()) : 0;
+  let msg = lastTxt
+    ? `Se sincronizó por última vez a las ${lastTxt}.`
+    : 'Se sincronizó hace poco.';
+  if (left > 0) msg += ` Podrás volver a sincronizar en ${fmtLeft(left)}${retryTxt ? ` (a las ${retryTxt})` : ''}.`;
+  return msg;
+}
+
 /* --- Carga de Reporte AX en una TIENDA (escribe en store_workers) ---
    Solo admin/superadmin. Usa /api/roster con accion 'replace_ax'. Regla
    "el ultimo reporte manda": el AX define el roster y pisa los campos que
