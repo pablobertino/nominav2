@@ -275,10 +275,10 @@ export async function enterpriseRosterClear(companyCode, adminId) {
    No usa Excel. El backend (/api/ax-roster) llama a la API con el alias y
    escribe en store_workers o enterprise_workers segun el tipo. Solo
    admin/superadmin. Regla "el ultimo reporte manda"; la API trae cargo. */
-export async function axRosterPull(companyCode, { uploadedBy, adminId } = {}) {
+export async function axRosterPull(companyCode, { uploadedBy, adminId, source } = {}) {
   const res = await fetch('/api/ax-roster', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ company_code: companyCode, uploaded_by: uploadedBy, adminId }),
+    body: JSON.stringify({ company_code: companyCode, uploaded_by: uploadedBy, adminId, source: source || 'manual' }),
   });
   return res.json();
 }

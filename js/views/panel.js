@@ -111,7 +111,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.28</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.29</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -772,8 +772,10 @@ function openSyncAllModal(user, rows) {
   const logRow = (code, ok, info) => {
     if (!logEl) return;
     const row = document.createElement('div');
-    row.className = 'sa-row ' + (ok ? 'ok' : 'fail');
-    row.innerHTML = `<span class="c">${code}</span><span class="r">${ok ? '✓ ' + info : '✕ ' + info}</span>`;
+    const cls = ok === 'skip' ? 'skip' : (ok ? 'ok' : 'fail');
+    const icon = ok === 'skip' ? '–' : (ok ? '✓' : '✕');
+    row.className = 'sa-row ' + cls;
+    row.innerHTML = `<span class="c">${code}</span><span class="r">${icon} ${info}</span>`;
     logEl.appendChild(row); logEl.scrollTop = logEl.scrollHeight;
   };
   const closeAndMaybeRefresh = () => {
@@ -794,24 +796,33 @@ function openSyncAllModal(user, rows) {
     $('#saCancel').textContent = 'Detener';
     $('#saProg').style.display = 'block';
     const uploadedBy = user.name || user.username || 'admin';
-    let ok = 0, fail = 0;
+    let ok = 0, fail = 0, skipped = 0;
     for (let i = 0; i < list.length; i++) {
       if (stopped) break;
       const c = list[i];
       if (statEl) statEl.textContent = `(${i + 1}/${total}) ${c.code} — ${c.name || ''}…`;
       setFill(i / total * 100);
       let r;
-      try { r = await axRosterPull(c.code, { uploadedBy, adminId: user.id }); }
+      try { r = await axRosterPull(c.code, { uploadedBy, adminId: user.id, source: 'bulk' }); }
       catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
-      if (r && r.ok) { ok++; anySynced = true; const s = r.summary || {}; logRow(c.code, true, `${s.total != null ? s.total : '?'} personas`); }
-      else { fail++; logRow(c.code, false, (r && r.error) || 'error'); }
+      if (r && r.ok) {
+        ok++; anySynced = true;
+        const s = r.summary || {};
+        const chg = s.changes ? ` · ${s.changes} cambio${s.changes === 1 ? '' : 's'}` : '';
+        logRow(c.code, true, `${s.total != null ? s.total : '?'} personas${chg}`);
+      } else if (r && r.error === 'cooldown') {
+        skipped++; logRow(c.code, 'skip', 'omitida (limite)');
+      } else {
+        fail++; logRow(c.code, false, (r && r.error) || 'error');
+      }
       setFill((i + 1) / total * 100);
     }
     phase = 'done';
     setFill(100);
+    const omit = skipped ? `, <b>${skipped}</b> omitida(s) por limite` : '';
     if (statEl) statEl.innerHTML = stopped
-      ? `Detenido · <b>${ok}</b> sincronizada(s), <b>${fail}</b> con error.`
-      : `Listo · <b>${ok}</b> sincronizada(s), <b>${fail}</b> con error de ${total}.`;
+      ? `Detenido · <b>${ok}</b> sincronizada(s), <b>${fail}</b> con error${omit}.`
+      : `Listo · <b>${ok}</b> sincronizada(s), <b>${fail}</b> con error${omit} de ${total}.`;
     const b = $('#saCancel'); b.disabled = false; b.textContent = 'Cerrar';
   });
 }

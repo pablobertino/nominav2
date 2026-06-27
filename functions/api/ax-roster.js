@@ -173,6 +173,71 @@ async function upsertWorkersMaster(env, cc, rows) {
   return payload.length;
 }
 
+/* Cambios a nivel trabajador entre el roster previo y el nuevo. En la primera
+   sincronizacion (sin filas previas) NO genera eventos (seria ruido: todos
+   "nuevos"). Detecta: nuevo, removido (ya no viene y no es manual) y cambio
+   de estatus activo<->egresado. */
+function computeRosterChanges(existingRows, valid) {
+  const changes = [];
+  if (!existingRows || !existingRows.length) return changes;
+  const prev = new Map(existingRows.map(e => [e.id_number, e]));
+  const nuevoByCed = new Map(valid.map(v => [v.id_number, v]));
+  for (const v of valid) {
+    const e = prev.get(v.id_number);
+    if (!e) {
+      changes.push({ id_number: v.id_number, worker_name: v.full_name || null,
+        change_type: 'new', old_value: null, new_value: v.end_date ? 'Egresado' : 'Activo' });
+    } else {
+      const wasActive = !e.end_date, isActive = !v.end_date;
+      if (wasActive !== isActive) {
+        changes.push({ id_number: v.id_number, worker_name: v.full_name || e.full_name || null,
+          change_type: 'status', old_value: wasActive ? 'Activo' : 'Egresado',
+          new_value: isActive ? 'Activo' : 'Egresado' });
+      }
+    }
+  }
+  for (const e of existingRows) {
+    if (!nuevoByCed.has(e.id_number) && e.source !== 'manual') {
+      changes.push({ id_number: e.id_number, worker_name: e.full_name || null,
+        change_type: 'removed', old_value: e.end_date ? 'Egresado' : 'Activo', new_value: null });
+    }
+  }
+  return changes;
+}
+
+/* Registra una corrida de roster en roster_run + roster_change. No rompe la
+   respuesta del sync si el log falla. */
+async function recordRosterRun(env, { cc, status, source, triggered_by, result, error, changes, duration_ms }) {
+  const base = {
+    apikey: env.supabase_service_role,
+    Authorization: `Bearer ${env.supabase_service_role}`,
+    'Content-Profile': 'nomina_v2',
+    'Content-Type': 'application/json',
+  };
+  const finished = new Date();
+  const startedAt = new Date(finished.getTime() - (duration_ms || 0));
+  const changesCount = (changes && changes.length) || 0;
+  try {
+    let runId = null;
+    const res = await fetch(`${env.supabase_url}/rest/v1/roster_run`, {
+      method: 'POST', headers: { ...base, Prefer: 'return=representation' },
+      body: JSON.stringify({
+        company_code: cc, started_at: startedAt.toISOString(), finished_at: finished.toISOString(),
+        status, source, triggered_by: triggered_by ?? null,
+        result: result || null, error: error || null,
+        changes_count: changesCount, duration_ms: duration_ms ?? null,
+      }),
+    });
+    if (res.ok) { const rows = await res.json(); runId = rows && rows[0] && rows[0].id; }
+    if (changesCount && runId) {
+      await fetch(`${env.supabase_url}/rest/v1/roster_change`, {
+        method: 'POST', headers: { ...base, Prefer: 'return=minimal' },
+        body: JSON.stringify(changes.map(c => ({ ...c, run_id: runId, company_code: cc }))),
+      });
+    }
+  } catch (_) { /* el log no debe afectar el roster */ }
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); }
@@ -201,6 +266,35 @@ export async function onRequestPost({ request, env }) {
   const isStore = !NON_STORE_TYPES.has(company.company_type);
   const table = isStore ? 'store_workers' : 'enterprise_workers';
 
+  const started = Date.now();
+  const source = body.source === 'bulk' ? 'bulk' : 'manual';
+
+  // Cooldown anti-abuso (misma regla que el sync de empresas), POR EMPRESA.
+  // Solo cuentan las corridas OK; un fallo no bloquea el reintento.
+  try {
+    const cfgRows = await sb(env, 'sync_config?id=eq.1&select=manual_cooldown_value,manual_cooldown_unit');
+    const cfg = cfgRows && cfgRows[0];
+    if (cfg) {
+      const unitMs = { minutes: 60000, hours: 3600000, days: 86400000 };
+      const cdMs = (cfg.manual_cooldown_value || 0) * (unitMs[cfg.manual_cooldown_unit] || 60000);
+      if (cdMs > 0) {
+        const lastRows = await sb(env,
+          `roster_run?company_code=eq.${encodeURIComponent(cc)}&status=eq.ok&order=finished_at.desc&limit=1&select=finished_at`);
+        const last = lastRows && lastRows[0] && lastRows[0].finished_at;
+        if (last) {
+          const elapsed = Date.now() - new Date(last).getTime();
+          if (elapsed < cdMs) {
+            const retryAt = new Date(new Date(last).getTime() + cdMs).toISOString();
+            return json({
+              ok: false, error: 'cooldown', company_code: cc, retry_at: retryAt,
+              message: 'Esta empresa se sincronizo hace poco. Espera antes de volver a intentar.',
+            }, 429);
+          }
+        }
+      }
+    }
+  } catch (_) { /* si falla la verificacion, no bloquea */ }
+
   // Llamar a la API de empleados de AX (misma key que sync-companies).
   let apiData;
   try {
@@ -208,9 +302,13 @@ export async function onRequestPost({ request, env }) {
     const apiRes = await fetch(url, {
       headers: { Accept: 'application/json', 'X-API-Key': env.canaima_apikey },
     });
-    if (!apiRes.ok) return json({ ok: false, error: `La API de AX respondio ${apiRes.status}.` }, 502);
+    if (!apiRes.ok) {
+      await recordRosterRun(env, { cc, status: 'error', source, triggered_by: admin.id, error: `API AX ${apiRes.status}`, duration_ms: Date.now() - started });
+      return json({ ok: false, error: `La API de AX respondio ${apiRes.status}.` }, 502);
+    }
     apiData = await apiRes.json();
   } catch (e) {
+    await recordRosterRun(env, { cc, status: 'error', source, triggered_by: admin.id, error: 'API AX: ' + e.message, duration_ms: Date.now() - started });
     return json({ ok: false, error: 'No se pudo conectar con la API de AX: ' + e.message }, 502);
   }
   if (!Array.isArray(apiData)) apiData = apiData.empleados || apiData.data || apiData.items || [];
@@ -228,6 +326,7 @@ export async function onRequestPost({ request, env }) {
     valid.push(r);
   }
   if (!valid.length) {
+    await recordRosterRun(env, { cc, status: 'error', source, triggered_by: admin.id, error: 'Sin personal valido', duration_ms: Date.now() - started });
     return json({ ok: false, error: `La API no devolvio personal valido para ${cc}.` }, 200);
   }
 
@@ -235,13 +334,15 @@ export async function onRequestPost({ request, env }) {
   const egresados = valid.filter(r => r.end_date);
   const cedsReporte = new Set(valid.map(r => r.id_number));
 
+  let changes = [];   // cambios a nivel trabajador (se llena en cada rama)
   try {
     if (isStore) {
       // --- TIENDA: store_workers ---
-      // Conservar manuales cuya cedula no venga en el reporte de la API.
-      const manualNow = await sb(env,
-        `store_workers?company_code=eq.${encodeURIComponent(cc)}&source=eq.manual&select=id_number`);
-      const manualKeep = (manualNow || []).filter(m => !cedsReporte.has(m.id_number)).map(m => m.id_number);
+      // Estado previo (para detectar cambios) y manuales a conservar.
+      const existingAll = await sb(env,
+        `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,full_name,end_date,source`) || [];
+      changes = computeRosterChanges(existingAll, valid);
+      const manualKeep = existingAll.filter(m => m.source === 'manual' && !cedsReporte.has(m.id_number)).map(m => m.id_number);
       if (manualKeep.length) {
         const inList = manualKeep.map(c => `"${c}"`).join(',');
         await sb(env, `store_workers?company_code=eq.${encodeURIComponent(cc)}&id_number=not.in.(${inList})`, { method: 'DELETE' });
@@ -275,9 +376,10 @@ export async function onRequestPost({ request, env }) {
       // Conservar telefono/correo/direccion/department_id previos (la API no
       // los trae). El cargo SI lo trae la API, asi que aqui manda.
       const existing = await sb(env,
-        `enterprise_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,phone,email,address,department_id`);
+        `enterprise_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,phone,email,address,department_id,full_name,end_date,source`) || [];
+      changes = computeRosterChanges(existing, valid);
       const prevByCed = {};
-      (existing || []).forEach(e => { prevByCed[e.id_number] = e; });
+      existing.forEach(e => { prevByCed[e.id_number] = e; });
       await sb(env, `enterprise_workers?company_code=eq.${encodeURIComponent(cc)}`, { method: 'DELETE' });
       const payload = valid.map(r => {
         const prev = prevByCed[r.id_number] || {};
@@ -343,21 +445,22 @@ export async function onRequestPost({ request, env }) {
       body: JSON.stringify(metaRow),
     });
 
-    return json({
-      ok: true,
-      summary: {
-        total: valid.length,
-        active: activos.length,
-        terminated: egresados.length,
-        with_account: valid.filter(r => r.account_number).length,
-        with_role: valid.filter(r => r.role).length,
-        master_synced: masterSynced,
-        target: table,
-        source: 'ax_api',
-        warnings,
-      },
-    });
+    const summary = {
+      total: valid.length,
+      active: activos.length,
+      terminated: egresados.length,
+      with_account: valid.filter(r => r.account_number).length,
+      with_role: valid.filter(r => r.role).length,
+      master_synced: masterSynced,
+      target: table,
+      source: 'ax_api',
+      warnings,
+      changes: changes.length,
+    };
+    await recordRosterRun(env, { cc, status: 'ok', source, triggered_by: admin.id, result: summary, changes, duration_ms: Date.now() - started });
+    return json({ ok: true, summary });
   } catch (e) {
+    await recordRosterRun(env, { cc, status: 'error', source, triggered_by: admin.id, error: e.message, duration_ms: Date.now() - started });
     return json({ ok: false, error: 'Error al guardar el roster: ' + e.message }, 500);
   }
 }
