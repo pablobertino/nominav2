@@ -191,6 +191,13 @@ function ensureStyles() {
   .dash-uwhen b { color:var(--brand); font-weight:600; }
   .dash-empty { background:var(--surface); border:1px dashed var(--border); border-radius:var(--radius-lg);
     padding:18px; text-align:center; color:var(--muted); font-size:13px; }
+
+  /* Demografia admin (2 columnas) y movimientos recientes (ingresos/egresos) */
+  .dash-demo2 { display:grid; grid-template-columns:repeat(2,1fr); gap:12px; }
+  .dash-mov2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
+  .dash-movh { font-size:12.5px; font-weight:600; color:var(--ink-soft); margin:0 2px 8px;
+    display:flex; align-items:center; gap:6px; }
+  @media (max-width:760px){ .dash-demo2, .dash-mov2 { grid-template-columns:1fr; } }
   `;
   document.head.appendChild(st);
 }
@@ -240,6 +247,80 @@ function bdaysSectionHtml(today, upcoming, showCompany) {
     html += `<div class="dash-up">${upcoming.map(p => urowHtml(p, showCompany)).join('')}</div>`;
   }
   return html;
+}
+
+/* ---------- markup demografia (admin: desde agregados de /api/dashboard) ---------- */
+function sexCardHtml(sex) {
+  const m = (sex && sex.m) || 0, f = (sex && sex.f) || 0, t = (sex && sex.total) || 0;
+  const mp = t ? Math.round(m / t * 100) : 0, fp = t ? 100 - mp : 0;
+  const body = t
+    ? `<div class="dash-sexbar"><i style="width:${mp}%;background:#2563eb"></i><i style="width:${fp}%;background:#ec4899"></i></div>
+       <div class="dash-sexleg"><span><span class="lab m">M</span><b class="pct">${mp}%</b><span class="cnt">${m}</span></span>
+       <span><span class="lab f">F</span><b class="pct">${fp}%</b><span class="cnt">${f}</span></span></div>`
+    : '<div class="dash-dempty">Sin datos de sexo</div>';
+  return `<div class="dash-dcard"><div class="dash-dhead"><span class="t">Sexo</span><span class="n">${t} con dato</span></div>${body}</div>`;
+}
+function agesCardHtml(ages) {
+  const a = ages || {}; const buckets = a.buckets || [];
+  const maxA = Math.max(1, ...buckets.map(b => b.n || 0));
+  const body = a.count
+    ? buckets.map(b => `<div class="dash-dbar"><span class="dash-dbl">${esc(b.label)}</span><div class="dash-dbt"><i style="width:${Math.round((b.n || 0) / maxA * 100)}%;background:#4f46e5"></i></div><span class="dash-dbn">${b.n || 0}</span></div>`).join('')
+    : '<div class="dash-dempty">Sin fechas de nacimiento</div>';
+  const head = `${a.count || 0} con fecha${a.avg != null ? ` · prom ${a.avg}` : ''}`;
+  return `<div class="dash-dcard"><div class="dash-dhead"><span class="t">Edades</span><span class="n">${head}</span></div>${body}</div>`;
+}
+/* Barras de edad PROMEDIO por tipo de empresa (numero = promedio, entre parentesis el n). */
+function ageByTypeBarsHtml(ages) {
+  const byType = (ages && ages.by_type) || [];
+  if (!byType.length) return '<div class="dash-dempty">Sin fechas de nacimiento.</div>';
+  const maxAvg = Math.max(1, ...byType.map(t => Number(t.avg) || 0));
+  return byType.map(t => `<div class="dash-brow">
+    <span class="dash-bl">${esc(t.tipo)} <span style="color:var(--faint)">(${Number(t.n || 0).toLocaleString('es-VE')})</span></span>
+    <div class="dash-bt"><i style="width:${Math.round((Number(t.avg) || 0) / maxAvg * 100)}%;background:${typeColor(t.tipo)}"></i></div>
+    <span class="dash-bn">${t.avg}</span></div>`).join('');
+}
+
+/* ---------- markup movimientos recientes (ingresos / egresos) ---------- */
+/* Dias transcurridos desde una fecha YMD hasta hoy (Caracas). */
+function daysAgoFrom(ymd) {
+  if (!ymd) return null;
+  const t = caracasToday();
+  const today = Date.UTC(t.y, t.m - 1, t.d);
+  const d = new Date(ymd);
+  if (isNaN(d)) return null;
+  const that = Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
+  return Math.round((today - that) / 86400000);
+}
+function agoLabel(n) {
+  if (n == null) return '';
+  if (n <= 0) return 'hoy';
+  if (n === 1) return 'ayer';
+  if (n < 30) return `hace ${n} días`;
+  const m = Math.round(n / 30);
+  return m <= 1 ? 'hace 1 mes' : `hace ${m} meses`;
+}
+function ymdShort(ymd) {
+  if (!ymd) return '';
+  const mm = +String(ymd).slice(5, 7), dd = +String(ymd).slice(8, 10);
+  return `${dd} ${MES[mm - 1] || ''}`;
+}
+function movRowHtml(p) {
+  const ci = avatarColor(p.id_number);
+  const loc = [p.zone, p.subzone].filter(Boolean).join(' · ');
+  const sub = [p.role, p.company_name].filter(Boolean).join(' · ');
+  const ago = agoLabel(daysAgoFrom(p.mov_date));
+  return `<div class="dash-urow">
+    <div class="dash-uava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(p.full_name))}</div>
+    <div class="dash-umain">
+      <div class="dash-uname">${esc(p.full_name)}</div>
+      ${sub || loc ? `<div class="dash-usub">${esc([sub, loc].filter(Boolean).join(' — '))}</div>` : ''}
+    </div>
+    <div class="dash-uwhen">${ymdShort(p.mov_date)} · <b>${ago}</b></div>
+  </div>`;
+}
+function movListHtml(rows, emptyMsg) {
+  if (!rows || !rows.length) return `<div class="dash-empty">${emptyMsg}</div>`;
+  return `<div class="dash-up">${rows.map(movRowHtml).join('')}</div>`;
 }
 
 /* ===================== ENTRADA ===================== */
@@ -364,6 +445,18 @@ async function renderAdminDash(user) {
   const typesHtml = cbt.map(x =>
     `<div class="dash-tc" style="border-left-color:${typeColor(x.tipo)}"><div class="n">${fmt(x.n)}</div><div class="l">${esc(x.tipo)}</div></div>`).join('');
 
+  // Demografia (sexo + edades) y edad promedio por tipo de empresa.
+  const sexCard = sexCardHtml(s.sex);
+  const edadesCard = agesCardHtml(s.ages);
+  const ageTypeBars = ageByTypeBarsHtml(s.ages);
+  const agAvg = (s.ages && s.ages.avg != null) ? `${s.ages.avg}` : '—';
+  const agCount = fmt((s.ages && s.ages.count) || 0);
+
+  // Movimientos recientes (ingresos / egresos) del alcance.
+  const mov = d.movimientos || { ingresos: [], egresos: [] };
+  const ingList = movListHtml(mov.ingresos, 'Sin ingresos recientes.');
+  const egrList = movListHtml(mov.egresos, 'Sin egresos recientes.');
+
   $('#pnlMain').innerHTML = `
     <div class="dash-greet"><h1>Hola, ${esc(name)} 👋</h1><p>${scopeNote} · resumen de hoy</p></div>
 
@@ -374,6 +467,18 @@ async function renderAdminDash(user) {
 
     <div class="dash-sec">Empresas por tipo <small>${fmt(s.empresas)} en total</small></div>
     <div class="dash-types">${typesHtml}</div>
+
+    <div class="dash-sec">Demografía del personal <small>${scopeNote}</small></div>
+    <div class="dash-demo2">${sexCard}${edadesCard}</div>
+
+    <div class="dash-sec">Edad promedio por tipo de empresa <small>prom. general ${agAvg} años · ${agCount} con fecha</small></div>
+    <div class="dash-card"><div class="dash-bars">${ageTypeBars}</div></div>
+
+    <div class="dash-sec">Movimientos recientes <small>${scopeNote}</small></div>
+    <div class="dash-mov2">
+      <div><div class="dash-movh">➕ Últimos ingresos</div>${ingList}</div>
+      <div><div class="dash-movh">🔴 Últimos egresos</div>${egrList}</div>
+    </div>
 
     <div class="dash-sec">Cumpleaños 🎂 <small>${scopeNote}</small></div>
     <div id="dashBdays"></div>`;
@@ -413,7 +518,7 @@ function demoHtml(workers) {
 
   return `<div class="dash-demo">
     <div class="dash-dcard"><div class="dash-dhead"><span class="t">Sexo</span><span class="n">${sexTot} con dato</span></div>${sexBody}</div>
-    <div class="dash-dcard"><div class="dash-dhead"><span class="t">Edades</span><span class="n">${ages.length} con fecha</span></div>${ageBody}</div>
+    <div class="dash-dcard"><div class="dash-dhead"><span class="t">Edades</span><span class="n">${ages.length} con fecha${ages.length ? ` · prom ${(ages.reduce((a, b) => a + b, 0) / ages.length).toFixed(1)}` : ''}</span></div>${ageBody}</div>
     <div class="dash-dcard"><div class="dash-dhead"><span class="t">Estado civil</span><span class="n">${civTot} con dato</span></div>${civBody}</div>
   </div>`;
 }

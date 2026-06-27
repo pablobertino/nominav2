@@ -85,13 +85,16 @@ export async function onRequestPost({ request, env }) {
       codes = (rows || []).map(r => r.company_code);
     }
 
-    // Resumen + cumpleanos (una sola pasada cada uno).
-    const [summary, bdays] = await Promise.all([
+    // Resumen + cumpleanos + movimientos (ingresos/egresos recientes).
+    const [summary, bdays, movements] = await Promise.all([
       sb(env, 'rpc/dashboard_admin_summary', {
         method: 'POST', body: JSON.stringify({ p_codes: codes }),
       }),
       sb(env, 'rpc/dashboard_birthdays', {
         method: 'POST', body: JSON.stringify({ p_codes: codes, p_days: days }),
+      }),
+      sb(env, 'rpc/dashboard_movements', {
+        method: 'POST', body: JSON.stringify({ p_codes: codes, p_limit: 6 }),
       }),
     ]);
 
@@ -151,6 +154,7 @@ export async function onRequestPost({ request, env }) {
       summary: summary || {},
       today,
       upcoming,
+      movimientos: movements || { ingresos: [], egresos: [] },
     });
   } catch (e) {
     return json({ ok: false, error: String(e.message || e) }, 500);
