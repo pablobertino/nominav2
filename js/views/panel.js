@@ -112,7 +112,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.31</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.32</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1534,11 +1534,14 @@ function renderScopeLists() {
   $('#scSummary').innerHTML = `<span class="muted">Resultado estimado:</span> <strong>${est}</strong> ${SCOPE.isEnt ? 'empresas' : 'tiendas'} gestionables.`;
 }
 
-// Estima cuántas tiendas quedan en el alcance (include − exclude)
+// Estima cuántas tiendas/empresas quedan en el alcance (include − exclude),
+// contando IGUAL que la funcion real get_admin_companies: el universo de
+// zona/subzona/departamento es SOLO empresas activas; las empresas asignadas
+// por codigo se cuentan aparte, esten activas o no.
 function estimateScope() {
-  const universe = SCOPE.companies.filter(c => SCOPE.isEnt
+  const universe = SCOPE.companies.filter(c => c.is_active && (SCOPE.isEnt
     ? NON_STORE_TYPES.has(c.company_type)
-    : !NON_STORE_TYPES.has(c.company_type));
+    : !NON_STORE_TYPES.has(c.company_type)));
   const inSet = new Set();
   const deptCompany = (val) => { const d = SCOPE.departments.find(d => String(d.id) === String(val)); return d ? d.company_code : null; };
   SCOPE.include.filter(scopeMatchesMode).forEach(x => {
