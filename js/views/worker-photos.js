@@ -229,7 +229,8 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   const mode = (opts && opts.mode) === 'enterprise' ? 'enterprise' : 'store';
   const adminId = user && user.kind === 'admin' ? (user.id || null) : null;
   const isAdmin = !!(user && user.kind === 'admin');
-  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, departments: [], selMode: false, selected: new Set() };
+  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, departments: [], selMode: false, selected: new Set(),
+    sortKey: 'name_az', fPhoto: 'all', fGender: 'all', fCargo: 'ALL', fDept: 'ALL', fStatus: 'all' };
 
   const back = onExit
     ? `<button class="btn" id="wpBack" style="margin-bottom:14px">← Volver</button>`
@@ -253,8 +254,39 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
       <div id="wpRosterBar" class="wp-rosterbar" style="display:none"></div>
       <div id="wpDemo"></div>
       <div class="pnl-filters">
-        <div class="search"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input id="wpSearch" placeholder="Buscar por nombre o cédula…"></div>
+        <div class="search"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input id="wpSearch" placeholder="Buscar por nombre, cédula o cargo…"></div>
+        <select id="wpfPhoto">
+          <option value="all">Foto: todas</option>
+          <option value="without">Sin foto</option>
+          <option value="with">Con foto</option>
+        </select>
+        <select id="wpfGender">
+          <option value="all">Sexo: todos</option>
+          <option value="M">Masculino</option>
+          <option value="F">Femenino</option>
+        </select>
+        <select id="wpfCargo"><option value="ALL">Todos los cargos</option></select>
+        <select id="wpfDept" style="display:none"><option value="ALL">Todos los deptos.</option></select>
+        <select id="wpfStatus">
+          <option value="all">Activos y egresados</option>
+          <option value="active">Solo activos</option>
+          <option value="inactive">Solo egresados</option>
+        </select>
+        <select id="wpSort">
+          <option value="name_az">Orden: Nombre (A→Z)</option>
+          <option value="name_za">Orden: Nombre (Z→A)</option>
+          <option value="photo_pending">Orden: Sin foto primero</option>
+          <option value="photo_loaded">Orden: Con foto primero</option>
+          <option value="cargo_az">Orden: Cargo (A→Z)</option>
+          <option value="tenure_old">Orden: Más antiguo</option>
+          <option value="tenure_new">Orden: Más reciente</option>
+          <option value="age_desc">Orden: Mayor edad</option>
+          <option value="age_asc">Orden: Menor edad</option>
+          <option value="sex">Orden: Sexo (M→F)</option>
+          <option value="ced_asc">Orden: Cédula</option>
+        </select>
       </div>
+      <div class="muted" id="wpShown" style="font-size:12px;margin:-2px 2px 10px;display:none"></div>
       <div id="wpSelBar" class="wp-rosterbar" style="display:none;align-items:center;gap:10px;flex-wrap:wrap"></div>
       <div id="wpGrid" class="wp-grid"><div class="pnl-loading">Cargando…</div></div>
     </div>
@@ -263,6 +295,18 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
 
   if (onExit) $('#wpBack').addEventListener('click', onExit);
   $('#wpSearch').addEventListener('input', e => { STATE.q = e.target.value; paintGrid(); });
+  const onFilterChange = () => {
+    STATE.fPhoto = $('#wpfPhoto').value;
+    STATE.fGender = $('#wpfGender').value;
+    STATE.fCargo = $('#wpfCargo').value;
+    const ds = $('#wpfDept'); STATE.fDept = ds ? ds.value : 'ALL';
+    STATE.fStatus = $('#wpfStatus').value;
+    paintGrid();
+  };
+  ['#wpfPhoto', '#wpfGender', '#wpfCargo', '#wpfDept', '#wpfStatus'].forEach(id => {
+    const el = $(id); if (el) el.addEventListener('change', onFilterChange);
+  });
+  $('#wpSort').addEventListener('change', e => { STATE.sortKey = e.target.value; paintGrid(); });
   $('#wpReporte').addEventListener('click', STATE.mode === 'enterprise' ? openReporteAXModal : openReporteModal);
   const axBtn = $('#wpReporteAX');
   if (axBtn) axBtn.addEventListener('click', openReporteAXModalStore);
@@ -299,6 +343,7 @@ async function load() {
   updateInfo(d);
   paintRosterBar();
   paintDemo();
+  fillFilterOptions();
   paintGrid();
 }
 
@@ -423,13 +468,127 @@ function paintDemo() {
   host.innerHTML = demoStatsHtml(STATE.workers, STATE.mode);
 }
 
+/* ===================== FILTRO + ORDEN =====================
+   Toda la grilla pasa por currentFiltered() (busqueda + filtros) y luego por
+   sortWorkers() (orden elegido). Los datos faltantes van al final y el
+   desempate siempre es por nombre, para que el orden sea estable. */
+function cmpName(a, b) {
+  return String(a.full_name || '').localeCompare(String(b.full_name || ''), 'es', { sensitivity: 'base' });
+}
+/* Lista filtrada por busqueda + filtros activos (sin ordenar). La usan el grid
+   y "Marcar todos" para que ambos vean exactamente lo mismo. */
+function currentFiltered() {
+  const q = (STATE.q || '').toLowerCase().trim();
+  // Resolver el nombre del depto elegido una sola vez (los trabajadores traen
+  // department_name, no el id, asi que filtramos por nombre).
+  let fDepName = null;
+  if (STATE.fDept !== 'ALL' && STATE.fDept !== '__none') {
+    const dep = (STATE.departments || []).find(d => String(d.id) === String(STATE.fDept));
+    fDepName = dep ? dep.name : null;
+  }
+  return STATE.workers.filter(w => {
+    if (q && !((w.full_name || '').toLowerCase().includes(q)
+      || String(w.id_number || '').includes(q)
+      || (w.role || '').toLowerCase().includes(q))) return false;
+    if (STATE.fPhoto === 'with' && !w.has_photo) return false;
+    if (STATE.fPhoto === 'without' && w.has_photo) return false;
+    if (STATE.fGender !== 'all' && w.gender !== STATE.fGender) return false;
+    if (STATE.fCargo !== 'ALL') {
+      if (STATE.fCargo === '__none') { if (w.role) return false; }
+      else if (w.role !== STATE.fCargo) return false;
+    }
+    if (STATE.fDept !== 'ALL') {
+      if (STATE.fDept === '__none') { if (w.department_name) return false; }
+      else if (w.department_name !== fDepName) return false;
+    }
+    if (STATE.fStatus === 'active' && w.end_date) return false;
+    if (STATE.fStatus === 'inactive' && !w.end_date) return false;
+    return true;
+  });
+}
+/* Ordena EN SITIO segun STATE.sortKey. */
+function sortWorkers(list) {
+  const k = STATE.sortKey || 'name_az';
+  list.sort((a, b) => {
+    switch (k) {
+      case 'name_za': return -cmpName(a, b);
+      case 'photo_pending': return ((a.has_photo ? 1 : 0) - (b.has_photo ? 1 : 0)) || cmpName(a, b);
+      case 'photo_loaded': return ((b.has_photo ? 1 : 0) - (a.has_photo ? 1 : 0)) || cmpName(a, b);
+      case 'cargo_az': {
+        const ra = a.role || '', rb = b.role || '';
+        if (!ra && rb) return 1; if (ra && !rb) return -1;
+        return ra.localeCompare(rb, 'es', { sensitivity: 'base' }) || cmpName(a, b);
+      }
+      case 'tenure_old': case 'tenure_new': {
+        const da = a.start_date || '', db = b.start_date || '';
+        if (!da && db) return 1; if (da && !db) return -1; if (da === db) return cmpName(a, b);
+        return k === 'tenure_old' ? (da < db ? -1 : 1) : (da > db ? -1 : 1);
+      }
+      case 'age_desc': case 'age_asc': {
+        const aa = ageFrom(a.birth_date), ab = ageFrom(b.birth_date);
+        if (aa == null && ab == null) return cmpName(a, b);
+        if (aa == null) return 1; if (ab == null) return -1;
+        return (k === 'age_desc' ? ab - aa : aa - ab) || cmpName(a, b);
+      }
+      case 'sex': {
+        const ord = g => (g === 'M' ? 0 : g === 'F' ? 1 : 2);
+        return (ord(a.gender) - ord(b.gender)) || cmpName(a, b);
+      }
+      case 'ced_asc': {
+        const na = parseInt(String(a.id_number).replace(/\D/g, ''), 10) || 0;
+        const nb = parseInt(String(b.id_number).replace(/\D/g, ''), 10) || 0;
+        return (na - nb) || cmpName(a, b);
+      }
+      default: return cmpName(a, b);
+    }
+  });
+  return list;
+}
+/* Rellena los combos que dependen del roster: Cargo (cargos presentes) y
+   Departamento (solo si la empresa tiene). Conserva la seleccion si sigue
+   siendo valida tras recargar la lista. */
+function fillFilterOptions() {
+  const cargoSel = $('#wpfCargo');
+  if (cargoSel) {
+    const roles = [...new Set(STATE.workers.map(w => w.role).filter(Boolean))]
+      .sort((a, b) => a.localeCompare(b, 'es', { sensitivity: 'base' }));
+    const hasNone = STATE.workers.some(w => !w.role);
+    const cur = STATE.fCargo;
+    cargoSel.innerHTML = '<option value="ALL">Todos los cargos</option>'
+      + roles.map(r => `<option value="${esc(r)}">${esc(r)}</option>`).join('')
+      + (hasNone ? '<option value="__none">— Sin cargo —</option>' : '');
+    if ([...cargoSel.options].some(o => o.value === cur)) cargoSel.value = cur;
+    else STATE.fCargo = 'ALL';
+  }
+  const deptSel = $('#wpfDept');
+  if (deptSel) {
+    if (STATE.departments && STATE.departments.length) {
+      deptSel.style.display = '';
+      const cur = STATE.fDept;
+      deptSel.innerHTML = '<option value="ALL">Todos los deptos.</option>'
+        + STATE.departments.map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('')
+        + '<option value="__none">— Sin departamento —</option>';
+      if ([...deptSel.options].some(o => o.value === cur)) deptSel.value = cur;
+      else STATE.fDept = 'ALL';
+    } else {
+      deptSel.style.display = 'none';
+      STATE.fDept = 'ALL';
+    }
+  }
+}
+
 /* ===================== GRID ===================== */
 function paintGrid() {
   const grid = $('#wpGrid');
   if (!grid) return;
-  const q = (STATE.q || '').toLowerCase().trim();
-  const list = STATE.workers.filter(w =>
-    !q || (w.full_name || '').toLowerCase().includes(q) || (w.id_number || '').includes(q));
+  const list = sortWorkers(currentFiltered());
+  const shown = $('#wpShown');
+  if (shown) {
+    const total = STATE.workers.length;
+    const filtered = list.length !== total;
+    shown.style.display = filtered ? '' : 'none';
+    if (filtered) shown.textContent = `Mostrando ${list.length} de ${total}`;
+  }
   const sel = STATE.selMode;
 
   grid.innerHTML = list.map(w => {
@@ -512,10 +671,7 @@ function paintSelBar() {
   $('#wpSelApply').addEventListener('click', applyBulkDept);
   $('#wpSelCancel').addEventListener('click', toggleSelMode);
   $('#wpSelAll').addEventListener('click', () => {
-    const q = (STATE.q || '').toLowerCase().trim();
-    STATE.workers
-      .filter(w => !q || (w.full_name || '').toLowerCase().includes(q) || (w.id_number || '').includes(q))
-      .forEach(w => STATE.selected.add(String(w.id_number)));
+    currentFiltered().forEach(w => STATE.selected.add(String(w.id_number)));
     paintGrid(); paintSelBar();
   });
 }
