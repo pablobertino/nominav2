@@ -111,7 +111,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.27</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.28</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1694,6 +1694,38 @@ function viewSoon(title, msg) {
    - estado de la ultima ejecucion (cuando y con que resultado).
    El cron y el boton manual llaman al MISMO endpoint /api/sync-companies;
    cada corrida queda registrada en nomina_v2.sync_config / sync_runs. */
+/* Cooldown del boton manual: deshabilita el boton y muestra una cuenta
+   regresiva. El limite real tambien lo valida el servidor; esto es la capa
+   de UX. Se alimenta de sync_config.last_manual_run_at + cooldown. */
+let SYNC_CD_TIMER = null;
+const SYNC_UNIT_MS = { minutes: 60000, hours: 3600000, days: 86400000 };
+function syncCdTotalMs(c) {
+  return (c.manual_cooldown_value || 0) * (SYNC_UNIT_MS[c.manual_cooldown_unit] || 60000);
+}
+function syncFmtLeft(ms) {
+  const s = Math.ceil(ms / 1000);
+  const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600), m = Math.floor((s % 3600) / 60), ss = s % 60;
+  if (d > 0) return `${d}d ${h}h`;
+  if (h > 0) return `${h}h ${m}m`;
+  if (m > 0) return `${m}m ${ss}s`;
+  return `${ss}s`;
+}
+function applySyncCooldown(c) {
+  const btn = document.getElementById('syncBtn');
+  if (!btn) return;
+  if (SYNC_CD_TIMER) { clearInterval(SYNC_CD_TIMER); SYNC_CD_TIMER = null; }
+  const total = syncCdTotalMs(c || {});
+  const last = (c && c.last_manual_run_at) ? new Date(c.last_manual_run_at).getTime() : 0;
+  const tick = () => {
+    const left = (total > 0 && last) ? (last + total - Date.now()) : 0;
+    if (left > 0) { btn.disabled = true; btn.textContent = `Disponible en ${syncFmtLeft(left)}`; return true; }
+    btn.disabled = false; btn.innerHTML = `${I.sync} Sincronizar ahora`;
+    if (SYNC_CD_TIMER) { clearInterval(SYNC_CD_TIMER); SYNC_CD_TIMER = null; }
+    return false;
+  };
+  if (tick()) SYNC_CD_TIMER = setInterval(tick, 1000);
+}
+
 const SYNC_FREQ_LABEL = {
   hourly: 'Cada hora', '6h': 'Cada 6 horas', '12h': 'Cada 12 horas',
   daily: 'Una vez al día', '2d': 'Cada 2 días',
@@ -1729,22 +1761,42 @@ async function viewSync(user) {
       + `<div style="margin-top:8px;color:var(--danger)">${escH(err)}</div>`;
   };
 
+  const changeLine = (c) => {
+    const name = c.business_name ? ` — ${escH(c.business_name)}` : '';
+    if (c.change_type === 'new') return `<div>➕ Nueva empresa <b>${escH(c.company_code)}</b>${name}</div>`;
+    return `<div>🔄 <b>${escH(c.company_code)}</b>${name}: ${escH(c.old_value || '—')} → <b>${escH(c.new_value || '—')}</b></div>`;
+  };
+  const changesCell = (r) => {
+    const cs = r.changes || [];
+    if (!cs.length) return '<span class="muted">Sin cambios</span>';
+    return `<button class="sync-chg-toggle" data-run="${r.id}" style="background:none;border:0;color:var(--brand,#2563eb);cursor:pointer;padding:0;font:inherit;text-decoration:underline">${cs.length} cambio${cs.length === 1 ? '' : 's'}</button>`;
+  };
   const runsHtml = (runs) => {
     if (!runs || !runs.length) return '';
     const rows = runs.map(r => {
       const when = fmtDeadline(r.finished_at || r.started_at);
-      const src = r.source === 'cron' ? 'auto' : 'manual';
+      const origin = r.source === 'cron' ? 'Automática' : `Manual${r.triggered_by_name ? ' · ' + escH(r.triggered_by_name) : ''}`;
       const dur = r.duration_ms != null ? `${(r.duration_ms / 1000).toFixed(1)} s` : '—';
       const est = r.status === 'ok' ? '<span class="pill pill-open">OK</span>' : '<span class="pill pill-closed">Error</span>';
-      const detail = r.status === 'ok'
-        ? `${(r.result && r.result.companies) || 0} empresas`
+      const result = r.status === 'ok' ? changesCell(r)
         : `<span style="color:var(--danger)">${escH((r.error || '').slice(0, 70))}</span>`;
-      return `<tr><td>${when}</td><td>${src}</td><td>${est}</td><td>${detail}</td><td style="text-align:right">${dur}</td></tr>`;
+      const detailRow = (r.changes && r.changes.length)
+        ? `<tr class="sync-chg-detail" id="chg-${r.id}" hidden><td colspan="5" style="font-size:12px;line-height:1.7;background:var(--bg-soft,#f8fafc)">${r.changes.map(changeLine).join('')}</td></tr>`
+        : '';
+      return `<tr><td>${when}</td><td>${origin}</td><td>${est}</td><td>${result}</td><td style="text-align:right">${dur}</td></tr>${detailRow}`;
     }).join('');
     return `<div class="card">
       <h3 style="margin:0 0 10px;font-size:15px">Últimas ejecuciones</h3>
-      <table class="cfg-cat-table"><thead><tr><th>Fecha</th><th>Origen</th><th>Estado</th><th>Resultado</th><th style="text-align:right">Duración</th></tr></thead><tbody>${rows}</tbody></table>
+      <table class="cfg-cat-table"><thead><tr><th>Fecha</th><th>Origen</th><th>Estado</th><th>Cambios</th><th style="text-align:right">Duración</th></tr></thead><tbody>${rows}</tbody></table>
     </div>`;
+  };
+  const wireRunToggles = () => {
+    document.querySelectorAll('.sync-chg-toggle').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const row = document.getElementById('chg-' + btn.dataset.run);
+        if (row) row.hidden = !row.hidden;
+      });
+    });
   };
 
   const cfgRes = await syncCfgApi({ action: 'get', adminId: user.id });
@@ -1780,6 +1832,19 @@ async function viewSync(user) {
         <div><label class="flabel">Frecuencia</label><select id="syncFreq">${freqOpts}</select></div>
         <div id="syncHourWrap" style="${showHour ? '' : 'display:none'}"><label class="flabel">Hora (Caracas)</label><select id="syncHour">${hourOpts}</select></div>
       </div>
+      <div class="cfg-grid3" style="margin-top:12px">
+        <div><label class="flabel">Límite del botón manual</label>
+          <div style="display:flex;gap:8px">
+            <input type="number" id="syncCdVal" min="0" max="999" value="${cfg.manual_cooldown_value ?? 10}" style="width:90px">
+            <select id="syncCdUnit">
+              <option value="minutes" ${cfg.manual_cooldown_unit === 'minutes' ? 'selected' : ''}>minutos</option>
+              <option value="hours" ${cfg.manual_cooldown_unit === 'hours' ? 'selected' : ''}>horas</option>
+              <option value="days" ${cfg.manual_cooldown_unit === 'days' ? 'selected' : ''}>días</option>
+            </select>
+          </div>
+          <p class="muted" style="font-size:11px;margin:6px 0 0">Tiempo mínimo entre sincronizaciones manuales (0 = sin límite). Aplica a todos.</p>
+        </div>
+      </div>
       <details style="margin-top:14px">
         <summary class="muted" style="cursor:pointer;font-size:12.5px">Opciones avanzadas</summary>
         <div style="margin-top:10px"><label class="flabel">URL del portal <span class="muted">(donde corre /api/sync-companies)</span></label>
@@ -1790,6 +1855,9 @@ async function viewSync(user) {
     </div>
 
     <div id="syncRuns">${runsHtml(cfgRes.runs)}</div>`;
+
+  wireRunToggles();
+  applySyncCooldown(cfg);
 
   // Mostrar/ocultar la hora según la frecuencia elegida
   $('#syncFreq').addEventListener('change', (e) => {
@@ -1806,6 +1874,8 @@ async function viewSync(user) {
       frequency: $('#syncFreq').value,
       daily_hour: parseInt($('#syncHour').value, 10),
       endpoint_url: $('#syncUrl').value.trim(),
+      manual_cooldown_value: parseInt($('#syncCdVal').value, 10),
+      manual_cooldown_unit: $('#syncCdUnit').value,
     });
     btn.disabled = false; btn.textContent = orig;
     if (!r.ok) { alert(r.error || 'No se pudo guardar.'); return; }
@@ -1816,6 +1886,7 @@ async function viewSync(user) {
   $('#syncBtn').addEventListener('click', async () => {
     const btn = $('#syncBtn'); const last = $('#syncLast');
     btn.disabled = true; last.innerHTML = '<span class="muted">Sincronizando…</span>';
+    let msg = null;
     try {
       const res = await fetch('/api/sync-companies', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -1823,14 +1894,20 @@ async function viewSync(user) {
       });
       const d = await res.json();
       if (d.ok) CATALOG = null; // forzar recarga al volver a Empresas
-    } catch (e) { /* el detalle real se lee del registro abajo */ }
+      else if (res.status === 429 || d.error === 'cooldown') msg = d.message || 'Sincronización reciente. Espera antes de volver a intentar.';
+      else msg = d.error || 'No se pudo sincronizar.';
+    } catch (e) { msg = 'Error de conexión.'; }
     const fresh = await syncCfgApi({ action: 'get', adminId: user.id });
     if (fresh.ok) {
       $('#syncLast').innerHTML = lastRunHtml(fresh.config || {});
       $('#syncRuns').innerHTML = runsHtml(fresh.runs);
+      wireRunToggles();
+      applySyncCooldown(fresh.config || {});
+    } else {
+      btn.disabled = false;
     }
+    if (msg) { const sl = $('#syncLast'); if (sl) sl.insertAdjacentHTML('afterbegin', `<div style="color:var(--danger);margin-bottom:8px">${escH(msg)}</div>`); }
     bellLoad(user); // una sync manual puede haber generado novedades
-    btn.disabled = false;
   });
 }
 

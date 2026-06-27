@@ -67,7 +67,7 @@ async function upsert(env, table, rows) {
 
 /** Registra el resultado de una corrida (manual o cron) en sync_config +
    sync_runs. NO debe romper la respuesta de la sincronizacion si el log falla. */
-async function recordRun(env, { status, source, result, error, duration_ms, changes }) {
+async function recordRun(env, { status, source, result, error, duration_ms, changes, triggered_by }) {
   const base = {
     apikey: env.supabase_service_role,
     Authorization: `Bearer ${env.supabase_service_role}`,
@@ -76,14 +76,21 @@ async function recordRun(env, { status, source, result, error, duration_ms, chan
   };
   const finished = new Date();
   const started = new Date(finished.getTime() - (duration_ms || 0));
+  const changesCount = (changes && changes.length) || 0;
   try {
+    const cfgPatch = {
+      last_run_at: finished.toISOString(), last_status: status,
+      last_result: result || null, last_source: source,
+      last_duration_ms: duration_ms ?? null,
+    };
+    // Solo las corridas MANUALES alimentan el cooldown del boton.
+    if (source === 'manual') {
+      cfgPatch.last_manual_run_at = finished.toISOString();
+      cfgPatch.last_manual_by = triggered_by ?? null;
+    }
     await fetch(`${env.supabase_url}/rest/v1/sync_config?id=eq.1`, {
       method: 'PATCH', headers: { ...base, Prefer: 'return=minimal' },
-      body: JSON.stringify({
-        last_run_at: finished.toISOString(), last_status: status,
-        last_result: result || null, last_source: source,
-        last_duration_ms: duration_ms ?? null,
-      }),
+      body: JSON.stringify(cfgPatch),
     });
     // Insertar la corrida y recuperar su id para enlazar los cambios.
     let runId = null;
@@ -93,6 +100,7 @@ async function recordRun(env, { status, source, result, error, duration_ms, chan
         started_at: started.toISOString(), finished_at: finished.toISOString(),
         status, source, result: result || null, error: error || null,
         duration_ms: duration_ms ?? null,
+        triggered_by: triggered_by ?? null, changes_count: changesCount,
       }),
     });
     if (runRes.ok) { const rows = await runRes.json(); runId = rows && rows[0] && rows[0].id; }
@@ -124,6 +132,32 @@ export async function onRequestPost({ request, env }) {
     `admin_users?id=eq.${encodeURIComponent(adminId)}&role=eq.superadmin&is_active=eq.true&select=id`)
     .catch(() => []);
   if (!admins.length) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+
+  // Cooldown anti-abuso del boton manual (no aplica al cron). Se valida en el
+  // servidor para que no se pueda saltar desde el cliente.
+  if (source === 'manual') {
+    let cfgRow = null;
+    try {
+      const rows = await sbFetch(env,
+        'sync_config?id=eq.1&select=manual_cooldown_value,manual_cooldown_unit,last_manual_run_at');
+      cfgRow = rows && rows[0];
+    } catch (_) { cfgRow = null; }
+    if (cfgRow && cfgRow.last_manual_run_at) {
+      const unitMs = { minutes: 60000, hours: 3600000, days: 86400000 };
+      const cdMs = (cfgRow.manual_cooldown_value || 0) * (unitMs[cfgRow.manual_cooldown_unit] || 60000);
+      if (cdMs > 0) {
+        const elapsed = Date.now() - new Date(cfgRow.last_manual_run_at).getTime();
+        if (elapsed < cdMs) {
+          const retryAt = new Date(new Date(cfgRow.last_manual_run_at).getTime() + cdMs).toISOString();
+          return json({
+            ok: false, error: 'cooldown',
+            message: 'Sincronización reciente. Espera antes de volver a intentar.',
+            retry_at: retryAt,
+          }, 429);
+        }
+      }
+    }
+  }
 
   // 2) Ejecutar la sincronizacion y registrar el resultado.
   const started = Date.now();
@@ -219,11 +253,11 @@ export async function onRequestPost({ request, env }) {
       subzones: subzones.size,
       concepts: concepts.size,
     };
-    await recordRun(env, { status: 'ok', source, result: synced, duration_ms: Date.now() - started, changes });
+    await recordRun(env, { status: 'ok', source, result: synced, duration_ms: Date.now() - started, changes, triggered_by: adminId });
     return json({ ok: true, synced });
   } catch (err) {
     await recordRun(env, { status: 'error', source, result: { error: err.message },
-      error: err.message, duration_ms: Date.now() - started });
+      error: err.message, duration_ms: Date.now() - started, triggered_by: adminId });
     return json({ ok: false, error: 'Error: ' + err.message }, 500);
   }
 }

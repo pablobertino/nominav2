@@ -51,8 +51,27 @@ export async function onRequestPost({ request, env }) {
 
     if (action === 'get') {
       const cfgRows = await sb(env, 'sync_config?id=eq.1&select=*');
-      const runs = await sb(env, 'sync_runs?select=*&order=started_at.desc&limit=8');
-      return json({ ok: true, config: (cfgRows && cfgRows[0]) || null, runs: runs || [] });
+      const runs = await sb(env, 'sync_runs?select=*&order=started_at.desc&limit=8') || [];
+      if (runs.length) {
+        const ids = runs.map(r => r.id).join(',');
+        // Cambios de cada corrida (para mostrar el detalle o "Sin cambios").
+        const changes = await sb(env,
+          `company_change?run_id=in.(${ids})&select=run_id,company_code,business_name,change_type,old_value,new_value&order=id.asc`) || [];
+        const byRun = {};
+        for (const c of changes) { (byRun[c.run_id] = byRun[c.run_id] || []).push(c); }
+        // Nombre de quien disparo (corridas manuales).
+        const adminIds = [...new Set(runs.map(r => r.triggered_by).filter(Boolean))];
+        const names = {};
+        if (adminIds.length) {
+          const admins = await sb(env, `admin_users?id=in.(${adminIds.join(',')})&select=id,username`) || [];
+          for (const a of admins) names[a.id] = a.username;
+        }
+        for (const r of runs) {
+          r.changes = byRun[r.id] || [];
+          r.triggered_by_name = r.triggered_by ? (names[r.triggered_by] || null) : null;
+        }
+      }
+      return json({ ok: true, config: (cfgRows && cfgRows[0]) || null, runs });
     }
 
     if (action === 'set') {
@@ -80,6 +99,17 @@ export async function onRequestPost({ request, env }) {
           } catch { return json({ ok: false, error: 'URL inválida (usa https://…).' }, 400); }
         }
         patch.endpoint_url = u === '' ? null : u.replace(/\/+$/, '');
+      }
+
+      if (body.manual_cooldown_value !== undefined) {
+        const v = parseInt(body.manual_cooldown_value, 10);
+        if (isNaN(v) || v < 0 || v > 999) return json({ ok: false, error: 'Límite inválido (0 a 999).' }, 400);
+        patch.manual_cooldown_value = v;
+      }
+      if (body.manual_cooldown_unit !== undefined) {
+        if (!['minutes', 'hours', 'days'].includes(body.manual_cooldown_unit))
+          return json({ ok: false, error: 'Unidad inválida.' }, 400);
+        patch.manual_cooldown_unit = body.manual_cooldown_unit;
       }
 
       if (!Object.keys(patch).length) return json({ ok: false, error: 'Nada que guardar.' }, 400);
