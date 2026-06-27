@@ -1418,7 +1418,10 @@ function openAxApiModal() {
     }
     if (!r || !r.ok) {
       res.className = 'wp-prev warn';
-      res.innerHTML = `⚠ ${esc((r && r.error) || 'No se pudo sincronizar con AX.')}`;
+      const msg = (r && r.error === 'cooldown')
+        ? (r.message || 'Esta empresa se sincronizo hace poco. Espera antes de volver a intentar.')
+        : ((r && r.error) || 'No se pudo sincronizar con AX.');
+      res.innerHTML = `⚠ ${esc(msg)}`;
       goB.disabled = false; goB.textContent = 'Reintentar';
       return;
     }

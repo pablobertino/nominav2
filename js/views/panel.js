@@ -68,6 +68,7 @@ const NAV = [
   ['quincenas', I.calendar, 'Quincenas'],
   ['documentos', I.docs, 'Documentos'],
   ['historial', I.history, 'Historial'],
+  ['rostersync', I.photo, 'Sinc. Personal'],
   ['equipo', I.team, 'Equipo', 'superonly'],
   ['permisos', I.shield, 'Permisos', 'superonly'],
   ['sync', I.sync, 'Sincronización', 'superonly'],
@@ -92,7 +93,7 @@ function shell(user) {
   const navItems = isCompany
     ? [['dashboard', I.grid, 'Inicio'], ['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['historial', I.history, 'Historial']]
     : isEditorPersonal
-      ? NAV.filter(n => n[0] === 'dashboard' || n[0] === 'tiendas')
+      ? NAV.filter(n => ['dashboard', 'tiendas', 'rostersync'].includes(n[0]))
       : NAV.filter(n => n[3] !== 'superonly' || isSuper);
 
   return `
@@ -111,7 +112,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.29</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.30</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1697,6 +1698,80 @@ function viewSoon(title, msg) {
     <div class="card"><p class="muted" style="margin:0">${msg}</p></div>`;
 }
 
+/* ---------- Modal de detalle de cambios (compartido) ----------
+   Lo usan la grilla de empresas (Sincronizacion) y la de personal. */
+function syncChangesModal(title, bodyHtml) {
+  openModal(`
+    <div class="modal-head"><span>${escHtml(title)}</span><button class="modal-x" id="mX">✕</button></div>
+    <div style="max-height:60vh;overflow:auto;font-size:13px;line-height:1.8">${bodyHtml}</div>
+    <div class="modal-actions"><button class="btn" id="mCancel">Cerrar</button></div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+}
+
+/* ---------- VISTA: SINC. PERSONAL (admin / editor / superadmin) ----------
+   Bitacora de sincronizaciones de personal (roster) con alcance por empresa.
+   El detalle de cambios se carga a demanda y se muestra en un modal. */
+async function rosterRunsApi(payload) {
+  return fetch('/api/roster-runs', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then(r => r.json());
+}
+function rosterChangeLine(c) {
+  const ced = c.id_number ? ` <span class="muted">(${escHtml(c.id_number)})</span>` : '';
+  const who = `<b>${escHtml(c.worker_name || c.id_number || '—')}</b>${c.worker_name && c.id_number ? ced : ''}`;
+  if (c.change_type === 'new') return `<div>➕ Ingresó ${who}${c.new_value ? ` — ${escHtml(c.new_value)}` : ''}</div>`;
+  if (c.change_type === 'removed') return `<div>➖ Salió de la lista ${who}</div>`;
+  return `<div>🔄 ${who}: ${escHtml(c.old_value || '—')} → <b>${escHtml(c.new_value || '—')}</b></div>`;
+}
+async function viewRosterSync(user) {
+  $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Sinc. Personal</h1><p>Sincronizaciones de personal desde AX</p></div></div><div class="pnl-loading">Cargando…</div>`;
+  const res = await rosterRunsApi({ action: 'get', adminId: user.id });
+  if (!res.ok) {
+    $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Sinc. Personal</h1></div></div><div class="card"><p class="muted" style="margin:0">Error: ${escHtml(res.error || 'no se pudo cargar')}</p></div>`;
+    return;
+  }
+  const runs = res.runs || [];
+  const originLabel = (r) => (r.source === 'bulk' ? 'Todo' : 'Manual') + (r.triggered_by_name ? ' · ' + escHtml(r.triggered_by_name) : '');
+  const resultCell = (r) => {
+    if (r.status !== 'ok') return `<span style="color:var(--danger)">${escHtml((r.error || '').slice(0, 60))}</span>`;
+    const s = r.result || {};
+    return `${s.total != null ? s.total : '?'} pers.${s.active != null ? ` · ${s.active} act` : ''}`;
+  };
+  const changesCell = (r) => {
+    if (!r.changes_count) return '<span class="muted">Sin cambios</span>';
+    return `<button class="rs-chg" data-run="${r.id}" style="background:none;border:0;color:var(--brand,#2563eb);cursor:pointer;padding:0;font:inherit;text-decoration:underline">${r.changes_count} cambio${r.changes_count === 1 ? '' : 's'}</button>`;
+  };
+  const rows = runs.map(r => `<tr>
+    <td>${fmtDeadline(r.finished_at || r.started_at)}</td>
+    <td><b>${escHtml(r.company_code)}</b>${r.business_name ? `<br><span class="muted" style="font-size:11px">${escHtml(r.business_name)}</span>` : ''}</td>
+    <td>${originLabel(r)}</td>
+    <td>${r.status === 'ok' ? '<span class="pill pill-open">OK</span>' : '<span class="pill pill-closed">Error</span>'}</td>
+    <td>${resultCell(r)}</td>
+    <td>${changesCell(r)}</td>
+  </tr>`).join('') || '<tr><td colspan="6" class="empty">Aún no hay sincronizaciones de personal.</td></tr>';
+
+  $('#pnlMain').innerHTML = `
+    <div class="pnl-head"><div><h1>Sinc. Personal</h1><p>Últimas sincronizaciones de personal desde AX${runs.length ? ` · ${runs.length}` : ''}</p></div></div>
+    <div class="card">
+      <table class="cfg-cat-table"><thead><tr><th>Fecha</th><th>Empresa</th><th>Origen</th><th>Estado</th><th>Resultado</th><th>Cambios</th></tr></thead><tbody>${rows}</tbody></table>
+      <p class="muted" style="font-size:12px;margin:12px 2px 0">Muestra las sincronizaciones de personal de tus empresas (las tuyas y las que hizo cualquiera sobre ellas). Haz clic en los cambios para ver el detalle.</p>
+    </div>`;
+
+  $('#pnlMain').querySelectorAll('.rs-chg').forEach(btn =>
+    btn.addEventListener('click', async () => {
+      const run = runs.find(x => String(x.id) === btn.dataset.run);
+      btn.disabled = true;
+      const d = await rosterRunsApi({ action: 'changes', adminId: user.id, run_id: btn.dataset.run });
+      btn.disabled = false;
+      if (!d.ok) { alert(d.error || 'No se pudo cargar el detalle.'); return; }
+      const bodyHtml = (d.changes && d.changes.length) ? d.changes.map(rosterChangeLine).join('') : '<p class="muted" style="margin:0">Sin cambios.</p>';
+      const title = `Cambios · ${run ? run.company_code : ''}${run && run.business_name ? ' — ' + run.business_name : ''}`;
+      syncChangesModal(title, bodyHtml);
+    }));
+}
+
 /* ---------- VISTA: SYNC ----------
    Sincronizacion del catalogo de empresas (AX -> Supabase):
    - ejecucion manual ("Sincronizar ahora"),
@@ -1772,6 +1847,7 @@ async function viewSync(user) {
       + `<div style="margin-top:8px;color:var(--danger)">${escH(err)}</div>`;
   };
 
+  const runChangesMap = {};   // id -> [changes] (para el modal de detalle)
   const changeLine = (c) => {
     const name = c.business_name ? ` — ${escH(c.business_name)}` : '';
     if (c.change_type === 'new') return `<div>➕ Nueva empresa <b>${escH(c.company_code)}</b>${name}</div>`;
@@ -1785,16 +1861,14 @@ async function viewSync(user) {
   const runsHtml = (runs) => {
     if (!runs || !runs.length) return '';
     const rows = runs.map(r => {
+      runChangesMap[r.id] = r.changes || [];
       const when = fmtDeadline(r.finished_at || r.started_at);
       const origin = r.source === 'cron' ? 'Automática' : `Manual${r.triggered_by_name ? ' · ' + escH(r.triggered_by_name) : ''}`;
       const dur = r.duration_ms != null ? `${(r.duration_ms / 1000).toFixed(1)} s` : '—';
       const est = r.status === 'ok' ? '<span class="pill pill-open">OK</span>' : '<span class="pill pill-closed">Error</span>';
       const result = r.status === 'ok' ? changesCell(r)
         : `<span style="color:var(--danger)">${escH((r.error || '').slice(0, 70))}</span>`;
-      const detailRow = (r.changes && r.changes.length)
-        ? `<tr class="sync-chg-detail" id="chg-${r.id}" hidden><td colspan="5" style="font-size:12px;line-height:1.7;background:var(--bg-soft,#f8fafc)">${r.changes.map(changeLine).join('')}</td></tr>`
-        : '';
-      return `<tr><td>${when}</td><td>${origin}</td><td>${est}</td><td>${result}</td><td style="text-align:right">${dur}</td></tr>${detailRow}`;
+      return `<tr><td>${when}</td><td>${origin}</td><td>${est}</td><td>${result}</td><td style="text-align:right">${dur}</td></tr>`;
     }).join('');
     return `<div class="card">
       <h3 style="margin:0 0 10px;font-size:15px">Últimas ejecuciones</h3>
@@ -1804,8 +1878,9 @@ async function viewSync(user) {
   const wireRunToggles = () => {
     document.querySelectorAll('.sync-chg-toggle').forEach(btn => {
       btn.addEventListener('click', () => {
-        const row = document.getElementById('chg-' + btn.dataset.run);
-        if (row) row.hidden = !row.hidden;
+        const cs = runChangesMap[btn.dataset.run] || [];
+        if (!cs.length) return;
+        syncChangesModal('Cambios de la sincronización', cs.map(changeLine).join(''));
       });
     });
   };
@@ -2955,6 +3030,7 @@ async function navigate(view, user) {
   else if (view === 'equipo') viewEquipo(user);
   else if (view === 'permisos') viewPermisos(user);
   else if (view === 'sync') viewSync(user);
+  else if (view === 'rostersync') viewRosterSync(user);
   else if (view === 'config') viewConfig(user);
   else if (view === 'historial') renderHistory(user);
   else if (view === 'documentos') renderPersonnelDocs(user, null);
