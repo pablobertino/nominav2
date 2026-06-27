@@ -67,33 +67,43 @@ async function upsert(env, table, rows) {
 
 /** Registra el resultado de una corrida (manual o cron) en sync_config +
    sync_runs. NO debe romper la respuesta de la sincronizacion si el log falla. */
-async function recordRun(env, { status, source, result, error, duration_ms }) {
-  const hdr = {
+async function recordRun(env, { status, source, result, error, duration_ms, changes }) {
+  const base = {
     apikey: env.supabase_service_role,
     Authorization: `Bearer ${env.supabase_service_role}`,
     'Content-Profile': 'nomina_v2',
     'Content-Type': 'application/json',
-    Prefer: 'return=minimal',
   };
   const finished = new Date();
   const started = new Date(finished.getTime() - (duration_ms || 0));
   try {
     await fetch(`${env.supabase_url}/rest/v1/sync_config?id=eq.1`, {
-      method: 'PATCH', headers: hdr,
+      method: 'PATCH', headers: { ...base, Prefer: 'return=minimal' },
       body: JSON.stringify({
         last_run_at: finished.toISOString(), last_status: status,
         last_result: result || null, last_source: source,
         last_duration_ms: duration_ms ?? null,
       }),
     });
-    await fetch(`${env.supabase_url}/rest/v1/sync_runs`, {
-      method: 'POST', headers: hdr,
+    // Insertar la corrida y recuperar su id para enlazar los cambios.
+    let runId = null;
+    const runRes = await fetch(`${env.supabase_url}/rest/v1/sync_runs`, {
+      method: 'POST', headers: { ...base, Prefer: 'return=representation' },
       body: JSON.stringify({
         started_at: started.toISOString(), finished_at: finished.toISOString(),
         status, source, result: result || null, error: error || null,
         duration_ms: duration_ms ?? null,
       }),
     });
+    if (runRes.ok) { const rows = await runRes.json(); runId = rows && rows[0] && rows[0].id; }
+
+    // Registrar los cambios detectados (empresa nueva / cambio de estatus).
+    if (changes && changes.length) {
+      await fetch(`${env.supabase_url}/rest/v1/company_change`, {
+        method: 'POST', headers: { ...base, Prefer: 'return=minimal' },
+        body: JSON.stringify(changes.map(c => ({ ...c, run_id: runId }))),
+      });
+    }
   } catch (_) { /* el log no debe afectar el resultado de la sync */ }
 }
 
@@ -172,6 +182,31 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
+    // Detectar cambios (empresa nueva / cambio de estatus) comparando contra
+    // el estado actual ANTES del upsert. En la primera carga (sin empresas
+    // previas) no se generan eventos: serian ruido (todas "nuevas").
+    let changes = [];
+    try {
+      const existing = await sbFetch(env, 'companies?select=company_code,status,business_name');
+      if (existing && existing.length) {
+        const prev = new Map(existing.map(c => [c.company_code, c]));
+        for (const row of companyRows) {
+          const old = prev.get(row.company_code);
+          if (!old) {
+            changes.push({ company_code: row.company_code, business_name: row.business_name || null,
+              change_type: 'new', old_value: null, new_value: row.status || null });
+          } else {
+            const a = (old.status || '').trim(), b = (row.status || '').trim();
+            if (a !== b && (a || b)) {
+              changes.push({ company_code: row.company_code,
+                business_name: row.business_name || old.business_name || null,
+                change_type: 'status', old_value: old.status || null, new_value: row.status || null });
+            }
+          }
+        }
+      }
+    } catch (_) { changes = []; }   // si falla la deteccion, no rompe la sync
+
     // 4) Upsert en orden (catálogos antes que companies por las FK)
     await upsert(env, 'zones', [...zones.values()]);
     await upsert(env, 'subzones', [...subzones.values()]);
@@ -184,7 +219,7 @@ export async function onRequestPost({ request, env }) {
       subzones: subzones.size,
       concepts: concepts.size,
     };
-    await recordRun(env, { status: 'ok', source, result: synced, duration_ms: Date.now() - started });
+    await recordRun(env, { status: 'ok', source, result: synced, duration_ms: Date.now() - started, changes });
     return json({ ok: true, synced });
   } catch (err) {
     await recordRun(env, { status: 'error', source, result: { error: err.message },

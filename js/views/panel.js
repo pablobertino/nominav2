@@ -82,6 +82,7 @@ function shell(user) {
   const isCompany = user.kind === 'company';
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   const isEditorPersonal = user.kind === 'admin' && user.role === 'editor_personal';
+  const showBell = user.kind === 'admin' && (user.role === 'superadmin' || user.role === 'admin');
   const nameLabel = isCompany ? user.companyCode : (user.name || user.username);
   const roleLabel = isCompany ? 'tienda' : (ROLE_LABELS[user.role] || user.role);
   const initials = (nameLabel || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -95,11 +96,22 @@ function shell(user) {
       : NAV.filter(n => n[3] !== 'superonly' || isSuper);
 
   return `
+  <style>
+    .pnl-topbar-right{position:relative;display:flex;align-items:center;gap:10px}
+    .pnl-bell{position:relative;background:none;border:0;cursor:pointer;color:var(--muted);padding:6px;border-radius:8px;display:flex;align-items:center}
+    .pnl-bell:hover{background:var(--bg-soft,#f1f2f4);color:var(--text,#0f172a)}
+    .pnl-bell-badge{position:absolute;top:-1px;right:-1px;min-width:16px;height:16px;padding:0 4px;border-radius:9px;background:#e11d48;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1}
+    .pnl-bell-pop{position:absolute;top:calc(100% + 8px);right:0;width:340px;max-width:calc(100vw - 24px);max-height:70vh;overflow:auto;background:var(--card,#fff);border:1px solid var(--border,#e5e7eb);border-radius:12px;box-shadow:0 12px 32px rgba(15,23,42,.16);z-index:60}
+    .pnl-bell-pop h4{margin:0;padding:12px 14px;border-bottom:1px solid var(--border,#e5e7eb);font-size:13px;position:sticky;top:0;background:var(--card,#fff)}
+    .pnl-bell-item{padding:10px 14px;border-bottom:1px solid var(--border,#f1f2f4);font-size:12.5px;line-height:1.45}
+    .pnl-bell-item:last-child{border-bottom:0}
+    .pnl-bell-empty{padding:18px 14px;color:var(--muted);font-size:12.5px;text-align:center}
+  </style>
   <div class="pnl-layout">
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.26</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.27</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -113,10 +125,17 @@ function shell(user) {
           <div class="pnl-avatar" id="pnlAvatar">${initials}</div>
           <div class="pnl-uinfo"><div class="pnl-uname">${nameLabel}</div><div class="pnl-urole">${roleLabel}</div></div>
         </div>
-        <button id="logoutBtn" class="pnl-logout" title="Cerrar sesión">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
-          Salir
-        </button>
+        <div class="pnl-topbar-right">
+          ${showBell ? `<button class="pnl-bell" id="pnlBell" title="Novedades de empresas" aria-label="Novedades">
+            <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
+            <span class="pnl-bell-badge" id="pnlBellBadge" style="display:none">0</span>
+          </button>
+          <div class="pnl-bell-pop" id="pnlBellPop" hidden></div>` : ''}
+          <button id="logoutBtn" class="pnl-logout" title="Cerrar sesión">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4M16 17l5-5-5-5M21 12H9"/></svg>
+            Salir
+          </button>
+        </div>
       </header>
       <main class="pnl-main" id="pnlMain"></main>
     </div>
@@ -140,6 +159,80 @@ async function loadAvatar(email) {
     img.src = url;
     img.alt = '';
   } catch { /* navegador sin crypto.subtle: iniciales */ }
+}
+
+/* ---------- Campanita de novedades de empresas ----------
+   Muestra empresas nuevas y cambios de estatus detectados en cada
+   sincronizacion. El contador (sin leer) es por administrador. */
+let BELL_ITEMS = [];
+let BELL_INT = null;
+function escHtml(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+function bellItemHtml(c) {
+  const when = fmtDeadline(c.detected_at);
+  const name = c.business_name ? ` — ${escHtml(c.business_name)}` : '';
+  if (c.change_type === 'new') {
+    return `<div class="pnl-bell-item">➕ <b>Nueva empresa</b> ${escHtml(c.company_code)}${name}`
+      + `<div class="muted" style="font-size:11px;margin-top:2px">${when}</div></div>`;
+  }
+  return `<div class="pnl-bell-item">🔄 <b>${escHtml(c.company_code)}</b>${name}`
+    + `<div style="margin-top:2px">Estatus: ${escHtml(c.old_value || '—')} → <b>${escHtml(c.new_value || '—')}</b></div>`
+    + `<div class="muted" style="font-size:11px;margin-top:2px">${when}</div></div>`;
+}
+function bellRender() {
+  const pop = document.getElementById('pnlBellPop');
+  if (!pop) return;
+  const body = BELL_ITEMS.length
+    ? BELL_ITEMS.map(bellItemHtml).join('')
+    : '<div class="pnl-bell-empty">Sin novedades de empresas.</div>';
+  pop.innerHTML = `<h4>Novedades de empresas</h4>${body}`;
+}
+async function bellLoad(user) {
+  const badge = document.getElementById('pnlBellBadge');
+  if (!badge) return;
+  try {
+    const r = await fetch('/api/notifications', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'get', adminId: user.id }),
+    }).then(x => x.json());
+    if (!r.ok) return;
+    BELL_ITEMS = r.items || [];
+    const n = r.unread || 0;
+    if (n > 0) { badge.textContent = n > 99 ? '99+' : String(n); badge.style.display = 'flex'; }
+    else { badge.style.display = 'none'; }
+    const pop = document.getElementById('pnlBellPop');
+    if (pop && !pop.hidden) bellRender();
+  } catch (_) { /* sin conexion: deja el badge como este */ }
+}
+function initBell(user) {
+  const bell = document.getElementById('pnlBell');
+  const pop = document.getElementById('pnlBellPop');
+  if (!bell || !pop) return;
+  bell.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    const opening = pop.hidden;
+    pop.hidden = !pop.hidden;
+    if (opening) {
+      bellRender();
+      const badge = document.getElementById('pnlBellBadge');
+      if (badge && badge.style.display !== 'none') {
+        badge.style.display = 'none';
+        try {
+          await fetch('/api/notifications', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action: 'seen', adminId: user.id }),
+          });
+        } catch (_) { /* nada */ }
+      }
+    }
+  });
+  document.addEventListener('click', (e) => {
+    if (!pop.hidden && !pop.contains(e.target) && !bell.contains(e.target)) pop.hidden = true;
+  });
+  bellLoad(user);
+  if (BELL_INT) clearInterval(BELL_INT);
+  BELL_INT = setInterval(() => bellLoad(user), 5 * 60 * 1000);
 }
 
 /* ---------- helpers de render ---------- */
@@ -1736,6 +1829,7 @@ async function viewSync(user) {
       $('#syncLast').innerHTML = lastRunHtml(fresh.config || {});
       $('#syncRuns').innerHTML = runsHtml(fresh.runs);
     }
+    bellLoad(user); // una sync manual puede haber generado novedades
     btn.disabled = false;
   });
 }
@@ -2940,6 +3034,8 @@ export function renderPanel() {
   $('#logoutBtn').addEventListener('click', () => { clearSession(); go('/login'); });
   document.querySelectorAll('#pnlNav button').forEach(b =>
     b.addEventListener('click', () => navigate(b.dataset.view, user)));
+  // Campanita de novedades (solo admins; si no existe el boton, no hace nada).
+  initBell(user);
   // Landing unificado: ambos arrancan en el Dashboard (Inicio).
   navigate('dashboard', user);
 }
