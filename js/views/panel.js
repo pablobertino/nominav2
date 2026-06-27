@@ -99,7 +99,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.25</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.26</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -1593,33 +1593,150 @@ function viewSoon(title, msg) {
     <div class="card"><p class="muted" style="margin:0">${msg}</p></div>`;
 }
 
-/* ---------- VISTA: SYNC ---------- */
-function viewSync(user) {
+/* ---------- VISTA: SYNC ----------
+   Sincronizacion del catalogo de empresas (AX -> Supabase):
+   - ejecucion manual ("Sincronizar ahora"),
+   - programacion automatica (cron en Supabase que revisa cada ~15 min y
+     ejecuta segun la frecuencia elegida aqui),
+   - estado de la ultima ejecucion (cuando y con que resultado).
+   El cron y el boton manual llaman al MISMO endpoint /api/sync-companies;
+   cada corrida queda registrada en nomina_v2.sync_config / sync_runs. */
+const SYNC_FREQ_LABEL = {
+  hourly: 'Cada hora', '6h': 'Cada 6 horas', '12h': 'Cada 12 horas',
+  daily: 'Una vez al día', '2d': 'Cada 2 días',
+};
+async function syncCfgApi(payload) {
+  return fetch('/api/sync-config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then(r => r.json());
+}
+
+async function viewSync(user) {
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
-  $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Sincronización</h1><p>Catálogo AX → Supabase</p></div></div>
-    <div class="card">
-      ${isSuper ? `
-      <div class="sync-row">
-        <div class="muted" id="syncStatus">Vuelca empresas, zonas, subzonas y conceptos desde la API.</div>
-        <button class="btn btn-primary" id="syncBtn">${I.sync} Sincronizar ahora</button>
-      </div>` : `<p class="muted" style="margin:0">Solo el superadmin puede sincronizar.</p>`}
-    </div>`;
+  $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Sincronización</h1><p>Catálogo de empresas · AX → Supabase</p></div></div>`
+    + (isSuper ? `<div class="pnl-loading">Cargando…</div>`
+               : `<div class="card"><p class="muted" style="margin:0">Solo el superadmin puede sincronizar.</p></div>`);
   if (!isSuper) return;
+
+  const escH = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  const lastRunHtml = (cfg) => {
+    if (!cfg || !cfg.last_run_at) return '<span class="muted">Aún no se ha ejecutado.</span>';
+    const when = fmtDeadline(cfg.last_run_at);
+    const src = cfg.last_source === 'cron' ? 'automática' : 'manual';
+    const dur = cfg.last_duration_ms != null ? ` · ${(cfg.last_duration_ms / 1000).toFixed(1)} s` : '';
+    if (cfg.last_status === 'ok') {
+      const r = cfg.last_result || {};
+      return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="pill pill-open">✅ OK</span><b>${when}</b><span class="muted">${src}${dur}</span></div>`
+        + `<div style="margin-top:8px">${r.companies || 0} empresas · ${r.zones || 0} zonas · ${r.subzones || 0} subzonas · ${r.concepts || 0} conceptos</div>`;
+    }
+    const err = (cfg.last_result && cfg.last_result.error) || 'error desconocido';
+    return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="pill pill-closed">❌ Error</span><b>${when}</b><span class="muted">${src}${dur}</span></div>`
+      + `<div style="margin-top:8px;color:var(--danger)">${escH(err)}</div>`;
+  };
+
+  const runsHtml = (runs) => {
+    if (!runs || !runs.length) return '';
+    const rows = runs.map(r => {
+      const when = fmtDeadline(r.finished_at || r.started_at);
+      const src = r.source === 'cron' ? 'auto' : 'manual';
+      const dur = r.duration_ms != null ? `${(r.duration_ms / 1000).toFixed(1)} s` : '—';
+      const est = r.status === 'ok' ? '<span class="pill pill-open">OK</span>' : '<span class="pill pill-closed">Error</span>';
+      const detail = r.status === 'ok'
+        ? `${(r.result && r.result.companies) || 0} empresas`
+        : `<span style="color:var(--danger)">${escH((r.error || '').slice(0, 70))}</span>`;
+      return `<tr><td>${when}</td><td>${src}</td><td>${est}</td><td>${detail}</td><td style="text-align:right">${dur}</td></tr>`;
+    }).join('');
+    return `<div class="card">
+      <h3 style="margin:0 0 10px;font-size:15px">Últimas ejecuciones</h3>
+      <table class="cfg-cat-table"><thead><tr><th>Fecha</th><th>Origen</th><th>Estado</th><th>Resultado</th><th style="text-align:right">Duración</th></tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+  };
+
+  const cfgRes = await syncCfgApi({ action: 'get', adminId: user.id });
+  if (!cfgRes.ok) {
+    $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Sincronización</h1></div></div><div class="card"><p class="muted" style="margin:0">Error: ${escH(cfgRes.error || 'no se pudo cargar')}</p></div>`;
+    return;
+  }
+  const cfg = cfgRes.config || { enabled: true, frequency: 'daily', daily_hour: 6 };
+
+  const hourOpts = Array.from({ length: 24 }, (_, h) =>
+    `<option value="${h}" ${cfg.daily_hour === h ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('');
+  const freqOpts = Object.entries(SYNC_FREQ_LABEL).map(([v, l]) =>
+    `<option value="${v}" ${cfg.frequency === v ? 'selected' : ''}>${l}</option>`).join('');
+  const showHour = (cfg.frequency === 'daily' || cfg.frequency === '2d');
+
+  $('#pnlMain').innerHTML = `
+    <div class="pnl-head"><div><h1>Sincronización</h1><p>Catálogo de empresas · AX → Supabase</p></div>
+      <div class="head-actions"><button class="btn btn-primary" id="syncBtn">${I.sync} Sincronizar ahora</button></div>
+    </div>
+
+    <div class="card">
+      <h3 style="margin:0 0 10px;font-size:15px">Última sincronización</h3>
+      <div id="syncLast">${lastRunHtml(cfg)}</div>
+      <p class="muted" style="font-size:12px;margin:12px 0 0">Vuelca empresas, zonas, subzonas y conceptos desde la API de AX. Es un upsert: actualiza lo que viene, no borra lo ausente.</p>
+    </div>
+
+    <div class="card">
+      <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">Programación automática</h3><span class="cfg-saved" id="syncSaved">✓ Guardado</span></div>
+      <p class="cfg-desc" style="margin:0 0 14px">El sistema revisa cada ~15 minutos y ejecuta la sincronización cuando corresponde según la frecuencia. Por defecto, una vez al día.</p>
+      <div class="cfg-grid3">
+        <div><label class="flabel">Estado</label>
+          <select id="syncEnabled"><option value="1" ${cfg.enabled ? 'selected' : ''}>Activa</option><option value="0" ${!cfg.enabled ? 'selected' : ''}>Inactiva</option></select></div>
+        <div><label class="flabel">Frecuencia</label><select id="syncFreq">${freqOpts}</select></div>
+        <div id="syncHourWrap" style="${showHour ? '' : 'display:none'}"><label class="flabel">Hora (Caracas)</label><select id="syncHour">${hourOpts}</select></div>
+      </div>
+      <details style="margin-top:14px">
+        <summary class="muted" style="cursor:pointer;font-size:12.5px">Opciones avanzadas</summary>
+        <div style="margin-top:10px"><label class="flabel">URL del portal <span class="muted">(donde corre /api/sync-companies)</span></label>
+          <input type="text" id="syncUrl" value="${escH(cfg.endpoint_url || '')}" placeholder="https://nominav2.pages.dev">
+          <p class="muted" style="font-size:11.5px;margin:6px 0 0">El cron llama a esta URL para ejecutar la sincronización. Debe ser la dirección pública del portal en producción. Si se deja vacío, usa el valor por defecto.</p></div>
+      </details>
+      <div class="cfg-foot"><button class="btn btn-primary" id="syncSave">Guardar programación</button></div>
+    </div>
+
+    <div id="syncRuns">${runsHtml(cfgRes.runs)}</div>`;
+
+  // Mostrar/ocultar la hora según la frecuencia elegida
+  $('#syncFreq').addEventListener('change', (e) => {
+    const sh = (e.target.value === 'daily' || e.target.value === '2d');
+    $('#syncHourWrap').style.display = sh ? '' : 'none';
+  });
+
+  // Guardar programación
+  $('#syncSave').addEventListener('click', async () => {
+    const btn = $('#syncSave'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Guardando…';
+    const r = await syncCfgApi({
+      action: 'set', adminId: user.id,
+      enabled: $('#syncEnabled').value === '1',
+      frequency: $('#syncFreq').value,
+      daily_hour: parseInt($('#syncHour').value, 10),
+      endpoint_url: $('#syncUrl').value.trim(),
+    });
+    btn.disabled = false; btn.textContent = orig;
+    if (!r.ok) { alert(r.error || 'No se pudo guardar.'); return; }
+    const sv = $('#syncSaved'); if (sv) { sv.style.display = 'inline'; setTimeout(() => sv.style.display = 'none', 1800); }
+  });
+
+  // Sincronizar ahora (manual) -> relee la config para mostrar el resultado real
   $('#syncBtn').addEventListener('click', async () => {
-    const st = $('#syncStatus'), btn = $('#syncBtn');
-    st.textContent = 'Sincronizando…'; btn.disabled = true;
+    const btn = $('#syncBtn'); const last = $('#syncLast');
+    btn.disabled = true; last.innerHTML = '<span class="muted">Sincronizando…</span>';
     try {
       const res = await fetch('/api/sync-companies', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ adminId: user.id }),
+        body: JSON.stringify({ adminId: user.id, source: 'manual' }),
       });
       const d = await res.json();
-      if (!d.ok) throw new Error(d.error);
-      st.textContent = `✅ ${d.synced.companies} empresas, ${d.synced.zones} zonas, ${d.synced.subzones} subzonas, ${d.synced.concepts} conceptos.`;
-      CATALOG = null; // forzar recarga al volver a Tiendas
-    } catch (e) { st.textContent = '❌ ' + e.message; }
-    finally { btn.disabled = false; }
+      if (d.ok) CATALOG = null; // forzar recarga al volver a Empresas
+    } catch (e) { /* el detalle real se lee del registro abajo */ }
+    const fresh = await syncCfgApi({ action: 'get', adminId: user.id });
+    if (fresh.ok) {
+      $('#syncLast').innerHTML = lastRunHtml(fresh.config || {});
+      $('#syncRuns').innerHTML = runsHtml(fresh.runs);
+    }
+    btn.disabled = false;
   });
 }
 

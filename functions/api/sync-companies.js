@@ -65,20 +65,60 @@ async function upsert(env, table, rows) {
   }
 }
 
+/** Registra el resultado de una corrida (manual o cron) en sync_config +
+   sync_runs. NO debe romper la respuesta de la sincronizacion si el log falla. */
+async function recordRun(env, { status, source, result, error, duration_ms }) {
+  const hdr = {
+    apikey: env.supabase_service_role,
+    Authorization: `Bearer ${env.supabase_service_role}`,
+    'Content-Profile': 'nomina_v2',
+    'Content-Type': 'application/json',
+    Prefer: 'return=minimal',
+  };
+  const finished = new Date();
+  const started = new Date(finished.getTime() - (duration_ms || 0));
+  try {
+    await fetch(`${env.supabase_url}/rest/v1/sync_config?id=eq.1`, {
+      method: 'PATCH', headers: hdr,
+      body: JSON.stringify({
+        last_run_at: finished.toISOString(), last_status: status,
+        last_result: result || null, last_source: source,
+        last_duration_ms: duration_ms ?? null,
+      }),
+    });
+    await fetch(`${env.supabase_url}/rest/v1/sync_runs`, {
+      method: 'POST', headers: hdr,
+      body: JSON.stringify({
+        started_at: started.toISOString(), finished_at: finished.toISOString(),
+        status, source, result: result || null, error: error || null,
+        duration_ms: duration_ms ?? null,
+      }),
+    });
+  } catch (_) { /* el log no debe afectar el resultado de la sync */ }
+}
+
 export async function onRequestPost({ request, env }) {
-  // 1) Validar que el llamador es superadmin activo
-  let adminId;
-  try { ({ adminId } = await request.json()); }
-  catch { return json({ ok: false, error: 'Solicitud inválida.' }, 400); }
+  // 1) Validar que el llamador es superadmin activo. Acepta { source } para
+  //    distinguir corridas manuales (UI) de automaticas (cron via pg_net).
+  let adminId, source = 'manual';
+  try {
+    const body = await request.json();
+    adminId = body.adminId;
+    source = body.source === 'cron' ? 'cron' : 'manual';
+  } catch { return json({ ok: false, error: 'Solicitud inválida.' }, 400); }
 
   if (!adminId) return json({ ok: false, error: 'No autorizado.' }, 401);
 
-  try {
-    const admins = await sbFetch(env,
-      `admin_users?id=eq.${encodeURIComponent(adminId)}&role=eq.superadmin&is_active=eq.true&select=id`);
-    if (!admins.length) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+  // Auth FUERA del registro de corridas (un fallo de auth no es una corrida).
+  const admins = await sbFetch(env,
+    `admin_users?id=eq.${encodeURIComponent(adminId)}&role=eq.superadmin&is_active=eq.true&select=id`)
+    .catch(() => []);
+  if (!admins.length) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
 
-    // 2) Traer empresas de la API de AX
+  // 2) Ejecutar la sincronizacion y registrar el resultado.
+  const started = Date.now();
+  try {
+    // Traer empresas de la API de AX
     const apiRes = await fetch(AX_API, {
       headers: { Accept: 'application/json', 'X-API-Key': env.canaima_apikey },
     });
@@ -138,16 +178,17 @@ export async function onRequestPost({ request, env }) {
     await upsert(env, 'concepts', [...concepts.values()]);
     await upsert(env, 'companies', companyRows);
 
-    return json({
-      ok: true,
-      synced: {
-        companies: companyRows.length,
-        zones: zones.size,
-        subzones: subzones.size,
-        concepts: concepts.size,
-      },
-    });
+    const synced = {
+      companies: companyRows.length,
+      zones: zones.size,
+      subzones: subzones.size,
+      concepts: concepts.size,
+    };
+    await recordRun(env, { status: 'ok', source, result: synced, duration_ms: Date.now() - started });
+    return json({ ok: true, synced });
   } catch (err) {
+    await recordRun(env, { status: 'error', source, result: { error: err.message },
+      error: err.message, duration_ms: Date.now() - started });
     return json({ ok: false, error: 'Error: ' + err.message }, 500);
   }
 }
