@@ -324,7 +324,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   // la lista, abre la tarjeta del trabajador indicado por cedula.
   if (opts && opts.openCed) {
     const target = STATE.workers.find(x => String(x.id_number) === String(opts.openCed));
-    if (target) openFicha(String(opts.openCed));
+    if (target) { STATE.fichaDirect = true; openFicha(String(opts.openCed)); }
   }
 }
 
@@ -957,7 +957,7 @@ function wireFicha(host, w) {
     paintGrid();
   }
 
-  q('#ffBack').addEventListener('click', backToGrid);
+  q('#ffBack').addEventListener('click', fichaBack);
   q('#ffEdit').addEventListener('click', toEdit);
   q('#ffCancel').addEventListener('click', () => openFicha(w.id_number));
   q('#ffSave').addEventListener('click', save);
@@ -970,6 +970,14 @@ function backToGrid() {
   $('#wpGridView').style.display = '';
   CUR = null;
   window.scrollTo(0, 0);
+}
+
+/* "Volver" de la ficha: si se entro DIRECTO a la ficha (ej. desde Buscar
+   personal), regresa al origen (onExit, la misma busqueda). Si se entro por el
+   grid de la empresa, vuelve a ese grid. */
+function fichaBack() {
+  if (STATE && STATE.fichaDirect && STATE.onExit) { STATE.onExit(); return; }
+  backToGrid();
 }
 
 /* ===================== LIGHTBOX (foto grande + descargar) ===================== */

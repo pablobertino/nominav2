@@ -57,9 +57,21 @@ export async function onRequestPost({ request, env }) {
       if (q.length < 2) return json({ ok: true, rows: [], short: true });
       // Si el admin no tiene empresas en su alcance, no hay nada que buscar.
       if (admin.codes !== null && !admin.codes.length) return json({ ok: true, rows: [] });
+      // Filtros opcionales: sexo (M/F) y rango de edad.
+      const gender = (body.gender === 'M' || body.gender === 'F') ? body.gender : null;
+      const toAge = v => {
+        if (v === '' || v === null || v === undefined) return null;
+        const n = parseInt(v, 10);
+        return Number.isFinite(n) && n >= 0 && n <= 120 ? n : null;
+      };
+      const ageMin = toAge(body.age_min);
+      const ageMax = toAge(body.age_max);
       const rows = await sb(env, 'rpc/personnel_search', {
         method: 'POST',
-        body: JSON.stringify({ p_codes: admin.codes, p_q: q, p_limit: 80 }),
+        body: JSON.stringify({
+          p_codes: admin.codes, p_q: q,
+          p_gender: gender, p_age_min: ageMin, p_age_max: ageMax, p_limit: 80,
+        }),
       });
       return json({ ok: true, rows: rows || [] });
     }
