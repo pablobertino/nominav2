@@ -270,13 +270,17 @@ function fmtHora12(hhmm) {
   return `${h12}:${String(m).padStart(2, '0')} ${ap}`;
 }
 function previewVars() {
-  // valores de muestra: usa el primer auto del feed si existe, si no genericos
-  const a = (AV_FEED && AV_FEED.auto && AV_FEED.auto[0]) || {};
+  // Variables reales del periodo vigente (vienen del endpoint tpl_get -> vars).
+  // Las horas se toman de los campos editables del modal para que la preview
+  // reaccione en vivo al cambiarlas.
+  const v = (AV_TPL && AV_TPL.vars) || {};
   return {
-    '#Periodo': (a.title && (a.title.match(/\d{4}-\d{2}-Q\d/) || [])[0]) || '2026-06-Q2',
-    '#Fecha_Cierre': '—', '#Fecha_Calculo': '—', '#Fecha_Pago': a.date || '—',
-    '#HoraLimite1': fmtHora12($('#avtHora1') ? $('#avtHora1').value : '18:00'),
-    '#HoraLimite2': fmtHora12($('#avtHora2') ? $('#avtHora2').value : '14:00'),
+    '#Periodo': v.Periodo || '',
+    '#Fecha_Cierre': v.Fecha_Cierre || '',
+    '#Fecha_Calculo': v.Fecha_Calculo || '',
+    '#Fecha_Pago': v.Fecha_Pago || '',
+    '#HoraLimite1': fmtHora12($('#avtHora1') ? $('#avtHora1').value : ((AV_TPL && AV_TPL.hora1) || '18:00')),
+    '#HoraLimite2': fmtHora12($('#avtHora2') ? $('#avtHora2').value : ((AV_TPL && AV_TPL.hora2) || '14:00')),
   };
 }
 function applyVarsPreview(tpl) {

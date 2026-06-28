@@ -115,12 +115,16 @@ export async function onRequestPost({ request, env }) {
       const rows = await sb(env, "app_settings?key=in.(aviso_tpl_calc,aviso_tpl_cut,aviso_tpl_pay,corte_hora_limite_general,corte_hora_limite,aviso_dias_previos)&select=key,value");
       const map = {}; (rows || []).forEach(r => { map[r.key] = r.value; });
       const parse = k => { try { return JSON.parse(map[k] || '{}'); } catch { return {}; } };
+      // variables reales del periodo vigente (para la vista previa del editor)
+      let vars = {};
+      try { vars = await sb(env, 'rpc/current_period_vars', { method: 'POST', body: '{}' }) || {}; } catch { vars = {}; }
       return json({
         ok: true,
         templates: { calc: parse('aviso_tpl_calc'), cut: parse('aviso_tpl_cut'), pay: parse('aviso_tpl_pay') },
         hora1: map['corte_hora_limite_general'] || '18:00',
         hora2: map['corte_hora_limite'] || '14:00',
         dias_previos: map['aviso_dias_previos'] || '2',
+        vars,
       });
     }
 
