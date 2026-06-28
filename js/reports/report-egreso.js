@@ -46,6 +46,21 @@ function causeByCode(code) {
   return (CAUSES || []).find(c => c.code === code) || null;
 }
 
+// Catalogo de MOTIVOS de egreso (cargado una vez). Cada uno: {code,label,is_other}.
+let REASONS = null;
+async function loadReasons() {
+  if (REASONS) return REASONS;
+  const res = await fetch('/api/catalog', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'egress_reasons' }),
+  }).then(r => r.json()).catch(() => null);
+  REASONS = (res && res.ok && res.reasons) ? res.reasons : [];
+  return REASONS;
+}
+function reasonByCode(code) {
+  return (REASONS || []).find(r => r.code === code) || null;
+}
+
 export const egresoReport = {
   code: 'egreso',
   title: 'Reportar Egreso',
@@ -57,6 +72,7 @@ export const egresoReport = {
     { key: 'kind', label: 'Tipo' },
     { key: 'report_date', label: 'Fecha de egreso' },
     { key: 'real_date', label: 'Fecha real (opcional)' },
+    { key: 'reason', label: 'Motivo' },
     { key: 'doc', label: 'Carta de renuncia' },
   ],
   summaryCell(w, key) {
@@ -68,6 +84,14 @@ export const egresoReport = {
       // un dato que no aplica (la persona egreso en la fecha reportada).
       if (!e.realDate || e.realDate === e.reportDate) return '<span style="color:var(--muted)">—</span>';
       return `<span style="color:#9a6a00">${DW.fmtDate(e.realDate)}</span>`;
+    }
+    if (key === 'reason') {
+      if (!e.reasonCode) return '<span style="color:var(--muted)">—</span>';
+      const r = reasonByCode(e.reasonCode);
+      const lbl = r ? r.label : e.reasonCode;
+      return e.reasonComment
+        ? `${lbl} <span style="color:var(--muted)" title="${String(e.reasonComment).replace(/"/g, '&quot;')}">💬</span>`
+        : lbl;
     }
     if (key === 'doc') {
       if (e.fileName) return '<span class="pill pill-set">📎 adjunta</span>';
@@ -84,13 +108,14 @@ export const egresoReport = {
   isComplete(w) {
     const e = w.egress;
     if (!e || !e.reportDate) return false;
+    if (!e.reasonCode) return false;   // el motivo es obligatorio
     // El documento queda resuelto si: hay carta, o hay causa elegida.
     return !!(e.fileName || e.docCause);
   },
 
   renderStep4(ctx) {
     $('#wzPanel').innerHTML = '<div class="pnl-loading">Cargando…</div>';
-    loadCauses().then(() => paintStep4(ctx));
+    Promise.all([loadCauses(), loadReasons()]).then(() => paintStep4(ctx));
   },
 
   async submit({ companyCode, responsible, position, workers, source_kind, source_admin_id }) {
@@ -105,6 +130,9 @@ export const egresoReport = {
         name: w.name,
         report_date: reportDate,
         real_date: realDate,
+        // Motivo del egreso (obligatorio) + comentario breve de la tienda.
+        reason_code: e.reasonCode || null,
+        reason_comment: e.reasonComment || null,
         // Documento: si hay carta viaja el base64; si no, la causa.
         doc_file_name: e.fileName || null,
         doc_file_b64: e.fileB64 || null,
@@ -151,7 +179,7 @@ function paintStep4(ctx) {
     <table>
       <thead><tr>
         <th style="width:30px"><input type="checkbox" class="chk" id="egAll"></th>
-        <th>Trabajador</th><th>Tipo</th><th>Fecha de egreso</th><th>Fecha real</th><th>Carta</th><th style="width:130px"></th>
+        <th>Trabajador</th><th>Tipo</th><th>Fecha de egreso</th><th>Fecha real</th><th>Carta</th><th>Motivo</th><th style="width:130px"></th>
       </tr></thead><tbody id="egTbody"></tbody>
     </table>
 
@@ -181,7 +209,7 @@ function updateNext(ctx) {
   const total = ctx.workers.length;
   const done = ctx.workers.filter(w => {
     const e = w.egress;
-    return e && e.reportDate && (e.fileName || e.docCause);
+    return e && e.reportDate && e.reasonCode && (e.fileName || e.docCause);
   }).length;
   const btn = $('#egNext');
   if (btn) btn.disabled = done !== total || total === 0;
@@ -201,13 +229,22 @@ function docCell(e) {
     : `<span class="pill pill-pend" title="${label}">pendiente</span>`;
 }
 
+// Celda del motivo (con el comentario de la tienda como tooltip si existe).
+function motivoCellHtml(e) {
+  const r = reasonByCode(e.reasonCode);
+  const lbl = r ? r.label : e.reasonCode;
+  if (!e.reasonComment) return `<span class="pill pill-set">${lbl}</span>`;
+  const safe = String(e.reasonComment).replace(/"/g, '&quot;');
+  return `<span class="pill pill-set" title="${safe}">${lbl} 💬</span>`;
+}
+
 function renderRows(ctx) {
   const tb = $('#egTbody');
   if (!tb) return;
 
   tb.innerHTML = ctx.workers.map(w => {
     const e = w.egress || {};
-    const ready = e.reportDate && (e.fileName || e.docCause);
+    const ready = e.reportDate && e.reasonCode && (e.fileName || e.docCause);
     const repCell = (e.reportDate) ? `<span class="date-badge">${DW.fmtDate(e.reportDate)}</span>` : '<span class="pill pill-pend">pendiente</span>';
     // Fecha real: solo cuando difiere de la de egreso. Si coincide o no se
     // indico, no aplica (guion suave).
@@ -216,18 +253,19 @@ function renderRows(ctx) {
       realCell = `<span class="date-badge" style="background:#fff4e5;border-color:#f6c992">${DW.fmtDate(e.realDate)}</span>`;
     }
     const dCell = (e.reportDate) ? docCell(e) : '<span style="color:var(--muted)">—</span>';
+    const mCell = (e.reportDate && e.reasonCode) ? motivoCellHtml(e) : '<span style="color:var(--muted)">—</span>';
     return `<tr class="${ready ? 'done-row' : ''}">
       <td><input type="checkbox" class="chk egsel" value="${w.id}"></td>
       <td><b>${w.name}</b><br><span class="ced">${w.ced}</span>
         ${w.endDate ? `<br><span class="pill pill-out" style="margin-top:3px">ya tenía egreso ${DW.fmtDate(w.endDate)}</span>` : ''}</td>
       <td>Baja (B)</td>
-      <td>${repCell}</td><td>${realCell}</td><td>${dCell}</td>
+      <td>${repCell}</td><td>${realCell}</td><td>${dCell}</td><td>${mCell}</td>
       <td style="white-space:nowrap">
         <button class="btn btn-sm" data-cfg="${w.id}">${ready ? '✏️ Editar' : '＋ Configurar'}</button>
         <button class="x-btn" data-rm="${w.id}" title="Quitar">✕</button>
       </td>
     </tr>`;
-  }).join('') || '<tr><td colspan="7" class="empty">No hay trabajadores. Vuelve al paso anterior para agregarlos.</td></tr>';
+  }).join('') || '<tr><td colspan="8" class="empty">No hay trabajadores. Vuelve al paso anterior para agregarlos.</td></tr>';
 
   tb.querySelectorAll('.egsel').forEach(c => c.addEventListener('change', onSel));
   tb.querySelectorAll('[data-cfg]').forEach(b => b.addEventListener('click', () => openConfig(ctx, +b.dataset.cfg)));
@@ -314,6 +352,7 @@ function openConfig(ctx, id) {
     realOn: !!(e.realDate && e.realDate !== e.reportDate),
     fileName: e.fileName || null, fileB64: e.fileB64 || null, fileType: e.fileType || null,
     docCause: e.docCause || '', docCauseOther: e.docCauseOther || '',
+    reasonCode: e.reasonCode || '', reasonComment: e.reasonComment || '',
   };
   let touched = !!e.reportDate;
 
@@ -341,6 +380,16 @@ function openConfig(ctx, id) {
           <div class="date-err" id="egRealErr" style="color:var(--danger);font-size:12px;min-height:16px;margin-top:6px"></div>
           <div id="egRealNote" class="hint" style="margin-top:4px"></div>
         </div>
+      </div>
+
+      <div style="margin-top:14px">
+        <label class="flabel">Motivo del egreso <span style="color:var(--danger)">*</span></label>
+        <select id="egReason">
+          <option value="" ${!tmp.reasonCode ? 'selected' : ''} disabled>Selecciona un motivo…</option>
+          ${(REASONS || []).map(r => `<option value="${r.code}" ${tmp.reasonCode === r.code ? 'selected' : ''}>${r.label}</option>`).join('')}
+        </select>
+        <label class="flabel" style="margin-top:10px">Comentario <span style="color:var(--muted);font-weight:400">(opcional, breve)</span></label>
+        <input id="egReasonComment" maxlength="140" placeholder="Detalle breve (opcional)" value="${(tmp.reasonComment || '').replace(/"/g, '&quot;')}">
       </div>
 
       ${docBoxHtml(tmp)}
@@ -428,6 +477,12 @@ function openConfig(ctx, id) {
   realEl.addEventListener('input', onReal);
   realEl.addEventListener('change', onReal);
 
+  // Motivo (obligatorio) + comentario (opcional, breve).
+  const reasonEl = ov.querySelector('#egReason');
+  const commentEl = ov.querySelector('#egReasonComment');
+  reasonEl.addEventListener('change', () => { tmp.reasonCode = reasonEl.value; check(); });
+  commentEl.addEventListener('input', () => { tmp.reasonComment = commentEl.value; check(); });
+
   function check() {
     // 1) Fecha de egreso (obligatoria, contra la ventana).
     const errEgreso = egresoDateError(tmp.reportDate, win, w.endDate);
@@ -449,7 +504,7 @@ function openConfig(ctx, id) {
     const docOk = tmp.fileName
       || (tmp.docCause && (tmp.docCause !== 'other' || (tmp.docCauseOther || '').trim()));
 
-    const allOk = !errEgreso && tmp.reportDate && !errReal && docOk;
+    const allOk = !errEgreso && tmp.reportDate && !errReal && docOk && !!tmp.reasonCode;
     applyB.disabled = !allOk;
   }
 
@@ -465,6 +520,8 @@ function openConfig(ctx, id) {
     w.egress = {
       reportDate: tmp.reportDate,
       realDate: realEff,
+      reasonCode: tmp.reasonCode || null,
+      reasonComment: (tmp.reasonComment || '').trim() || null,
       fileName: tmp.fileName, fileB64: tmp.fileB64, fileType: tmp.fileType,
       docCause: tmp.fileName ? null : (tmp.docCause || null),
       docCauseOther: tmp.fileName ? null : (tmp.docCauseOther || null),
@@ -486,6 +543,7 @@ function openBulk(ctx) {
   if (!ids.length) { alert('Selecciona al menos un trabajador.'); return; }
   const { win } = ctx;
   const causeOpts = (CAUSES || []).map(c => `<option value="${c.code}">${c.label}</option>`).join('');
+  const reasonOpts = (REASONS || []).map(r => `<option value="${r.code}">${r.label}</option>`).join('');
 
   const ov = document.createElement('div');
   ov.className = 'modal-ov';
@@ -505,6 +563,13 @@ function openBulk(ctx) {
           <input id="bCauseOther" placeholder="Especifica la causa">
         </div>
         <p class="hint" style="margin-top:6px">La carta y la fecha real (si aplica) se ajustan luego por persona desde <b>Editar</b>. Aquí solo aplicas la fecha de egreso y, si quieres, una causa común.</p>
+      </div>
+      <div style="margin-top:12px"><label class="flabel">Motivo del egreso (común, opcional)</label>
+        <select id="bReason">
+          <option value="" selected>— Sin motivo (lo configuro por persona) —</option>
+          ${reasonOpts}
+        </select>
+        <p class="hint" style="margin-top:6px">El motivo es obligatorio para finalizar; si no lo pones aquí, configúralo por persona en <b>Editar</b>. El comentario va por persona.</p>
       </div>
       <div class="wiz-foot" style="margin-top:8px">
         <button class="btn" id="bCancel">Cancelar</button>
@@ -540,6 +605,7 @@ function openBulk(ctx) {
     const date = dateEl.value;
     const cause = causeEl.value || '';
     const causeOther = cause === 'other' ? (ov.querySelector('#bCauseOther').value || '').trim() : '';
+    const reason = (ov.querySelector('#bReason').value || '');
     let skipped = 0;
     ctx.workers.forEach(w => {
       if (!ids.includes(w.id)) return;
@@ -552,6 +618,8 @@ function openBulk(ctx) {
       w.egress = {
         reportDate: date,
         realDate: keepReal,
+        reasonCode: reason || prev.reasonCode || null,
+        reasonComment: prev.reasonComment || null,
         fileName: prev.fileName || null, fileB64: prev.fileB64 || null, fileType: prev.fileType || null,
         docCause: prev.fileName ? null : (cause || prev.docCause || null),
         docCauseOther: prev.fileName ? null : (cause === 'other' ? causeOther : (cause ? null : (prev.docCauseOther || null))),

@@ -77,6 +77,14 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, causas: causas || [] });
     }
 
+    // --- Catalogo de MOTIVOS de egreso (por que se va el trabajador) ---
+    // Distinto de egress_causes (que es por que no se adjunta la carta).
+    // Lo elige la tienda; el motivo es OBLIGATORIO en el reporte de egreso.
+    if (body.action === 'egress_reasons') {
+      const reasons = await sb(env, 'egress_reasons?is_active=eq.true&select=code,label,is_other&order=sort_order');
+      return json({ ok: true, reasons: reasons || [] });
+    }
+
     // --- Catalogos del wizard de INGRESO (cargos + bancos + operadoras + ventana) ---
     // Una sola llamada para llenar el formulario de Alta. Todo configurable
     // por ABM. Cargos: solo los activos y marcados para ingreso, con label

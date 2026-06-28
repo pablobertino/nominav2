@@ -1069,6 +1069,11 @@ async function submitEgreso(env, body) {
   const causeMap = {};
   (causes || []).forEach(c => { causeMap[c.code] = c; });
 
+  // --- Motivos de egreso (catalogo, por que se va el trabajador). Obligatorio. ---
+  const reasons = await sb(env, 'egress_reasons?is_active=eq.true&select=code,label');
+  const reasonMap = {};
+  (reasons || []).forEach(r => { reasonMap[r.code] = r; });
+
   // --- Validacion linea por linea ---
   // Nuevo modelo: el front manda report_date = la FECHA DE EGRESO elegida por
   // la tienda (la que va a AX). El servidor la VALIDA contra la ventana (no la
@@ -1089,6 +1094,8 @@ async function submitEgreso(env, body) {
     const fileType = (ln.doc_file_type || '').toString().trim();
     const causeCode = (ln.doc_cause || '').toString().trim();
     const causeOther = (ln.doc_cause_other || '').toString().trim();
+    const reasonCode = (ln.reason_code || '').toString().trim();
+    const reasonComment = (ln.reason_comment || '').toString().trim();
 
     if (!ced || ced.length < 6 || ced.length > 8) { errors.push(`${tag}: cedula invalida.`); return; }
     if (!name) { errors.push(`${tag}: falta el nombre.`); return; }
@@ -1119,6 +1126,10 @@ async function submitEgreso(env, body) {
     if (real > today) { errors.push(`${tag}: la fecha real (${real}) no puede ser futura.`); return; }
     if (real > report) { errors.push(`${tag}: la fecha real (${real}) no puede ser posterior a la fecha de egreso (${report}).`); return; }
 
+    // Motivo del egreso (obligatorio) + comentario (opcional, breve).
+    if (!reasonCode) { errors.push(`${tag}: falta el motivo del egreso.`); return; }
+    if (!reasonMap[reasonCode]) { errors.push(`${tag}: motivo de egreso invalido.`); return; }
+
     // Documento: si NO adjunta carta, exige una causa valida.
     const hasDoc = !!fileB64;
     let docCause = null, docWaived = false, causeLabel = null;
@@ -1138,6 +1149,10 @@ async function submitEgreso(env, body) {
       report_date: report,
       real_date: real,
       _adjusted: real !== report,
+      // motivo del egreso (catalogo egress_reasons) + comentario de la tienda
+      reason_code: reasonCode,
+      reason_comment: reasonComment ? reasonComment.slice(0, 200) : null,
+      _reasonLabel: (reasonMap[reasonCode] && reasonMap[reasonCode].label) || reasonCode,
       // documento
       has_document: hasDoc,
       doc_cause: docCause,
@@ -1207,6 +1222,8 @@ async function submitEgreso(env, body) {
     worker_name: l.worker_name,
     report_date: l.report_date,
     real_date: l.real_date,
+    reason_code: l.reason_code,
+    reason_comment: l.reason_comment,
     has_document: l.has_document,
     doc_cause: l.doc_cause,
     doc_waived: l.doc_waived,
@@ -1258,6 +1275,8 @@ async function submitEgreso(env, body) {
         ['Fecha de egreso', dmy(l.report_date)],
       ];
       if (l._adjusted) campos.push(['Fecha real de egreso', dmy(l.real_date)]);
+      campos.push(['Motivo', l._reasonLabel || l.reason_code]);
+      if (l.reason_comment) campos.push(['Comentario', l.reason_comment]);
       if (l.has_document) {
         campos.push(['Carta de renuncia', 'adjunta (ticket DOC aparte)']);
       } else {
