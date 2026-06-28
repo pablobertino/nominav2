@@ -89,6 +89,8 @@ function ensureStyles() {
   .rs-btn { cursor:pointer; } .rs-btn-primary { background:var(--brand,#2563eb); color:#fff; border-color:var(--brand,#2563eb); }
   .rs-custom { display:none; gap:8px; align-items:center; flex-wrap:wrap; }
   .rs-custom.on { display:flex; }
+  .rs-quincena { display:none; }
+  .rs-quincena.on { display:inline-block; }
 
   .rs-kpis { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:16px 0 6px; }
   .rs-kpi { background:var(--surface); border:1px solid var(--border); border-radius:14px; padding:15px 17px; box-shadow:0 1px 2px rgba(15,23,42,.06); }
@@ -139,6 +141,8 @@ function ensureStyles() {
 /* ---------- estado del periodo ---------- */
 let RS_USER = null;
 let RS_FROM = null, RS_TO = null;
+let RS_PERIODS = null;      // cache de quincenas (payroll_periods)
+let RS_QUINCENA_ID = null;  // id de la quincena elegida en modo quincena
 
 /* ---------- entrada ---------- */
 export async function renderReportStats(user) {
@@ -155,11 +159,13 @@ export async function renderReportStats(user) {
       <div class="rs-filters">
         <select id="rsPreset">
           <option value="m0">Este mes</option>
+          <option value="quincena">Quincena (pago)</option>
           <option value="m1">Mes pasado</option>
           <option value="d30">\u00daltimos 30 d\u00edas</option>
           <option value="d90">\u00daltimos 90 d\u00edas</option>
           <option value="custom">Personalizado\u2026</option>
         </select>
+        <select class="rs-quincena" id="rsQuincena"></select>
         <span class="rs-custom" id="rsCustom">
           <input type="date" id="rsFrom" value="${RS_FROM}">
           <span style="color:var(--muted);font-size:12px">a</span>
@@ -173,21 +179,72 @@ export async function renderReportStats(user) {
   // Eventos (sin onclick inline por CSP).
   $('#rsPreset').addEventListener('change', onPreset);
   $('#rsApply').addEventListener('click', onApplyCustom);
+  $('#rsQuincena').addEventListener('change', onQuincena);
 
   await loadStats();
 }
 
-function onPreset(e) {
+async function onPreset(e) {
   const v = e.target.value;
   const custom = $('#rsCustom');
-  if (v === 'custom') { custom.classList.add('on'); return; }
-  custom.classList.remove('on');
+  const quin = $('#rsQuincena');
+  custom.classList.toggle('on', v === 'custom');
+  quin.classList.toggle('on', v === 'quincena');
+  if (v === 'custom') return;
+  if (v === 'quincena') { await selectQuincenaMode(); return; }
   let b;
   if (v === 'm0') b = monthBounds(0);
   else if (v === 'm1') b = monthBounds(-1);
   else if (v === 'd30') b = lastNDays(30);
   else if (v === 'd90') b = lastNDays(90);
   RS_FROM = b.from; RS_TO = b.to;
+  $('#rsFrom').value = RS_FROM; $('#rsTo').value = RS_TO;
+  loadStats();
+}
+
+// Carga las quincenas (una sola vez) desde payroll_periods.
+async function ensurePeriods() {
+  if (RS_PERIODS) return RS_PERIODS;
+  try {
+    const res = await fetch('/api/report-stats', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'periods', user: { kind: RS_USER.kind, id: RS_USER.id } }),
+    });
+    const d = await res.json();
+    RS_PERIODS = (d.ok && Array.isArray(d.periods)) ? d.periods : [];
+  } catch { RS_PERIODS = []; }
+  return RS_PERIODS;
+}
+
+function quincenaLabel(p) {
+  const mm = +String(p.range_start).slice(5, 7);
+  const q = p.quincena === 1 ? '1\u00aa' : '2\u00aa';
+  return `${q} quincena ${MES[mm - 1] || ''} ${p.year}`;
+}
+
+// Modo quincena: pobla el select, elige la que contiene hoy (o la previa) y carga.
+async function selectQuincenaMode() {
+  const sel = $('#rsQuincena');
+  const pers = await ensurePeriods();
+  if (!pers.length) { sel.innerHTML = '<option value="">(sin quincenas)</option>'; return; }
+  sel.innerHTML = pers.map(p => `<option value="${p.id}">${esc(quincenaLabel(p))}</option>`).join('');
+  const t = caracasToday();
+  const todayIso = `${t.y}-${String(t.m).padStart(2, '0')}-${String(t.d).padStart(2, '0')}`;
+  let chosen = (RS_QUINCENA_ID && pers.find(p => String(p.id) === String(RS_QUINCENA_ID)))
+    || pers.find(p => p.range_start <= todayIso && p.range_end >= todayIso)
+    || pers[0];
+  RS_QUINCENA_ID = chosen.id;
+  sel.value = String(chosen.id);
+  RS_FROM = chosen.range_start; RS_TO = chosen.range_end;
+  $('#rsFrom').value = RS_FROM; $('#rsTo').value = RS_TO;
+  loadStats();
+}
+
+function onQuincena(e) {
+  const p = (RS_PERIODS || []).find(x => String(x.id) === String(e.target.value));
+  if (!p) return;
+  RS_QUINCENA_ID = p.id;
+  RS_FROM = p.range_start; RS_TO = p.range_end;
   $('#rsFrom').value = RS_FROM; $('#rsTo').value = RS_TO;
   loadStats();
 }

@@ -58,6 +58,15 @@ export async function onRequestPost({ request, env }) {
     if (!a || !a.length) return json({ ok: false, error: 'Sesion no valida.' }, 403);
     const role = a[0].role;
 
+    // Lista de quincenas (periodos de pago) para el filtro. No depende del
+    // alcance: son los mismos periodos para todos. Se piden aparte (lazy).
+    if (body.action === 'periods') {
+      const pers = await sb(env,
+        'payroll_periods?select=id,name,year,month,quincena,range_start,range_end'
+        + '&order=range_start.desc&limit=18');
+      return json({ ok: true, periods: pers || [] });
+    }
+
     // Alcance: superadmin = todo (null); admin/editor = sus empresas.
     let codes = null;
     if (role !== 'superadmin') {
