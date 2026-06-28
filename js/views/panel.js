@@ -96,10 +96,10 @@ function shell(user) {
   const isCompany = user.kind === 'company';
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   const isEditorPersonal = user.kind === 'admin' && user.role === 'editor_personal';
-  // La campanita se muestra para admin/superadmin Y para usuarios company.
-  // (editor_personal no la ve.)
-  const showBell = (user.kind === 'company')
-    || (user.kind === 'admin' && (user.role === 'superadmin' || user.role === 'admin'));
+  // La campanita se muestra para admin/superadmin, editor_personal Y usuarios
+  // company. El editor solo recibe avisos dirigidos a "Editores" (solo lectura);
+  // no gestiona el seteo de avisos.
+  const showBell = (user.kind === 'company') || (user.kind === 'admin');
   const nameLabel = isCompany ? user.companyCode : (user.name || user.username);
   const roleLabel = isCompany ? 'tienda' : (ROLE_LABELS[user.role] || user.role);
   const initials = (nameLabel || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -132,7 +132,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.51</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.52</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>

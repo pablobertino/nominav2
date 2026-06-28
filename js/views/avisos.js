@@ -103,25 +103,27 @@ function api(extra) {
 export async function renderAvisos(user, opts = {}) {
   AV_USER = user;
   ensureStyles();
-  const isAdmin = user.kind === 'admin';
+  // Solo admin/superadmin GESTIONAN avisos. El editor_personal es admin pero
+  // de solo lectura: ve los avisos dirigidos a "Editores" como un usuario mas.
+  const canManage = user.kind === 'admin' && user.role !== 'editor_personal';
   $('#pnlMain').innerHTML = `
     <div class="av-head">
       <div><h1>Avisos</h1>
-        <p>${isAdmin
-          ? 'Los del per\u00edodo se generan solos (plantillas editables). Crea comunicados para tiendas o administradores.'
+        <p>${canManage
+          ? 'Los del per\u00edodo se generan solos (plantillas editables). Crea comunicados para tiendas, empresas, administradores o editores.'
           : 'Recordatorios del per\u00edodo de n\u00f3mina y comunicados de la administraci\u00f3n.'}</p></div>
-      ${isAdmin ? `<button class="av-btn av-btn-primary" id="avNew">+ Nuevo aviso</button>` : ''}
+      ${canManage ? `<button class="av-btn av-btn-primary" id="avNew">+ Nuevo aviso</button>` : ''}
     </div>
     <div id="avBody"><div class="av-empty">Cargando\u2026</div></div>
     <div id="avModals"></div>`;
 
-  if (isAdmin) $('#avNew').addEventListener('click', () => openManualModal(null));
+  if (canManage) $('#avNew').addEventListener('click', () => openManualModal(null));
   await loadAndRender();
   if (opts.focusId) setTimeout(() => gotoAviso(opts.focusId), 300);
 }
 
 async function loadAndRender() {
-  const isAdmin = AV_USER.kind === 'admin';
+  const canManage = AV_USER.kind === 'admin' && AV_USER.role !== 'editor_personal';
   let feed;
   try {
     feed = await api({ action: 'feed' });
@@ -134,7 +136,7 @@ async function loadAndRender() {
   // marca como visto al entrar a la seccion
   api({ action: 'seen' }).catch(() => {});
 
-  if (isAdmin) {
+  if (canManage) {
     const [tpl, man] = await Promise.all([api({ action: 'tpl_get' }), api({ action: 'list_manual' })]);
     AV_TPL = tpl && tpl.ok ? tpl : null;
     AV_MANUAL = (man && man.ok) ? man.rows : [];

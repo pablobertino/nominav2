@@ -14,7 +14,8 @@
    PERMISOS de gestion:
      superadmin -> edita plantillas + ve/edita TODOS los manuales
      admin      -> NO edita plantillas; ve/edita SOLO sus propios manuales
-     editor     -> sin acceso a la seccion (no llega aqui)
+     editor     -> solo LECTURA (feed/seen): recibe avisos dirigidos a 'editors'
+                   via campanita; cualquier accion de gestion devuelve 403
 
    Acciones (POST {action, user, ...}):
    Lectura (company o admin/superadmin/editor):
