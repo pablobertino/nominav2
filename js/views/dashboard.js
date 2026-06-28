@@ -462,13 +462,26 @@ async function renderAdminDash(user) {
   const agCount = fmt((s.ages && s.ages.count) || 0);
 
   // Edad promedio por CARGO, tiendas y empresas por separado.
-  const cargoStores = ageByCargoBarsHtml((d.ageByCargo && d.ageByCargo.stores) || [], '#2563eb');
-  const cargoEnt = ageByCargoBarsHtml((d.ageByCargo && d.ageByCargo.enterprises) || [], '#9333ea');
+  const abc = d.ageByCargo || {};
+  const cargoStores = ageByCargoBarsHtml(abc.stores || [], '#2563eb');
+  const cargoEnt = ageByCargoBarsHtml(abc.enterprises || [], '#9333ea');
+  // Encabezado por grupo: promedio general + total con fecha (mismo estilo que "por tipo de empresa").
+  const cargoStHead = abc.stores_avg != null ? `prom. ${abc.stores_avg} años · ${fmt(abc.stores_n || 0)} con fecha` : 'sin fechas';
+  const cargoEnHead = abc.enterprises_avg != null ? `prom. ${abc.enterprises_avg} años · ${fmt(abc.enterprises_n || 0)} con fecha` : 'sin fechas';
 
   // Movimientos recientes (ingresos / egresos) del alcance.
   const mov = d.movimientos || { ingresos: [], egresos: [] };
   const ingList = movListHtml(mov.ingresos, 'Sin ingresos recientes.');
   const egrList = movListHtml(mov.egresos, 'Sin egresos recientes.');
+  // Totalizadores (no se promedia: solo se cuenta) de la ventana de dias.
+  const movWin = mov.window_days || days;
+  const ingCount = fmt(mov.ingresos_count || 0);
+  const egrCount = fmt(mov.egresos_count || 0);
+
+  // Totalizadores de cumpleanos (solo se cuenta).
+  const bdToday = d.today || [];
+  const bdUpcoming = (d.upcoming || []).slice(0, 12);
+  const bdHead = `${fmt(bdToday.length)} hoy · ${fmt(bdUpcoming.length)} próximos`;
 
   $('#pnlMain').innerHTML = `
     <div class="dash-greet"><h1>Hola, ${esc(name)} 👋</h1><p>${scopeNote} · resumen de hoy</p></div>
@@ -489,20 +502,20 @@ async function renderAdminDash(user) {
 
     <div class="dash-sec">Edad promedio por cargo <small>${scopeNote} · solo con fecha de nacimiento</small></div>
     <div class="dash-mov2">
-      <div><div class="dash-movh">🏬 Tiendas</div><div class="dash-card"><div class="dash-bars">${cargoStores}</div></div></div>
-      <div><div class="dash-movh">🏢 Empresas</div><div class="dash-card"><div class="dash-bars">${cargoEnt}</div></div></div>
+      <div><div class="dash-movh">🏬 Tiendas <span style="font-weight:400;color:var(--muted)">· ${cargoStHead}</span></div><div class="dash-card"><div class="dash-bars">${cargoStores}</div></div></div>
+      <div><div class="dash-movh">🏢 Empresas <span style="font-weight:400;color:var(--muted)">· ${cargoEnHead}</span></div><div class="dash-card"><div class="dash-bars">${cargoEnt}</div></div></div>
     </div>
 
-    <div class="dash-sec">Movimientos recientes <small>${scopeNote}</small></div>
+    <div class="dash-sec">Movimientos recientes <small>${scopeNote} · ${ingCount} ingresos · ${egrCount} egresos en ${movWin} días</small></div>
     <div class="dash-mov2">
-      <div><div class="dash-movh">➕ Últimos ingresos</div>${ingList}</div>
-      <div><div class="dash-movh">🔴 Últimos egresos</div>${egrList}</div>
+      <div><div class="dash-movh">➕ Últimos ingresos <span style="font-weight:400;color:var(--muted)">· ${ingCount} en ${movWin} d</span></div>${ingList}</div>
+      <div><div class="dash-movh">🔴 Últimos egresos <span style="font-weight:400;color:var(--muted)">· ${egrCount} en ${movWin} d</span></div>${egrList}</div>
     </div>
 
-    <div class="dash-sec">Cumpleaños 🎂 <small>${scopeNote}</small></div>
+    <div class="dash-sec">Cumpleaños 🎂 <small>${scopeNote} · ${bdHead}</small></div>
     <div id="dashBdays"></div>`;
 
-  $('#dashBdays').innerHTML = bdaysSectionHtml(d.today || [], (d.upcoming || []).slice(0, 12), true);
+  $('#dashBdays').innerHTML = bdaysSectionHtml(bdToday, bdUpcoming, true);
 }
 
 /* ===================== demografia (sexo / edades / estado civil) ===================== */
