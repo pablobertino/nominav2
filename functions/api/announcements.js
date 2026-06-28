@@ -63,7 +63,7 @@ async function resolveUser(env, user) {
     if (!user.companyCode) return null;
     const u = await sb(env, `company_users?company_code=eq.${encodeURIComponent(user.companyCode)}&is_active=eq.true&select=company_code`);
     if (!u || !u.length) return null;
-    const c = await sb(env, `companies?code=eq.${encodeURIComponent(user.companyCode)}&select=company_type`);
+    const c = await sb(env, `companies?company_code=eq.${encodeURIComponent(user.companyCode)}&select=company_type`);
     const ctype = (c && c[0] && c[0].company_type) || '';
     const subtype = (ctype === 'Tienda') ? 'store' : 'enterprise';
     return { kind: 'company', key: user.companyCode, subtype, isAdmin: false, isSuper: false, role: 'company' };
