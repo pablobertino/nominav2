@@ -279,6 +279,15 @@ function ageByTypeBarsHtml(ages) {
     <div class="dash-bt"><i style="width:${Math.round((Number(t.avg) || 0) / maxAvg * 100)}%;background:${typeColor(t.tipo)}"></i></div>
     <span class="dash-bn">${t.avg}</span></div>`).join('');
 }
+/* Barras de edad PROMEDIO por CARGO (numero = promedio, entre parentesis el n). */
+function ageByCargoBarsHtml(rows, color) {
+  if (!rows || !rows.length) return '<div class="dash-dempty">Sin fechas de nacimiento.</div>';
+  const maxAvg = Math.max(1, ...rows.map(r => Number(r.avg_age) || 0));
+  return rows.map(r => `<div class="dash-brow">
+    <span class="dash-bl">${esc(r.role)} <span style="color:var(--faint)">(${Number(r.n || 0).toLocaleString('es-VE')})</span></span>
+    <div class="dash-bt"><i style="width:${Math.round((Number(r.avg_age) || 0) / maxAvg * 100)}%;background:${color}"></i></div>
+    <span class="dash-bn">${r.avg_age}</span></div>`).join('');
+}
 
 /* ---------- markup movimientos recientes (ingresos / egresos) ---------- */
 /* Dias transcurridos desde una fecha YMD hasta hoy (Caracas). */
@@ -452,6 +461,10 @@ async function renderAdminDash(user) {
   const agAvg = (s.ages && s.ages.avg != null) ? `${s.ages.avg}` : '—';
   const agCount = fmt((s.ages && s.ages.count) || 0);
 
+  // Edad promedio por CARGO, tiendas y empresas por separado.
+  const cargoStores = ageByCargoBarsHtml((d.ageByCargo && d.ageByCargo.stores) || [], '#2563eb');
+  const cargoEnt = ageByCargoBarsHtml((d.ageByCargo && d.ageByCargo.enterprises) || [], '#9333ea');
+
   // Movimientos recientes (ingresos / egresos) del alcance.
   const mov = d.movimientos || { ingresos: [], egresos: [] };
   const ingList = movListHtml(mov.ingresos, 'Sin ingresos recientes.');
@@ -473,6 +486,12 @@ async function renderAdminDash(user) {
 
     <div class="dash-sec">Edad promedio por tipo de empresa <small>prom. general ${agAvg} años · ${agCount} con fecha</small></div>
     <div class="dash-card"><div class="dash-bars">${ageTypeBars}</div></div>
+
+    <div class="dash-sec">Edad promedio por cargo <small>${scopeNote} · solo con fecha de nacimiento</small></div>
+    <div class="dash-mov2">
+      <div><div class="dash-movh">🏬 Tiendas</div><div class="dash-card"><div class="dash-bars">${cargoStores}</div></div></div>
+      <div><div class="dash-movh">🏢 Empresas</div><div class="dash-card"><div class="dash-bars">${cargoEnt}</div></div></div>
+    </div>
 
     <div class="dash-sec">Movimientos recientes <small>${scopeNote}</small></div>
     <div class="dash-mov2">

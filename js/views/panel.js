@@ -19,7 +19,6 @@ import { renderDashboard } from './dashboard.js';
 import { renderReportStats } from './report-stats.js';
 import { renderEgressRatify } from './egress-ratify.js';
 import { renderPersonnelSearch } from './personnel-search.js';
-import { renderCalendar } from './calendar.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { renderDepartments } from './departments.js';
@@ -71,7 +70,6 @@ const NAV = [
   ['buscar', I.search, 'Buscar personal'],
   ['catalogos', I.catalog, 'Catálogos'],
   ['usuarios', I.users, 'Usuarios'],
-  ['quincenas', I.calendar, 'Quincenas', 'superonly'],
   ['calendario', I.calendar, 'Calendario'],
   ['documentos', I.docs, 'Documentos'],
   ['historial', I.history, 'Historial'],
@@ -121,7 +119,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.44</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.45</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -3107,7 +3105,7 @@ async function navigate(view, user) {
   else if (view === 'catalogos') viewCatalogos();
   else if (view === 'usuarios') viewUsuarios(user);
   else if (view === 'quincenas') viewPeriods(user);
-  else if (view === 'calendario') renderCalendar(user);
+  else if (view === 'calendario') viewPeriods(user);
   else if (view === 'equipo') viewEquipo(user);
   else if (view === 'permisos') viewPermisos(user);
   else if (view === 'sync') viewSync(user);

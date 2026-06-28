@@ -85,8 +85,8 @@ export async function onRequestPost({ request, env }) {
       codes = (rows || []).map(r => r.company_code);
     }
 
-    // Resumen + cumpleanos + movimientos (ingresos/egresos recientes).
-    const [summary, bdays, movements] = await Promise.all([
+    // Resumen + cumpleanos + movimientos (ingresos/egresos recientes) + edad por cargo.
+    const [summary, bdays, movements, ageByCargo] = await Promise.all([
       sb(env, 'rpc/dashboard_admin_summary', {
         method: 'POST', body: JSON.stringify({ p_codes: codes }),
       }),
@@ -95,6 +95,9 @@ export async function onRequestPost({ request, env }) {
       }),
       sb(env, 'rpc/dashboard_movements', {
         method: 'POST', body: JSON.stringify({ p_codes: codes, p_limit: 6 }),
+      }),
+      sb(env, 'rpc/dashboard_age_by_cargo', {
+        method: 'POST', body: JSON.stringify({ p_codes: codes }),
       }),
     ]);
 
@@ -152,6 +155,7 @@ export async function onRequestPost({ request, env }) {
       scope: role === 'superadmin' ? 'all' : 'scoped',
       days,
       summary: summary || {},
+      ageByCargo: ageByCargo || { stores: [], enterprises: [] },
       today,
       upcoming,
       movimientos: movements || { ingresos: [], egresos: [] },
