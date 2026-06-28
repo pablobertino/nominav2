@@ -1,21 +1,33 @@
 /* =====================================================================
    functions/api/announcements.js  →  POST /api/announcements
-   Sistema de Avisos. Combina avisos automaticos del periodo (calculados al
-   vuelo por el RPC announcements_feed) + avisos manuales (tabla announcements).
+   Sistema de Avisos. Automaticos del periodo (RPC announcements_feed) +
+   manuales (tabla announcements).
+
+   AUDIENCIAS (announcements.audience):
+     all | stores | enterprises | admins | editors
+       all          -> todos los company (tiendas + empresas)
+       stores       -> company tipo Tienda
+       enterprises  -> company NO tienda
+       admins       -> admin con rol admin/superadmin
+       editors      -> admin con rol editor_personal
+
+   PERMISOS de gestion:
+     superadmin -> edita plantillas + ve/edita TODOS los manuales
+     admin      -> NO edita plantillas; ve/edita SOLO sus propios manuales
+     editor     -> sin acceso a la seccion (no llega aqui)
 
    Acciones (POST {action, user, ...}):
-   Lectura (admin o company):
-     - feed : { auto[], manual[], seen_at, unread }  avisos para el usuario.
-     - seen : marca "visto ahora" (resetea el badge de no leidos).
-   Admin/superadmin (gestion):
-     - tpl_get     : plantillas de los 3 automaticos + horas limite.
-     - tpl_save    : guarda plantilla {type, title, short, text} + horas.
-     - list_manual : todos los manuales (activos e inactivos) para administrar.
-     - save_manual : crea/edita {id?, title, body, audience, starts_on, ends_on}.
-     - toggle_manual / delete_manual : { id }.
+   Lectura (company o admin/superadmin/editor):
+     - feed : { auto[], manual[], seen_at, unread }
+     - seen : marca visto.
+   Gestion:
+     - tpl_get  (admin+super; pero solo super puede guardar)
+     - tpl_save (SOLO superadmin)
+     - list_manual (admin: solo suyos; super: todos)
+     - save_manual / toggle_manual / delete_manual (admin: solo suyos; super: cualquiera)
 
-   user admin   = { kind:'admin', id }
    user company = { kind:'company', companyCode }
+   user admin   = { kind:'admin', id }
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
@@ -39,19 +51,27 @@ async function sb(env, path, opts = {}) {
   return t ? JSON.parse(t) : null;
 }
 
-// Resuelve el usuario: { kind, key, isAdmin, role } o null si no valido.
+const NON_STORE_TYPES = ['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea'];
+
+// Resuelve el usuario y su subtipo para audiencias.
+// company  -> { kind:'company', key, subtype:'store'|'enterprise', isAdmin:false }
+// admin    -> { kind:'admin', key(id), subtype:rol, isAdmin:true, isSuper, role }
 async function resolveUser(env, user) {
   if (!user) return null;
   if (user.kind === 'company') {
     if (!user.companyCode) return null;
     const u = await sb(env, `company_users?company_code=eq.${encodeURIComponent(user.companyCode)}&is_active=eq.true&select=company_code`);
     if (!u || !u.length) return null;
-    return { kind: 'company', key: user.companyCode, isAdmin: false, role: 'company' };
+    const c = await sb(env, `companies?code=eq.${encodeURIComponent(user.companyCode)}&select=company_type`);
+    const ctype = (c && c[0] && c[0].company_type) || '';
+    const subtype = (ctype === 'Tienda') ? 'store' : 'enterprise';
+    return { kind: 'company', key: user.companyCode, subtype, isAdmin: false, isSuper: false, role: 'company' };
   }
   if (user.kind === 'admin' && user.id) {
     const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
     if (!a || !a.length) return null;
-    return { kind: 'admin', key: String(a[0].id), isAdmin: true, role: a[0].role };
+    const role = a[0].role;
+    return { kind: 'admin', key: String(a[0].id), subtype: role, isAdmin: true, isSuper: role === 'superadmin', role };
   }
   return null;
 }
@@ -59,23 +79,18 @@ async function resolveUser(env, user) {
 const clean = v => { const s = String(v == null ? '' : v).trim(); return s ? s : null; };
 const ymd = v => { const s = String(v || '').slice(0, 10); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null; };
 
-// Cuenta no leidos: avisos (auto + manual) con fecha posterior al seen_at.
-// Para 'today' contamos siempre como no leido si seen_at < hoy.
 function countUnread(feed, seenAt) {
   const seen = seenAt ? new Date(seenAt) : null;
   let n = 0;
-  // automaticos: si hoy, cuentan si no se ha visto hoy
   for (const a of (feed.auto || [])) {
     if (a.today) { if (!seen || isBeforeToday(seen, feed.today)) n++; }
   }
-  // manuales: cuentan si created_at > seen_at
   for (const m of (feed.manual || [])) {
     if (!seen || (m.created_at && new Date(m.created_at) > seen)) n++;
   }
   return n;
 }
 function isBeforeToday(seenDate, todayStr) {
-  // todayStr = 'YYYY-MM-DD' (Caracas). Visto antes de hoy => no leido hoy.
   const t = new Date(todayStr + 'T00:00:00-04:00');
   return seenDate < t;
 }
@@ -88,10 +103,10 @@ export async function onRequestPost({ request, env }) {
     const u = await resolveUser(env, body.user || null);
     if (!u) return json({ ok: false, error: 'Sesion no valida.' }, 403);
 
-    // ---------- LECTURA (admin o company) ----------
+    // ---------- LECTURA (company o admin) ----------
     if (body.action === 'feed') {
       const feed = await sb(env, 'rpc/announcements_feed', {
-        method: 'POST', body: JSON.stringify({ p_kind: u.kind }),
+        method: 'POST', body: JSON.stringify({ p_kind: u.kind, p_subtype: u.subtype }),
       });
       const st = await sb(env, `announcement_seen?user_kind=eq.${u.kind}&user_key=eq.${encodeURIComponent(u.key)}&select=seen_at`);
       const seenAt = (st && st[0] && st[0].seen_at) || null;
@@ -108,27 +123,30 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true });
     }
 
-    // ---------- GESTION (solo admin) ----------
-    if (!u.isAdmin) return json({ ok: false, error: 'No autorizado.' }, 403);
+    // ---------- GESTION (solo admin/superadmin; editor NO) ----------
+    if (!u.isAdmin || u.role === 'editor_personal') {
+      return json({ ok: false, error: 'No autorizado.' }, 403);
+    }
 
     if (body.action === 'tpl_get') {
       const rows = await sb(env, "app_settings?key=in.(aviso_tpl_calc,aviso_tpl_cut,aviso_tpl_pay,corte_hora_limite_general,corte_hora_limite,aviso_dias_previos)&select=key,value");
       const map = {}; (rows || []).forEach(r => { map[r.key] = r.value; });
       const parse = k => { try { return JSON.parse(map[k] || '{}'); } catch { return {}; } };
-      // variables reales del periodo vigente (para la vista previa del editor)
       let vars = {};
       try { vars = await sb(env, 'rpc/current_period_vars', { method: 'POST', body: '{}' }) || {}; } catch { vars = {}; }
       return json({
         ok: true,
+        can_edit_templates: u.isSuper,           // admin ve pero no edita; super si
         templates: { calc: parse('aviso_tpl_calc'), cut: parse('aviso_tpl_cut'), pay: parse('aviso_tpl_pay') },
         hora1: map['corte_hora_limite_general'] || '18:00',
         hora2: map['corte_hora_limite'] || '14:00',
-        dias_previos: map['aviso_dias_previos'] || '2',
-        vars,
+        dias_previos: map['aviso_dias_previos'] || '0',
       });
     }
 
     if (body.action === 'tpl_save') {
+      // Solo superadmin puede editar plantillas.
+      if (!u.isSuper) return json({ ok: false, error: 'Solo el superadministrador puede editar las plantillas.' }, 403);
       const type = clean(body.type);
       if (!['calc', 'cut', 'pay'].includes(type)) return json({ ok: false, error: 'Tipo invalido.' }, 400);
       const tpl = {
@@ -141,7 +159,6 @@ export async function onRequestPost({ request, env }) {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({ value: JSON.stringify(tpl), updated_at: new Date().toISOString() }),
       });
-      // horas limite (compartidas) si vienen
       if (body.hora1 != null) {
         await sb(env, `app_settings?key=eq.corte_hora_limite_general`, {
           method: 'PATCH', headers: { Prefer: 'return=minimal' },
@@ -158,14 +175,16 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (body.action === 'list_manual') {
-      const rows = await sb(env, 'announcements?select=*&order=created_at.desc') || [];
-      return json({ ok: true, rows });
+      // admin: solo los suyos; superadmin: todos.
+      const filter = u.isSuper ? '' : `&created_by=eq.${encodeURIComponent(u.key)}`;
+      const rows = await sb(env, `announcements?select=*${filter}&order=created_at.desc`) || [];
+      return json({ ok: true, rows, is_super: u.isSuper });
     }
 
     if (body.action === 'save_manual') {
       const title = clean(body.title);
       if (!title) return json({ ok: false, error: 'El titulo es obligatorio.' }, 400);
-      const aud = ['all', 'stores', 'admins'].includes(body.audience) ? body.audience : 'all';
+      const aud = ['all', 'stores', 'enterprises', 'admins', 'editors'].includes(body.audience) ? body.audience : 'all';
       const row = {
         title,
         body: String(body.body || ''),
@@ -175,6 +194,12 @@ export async function onRequestPost({ request, env }) {
         updated_at: new Date().toISOString(),
       };
       if (body.id) {
+        // admin solo puede editar los suyos; super cualquiera.
+        const own = await sb(env, `announcements?id=eq.${encodeURIComponent(body.id)}&select=created_by`);
+        if (!own || !own.length) return json({ ok: false, error: 'No encontrado.' }, 404);
+        if (!u.isSuper && String(own[0].created_by) !== String(u.key)) {
+          return json({ ok: false, error: 'Solo puedes editar tus propios avisos.' }, 403);
+        }
         await sb(env, `announcements?id=eq.${encodeURIComponent(body.id)}`, {
           method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(row),
         });
@@ -190,8 +215,11 @@ export async function onRequestPost({ request, env }) {
     if (body.action === 'toggle_manual') {
       const id = clean(body.id);
       if (!id) return json({ ok: false, error: 'Falta id.' }, 400);
-      const cur = await sb(env, `announcements?id=eq.${encodeURIComponent(id)}&select=is_active`);
+      const cur = await sb(env, `announcements?id=eq.${encodeURIComponent(id)}&select=is_active,created_by`);
       if (!cur || !cur.length) return json({ ok: false, error: 'No encontrado.' }, 404);
+      if (!u.isSuper && String(cur[0].created_by) !== String(u.key)) {
+        return json({ ok: false, error: 'Solo puedes cambiar tus propios avisos.' }, 403);
+      }
       await sb(env, `announcements?id=eq.${encodeURIComponent(id)}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({ is_active: !cur[0].is_active, updated_at: new Date().toISOString() }),
@@ -202,6 +230,11 @@ export async function onRequestPost({ request, env }) {
     if (body.action === 'delete_manual') {
       const id = clean(body.id);
       if (!id) return json({ ok: false, error: 'Falta id.' }, 400);
+      const cur = await sb(env, `announcements?id=eq.${encodeURIComponent(id)}&select=created_by`);
+      if (!cur || !cur.length) return json({ ok: false, error: 'No encontrado.' }, 404);
+      if (!u.isSuper && String(cur[0].created_by) !== String(u.key)) {
+        return json({ ok: false, error: 'Solo puedes eliminar tus propios avisos.' }, 403);
+      }
       await sb(env, `announcements?id=eq.${encodeURIComponent(id)}`, {
         method: 'DELETE', headers: { Prefer: 'return=minimal' },
       });

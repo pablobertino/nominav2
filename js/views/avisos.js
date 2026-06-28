@@ -25,7 +25,7 @@ const SVG = {
 };
 const VAR_KEYS = ['#Periodo', '#Fecha_Cierre', '#Fecha_Calculo', '#Fecha_Pago', '#HoraLimite1', '#HoraLimite2'];
 const TPL_LABEL = { calc: 'Último día de cálculo', cut: 'Día de cálculo', pay: 'Día de pago' };
-const AUD_LABEL = { all: 'Todos', stores: 'Tiendas', admins: 'Administradores' };
+const AUD_LABEL = { all: 'Todos', stores: 'Tiendas', enterprises: 'Empresas', admins: 'Administradores', editors: 'Editores' };
 
 let AV_USER = null;
 let AV_FEED = null;
@@ -148,6 +148,8 @@ async function loadAndRender() {
 function autoRow(a) {
   const id = `av-${a.type}`;
   const today = a.today ? `<span class="av-tag tag-today">Hoy</span>` : '';
+  // Solo el superadmin (can_edit_templates) ve el boton de editar plantilla.
+  const canEdit = AV_USER.kind === 'admin' && AV_TPL && AV_TPL.can_edit_templates;
   return `<div class="av-row" id="${id}">
     <div class="av-ic ${a.type}">${SVG[a.type] || ''}</div>
     <div class="av-body">
@@ -155,7 +157,7 @@ function autoRow(a) {
       <div class="av-text">${esc(a.body)}</div>
       <div class="av-meta"><span>\u{1F4C5} ${esc(a.date || '')}</span></div>
     </div>
-    <div class="av-actions">${AV_USER.kind === 'admin'
+    <div class="av-actions">${canEdit
       ? `<button class="av-iconbtn" data-tpl="${a.type}">Editar plantilla</button>` : ''}</div>
   </div>`;
 }
@@ -198,21 +200,24 @@ function renderUser() {
 /* ---------- vista admin ---------- */
 function renderAdmin() {
   const auto = (AV_FEED.auto || []);
+  const canEditTpl = !!(AV_TPL && AV_TPL.can_edit_templates);
   let html = '';
   html += `<div class="av-sub">Avisos del per\u00edodo (autom\u00e1ticos)</div>`;
-  html += auto.length
-    ? `<div class="av-card">${auto.map(autoRow).join('')}</div>`
-    : `<div class="av-empty">No hay hitos de per\u00edodo en la ventana de d\u00edas configurada. Puedes editar las plantillas desde cualquier hito cuando aparezca, o ajustar los d\u00edas previos en Configuraci\u00f3n.</div>`;
-  // si no hay hitos visibles, igual ofrecemos editar las 3 plantillas
-  if (!auto.length) {
-    html += `<div class="av-card" style="margin-top:8px">
+  if (auto.length) {
+    html += `<div class="av-card">${auto.map(autoRow).join('')}</div>`;
+  } else if (canEditTpl) {
+    // Superadmin sin hitos hoy: igual puede editar las 3 plantillas.
+    html += `<div class="av-card">
       ${['calc', 'cut', 'pay'].map(t => `<div class="av-row">
         <div class="av-ic ${t}">${SVG[t]}</div>
         <div class="av-body"><div class="av-title">${TPL_LABEL[t]}</div>
-          <div class="av-text">Plantilla del aviso autom\u00e1tico.</div></div>
+          <div class="av-text">Plantilla del aviso autom\u00e1tico (se muestra a las tiendas y empresas el d\u00eda del hito).</div></div>
         <div class="av-actions"><button class="av-iconbtn" data-tpl="${t}">Editar plantilla</button></div>
       </div>`).join('')}
     </div>`;
+  } else {
+    // Admin (no super): solo informativo, sin botones.
+    html += `<div class="av-empty">Los avisos del per\u00edodo (\u00faltimo d\u00eda de c\u00e1lculo, d\u00eda de c\u00e1lculo y d\u00eda de pago) se muestran autom\u00e1ticamente a las tiendas y empresas el d\u00eda que corresponde. Aparecer\u00e1n aqu\u00ed ese d\u00eda. Solo el superadministrador puede editar sus plantillas.</div>`;
   }
 
   html += `<div class="av-sub">Comunicados manuales</div>`;
@@ -366,9 +371,11 @@ function manualModalHtml(m) {
         <div class="av-row2" style="margin-top:12px">
           <div class="av-field"><label>Dirigido a</label>
             <select id="avmAud">
-              <option value="all"${m && m.audience === 'all' ? ' selected' : ''}>Todos</option>
+              <option value="all"${m && m.audience === 'all' ? ' selected' : ''}>Todos (tiendas y empresas)</option>
               <option value="stores"${m && m.audience === 'stores' ? ' selected' : ''}>Solo tiendas</option>
+              <option value="enterprises"${m && m.audience === 'enterprises' ? ' selected' : ''}>Solo empresas (no tiendas)</option>
               <option value="admins"${m && m.audience === 'admins' ? ' selected' : ''}>Solo administradores</option>
+              <option value="editors"${m && m.audience === 'editors' ? ' selected' : ''}>Solo editores</option>
             </select></div>
           <div class="av-field"><label>Mostrar desde</label>
             <input id="avmFrom" type="date" value="${m && m.starts_on ? String(m.starts_on).slice(0, 10) : todayISO()}">
