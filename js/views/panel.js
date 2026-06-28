@@ -18,6 +18,7 @@ import { renderWorkerPhotos } from './worker-photos.js';
 import { renderDashboard } from './dashboard.js';
 import { renderReportStats } from './report-stats.js';
 import { renderEgressRatify } from './egress-ratify.js';
+import { renderPersonnelSearch } from './personnel-search.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { renderDepartments } from './departments.js';
@@ -66,6 +67,7 @@ const I = {
 const NAV = [
   ['dashboard', I.grid, 'Inicio'],
   ['tiendas', I.store, 'Empresas'],
+  ['buscar', I.search, 'Buscar personal'],
   ['catalogos', I.catalog, 'Catálogos'],
   ['usuarios', I.users, 'Usuarios'],
   ['quincenas', I.calendar, 'Quincenas'],
@@ -98,7 +100,7 @@ function shell(user) {
   const navItems = isCompany
     ? [['dashboard', I.grid, 'Inicio'], ['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['historial', I.history, 'Historial']]
     : isEditorPersonal
-      ? NAV.filter(n => ['dashboard', 'tiendas', 'rostersync'].includes(n[0]))
+      ? NAV.filter(n => ['dashboard', 'tiendas', 'buscar', 'rostersync'].includes(n[0]))
       : NAV.filter(n => n[3] !== 'superonly' || isSuper);
 
   return `
@@ -117,7 +119,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.38</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.39</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -3111,6 +3113,7 @@ async function navigate(view, user) {
   else if (view === 'historial') renderHistory(user);
   else if (view === 'estadisticas') renderReportStats(user);
   else if (view === 'egmotivos') renderEgressRatify(user);
+  else if (view === 'buscar') renderPersonnelSearch(user);
   else if (view === 'documentos') renderPersonnelDocs(user, null);
   else if (view === 'miempresa') viewMiEmpresa(user);
   else if (view === 'fotos') {

@@ -319,6 +319,13 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   if (assignBtn) assignBtn.addEventListener('click', toggleSelMode);
 
   await load();
+
+  // Apertura directa de una ficha (ej. desde "Buscar personal"): tras cargar
+  // la lista, abre la tarjeta del trabajador indicado por cedula.
+  if (opts && opts.openCed) {
+    const target = STATE.workers.find(x => String(x.id_number) === String(opts.openCed));
+    if (target) openFicha(String(opts.openCed));
+  }
 }
 
 /* Carga (o recarga) el directorio de la empresa y repinta grid + barra.
