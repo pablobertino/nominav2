@@ -109,7 +109,7 @@ function shell(user) {
   const navItems = isCompany
     ? [['dashboard', I.grid, 'Inicio'], ['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['calendario', I.calendar, 'Calendario'], ['historial', I.history, 'Historial'], ['misstats', I.chart, 'Mis estadísticas'], ['avisos', I.bell, 'Avisos']]
     : isEditorPersonal
-      ? NAV.filter(n => ['dashboard', 'tiendas', 'buscar', 'calendario', 'rostersync'].includes(n[0]))
+      ? NAV.filter(n => ['dashboard', 'tiendas', 'buscar', 'calendario', 'rostersync', 'avisos'].includes(n[0]))
       : NAV.filter(n => n[3] !== 'superonly' || isSuper);
 
   return `
@@ -132,7 +132,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.54</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.55</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
