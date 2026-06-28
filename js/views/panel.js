@@ -17,6 +17,7 @@ import { renderHistory } from '../reports/history.js';
 import { renderWorkerPhotos } from './worker-photos.js';
 import { renderDashboard } from './dashboard.js';
 import { renderReportStats } from './report-stats.js';
+import { renderCompanyReports } from './company-reports.js';
 import { renderEgressRatify } from './egress-ratify.js';
 import { renderPersonnelSearch } from './personnel-search.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
@@ -62,6 +63,7 @@ const I = {
   docs: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M16 13H8M16 17H8M10 9H8"/></svg>',
   grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>',
   chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg>',
+  bizreport: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l5-4v18"/><path d="M19 21V11l-5-4"/><path d="M9 9v0M9 13v0M9 17v0"/></svg>',
 };
 
 const NAV = [
@@ -74,6 +76,7 @@ const NAV = [
   ['documentos', I.docs, 'Documentos'],
   ['historial', I.history, 'Historial'],
   ['estadisticas', I.chart, 'Estadísticas'],
+  ['reportempresas', I.bizreport, 'Reportes de empresas'],
   ['egmotivos', I.check, 'Ratificar egresos'],
   ['rostersync', I.photo, 'Sinc. Personal'],
   ['equipo', I.team, 'Equipo', 'superonly'],
@@ -119,7 +122,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.46</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.47</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -3113,6 +3116,7 @@ async function navigate(view, user) {
   else if (view === 'config') viewConfig(user);
   else if (view === 'historial') renderHistory(user);
   else if (view === 'estadisticas') renderReportStats(user);
+  else if (view === 'reportempresas') renderCompanyReports(user);
   else if (view === 'egmotivos') renderEgressRatify(user);
   else if (view === 'buscar') renderPersonnelSearch(user);
   else if (view === 'documentos') renderPersonnelDocs(user, null);

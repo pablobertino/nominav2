@@ -1058,10 +1058,45 @@ async function submitEgreso(env, body) {
   const reportMax = today < hito ? today : hito;
 
   // Trabajadores de la tienda (para validar egreso ya conocido). cedula -> end_date.
-  const roster = await sb(env,
-    `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,end_date`);
+  // Se trae tambien el PERFIL para el snapshot (Fase 2): el egreso puede venir
+  // de una tienda (store_workers) o de una empresa no-tienda (enterprise_workers),
+  // asi que se consultan AMBAS por company_code. Mapa cedula -> {perfil, source}.
+  const [rosterSW, rosterEW] = await Promise.all([
+    sb(env, `store_workers?company_code=eq.${encodeURIComponent(cc)}`
+      + `&select=id_number,end_date,gender,birth_date,role,department_id,start_date`),
+    sb(env, `enterprise_workers?company_code=eq.${encodeURIComponent(cc)}`
+      + `&select=id_number,end_date,gender,birth_date,role,department_id,start_date`),
+  ]);
   const endDateByCed = {};
-  (roster || []).forEach(w => { endDateByCed[w.id_number] = w.end_date || null; });
+  const profByCed = {};
+  (rosterSW || []).forEach(w => {
+    endDateByCed[w.id_number] = w.end_date || null;
+    profByCed[w.id_number] = { ...w, _src: 'store_workers' };
+  });
+  (rosterEW || []).forEach(w => {
+    // Si la cedula no estaba en store_workers, tomar el perfil/end_date de la empresa.
+    if (!(w.id_number in endDateByCed)) endDateByCed[w.id_number] = w.end_date || null;
+    if (!(w.id_number in profByCed)) profByCed[w.id_number] = { ...w, _src: 'enterprise_workers' };
+  });
+
+  // Helper: edad cumplida a 'ref' (YYYY-MM-DD) desde birth_date. null si falta
+  // o es centinela 1900-01-01 (regla de datos del portal).
+  const snapAge = (birth, ref) => {
+    if (!birth || String(birth).slice(0, 10) <= '1900-01-01') return null;
+    const b = String(birth).slice(0, 10).split('-').map(Number);
+    const t = String(ref).slice(0, 10).split('-').map(Number);
+    let a = t[0] - b[0];
+    if (t[1] < b[1] || (t[1] === b[1] && t[2] < b[2])) a--;
+    return (a >= 0 && a <= 120) ? a : null;
+  };
+  // Helper: dias entre dos 'YYYY-MM-DD' (b - a). null si falta alguna o negativo.
+  const daysBetween = (a, b) => {
+    if (!a || !b) return null;
+    const da = Date.UTC(...String(a).slice(0, 10).split('-').map((n, i) => i === 1 ? n - 1 : +n));
+    const db = Date.UTC(...String(b).slice(0, 10).split('-').map((n, i) => i === 1 ? n - 1 : +n));
+    const d = Math.round((db - da) / 86400000);
+    return d >= 0 ? d : null;
+  };
 
   // --- Causas de egreso sin carta (catalogo) ---
   // waives_document: si la causa exime el documento (no queda pendiente).
@@ -1216,18 +1251,38 @@ async function submitEgreso(env, body) {
   if (!reportId) return json({ ok: false, error: 'No se pudo registrar el reporte.' }, 500);
 
   // --- Detalle en egress_report_lines (ambas fechas + estado del documento) ---
-  const payload = clean.map(l => ({
-    report_id: reportId,
-    worker_id_number: l.worker_id_number,
-    worker_name: l.worker_name,
-    report_date: l.report_date,
-    real_date: l.real_date,
-    reason_code: l.reason_code,
-    reason_comment: l.reason_comment,
-    has_document: l.has_document,
-    doc_cause: l.doc_cause,
-    doc_waived: l.doc_waived,
-  }));
+  // Fase 2: ademas se captura el SNAPSHOT del perfil del trabajador al momento
+  // del egreso (edad, sexo, cargo, departamento, antiguedad), para poder
+  // analizar rotacion aunque la persona salga del roster. La antiguedad se
+  // calcula con la fecha REAL de egreso (real_date) vs la fecha de ingreso.
+  const payload = clean.map(l => {
+    const p = profByCed[l.worker_id_number] || null;
+    const birth = p && p.birth_date ? p.birth_date : null;
+    const startD = p && p.start_date ? p.start_date : null;
+    const ageY = snapAge(birth, l.real_date);
+    const tenure = daysBetween(startD, l.real_date);
+    return {
+      report_id: reportId,
+      worker_id_number: l.worker_id_number,
+      worker_name: l.worker_name,
+      report_date: l.report_date,
+      real_date: l.real_date,
+      reason_code: l.reason_code,
+      reason_comment: l.reason_comment,
+      has_document: l.has_document,
+      doc_cause: l.doc_cause,
+      doc_waived: l.doc_waived,
+      // snapshot del perfil (null donde no haya dato / centinela 1900)
+      snap_source: p ? p._src : 'none',
+      snap_gender: p && p.gender ? p.gender : null,
+      snap_birth_date: (birth && String(birth).slice(0, 10) > '1900-01-01') ? birth : null,
+      snap_role: p && p.role ? p.role : null,
+      snap_department_id: p && p.department_id != null ? p.department_id : null,
+      snap_start_date: startD,
+      snap_age_years: ageY,
+      snap_tenure_days: tenure,
+    };
+  });
   await sb(env, 'egress_report_lines', { method: 'POST', body: JSON.stringify(payload) });
 
   // ───────────────────────────────────────────────────────────────────
