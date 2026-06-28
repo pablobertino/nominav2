@@ -134,11 +134,16 @@ export async function onRequestPost({ request, env }) {
       const map = {}; (rows || []).forEach(r => { map[r.key] = r.value; });
       const parse = k => { try { return JSON.parse(map[k] || '{}'); } catch { return {}; } };
       let vars = {};
-      try { vars = await sb(env, 'rpc/current_period_vars', { method: 'POST', body: '{}' }) || {}; } catch { vars = {}; }
+      try {
+        const vr = await sb(env, 'rpc/current_period_vars', { method: 'POST', body: '{}' });
+        // PostgREST puede devolver el escalar json directo o envuelto en array.
+        vars = Array.isArray(vr) ? (vr[0] || {}) : (vr || {});
+      } catch { vars = {}; }
       return json({
         ok: true,
         can_edit_templates: u.isSuper,           // admin ve pero no edita; super si
         templates: { calc: parse('aviso_tpl_calc'), cut: parse('aviso_tpl_cut'), pay: parse('aviso_tpl_pay') },
+        vars,                                     // valores reales del periodo vigente (para la vista previa)
         hora1: map['corte_hora_limite_general'] || '18:00',
         hora2: map['corte_hora_limite'] || '14:00',
         dias_previos: map['aviso_dias_previos'] || '0',
