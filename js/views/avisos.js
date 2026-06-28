@@ -236,6 +236,12 @@ function fmtDate(iso) {
   return `${d}/${m}/${y}`;
 }
 
+/* Hoy en Caracas como YYYY-MM-DD (para predeterminar "Mostrar desde"). */
+function todayISO() {
+  const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Caracas', year: 'numeric', month: '2-digit', day: '2-digit' }).format(new Date());
+  return p; // en-CA ya entrega YYYY-MM-DD
+}
+
 /* ---------- resaltar al llegar de la campanita ---------- */
 export function gotoAviso(id) {
   const row = document.getElementById('av-man-' + id) || document.getElementById('av-' + id);
@@ -364,12 +370,13 @@ function manualModalHtml(m) {
               <option value="stores"${m && m.audience === 'stores' ? ' selected' : ''}>Solo tiendas</option>
               <option value="admins"${m && m.audience === 'admins' ? ' selected' : ''}>Solo administradores</option>
             </select></div>
-          <div class="av-field"><label>Vigencia</label>
-            <div class="av-row2">
-              <input id="avmFrom" type="date" value="${m && m.starts_on ? String(m.starts_on).slice(0, 10) : ''}">
-              <input id="avmTo" type="date" value="${m && m.ends_on ? String(m.ends_on).slice(0, 10) : ''}">
-            </div></div>
+          <div class="av-field"><label>Mostrar desde</label>
+            <input id="avmFrom" type="date" value="${m && m.starts_on ? String(m.starts_on).slice(0, 10) : todayISO()}">
+            <div class="av-help">El aviso aparece a partir de este día. Para lanzarlo a futuro, elige una fecha posterior.</div></div>
         </div>
+        <div class="av-field"><label>Ocultar después de (opcional)</label>
+          <input id="avmTo" type="date" value="${m && m.ends_on ? String(m.ends_on).slice(0, 10) : ''}">
+          <div class="av-help">Déjalo vacío para que el aviso no caduque.</div></div>
       </div>
       <div class="av-modal-f">
         ${isEdit ? `<button class="av-btn" id="avManDel" style="margin-right:auto;color:#dc2626;border-color:#fecaca">Eliminar</button>` : ''}

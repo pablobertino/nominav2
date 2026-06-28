@@ -15,6 +15,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { gotoAviso } from './avisos.js';
 
 /* ---------- helpers ---------- */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -75,6 +76,50 @@ function typeColor(t) { return TYPE_COLORS[t] || '#64748b'; }
 function clickNav(view) {
   const b = document.querySelector(`#pnlNav button[data-view="${view}"]`);
   if (b) b.click();
+}
+
+/* ---------- Banner de dia especial (cierre/calculo/pago) ----------
+   Aparece SOLO el dia exacto del hito (reusa el feed de avisos, que con
+   aviso_dias_previos=0 solo trae el automatico del dia). Al hacer clic va a
+   Avisos y resalta ese mensaje. Se inyecta al inicio del dashboard. */
+const BANNER_SVG = {
+  calc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="18" x2="12" y2="18"/></svg>',
+  cut: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/></svg>',
+  pay: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg>',
+};
+async function fetchTodayBanner(user) {
+  try {
+    const r = await fetch('/api/announcements', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'feed',
+        user: user.kind === 'company'
+          ? { kind: 'company', companyCode: user.companyCode }
+          : { kind: 'admin', id: user.id },
+      }),
+    }).then(x => x.json());
+    if (!r || !r.ok) return null;
+    const hit = (r.auto || []).find(a => a.today);
+    return hit || null;
+  } catch (_) { return null; }
+}
+/* Inyecta el banner (si aplica) al principio de #pnlMain, sin romper lo demas. */
+async function injectPeriodBanner(user) {
+  const a = await fetchTodayBanner(user);
+  if (!a) return;
+  const main = document.getElementById('pnlMain');
+  if (!main) return;
+  const el = document.createElement('button');
+  el.type = 'button';
+  el.className = `dash-pbanner ${a.type}`;
+  el.innerHTML = `<span class="ic">${BANNER_SVG[a.type] || ''}</span>
+    <span class="tx"><span class="tt">${esc(a.title)}</span><span class="ds">${esc(a.short || a.body || '')}</span></span>
+    <span class="go">Ver aviso \u2192</span>`;
+  el.addEventListener('click', () => {
+    clickNav('avisos');
+    setTimeout(() => { try { gotoAviso(a.type); } catch (_) {} }, 400);
+  });
+  main.insertBefore(el, main.firstChild);
 }
 
 /* ---------- estilos (una vez) ---------- */
@@ -198,6 +243,26 @@ function ensureStyles() {
   .dash-movh { font-size:12.5px; font-weight:600; color:var(--ink-soft); margin:0 2px 8px;
     display:flex; align-items:center; gap:6px; }
   @media (max-width:760px){ .dash-demo2, .dash-mov2 { grid-template-columns:1fr; } }
+
+  /* Banner de dia especial (cierre/calculo/pago) — franja delgada arriba */
+  .dash-pbanner { display:flex; align-items:center; gap:11px; cursor:pointer; margin-bottom:14px;
+    padding:10px 15px; border-radius:11px; border:1px solid; font:inherit; width:100%; text-align:left;
+    transition:filter .12s, box-shadow .12s; }
+  .dash-pbanner:hover { filter:brightness(.98); box-shadow:var(--shadow-sm); }
+  .dash-pbanner .ic { width:30px; height:30px; flex:0 0 auto; border-radius:8px; display:flex;
+    align-items:center; justify-content:center; }
+  .dash-pbanner .ic svg { width:17px; height:17px; }
+  .dash-pbanner .tx { flex:1; min-width:0; }
+  .dash-pbanner .tt { font-size:13px; font-weight:650; line-height:1.25; }
+  .dash-pbanner .ds { font-size:11.5px; opacity:.85; margin-top:1px; line-height:1.3;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .dash-pbanner .go { font-size:11px; font-weight:600; flex:0 0 auto; opacity:.8; }
+  .dash-pbanner.calc { background:#fffbeb; border-color:#fde68a; color:#92400e; }
+  .dash-pbanner.calc .ic { background:#fef3c7; color:#b45309; }
+  .dash-pbanner.cut  { background:#eff6ff; border-color:#bfdbfe; color:#1e40af; }
+  .dash-pbanner.cut .ic { background:#dbeafe; color:#1e40af; }
+  .dash-pbanner.pay  { background:#ecfdf5; border-color:#a7f3d0; color:#166534; }
+  .dash-pbanner.pay .ic { background:#dcfce7; color:#166534; }
   `;
   document.head.appendChild(st);
 }
@@ -404,6 +469,8 @@ async function renderCompanyDash(user) {
 
   $('#dashDemo').innerHTML = demoHtml(workers);
   $('#dashBdays').innerHTML = bdaysSectionHtml(today, upcoming, false);
+
+  injectPeriodBanner(user);
 }
 
 /* ===================== DASHBOARD ADMIN ===================== */
@@ -516,6 +583,8 @@ async function renderAdminDash(user) {
     <div id="dashBdays"></div>`;
 
   $('#dashBdays').innerHTML = bdaysSectionHtml(bdToday, bdUpcoming, true);
+
+  injectPeriodBanner(user);
 }
 
 /* ===================== demografia (sexo / edades / estado civil) ===================== */
