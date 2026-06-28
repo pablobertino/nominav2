@@ -203,9 +203,13 @@ async function ensureFacets() {
 }
 
 function api(extra) {
+  // El user admin viaja como { kind, id }; el company como { kind, companyCode }.
+  const u = CR_USER.kind === 'company'
+    ? { kind: 'company', companyCode: CR_USER.companyCode }
+    : { kind: CR_USER.kind, id: CR_USER.id };
   return fetch('/api/company-reports', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ user: { kind: CR_USER.kind, id: CR_USER.id }, from: CR_FROM, to: CR_TO, ...extra }),
+    body: JSON.stringify({ user: u, from: CR_FROM, to: CR_TO, ...extra }),
   }).then(r => r.json());
 }
 
@@ -394,10 +398,14 @@ async function openDetail(code) {
     $('#pnlMain').innerHTML = `<div class="cr-empty">No se pudo cargar el detalle.<br><small>${esc(String(e.message || e))}</small></div>`;
     return;
   }
-  paintDetail(det.detail || {}, (rot && rot.ok) ? (rot.rotation || {}) : {});
+  paintDetail(det.detail || {}, (rot && rot.ok) ? (rot.rotation || {}) : {}, {
+    showBack: true,
+    onBack: () => { renderListShell(); paintKpis(CR_ROWS); paintList(CR_ROWS); window.scrollTo(0, 0); },
+  });
 }
 
-function paintDetail(det, rot) {
+function paintDetail(det, rot, opts = {}) {
+  const showBack = opts.showBack !== false;
   const c = det.company || {};
   const k = det.kpis || {};
   const byType = det.by_type || {};
@@ -445,7 +453,7 @@ function paintDetail(det, rot) {
   ].map(([l, v]) => `<div><span class="cr-idlbl">${l}</span><span class="cr-idval">${esc(v || '\u2014')}</span></div>`).join('');
 
   $('#pnlMain').innerHTML = `
-    <button class="cr-back" id="crBack">\u2190 Volver a la lista</button>
+    ${showBack ? `<button class="cr-back" id="crBack">\u2190 Volver a la lista</button>` : ''}
     <div class="cr-idcard">
       <span class="cr-idcode">${esc(c.company_code || '')}</span>
       <div class="cr-idname">${esc(c.business_name || '')}</div>
@@ -471,7 +479,10 @@ function paintDetail(det, rot) {
 
     ${rotationHtml(rot)}`;
 
-  $('#crBack').addEventListener('click', () => { renderListShell(); paintKpis(CR_ROWS); paintList(CR_ROWS); window.scrollTo(0, 0); });
+  if (showBack) {
+    const bk = $('#crBack');
+    if (bk) bk.addEventListener('click', opts.onBack || (() => {}));
+  }
   window.scrollTo(0, 0);
 }
 
@@ -577,4 +588,128 @@ async function exportList(fmt) {
     XLSX.utils.book_append_sheet(wb, ws, 'Reportes');
     XLSX.writeFile(wb, `${fname}.xlsx`);
   }
+}
+
+/* ===================== "MIS ESTADISTICAS" (usuario company) =====================
+   Reusa el endpoint (actions detail/rotation) y el pintado, pero sin lista ni
+   filtros de empresa: el company solo ve LO SUYO. El endpoint ignora cualquier
+   code del cliente y usa el de la sesion. Incluye su propia rotacion (con la
+   ratificacion del admin como retroalimentacion). Empresa no-tienda: igual, y si
+   no tiene egresos el panel de rotacion muestra el vacio correspondiente.       */
+export async function renderMyStats(user) {
+  CR_USER = user;
+  ensureStyles();
+  if (!CR_FROM || !CR_TO) { const b = lastNDays(90); CR_FROM = b.from; CR_TO = b.to; }
+
+  $('#pnlMain').innerHTML = `
+    <div class="cr-head">
+      <div>
+        <h1>Mis estad\u00edsticas</h1>
+        <p>Resumen de los reportes de tu empresa y c\u00f3mo los ha atendido la administraci\u00f3n.</p>
+      </div>
+      <div class="cr-head-r">
+        <div class="cr-field" style="min-width:170px">
+          <label>Per\u00edodo</label>
+          <select id="msPeriod">
+            <option value="m0">Este mes</option>
+            <option value="m1">Mes pasado</option>
+            <option value="d30">\u00daltimos 30 d\u00edas</option>
+            <option value="d90" selected>\u00daltimos 90 d\u00edas</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div id="msBody"><div class="cr-empty">Cargando\u2026</div></div>`;
+
+  $('#msPeriod').addEventListener('change', (e) => {
+    const v = e.target.value;
+    let b;
+    if (v === 'm0') b = monthBounds(0);
+    else if (v === 'm1') b = monthBounds(-1);
+    else if (v === 'd30') b = lastNDays(30);
+    else b = lastNDays(90);
+    CR_FROM = b.from; CR_TO = b.to;
+    loadMyStats();
+  });
+
+  loadMyStats();
+}
+
+async function loadMyStats() {
+  const body = $('#msBody');
+  if (body) body.innerHTML = '<div class="cr-empty">Cargando\u2026</div>';
+  let det, rot;
+  try {
+    [det, rot] = await Promise.all([
+      api({ action: 'detail' }),     // el endpoint usa el code de la sesion
+      api({ action: 'rotation' }),
+    ]);
+    if (!det.ok) throw new Error(det.error || 'Error');
+  } catch (e) {
+    if (body) body.innerHTML = `<div class="cr-empty">No se pudieron cargar tus estad\u00edsticas.<br><small>${esc(String(e.message || e))}</small></div>`;
+    return;
+  }
+  paintDetailInto('#msBody', det.detail || {}, (rot && rot.ok) ? (rot.rotation || {}) : {});
+}
+
+/* Variante de paintDetail que escribe en un contenedor dado (no #pnlMain) y sin
+   tarjeta de identificacion ni boton volver. Reusa los mismos bloques visuales. */
+function paintDetailInto(sel, det, rot) {
+  const host = $(sel);
+  if (!host) return;
+  const k = det.kpis || {};
+  const byType = det.by_type || {};
+  const total = k.total || 0;
+  const att = total ? Math.round((k.attended || 0) / total * 100) : 0;
+  const avgDay = k.days ? (total / k.days).toFixed(1) : '0';
+
+  const maxType = Math.max(1, ...TOPIC_ORDER.map(t => byType[t] || 0));
+  const bars = TOPIC_ORDER.map(t => {
+    const m = TOPIC[t], n = byType[t] || 0, pct = total ? Math.round(n / total * 100) : 0;
+    return `<div class="cr-brow">
+      <span class="cr-bl"><span class="dot" style="background:${m.color}"></span>${m.icon} ${m.label}</span>
+      <div class="cr-bt"><i style="width:${Math.round(n / maxType * 100)}%;background:${m.color}"></i></div>
+      <span class="cr-bn"><b>${fmt(n)}</b><span>${pct}%</span></span></div>`;
+  }).join('');
+
+  const wk = det.by_week || [];
+  const maxWk = Math.max(1, ...wk.map(w => w.n || 0));
+  const trend = wk.length
+    ? wk.map(w => `<div class="cr-tcol" title="${esc(w.wk)}: ${w.n}"><div class="v">${w.n || ''}</div>
+        <div class="bar" style="height:${Math.round((w.n || 0) / maxWk * 100)}%"></div>
+        <div class="d">${dLabel(w.wk)}</div></div>`).join('')
+    : '<div class="cr-empty" style="border:none">Sin reportes en el periodo.</div>';
+
+  const rec = det.recent || [];
+  const recHtml = rec.length
+    ? rec.map(r => {
+      const m = TOPIC[r.topic] || { label: r.topic, icon: '\u2022' };
+      const pill = r.attention === 'attended' ? '<span class="cr-pill p-ratif">Atendido</span>'
+        : r.attention === 'annulled' ? '<span class="cr-pill p-rectif">Anulado</span>'
+          : '<span class="cr-pill p-pend">Pendiente</span>';
+      return `<div class="cr-rrow"><span style="font-size:15px">${m.icon}</span>
+        <span style="flex:1;font-size:13px">${esc(m.label)}</span>${pill}
+        <span style="font-size:11.5px;color:var(--muted);min-width:70px;text-align:right">${agoLabel(r.sent_at)}</span></div>`;
+    }).join('')
+    : '<div class="cr-empty" style="border:none">Sin reportes en el periodo.</div>';
+
+  host.innerHTML = `
+    <div class="cr-kpis">
+      <div class="cr-kpi"><div class="l">Total de reportes</div><div class="n">${fmt(total)}</div><div class="sub">${dLabel(CR_FROM)} \u2013 ${dLabel(CR_TO)}</div></div>
+      <div class="cr-kpi"><div class="l">Atendidos</div><div class="n" style="color:#16a34a">${fmt(k.attended || 0)}</div><div class="sub">${att}% \u00b7 ${fmt(k.pending || 0)} pendientes</div></div>
+      <div class="cr-kpi"><div class="l">Egresos</div><div class="n" style="color:#dc2626">${fmt(k.egresos || 0)}</div><div class="sub">en el per\u00edodo</div></div>
+      <div class="cr-kpi"><div class="l">Promedio diario</div><div class="n">${avgDay}</div><div class="sub">reportes por d\u00eda</div></div>
+    </div>
+
+    <div class="cr-sec">Mis reportes por tipo</div>
+    <div class="cr-card"><div class="cr-bars">${bars}</div></div>
+
+    <div class="cr-two" style="margin-top:12px">
+      <div><div class="cr-sec" style="margin-top:6px">Tendencia <small>por semana</small></div>
+        <div class="cr-card"><div class="cr-trend">${trend}</div></div></div>
+      <div><div class="cr-sec" style="margin-top:6px">Mis \u00faltimos reportes</div>
+        <div class="cr-card" style="padding:6px 12px">${recHtml}</div></div>
+    </div>
+
+    ${rotationHtml(rot)}`;
 }

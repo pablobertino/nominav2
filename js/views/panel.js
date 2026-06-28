@@ -17,7 +17,7 @@ import { renderHistory } from '../reports/history.js';
 import { renderWorkerPhotos } from './worker-photos.js';
 import { renderDashboard } from './dashboard.js';
 import { renderReportStats } from './report-stats.js';
-import { renderCompanyReports } from './company-reports.js';
+import { renderCompanyReports, renderMyStats } from './company-reports.js';
 import { renderEgressRatify } from './egress-ratify.js';
 import { renderPersonnelSearch } from './personnel-search.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
@@ -101,7 +101,7 @@ function shell(user) {
 
   // Navegación según rol: la tienda ve "Mi empresa" y su "Historial".
   const navItems = isCompany
-    ? [['dashboard', I.grid, 'Inicio'], ['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['calendario', I.calendar, 'Calendario'], ['historial', I.history, 'Historial']]
+    ? [['dashboard', I.grid, 'Inicio'], ['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['calendario', I.calendar, 'Calendario'], ['historial', I.history, 'Historial'], ['misstats', I.chart, 'Mis estadísticas']]
     : isEditorPersonal
       ? NAV.filter(n => ['dashboard', 'tiendas', 'buscar', 'calendario', 'rostersync'].includes(n[0]))
       : NAV.filter(n => n[3] !== 'superonly' || isSuper);
@@ -122,7 +122,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.47</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.48</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -3117,6 +3117,7 @@ async function navigate(view, user) {
   else if (view === 'historial') renderHistory(user);
   else if (view === 'estadisticas') renderReportStats(user);
   else if (view === 'reportempresas') renderCompanyReports(user);
+  else if (view === 'misstats') renderMyStats(user);
   else if (view === 'egmotivos') renderEgressRatify(user);
   else if (view === 'buscar') renderPersonnelSearch(user);
   else if (view === 'documentos') renderPersonnelDocs(user, null);
