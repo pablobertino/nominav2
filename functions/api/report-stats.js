@@ -76,6 +76,20 @@ export async function onRequestPost({ request, env }) {
       codes = (rows || []).map(r => r.company_code);
     }
 
+    // Actividad por tienda (tabla estilo portal anterior): una fila por
+    // tienda con total, atendidos/sin atender/anulados y conteo por topico.
+    // Filtros opcionales topic/status. KPIs se derivan en el cliente.
+    if (body.action === 'activity') {
+      const ALLOWED = ['marcaje', 'ausencia', 'ingreso', 'egreso', 'modificacion'];
+      const topic = ALLOWED.includes(body.topic) ? body.topic : null;
+      const status = ['attended', 'pending', 'annulled'].includes(body.status) ? body.status : null;
+      const rows = await sb(env, 'rpc/report_activity_by_store', {
+        method: 'POST',
+        body: JSON.stringify({ p_codes: codes, p_from: from, p_to: to, p_topic: topic, p_status: status }),
+      });
+      return json({ ok: true, scope: role === 'superadmin' ? 'all' : 'scoped', rows: rows || [] });
+    }
+
     const stats = await sb(env, 'rpc/report_stats', {
       method: 'POST',
       body: JSON.stringify({ p_codes: codes, p_from: from, p_to: to }),

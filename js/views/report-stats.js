@@ -9,6 +9,8 @@
    Export: renderReportStats(user)  — user = { kind:'admin', id, role, name }
    ===================================================================== */
 
+import { ensureXLSX } from '../reports/shared/roster.js';
+
 const $ = (s, r = document) => r.querySelector(s);
 
 function esc(s) {
@@ -134,6 +136,22 @@ function ensureStyles() {
   .rs-pill-warn { color:#b45309; background:#fef3c7; } .rs-pill-bad { color:#991b1b; background:#fee2e2; } .rs-pill-ok { color:#166534; background:#dcfce7; }
   .rs-empty { background:var(--surface); border:1px dashed var(--border); border-radius:14px; padding:18px; text-align:center; color:var(--muted); font-size:13px; }
   .rs-note { font-size:11.5px; color:var(--muted); margin:14px 2px 0; line-height:1.5; }
+  .rs-kpis5 { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin:6px 0 12px; }
+  @media (max-width:880px){ .rs-kpis5 { grid-template-columns:repeat(2,1fr); } }
+  .rs-actfilters { display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin:0 0 10px; }
+  .rs-actfilters select { font:inherit; font-size:13px; padding:8px 12px; border:1px solid var(--border); border-radius:9px; background:var(--surface); color:var(--ink); }
+  .rs-actfilters .sp { flex:1; }
+  .rs-actwrap { overflow:auto; border:1px solid var(--border); border-radius:14px; background:var(--surface); }
+  table.rs-act { width:100%; border-collapse:collapse; font-size:12.5px; min-width:780px; }
+  table.rs-act th, table.rs-act td { padding:9px 11px; text-align:left; border-bottom:1px solid var(--border-soft,#eef0f3); white-space:nowrap; }
+  table.rs-act th { position:sticky; top:0; background:var(--surface2,#f8fafc); color:var(--muted); font-weight:600; font-size:11px; text-transform:uppercase; letter-spacing:.03em; z-index:1; }
+  table.rs-act th.num, table.rs-act td.num { text-align:right; }
+  table.rs-act tr:last-child td { border-bottom:none; }
+  table.rs-act tbody tr:hover { background:var(--brand-bg,#eff6ff); }
+  table.rs-act td.code { font-family:ui-monospace,Menlo,monospace; font-weight:700; color:var(--brand,#2563eb); }
+  table.rs-act td.strong { font-weight:700; color:var(--ink); }
+  table.rs-act td.ok { color:#16a34a; font-weight:600; } table.rs-act td.bad { color:#dc2626; font-weight:600; } table.rs-act td.gray { color:#64748b; }
+  table.rs-act .rs-dash { color:var(--faint,#cbd5e1); }
   `;
   document.head.appendChild(st);
 }
@@ -143,6 +161,11 @@ let RS_USER = null;
 let RS_FROM = null, RS_TO = null;
 let RS_PERIODS = null;      // cache de quincenas (payroll_periods)
 let RS_QUINCENA_ID = null;  // id de la quincena elegida en modo quincena
+let RS_STORES_TOTAL = 0;    // tiendas activas del alcance (para "X / Y")
+let RS_LAST_SCOPE = 'scoped';
+let RS_ACT_ROWS = [];       // ultima tabla de actividad por tienda
+let RS_ACT_TOPIC = 'ALL';   // filtro Topico de la tabla
+let RS_ACT_STATUS = 'ALL';  // filtro Estado (atencion) de la tabla
 
 /* ---------- entrada ---------- */
 export async function renderReportStats(user) {
@@ -294,6 +317,7 @@ function renderBody(data) {
   }
 
   const stTotal = s.stores_total || 0, stRep = s.stores_reported || 0;
+  RS_STORES_TOTAL = stTotal;
   const cov = stTotal ? Math.round(stRep / stTotal * 100) : 0;
 
   const kpis = `
@@ -366,5 +390,136 @@ function renderBody(data) {
       </div>
     </div>
 
-    <p class="rs-note">Los datos salen de los reportes enviados desde el portal (tabla propia). La cobertura compara contra las tiendas activas de tu alcance.</p>`;
+    <p class="rs-note">Los datos salen de los reportes enviados desde el portal (tabla propia). La cobertura compara contra las tiendas activas de tu alcance.</p>
+
+    <div class="rs-sec">Actividad por tienda <small>una fila por tienda · estilo del portal anterior</small></div>
+    <div class="rs-kpis5" id="rsActKpis"></div>
+    <div class="rs-actfilters">
+      <select id="rsActTopic">
+        <option value="ALL">Tópico: todos</option>
+        <option value="marcaje">Marcaje</option>
+        <option value="ausencia">Ausencia</option>
+        <option value="ingreso">Ingreso (Alta)</option>
+        <option value="egreso">Egreso (Baja)</option>
+        <option value="modificacion">Modificación</option>
+      </select>
+      <select id="rsActStatus">
+        <option value="ALL">Estado: todos</option>
+        <option value="attended">Atendidos</option>
+        <option value="pending">Sin atender</option>
+        <option value="annulled">Anulados</option>
+      </select>
+      <span class="sp"></span>
+      <button class="rs-btn rs-btn-primary" id="rsActExport">⬇ Exportar Excel</button>
+    </div>
+    <div class="rs-actwrap" id="rsActTableWrap"><div class="rs-empty" style="border:none">Cargando actividad…</div></div>`;
+
+  const tSel = $('#rsActTopic'); if (tSel) { tSel.value = RS_ACT_TOPIC; tSel.addEventListener('change', () => { RS_ACT_TOPIC = tSel.value; loadActivity(); }); }
+  const sSel = $('#rsActStatus'); if (sSel) { sSel.value = RS_ACT_STATUS; sSel.addEventListener('change', () => { RS_ACT_STATUS = sSel.value; loadActivity(); }); }
+  const xBtn = $('#rsActExport'); if (xBtn) xBtn.addEventListener('click', exportActivity);
+
+  loadActivity();
+}
+
+/* ===================== ACTIVIDAD POR TIENDA (estilo del portal anterior) =====================
+   Una fila por tienda con total + atendidos/sin atender/anulados + conteo por
+   topico. Filtros Topico/Estado re-consultan el backend. Exporta a .xlsx con
+   SheetJS (ensureXLSX). KPIs de la cabecera se derivan de las filas visibles. */
+async function loadActivity() {
+  const wrap = $('#rsActTableWrap');
+  if (wrap) wrap.innerHTML = '<div class="rs-empty" style="border:none">Cargando actividad…</div>';
+  let d;
+  try {
+    const res = await fetch('/api/report-stats', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action: 'activity', user: { kind: RS_USER.kind, id: RS_USER.id },
+        from: RS_FROM, to: RS_TO,
+        topic: RS_ACT_TOPIC === 'ALL' ? null : RS_ACT_TOPIC,
+        status: RS_ACT_STATUS === 'ALL' ? null : RS_ACT_STATUS,
+      }),
+    });
+    d = await res.json();
+    if (!d.ok) throw new Error(d.error || 'Error');
+  } catch (e) {
+    if (wrap) wrap.innerHTML = `<div class="rs-empty" style="border:none">No se pudo cargar la actividad por tienda.<br><small>${esc(String(e.message || e))}</small></div>`;
+    const k = $('#rsActKpis'); if (k) k.innerHTML = '';
+    return;
+  }
+  RS_LAST_SCOPE = d.scope || RS_LAST_SCOPE;
+  RS_ACT_ROWS = d.rows || [];
+  paintActivity(RS_ACT_ROWS);
+}
+
+function paintActivity(rows) {
+  const sum = key => rows.reduce((a, r) => a + (r[key] || 0), 0);
+  const tot = sum('total'), att = sum('attended'), un = sum('unattended'), an = sum('annulled');
+  const k = $('#rsActKpis');
+  if (k) k.innerHTML = `
+    <div class="rs-kpi"><div class="l">Total reportes</div><div class="n">${fmt(tot)}</div></div>
+    <div class="rs-kpi"><div class="l">✅ Atendidos</div><div class="n" style="color:#16a34a">${fmt(att)}</div></div>
+    <div class="rs-kpi"><div class="l">🔴 Sin atender</div><div class="n" style="color:#dc2626">${fmt(un)}</div></div>
+    <div class="rs-kpi"><div class="l">⚫ Anulados</div><div class="n" style="color:#475569">${fmt(an)}</div></div>
+    <div class="rs-kpi"><div class="l">Tiendas con reportes</div><div class="n">${fmt(rows.length)} <span style="font-size:13px;color:var(--faint,#94a3b8)">/ ${fmt(RS_STORES_TOTAL)}</span></div></div>`;
+
+  const wrap = $('#rsActTableWrap');
+  if (!wrap) return;
+  if (!rows.length) { wrap.innerHTML = '<div class="rs-empty" style="border:none">Sin actividad de tiendas en el periodo con esos filtros.</div>'; return; }
+  const dash = v => v ? fmt(v) : '<span class="rs-dash">—</span>';
+  const head = `<thead><tr>
+    <th>Alias</th><th>Zona</th><th>Marca</th>
+    <th class="num">Total</th><th class="num">✅</th><th class="num">🔴</th><th class="num">⚫</th>
+    <th class="num">Marcaje</th><th class="num">Ausencia</th><th class="num">Alta</th><th class="num">Baja</th><th class="num">Modif.</th>
+  </tr></thead>`;
+  const tb = rows.map(r => `<tr>
+    <td class="code">${esc(r.company_code)}</td>
+    <td>${esc(r.zona || '—')}</td>
+    <td>${esc(r.marca || '—')}</td>
+    <td class="num strong">${fmt(r.total)}</td>
+    <td class="num ok">${dash(r.attended)}</td>
+    <td class="num bad">${dash(r.unattended)}</td>
+    <td class="num gray">${dash(r.annulled)}</td>
+    <td class="num">${dash(r.marcaje)}</td>
+    <td class="num">${dash(r.ausencia)}</td>
+    <td class="num">${dash(r.ingreso)}</td>
+    <td class="num">${dash(r.egreso)}</td>
+    <td class="num">${dash(r.modificacion)}</td>
+  </tr>`).join('');
+  wrap.innerHTML = `<table class="rs-act">${head}<tbody>${tb}</tbody></table>`;
+}
+
+async function exportActivity() {
+  const rows = RS_ACT_ROWS || [];
+  if (!rows.length) { alert('No hay actividad para exportar con los filtros actuales.'); return; }
+  const btn = $('#rsActExport');
+  const prev = btn ? btn.textContent : '';
+  if (btn) { btn.disabled = true; btn.textContent = 'Generando…'; }
+  let XLSX;
+  try { XLSX = await ensureXLSX(); }
+  catch { if (btn) { btn.disabled = false; btn.textContent = prev; } alert('No se pudo cargar el generador de Excel.'); return; }
+
+  const scopeNote = (RS_LAST_SCOPE === 'all') ? 'Todo el grupo' : 'Alcance del usuario';
+  const topicLbl = RS_ACT_TOPIC === 'ALL' ? 'Todos' : (TOPIC[RS_ACT_TOPIC] ? TOPIC[RS_ACT_TOPIC].label : RS_ACT_TOPIC);
+  const statusLbl = { ALL: 'Todos', attended: 'Atendidos', pending: 'Sin atender', annulled: 'Anulados' }[RS_ACT_STATUS] || 'Todos';
+
+  const aoa = [];
+  aoa.push(['Actividad por tienda - Portal de Nomina Grupo Canaima']);
+  aoa.push([`Periodo: ${RS_FROM} a ${RS_TO}`, '', `Alcance: ${scopeNote}`, '', `Topico: ${topicLbl}`, '', `Estado: ${statusLbl}`]);
+  aoa.push([]);
+  aoa.push(['Alias', 'Zona', 'Marca', 'Total', 'Atendidos', 'Sin atender', 'Anulados', 'Marcaje', 'Ausencia', 'Alta (Ingreso)', 'Baja (Egreso)', 'Modificacion']);
+  rows.forEach(r => aoa.push([
+    r.company_code, r.zona || '', r.marca || '', r.total, r.attended, r.unattended, r.annulled,
+    r.marcaje, r.ausencia, r.ingreso, r.egreso, r.modificacion,
+  ]));
+  const sum = key => rows.reduce((a, r) => a + (r[key] || 0), 0);
+  aoa.push([]);
+  aoa.push(['TOTAL', '', '', sum('total'), sum('attended'), sum('unattended'), sum('annulled'),
+    sum('marcaje'), sum('ausencia'), sum('ingreso'), sum('egreso'), sum('modificacion')]);
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{ wch: 8 }, { wch: 22 }, { wch: 16 }, { wch: 8 }, { wch: 10 }, { wch: 11 }, { wch: 9 }, { wch: 9 }, { wch: 9 }, { wch: 13 }, { wch: 13 }, { wch: 13 }];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Actividad');
+  XLSX.writeFile(wb, `Actividad_por_tienda_${RS_FROM}_a_${RS_TO}.xlsx`);
+  if (btn) { btn.disabled = false; btn.textContent = prev; }
 }
