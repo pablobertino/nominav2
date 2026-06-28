@@ -115,7 +115,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.36</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.37</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -2356,7 +2356,7 @@ async function cfgCatalogs(payload) {
 
 async function viewConfig(user) {
   $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros, catálogos e integraciones</p></div></div><div class="pnl-loading">Cargando…</div>`;
-  const [st, ty, ca, cg, bn, op, di, de] = await Promise.all([
+  const [st, ty, ca, cg, bn, op, di, de, er] = await Promise.all([
     cfgSettings({ action: 'list', adminId: user.id }),
     cfgCatalogs({ action: 'absence_list', adminId: user.id }),
     cfgCatalogs({ action: 'causa_list', adminId: user.id }),
@@ -2365,9 +2365,10 @@ async function viewConfig(user) {
     cfgCatalogs({ action: 'operadora_list', adminId: user.id }),
     cfgCatalogs({ action: 'incdoc_list', adminId: user.id, incidence_code: 'ingreso' }),
     cfgCatalogs({ action: 'incdoc_list', adminId: user.id, incidence_code: 'egreso' }),
+    cfgCatalogs({ action: 'egress_reason_list', adminId: user.id }),
   ]);
   if (!st.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${st.error}</div>`; return; }
-  CFG_DATA = { settings: st.settings || [], types: (ty.ok && ty.types) || [], causas: (ca.ok && ca.causas) || [], cargos: (cg.ok && cg.cargos) || [], bancos: (bn.ok && bn.bancos) || [], operadoras: (op.ok && op.operadoras) || [], docsIngreso: (di.ok && di.docs) || [], docsEgreso: (de.ok && de.docs) || [] };
+  CFG_DATA = { settings: st.settings || [], types: (ty.ok && ty.types) || [], causas: (ca.ok && ca.causas) || [], cargos: (cg.ok && cg.cargos) || [], bancos: (bn.ok && bn.bancos) || [], operadoras: (op.ok && op.operadoras) || [], docsIngreso: (di.ok && di.docs) || [], docsEgreso: (de.ok && de.docs) || [], egressReasons: (er.ok && er.reasons) || [] };
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros, catálogos e integraciones del portal</p></div></div>
@@ -2376,6 +2377,7 @@ async function viewConfig(user) {
         <div class="cfg-side-group">Catálogos de reportes</div>
         <button class="cfg-side-item" data-tab="aus"><span class="cfg-side-ic">📅</span> Tipos de ausencia</button>
         <button class="cfg-side-item" data-tab="mar"><span class="cfg-side-ic">🕐</span> Causas de marcaje</button>
+        <button class="cfg-side-item" data-tab="motegreso"><span class="cfg-side-ic">🔴</span> Motivos de egreso</button>
         <div class="cfg-side-group">Datos de ingreso</div>
         <button class="cfg-side-item" data-tab="car"><span class="cfg-side-ic">👔</span> Cargos</button>
         <button class="cfg-side-item" data-tab="ban"><span class="cfg-side-ic">🏦</span> Bancos</button>
@@ -2409,6 +2411,7 @@ function cfgRenderTab(user) {
   else if (CFG_TAB === 'depcargos') renderDepartmentCargos(user, body);
   else if (CFG_TAB === 'dingreso') cfgRenderIncDocs(user, body, 'ingreso');
   else if (CFG_TAB === 'degreso') cfgRenderIncDocs(user, body, 'egreso');
+  else if (CFG_TAB === 'motegreso') cfgRenderEgressReasons(user, body);
   else if (CFG_TAB === 'cor') cfgRenderCorte(user, body);
   else if (CFG_TAB === 'int') cfgRenderIntegraciones(user, body);
 }
@@ -2691,6 +2694,69 @@ function cfgCausaModal(user, c) {
       causa: { code: $('#ca_code').value, label: $('#ca_label').value,
         is_other: $('#ca_other').checked, is_active: $('#ca_active').checked } });
     if (!r.ok) { alert(r.error); return; }
+    closeModal();
+    await cfgReloadCatalogs(user); cfgRenderTab(user);
+  });
+}
+
+/* ===== Pestana MOTIVOS DE EGRESO ===== */
+function cfgRenderEgressReasons(user, body) {
+  const rows = (CFG_DATA.egressReasons || []).map((r, i) => {
+    const tipo = r.is_other ? '<span class="pill pill-warn2">texto libre</span>' : '';
+    const estado = r.is_active ? '<span class="pill pill-open">activo</span>' : '<span class="pill pill-closed">inactivo</span>';
+    return `<tr>
+      <td style="font-family:monospace;color:var(--muted)">${i + 1}</td>
+      <td><b>${r.label}</b><br><span class="muted" style="font-size:11px;font-family:monospace">${r.code}</span></td>
+      <td>${tipo}</td><td>${estado}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-mini" data-edit-egr="${r.code}">${I.pencil}</button>
+        <button class="btn btn-mini" data-toggle-egr="${r.code}" data-active="${r.is_active}">${r.is_active ? 'Desactivar' : 'Activar'}</button>
+      </td></tr>`;
+  }).join('') || '<tr><td colspan="5" class="empty">Sin motivos.</td></tr>';
+
+  body.innerHTML = `
+    <div class="card">
+      <div class="cfg-card-head"><h3>Motivos de egreso</h3>
+        <button class="btn btn-primary btn-mini" id="egrNew">${I.plus} Nuevo motivo</button></div>
+      <p class="cfg-desc" style="margin:0 0 14px">Motivos que la tienda elige al reportar un egreso (obligatorio). El tipo "texto libre" es el "Otro": sugiere escribir el detalle en el comentario.</p>
+      <table class="cfg-cat-table"><thead><tr>
+        <th>#</th><th>Motivo</th><th>Tipo</th><th>Estado</th><th></th>
+      </tr></thead><tbody>${rows}</tbody></table>
+    </div>`;
+
+  $('#egrNew').addEventListener('click', () => cfgEgressReasonModal(user, null));
+  body.querySelectorAll('[data-edit-egr]').forEach(b =>
+    b.addEventListener('click', () => cfgEgressReasonModal(user, (CFG_DATA.egressReasons || []).find(r => r.code === b.dataset.editEgr))));
+  body.querySelectorAll('[data-toggle-egr]').forEach(b =>
+    b.addEventListener('click', async () => {
+      const r = await cfgCatalogs({ action: 'egress_reason_toggle', adminId: user.id, code: b.dataset.toggleEgr, active: !(b.dataset.active === 'true') });
+      if (!r.ok) { alert(r.error); return; }
+      await cfgReloadCatalogs(user); cfgRenderTab(user);
+    }));
+}
+
+function cfgEgressReasonModal(user, r) {
+  const isNew = !r;
+  openModal(`
+    <div class="modal-head"><span>${isNew ? 'Nuevo motivo' : 'Editar motivo'}</span><button class="modal-x" id="mX">✕</button></div>
+    <label class="flabel">Nombre (lo ve la tienda)</label>
+    <input id="er_label" value="${r ? r.label.replace(/"/g,'&quot;') : ''}" placeholder="Bajo rendimiento" style="margin-bottom:12px">
+    <label class="flabel">Código (interno)</label>
+    <input id="er_code" value="${r ? r.code : ''}" ${r ? 'readonly' : ''} placeholder="bajo_rendimiento" style="font-family:monospace;margin-bottom:12px">
+    <label class="radio-row" style="margin-bottom:8px"><input type="checkbox" id="er_other" ${r && r.is_other ? 'checked' : ''}>
+      <span>Tipo "Otro" <span class="muted" style="font-size:12px">(sugiere escribir el detalle en el comentario)</span></span></label>
+    <label class="radio-row"><input type="checkbox" id="er_active" ${!r || r.is_active ? 'checked' : ''}> <span>Activo</span></label>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Guardar</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const res = await cfgCatalogs({ action: 'egress_reason_save', adminId: user.id,
+      reason: { code: $('#er_code').value, label: $('#er_label').value,
+        is_other: $('#er_other').checked, is_active: $('#er_active').checked } });
+    if (!res.ok) { alert(res.error); return; }
     closeModal();
     await cfgReloadCatalogs(user); cfgRenderTab(user);
   });
@@ -2996,6 +3062,7 @@ async function cfgReloadCatalogs(user) {
     cfgCatalogs({ action: 'operadora_list', adminId: user.id }),
     cfgCatalogs({ action: 'incdoc_list', adminId: user.id, incidence_code: 'ingreso' }),
     cfgCatalogs({ action: 'incdoc_list', adminId: user.id, incidence_code: 'egreso' }),
+    cfgCatalogs({ action: 'egress_reason_list', adminId: user.id }),
   ]);
   if (ty.ok) CFG_DATA.types = ty.types || [];
   if (ca.ok) CFG_DATA.causas = ca.causas || [];
@@ -3004,6 +3071,7 @@ async function cfgReloadCatalogs(user) {
   if (op.ok) CFG_DATA.operadoras = op.operadoras || [];
   if (di.ok) CFG_DATA.docsIngreso = di.docs || [];
   if (de.ok) CFG_DATA.docsEgreso = de.docs || [];
+  if (er.ok) CFG_DATA.egressReasons = er.reasons || [];
 }
 
 /* ---------- navegación ---------- */

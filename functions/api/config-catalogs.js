@@ -209,6 +209,45 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true });
     }
 
+    /* ---------------- MOTIVOS DE EGRESO (por que se va el trabajador) ----------------
+       Catalogo egress_reasons (code, label, is_other, is_active, sort_order).
+       Distinto de egress_doc_causes (por que no se adjunta la carta). El
+       motivo es OBLIGATORIO en el reporte de egreso; "Otro" (is_other) sugiere
+       comentario libre. Mismo patron que las causas de marcaje. */
+    if (action === 'egress_reason_list') {
+      const reasons = await sb(env, 'egress_reasons?select=code,label,is_other,is_active,sort_order&order=sort_order');
+      return json({ ok: true, reasons: reasons || [] });
+    }
+
+    if (action === 'egress_reason_save') {
+      const r = body.reason || {};
+      const code = (r.code || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '_');
+      const label = (r.label || '').trim();
+      if (!code) return json({ ok: false, error: 'Falta el codigo del motivo.' }, 400);
+      if (!label) return json({ ok: false, error: 'Falta el nombre del motivo.' }, 400);
+      const row = { code, label, is_other: !!r.is_other, is_active: r.is_active !== false };
+      const existing = await sb(env, `egress_reasons?code=eq.${encodeURIComponent(code)}&select=code`);
+      if (existing && existing.length) {
+        await sb(env, `egress_reasons?code=eq.${encodeURIComponent(code)}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(row),
+        });
+      } else {
+        const last = await sb(env, 'egress_reasons?select=sort_order&order=sort_order.desc&limit=1');
+        row.sort_order = ((last && last[0] && last[0].sort_order) || 0) + 10;
+        await sb(env, 'egress_reasons', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(row) });
+      }
+      return json({ ok: true, code });
+    }
+
+    if (action === 'egress_reason_toggle') {
+      const code = (body.code || '').trim().toLowerCase();
+      if (!code) return json({ ok: false, error: 'Falta el codigo.' }, 400);
+      await sb(env, `egress_reasons?code=eq.${encodeURIComponent(code)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify({ is_active: !!body.active }),
+      });
+      return json({ ok: true });
+    }
+
     /* ---------------- CARGOS (catalogo maestro) ----------------
        cargos: code (clave interna estable), label (lo ve la tienda),
        ax_code (lo que va a la plantilla AX; puede diferir del label,
