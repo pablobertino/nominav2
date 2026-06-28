@@ -18,6 +18,7 @@ import { renderWorkerPhotos } from './worker-photos.js';
 import { renderDashboard } from './dashboard.js';
 import { renderReportStats } from './report-stats.js';
 import { renderCompanyReports, renderMyStats } from './company-reports.js';
+import { renderAvisos, gotoAviso as avisosGoto } from './avisos.js';
 import { renderEgressRatify } from './egress-ratify.js';
 import { renderPersonnelSearch } from './personnel-search.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
@@ -64,6 +65,7 @@ const I = {
   grid: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/></svg>',
   chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg>',
   bizreport: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l5-4v18"/><path d="M19 21V11l-5-4"/><path d="M9 9v0M9 13v0M9 17v0"/></svg>',
+  bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
 };
 
 const NAV = [
@@ -77,6 +79,7 @@ const NAV = [
   ['historial', I.history, 'Historial'],
   ['estadisticas', I.chart, 'Estadísticas'],
   ['reportempresas', I.bizreport, 'Reportes de empresas'],
+  ['avisos', I.bell, 'Avisos'],
   ['egmotivos', I.check, 'Ratificar egresos'],
   ['rostersync', I.photo, 'Sinc. Personal'],
   ['equipo', I.team, 'Equipo', 'superonly'],
@@ -93,7 +96,10 @@ function shell(user) {
   const isCompany = user.kind === 'company';
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   const isEditorPersonal = user.kind === 'admin' && user.role === 'editor_personal';
-  const showBell = user.kind === 'admin' && (user.role === 'superadmin' || user.role === 'admin');
+  // La campanita se muestra para admin/superadmin Y para usuarios company.
+  // (editor_personal no la ve.)
+  const showBell = (user.kind === 'company')
+    || (user.kind === 'admin' && (user.role === 'superadmin' || user.role === 'admin'));
   const nameLabel = isCompany ? user.companyCode : (user.name || user.username);
   const roleLabel = isCompany ? 'tienda' : (ROLE_LABELS[user.role] || user.role);
   const initials = (nameLabel || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
@@ -101,7 +107,7 @@ function shell(user) {
 
   // Navegación según rol: la tienda ve "Mi empresa" y su "Historial".
   const navItems = isCompany
-    ? [['dashboard', I.grid, 'Inicio'], ['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['calendario', I.calendar, 'Calendario'], ['historial', I.history, 'Historial'], ['misstats', I.chart, 'Mis estadísticas']]
+    ? [['dashboard', I.grid, 'Inicio'], ['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['calendario', I.calendar, 'Calendario'], ['historial', I.history, 'Historial'], ['misstats', I.chart, 'Mis estadísticas'], ['avisos', I.bell, 'Avisos']]
     : isEditorPersonal
       ? NAV.filter(n => ['dashboard', 'tiendas', 'buscar', 'calendario', 'rostersync'].includes(n[0]))
       : NAV.filter(n => n[3] !== 'superonly' || isSuper);
@@ -113,8 +119,12 @@ function shell(user) {
     .pnl-bell:hover{background:var(--bg-soft,#f1f2f4);color:var(--text,#0f172a)}
     .pnl-bell-badge{position:absolute;top:-1px;right:-1px;min-width:16px;height:16px;padding:0 4px;border-radius:9px;background:#e11d48;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1}
     .pnl-bell-pop{position:absolute;top:calc(100% + 8px);right:0;width:340px;max-width:calc(100vw - 24px);max-height:70vh;overflow:auto;background:var(--card,#fff);border:1px solid var(--border,#e5e7eb);border-radius:12px;box-shadow:0 12px 32px rgba(15,23,42,.16);z-index:60}
-    .pnl-bell-pop h4{margin:0;padding:12px 14px;border-bottom:1px solid var(--border,#e5e7eb);font-size:13px;position:sticky;top:0;background:var(--card,#fff)}
-    .pnl-bell-item{padding:10px 14px;border-bottom:1px solid var(--border,#f1f2f4);font-size:12.5px;line-height:1.45}
+    .pnl-bell-pop h4{margin:0;padding:12px 14px;border-bottom:1px solid var(--border,#e5e7eb);font-size:13px;position:sticky;top:0;background:var(--card,#fff);display:flex;justify-content:space-between;align-items:center}
+    .pnl-bell-pop h4 a{color:var(--brand,#2563eb);text-decoration:none}
+    .bell-group{padding:8px 14px 4px;font-size:10.5px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--faint,#94a3b8)}
+    .pnl-bell-item{padding:10px 14px;border-bottom:1px solid var(--border,#f1f2f4);font-size:12.5px;line-height:1.45;display:flex;gap:9px;align-items:flex-start}
+    .pnl-bell-item .ic{flex:0 0 auto;line-height:1.3;color:var(--muted,#64748b)}
+    .pnl-bell-item .muted{color:var(--muted,#64748b)}
     .pnl-bell-item:last-child{border-bottom:0}
     .pnl-bell-empty{padding:18px 14px;color:var(--muted);font-size:12.5px;text-align:center}
   </style>
@@ -122,7 +132,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.48</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.49</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -177,46 +187,103 @@ async function loadAvatar(email) {
    sincronizacion. El contador (sin leer) es por administrador. */
 let BELL_ITEMS = [];
 let BELL_INT = null;
+let BELL_USER = null;
 function escHtml(s) {
   return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 }
-function bellItemHtml(c) {
+const BELL_SVG = {
+  calc: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="18" x2="12" y2="18"/></svg>',
+  cut: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/></svg>',
+  pay: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg>',
+  man: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 13v-2z"/></svg>',
+};
+
+/* Estado de la campanita: feed de avisos (todos) + novedades de empresa (admin). */
+let BELL_AUTO = [], BELL_MANUAL = [], BELL_EMPRESA = [];
+
+function bellAutoHtml(a) {
+  return `<div class="pnl-bell-item">`
+    + `<span class="ic">${BELL_SVG[a.type] || ''}</span>`
+    + `<div><div><b>${escHtml(a.title)}</b></div>`
+    + `<div class="muted">${escHtml(a.short || '')}</div>`
+    + `<div class="muted" style="font-size:11px;margin-top:2px">\u{1F4C5} ${escHtml(a.date || '')}</div></div></div>`;
+}
+function bellManualHtml(m) {
+  // En la campanita el manual muestra SOLO el titulo; el detalle se lee en Avisos.
+  return `<div class="pnl-bell-item" data-goto="${escHtml(String(m.id))}" style="cursor:pointer">`
+    + `<span class="ic">${BELL_SVG.man}</span>`
+    + `<div><div><b>${escHtml(m.title)}</b></div>`
+    + `<div class="muted" style="font-size:11px;margin-top:2px">Ver detalle en Avisos</div></div></div>`;
+}
+function bellEmpresaHtml(c) {
   const when = fmtDeadline(c.detected_at);
-  const name = c.business_name ? ` — ${escHtml(c.business_name)}` : '';
+  const name = c.business_name ? ` \u2014 ${escHtml(c.business_name)}` : '';
   if (c.change_type === 'new') {
-    return `<div class="pnl-bell-item">➕ <b>Nueva empresa</b> ${escHtml(c.company_code)}${name}`
-      + `<div class="muted" style="font-size:11px;margin-top:2px">${when}</div></div>`;
+    return `<div class="pnl-bell-item"><span class="ic">\u2795</span><div><b>Nueva empresa</b> ${escHtml(c.company_code)}${name}`
+      + `<div class="muted" style="font-size:11px;margin-top:2px">${when}</div></div></div>`;
   }
-  return `<div class="pnl-bell-item">🔄 <b>${escHtml(c.company_code)}</b>${name}`
-    + `<div style="margin-top:2px">Estatus: ${escHtml(c.old_value || '—')} → <b>${escHtml(c.new_value || '—')}</b></div>`
-    + `<div class="muted" style="font-size:11px;margin-top:2px">${when}</div></div>`;
+  return `<div class="pnl-bell-item"><span class="ic">\u{1F504}</span><div><b>${escHtml(c.company_code)}</b>${name}`
+    + `<div style="margin-top:2px">Estatus: ${escHtml(c.old_value || '\u2014')} \u2192 <b>${escHtml(c.new_value || '\u2014')}</b></div>`
+    + `<div class="muted" style="font-size:11px;margin-top:2px">${when}</div></div></div>`;
 }
 function bellRender() {
   const pop = document.getElementById('pnlBellPop');
   if (!pop) return;
-  const body = BELL_ITEMS.length
-    ? BELL_ITEMS.map(bellItemHtml).join('')
-    : '<div class="pnl-bell-empty">Sin novedades de empresas.</div>';
-  pop.innerHTML = `<h4>Novedades de empresas</h4>${body}`;
+  let html = `<h4>Avisos <a id="pnlBellAll" style="font-size:11.5px;font-weight:500;cursor:pointer">Ver todos</a></h4>`;
+  if (BELL_AUTO.length) {
+    html += `<div class="bell-group">Per\u00edodo de n\u00f3mina</div>` + BELL_AUTO.map(bellAutoHtml).join('');
+  }
+  if (BELL_MANUAL.length) {
+    html += `<div class="bell-group">Comunicados</div>` + BELL_MANUAL.map(bellManualHtml).join('');
+  }
+  if (BELL_EMPRESA.length) {
+    html += `<div class="bell-group">Novedades de empresas</div>` + BELL_EMPRESA.map(bellEmpresaHtml).join('');
+  }
+  if (html.indexOf('pnl-bell-item') < 0) html += '<div class="pnl-bell-empty">Sin avisos.</div>';
+  pop.innerHTML = html;
+  // "Ver todos" -> ir a la seccion Avisos
+  const all = document.getElementById('pnlBellAll');
+  if (all) all.addEventListener('click', () => { pop.hidden = true; navigate('avisos', BELL_USER); });
+  // clic en un manual -> ir a Avisos y resaltar
+  pop.querySelectorAll('[data-goto]').forEach(el =>
+    el.addEventListener('click', () => {
+      pop.hidden = true;
+      navigate('avisos', BELL_USER);
+      setTimeout(() => { try { avisosGoto(el.dataset.goto); } catch (_) {} }, 350);
+    }));
 }
 async function bellLoad(user) {
   const badge = document.getElementById('pnlBellBadge');
   if (!badge) return;
+  let unread = 0;
+  // 1) feed de avisos (todos los usuarios)
   try {
-    const r = await fetch('/api/notifications', {
+    const a = await fetch('/api/announcements', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'get', adminId: user.id }),
+      body: JSON.stringify({
+        action: 'feed',
+        user: user.kind === 'company' ? { kind: 'company', companyCode: user.companyCode } : { kind: 'admin', id: user.id },
+      }),
     }).then(x => x.json());
-    if (!r.ok) return;
-    BELL_ITEMS = r.items || [];
-    const n = r.unread || 0;
-    if (n > 0) { badge.textContent = n > 99 ? '99+' : String(n); badge.style.display = 'flex'; }
-    else { badge.style.display = 'none'; }
-    const pop = document.getElementById('pnlBellPop');
-    if (pop && !pop.hidden) bellRender();
-  } catch (_) { /* sin conexion: deja el badge como este */ }
+    if (a && a.ok) { BELL_AUTO = a.auto || []; BELL_MANUAL = a.manual || []; unread += (a.unread || 0); }
+  } catch (_) { /* nada */ }
+  // 2) novedades de empresa (solo admin)
+  if (user.kind === 'admin') {
+    try {
+      const r = await fetch('/api/notifications', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'get', adminId: user.id }),
+      }).then(x => x.json());
+      if (r && r.ok) { BELL_EMPRESA = r.items || []; unread += (r.unread || 0); }
+    } catch (_) { /* nada */ }
+  }
+  if (unread > 0) { badge.textContent = unread > 99 ? '99+' : String(unread); badge.style.display = 'flex'; }
+  else { badge.style.display = 'none'; }
+  const pop = document.getElementById('pnlBellPop');
+  if (pop && !pop.hidden) bellRender();
 }
 function initBell(user) {
+  BELL_USER = user;
   const bell = document.getElementById('pnlBell');
   const pop = document.getElementById('pnlBellPop');
   if (!bell || !pop) return;
@@ -229,12 +296,24 @@ function initBell(user) {
       const badge = document.getElementById('pnlBellBadge');
       if (badge && badge.style.display !== 'none') {
         badge.style.display = 'none';
+        // marcar visto en ambas fuentes
         try {
-          await fetch('/api/notifications', {
+          await fetch('/api/announcements', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ action: 'seen', adminId: user.id }),
+            body: JSON.stringify({
+              action: 'seen',
+              user: user.kind === 'company' ? { kind: 'company', companyCode: user.companyCode } : { kind: 'admin', id: user.id },
+            }),
           });
         } catch (_) { /* nada */ }
+        if (user.kind === 'admin') {
+          try {
+            await fetch('/api/notifications', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'seen', adminId: user.id }),
+            });
+          } catch (_) { /* nada */ }
+        }
       }
     }
   });
@@ -3118,6 +3197,7 @@ async function navigate(view, user) {
   else if (view === 'estadisticas') renderReportStats(user);
   else if (view === 'reportempresas') renderCompanyReports(user);
   else if (view === 'misstats') renderMyStats(user);
+  else if (view === 'avisos') renderAvisos(user);
   else if (view === 'egmotivos') renderEgressRatify(user);
   else if (view === 'buscar') renderPersonnelSearch(user);
   else if (view === 'documentos') renderPersonnelDocs(user, null);
