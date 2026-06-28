@@ -113,6 +113,7 @@ function fmtDateTime(iso) {
 }
 function ageFrom(ymd) {
   if (!ymd) return null;
+  if (String(ymd).slice(0, 10) <= '1900-01-01') return null; // 1900-01-01 = sin edad (AX dateNull)
   const t = new Date(), b = new Date(ymd);
   let a = t.getFullYear() - b.getFullYear();
   const m = t.getMonth() - b.getMonth();
@@ -129,6 +130,7 @@ function caracasMD() {
 }
 function isBirthday(ymd) {
   if (!ymd) return false;
+  if (String(ymd).slice(0, 10) <= '1900-01-01') return false;
   return String(ymd).slice(5, 10) === caracasMD();
 }
 /* Antiguedad desde la fecha de ingreso: "Xa Ym" / "Ym" / "nuevo". Devuelve ''
