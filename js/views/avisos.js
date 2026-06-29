@@ -8,6 +8,12 @@
    save_manual/toggle_manual/delete_manual).
    Export: renderAvisos(user), y un helper gotoAviso(id) para resaltar al
    llegar desde la campanita.
+
+   DOS MODOS (opts.mode):
+     - 'inbox'  -> recepcion/lectura, igual que las tiendas. Muestra Novedades
+                   de empresas + Periodo de nomina + Comunicados. Sin edicion.
+     - 'config' -> gestion (Envio de avisos). Solo plantillas del periodo +
+                   comunicados manuales. NO muestra novedades de empresa.
    ===================================================================== */
 
 const $ = (s, r = document) => r.querySelector(s);
@@ -104,13 +110,12 @@ function api(extra) {
 
 /* ---------- entrada ----------
    opts.mode: 'inbox' (recepcion/lectura, como las tiendas) | 'config' (gestion).
-   Si no se pasa, se infiere: admin/super -> 'config' por compatibilidad; pero
-   panel.js ahora pasa el modo explicito (avisos=inbox, avisosconfig=config). */
+   panel.js pasa el modo explicito (avisos=inbox, avisosconfig=config). */
 export async function renderAvisos(user, opts = {}) {
   AV_USER = user;
   ensureStyles();
-  // Modo efectivo. La gestion (config) solo la pueden ver admin/superadmin
-  // (NO editor_personal). En 'inbox' todos ven en modo lectura.
+  // La gestion (config) solo la pueden ver admin/superadmin (NO editor_personal).
+  // En 'inbox' todos ven en modo lectura.
   const canManageRole = user.kind === 'admin' && user.role !== 'editor_personal';
   AV_MODE = (opts.mode === 'config' && canManageRole) ? 'config' : 'inbox';
   const isConfig = AV_MODE === 'config';
@@ -144,34 +149,32 @@ async function loadAndRender() {
   // marca como visto al entrar a la seccion
   api({ action: 'seen' }).catch(() => {});
 
-  // Novedades de empresa (globales: las ven todos, sin filtro de alcance).
-  try {
-    const u = AV_USER.kind === 'company'
-      ? { kind: 'company', companyCode: AV_USER.companyCode }
-      : { kind: AV_USER.kind, id: AV_USER.id };
-    const ch = await fetch('/api/notifications', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'list_changes', user: u }),
-    }).then(r => r.json()).catch(() => null);
-    AV_CHANGES = (ch && ch.ok) ? (ch.items || []) : [];
-  } catch { AV_CHANGES = []; }
-
   if (isConfig) {
+    // Pantalla de configuracion: plantillas + comunicados manuales. NO novedades.
     const [tpl, man] = await Promise.all([api({ action: 'tpl_get' }), api({ action: 'list_manual' })]);
     AV_TPL = tpl && tpl.ok ? tpl : null;
     AV_MANUAL = (man && man.ok) ? man.rows : [];
     renderAdmin();
   } else {
+    // Inbox (recepcion): tambien trae las novedades de empresa (globales).
+    try {
+      const u = AV_USER.kind === 'company'
+        ? { kind: 'company', companyCode: AV_USER.companyCode }
+        : { kind: AV_USER.kind, id: AV_USER.id };
+      const ch = await fetch('/api/notifications', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'list_changes', user: u }),
+      }).then(r => r.json()).catch(() => null);
+      AV_CHANGES = (ch && ch.ok) ? (ch.items || []) : [];
+    } catch { AV_CHANGES = []; }
     renderUser();
   }
 }
 
-/* ---------- fila ---------- */
+/* ---------- fila: aviso automatico del periodo ---------- */
 function autoRow(a) {
   const id = `av-${a.type}`;
   const today = a.today ? `<span class="av-tag tag-today">Hoy</span>` : '';
-  // Solo el superadmin (can_edit_templates) ve el boton de editar plantilla.
-  const canEdit = AV_USER.kind === 'admin' && AV_TPL && AV_TPL.can_edit_templates;
   return `<div class="av-row" id="${id}">
     <div class="av-ic ${a.type}">${SVG[a.type] || ''}</div>
     <div class="av-body">
@@ -179,10 +182,9 @@ function autoRow(a) {
       <div class="av-text">${esc(a.body)}</div>
       <div class="av-meta"><span>\u{1F4C5} ${esc(a.date || '')}</span></div>
     </div>
-    <div class="av-actions">${canEdit
-      ? `<button class="av-iconbtn" data-tpl="${a.type}">Editar plantilla</button>` : ''}</div>
   </div>`;
 }
+/* ---------- fila: comunicado manual ---------- */
 function manualRow(m, admin) {
   const id = `av-man-${m.id}`;
   const today = m.today ? `<span class="av-tag tag-today">Hoy</span>` : '';
@@ -216,8 +218,8 @@ function fmtChangeWhen(iso) {
   return `${p(car.getUTCDate())}/${p(car.getUTCMonth() + 1)}/${car.getUTCFullYear()} ${h}:${p(car.getUTCMinutes())} ${ap}`;
 }
 
-/* Fila de novedad de empresa (cambio de estatus / empresa nueva). Son
-   globales: las ven todos los usuarios. Solo lectura. */
+/* Fila de novedad de empresa (cambio de estatus / empresa nueva). Globales:
+   las ven todos los usuarios. Solo lectura. Solo en el inbox. */
 function changeRow(c) {
   const name = c.business_name ? ` \u2014 ${esc(c.business_name)}` : '';
   const when = fmtChangeWhen(c.detected_at);
@@ -239,7 +241,7 @@ function changeRow(c) {
   </div>`;
 }
 
-/* ---------- vista usuario ---------- */
+/* ---------- vista usuario (inbox / recepcion) ---------- */
 function renderUser() {
   const auto = (AV_FEED.auto || []);
   const manual = (AV_FEED.manual || []);
@@ -257,19 +259,14 @@ function renderUser() {
   $('#avBody').innerHTML = html;
 }
 
-/* ---------- vista admin ---------- */
+/* ---------- vista admin (config / Envio de avisos) ----------
+   Solo configuracion: las 3 plantillas del periodo (editables por superadmin)
+   + comunicados manuales. NO muestra novedades de empresa (eso va en Avisos). */
 function renderAdmin() {
-  const auto = (AV_FEED.auto || []);
   const canEditTpl = !!(AV_TPL && AV_TPL.can_edit_templates);
-  let html = '';
-  if (AV_CHANGES.length) {
-    html += `<div class="av-sub">Novedades de empresas</div><div class="av-card">${AV_CHANGES.map(changeRow).join('')}</div>`;
-  }
-  html += `<div class="av-sub">Avisos del per\u00edodo (autom\u00e1ticos)</div>`;
-  if (auto.length) {
-    html += `<div class="av-card">${auto.map(autoRow).join('')}</div>`;
-  } else if (canEditTpl) {
-    // Superadmin sin hitos hoy: igual puede editar las 3 plantillas.
+  let html = `<div class="av-sub">Avisos del per\u00edodo (autom\u00e1ticos)</div>`;
+  if (canEditTpl) {
+    // Superadmin: SIEMPRE las 3 plantillas editables, haya o no hito hoy.
     html += `<div class="av-card">
       ${['calc', 'cut', 'pay'].map(t => `<div class="av-row">
         <div class="av-ic ${t}">${SVG[t]}</div>
@@ -280,7 +277,7 @@ function renderAdmin() {
     </div>`;
   } else {
     // Admin (no super): solo informativo, sin botones.
-    html += `<div class="av-empty">Los avisos del per\u00edodo (\u00faltimo d\u00eda de c\u00e1lculo, d\u00eda de c\u00e1lculo y d\u00eda de pago) se muestran autom\u00e1ticamente a las tiendas y empresas el d\u00eda que corresponde. Aparecer\u00e1n aqu\u00ed ese d\u00eda. Solo el superadministrador puede editar sus plantillas.</div>`;
+    html += `<div class="av-empty">Los avisos del per\u00edodo (\u00faltimo d\u00eda de c\u00e1lculo, d\u00eda de c\u00e1lculo y d\u00eda de pago) se muestran autom\u00e1ticamente a las tiendas y empresas el d\u00eda que corresponde. Solo el superadministrador puede editar sus plantillas.</div>`;
   }
 
   html += `<div class="av-sub">Comunicados manuales</div>`;
@@ -344,9 +341,6 @@ function fmtHora12(hhmm) {
   return `${h12}:${String(m).padStart(2, '0')} ${ap}`;
 }
 function previewVars() {
-  // Variables reales del periodo vigente (vienen del endpoint tpl_get -> vars).
-  // Las horas se toman de los campos editables del modal para que la preview
-  // reaccione en vivo al cambiarlas.
   const v = (AV_TPL && AV_TPL.vars) || {};
   return {
     '#Periodo': v.Periodo || '',
