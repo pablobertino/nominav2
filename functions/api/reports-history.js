@@ -381,6 +381,7 @@ async function detailReport(env, body, scope) {
 
   return json({
     ok: true,
+    osticket_url: await (async () => { try { return await osticketBase(env); } catch { return ''; } })(),
     report: {
       id: r.id, type: r.topic, company_code: r.company_code, company_name: companyName,
       zone_id: r.zone_id, subzone_id: r.subzone_id, sent_at: r.sent_at,

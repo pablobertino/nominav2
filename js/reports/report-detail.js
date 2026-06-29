@@ -14,9 +14,10 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { openResendModal } from './shared/resend-modal.js';
 import {
   ATT_STATES, ATT_ORDER, attPill, syncPill, attAuditText, fmtStamp,
-  fetchTicketText, fetchTicketExcel, postSetAttention,
+  fetchTicketText, fetchTicketExcel, postSetAttention, postSyncOsticket,
   copyText, downloadText, downloadBase64, showAttHelpModal,
 } from './shared/ticket-actions.js';
 
@@ -46,9 +47,13 @@ function fmtSent(iso) {
   return `${p(car.getUTCDate())}/${p(car.getUTCMonth() + 1)}/${car.getUTCFullYear()} ${h}:${p(car.getUTCMinutes())} ${ap}`;
 }
 
-function otPill(r) {
-  if (r.osticket_id) return `<span class="pill pill-set">Enviado · #${r.osticket_id}</span>`;
-  return '<span class="pill pill-out">No enviado</span>';
+function otPill(r, osticketUrl) {
+  if (!r.osticket_id) return '<span class="pill pill-out">No enviado</span>';
+  if (osticketUrl) {
+    const href = `${osticketUrl}/scp/tickets.php?number=${encodeURIComponent(r.osticket_id)}`;
+    return `<a class="pill pill-set ot-link" href="${href}" target="_blank" rel="noopener" title="Abrir el ticket en osTicket">Enviado · #${r.osticket_id}</a>`;
+  }
+  return `<span class="pill pill-set">Enviado · #${r.osticket_id}</span>`;
 }
 function originPill(r) {
   return r.source_kind === 'admin'
@@ -124,6 +129,7 @@ export async function showReportDetail({ reportId, user, onBack }) {
   }
 
   const r = res.report;
+  const osticketUrl = res.osticket_url || '';
   const t = TYPES[r.type] || { label: r.type, icon: '📄' };
   const canResend = !r.osticket_id;
 
@@ -134,12 +140,17 @@ export async function showReportDetail({ reportId, user, onBack }) {
     ? `<div class="att-comment">“${r.attention_comment}”</div>` : '';
   let attentionBlock;
   if (canManage) {
+    // Boton de re-sincronizar disponible siempre que el reporte tenga ticket
+    // (el estado pudo cambiar en osTicket por otra via).
+    const syncBtn = r.osticket_id
+      ? `<button class="btn btn-sm att-syncbtn" id="rdSync" title="Reenviar a osTicket el estado actual de este reporte">\u21BB sinc.</button>`
+      : '';
     attentionBlock = `<div class="att-cell">
       ${attPill(r.attention)}
       <select class="att-row-sel" id="rdAttSel" title="Cambiar estado de este reporte">
         ${ATT_ORDER.map(k => `<option value="${k}" ${k === r.attention ? 'selected' : ''}>${ATT_STATES[k].label}</option>`).join('')}
       </select>
-      ${syncPill(r.osticket_sync)}${auditHtml}${commentHtml}</div>`;
+      ${syncPill(r.osticket_sync)}${syncBtn}${auditHtml}${commentHtml}</div>`;
   } else {
     attentionBlock = `${attPill(r.attention)}${auditHtml}${commentHtml}`;
   }
@@ -167,7 +178,7 @@ export async function showReportDetail({ reportId, user, onBack }) {
         <div><span class="rd-lbl">Origen</span><span class="rd-val">${originPill(r)}</span></div>
         <div><span class="rd-lbl">Trabajadores</span><span class="rd-val">${r.workers_count}</span></div>
         <div><span class="rd-lbl">Atención <span class="att-help" id="rdAttHelp" title="Ver qué significa cada estado">?</span></span><span class="rd-val">${attentionBlock}</span></div>
-        <div><span class="rd-lbl">osTicket</span><span class="rd-val">${otPill(r)}</span></div>
+        <div><span class="rd-lbl">osTicket</span><span class="rd-val">${otPill(r, osticketUrl)}</span></div>
       </div>
       <h3 class="rd-section">Trabajadores del reporte</h3>
       ${linesHtml(r)}
@@ -243,9 +254,29 @@ export async function showReportDetail({ reportId, user, onBack }) {
     });
   }
 
+  // --- Re-sincronizar el estado con osTicket (solo admin, si hay ticket) ---
+  if (canManage && $('#rdSync')) {
+    $('#rdSync').addEventListener('click', async () => {
+      const b = $('#rdSync'); const orig = b.textContent;
+      b.disabled = true; b.textContent = '\u2026';
+      const d = await postSyncOsticket(user, { reportIds: [r.id] });
+      if (!d || (!d.ok && d.failed == null)) {
+        b.disabled = false; b.textContent = orig;
+        alert(d ? (d.error || 'No se pudo sincronizar.') : 'No se pudo sincronizar.');
+        return;
+      }
+      if (d.failed > 0) alert(`No se pudo sincronizar (revisa el indicador). ${(d.errors || []).join('; ')}`);
+      // Recargar el detalle para reflejar el nuevo osticket_sync.
+      showReportDetail({ reportId: r.id, user, onBack });
+    });
+  }
+
+  // --- Generar / reenviar el ticket cuando "No enviado" (opcion D) ---
   if (canResend && $('#rdResend')) {
     $('#rdResend').addEventListener('click', () => {
-      alert('El envío a osTicket aún no está habilitado. Quedará disponible cuando se active la integración.');
+      openResendModal(user, {
+        id: r.id, type: r.type, company_code: r.company_code, company_name: r.company_name,
+      }, () => showReportDetail({ reportId: r.id, user, onBack }));
     });
   }
 }
