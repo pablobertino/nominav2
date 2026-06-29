@@ -81,6 +81,52 @@ async function sbJson(env, path, opts = {}) {
   return t ? JSON.parse(t) : null;
 }
 
+/* =====================================================================
+   osTicket — helpers para empujar el estado (mismo patron que reports.js).
+   La URL vive en app_settings.osticket_url; la API key es Secret de
+   Cloudflare osticket_api_key. El cambio de estado va al endpoint propio
+   /api/gc-status.json, que recorre TODOS los tickets del reporte
+   (PLA + N DOC, via gc_report_link) y aplica Ticket::setStatus.
+   ===================================================================== */
+
+async function getSetting(env, key, fallback) {
+  const r = await sbJson(env, `app_settings?key=eq.${encodeURIComponent(key)}&select=value`);
+  return (r && r[0] && r[0].value != null) ? r[0].value : fallback;
+}
+
+// Base URL del osTicket (sin barra final).
+async function osticketBase(env) {
+  const url = await getSetting(env, 'osticket_url', '');
+  return String(url || '').replace(/\/+$/, '');
+}
+
+// POST JSON con la X-API-Key. Devuelve { status, ok, text, json }. No lanza.
+async function osticketPost(env, base, path, payload) {
+  const res = await fetch(`${base}${path}`, {
+    method: 'POST',
+    headers: { 'X-API-Key': env.osticket_api_key, 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const text = await res.text();
+  let js = null;
+  try { js = text ? JSON.parse(text) : null; } catch { /* puede venir texto plano */ }
+  return { status: res.status, ok: res.ok, text, json: js };
+}
+
+// Cambia el estado de TODOS los tickets de un reporte (por report_code) en
+// osTicket. Devuelve el objeto de respuesta del endpoint o lanza Error.
+async function osticketSetReportStatus(env, base, reportCodeStr, statusId, comment) {
+  const r = await osticketPost(env, base, '/api/gc-status.json', {
+    report_code: reportCodeStr,
+    status_id: statusId,
+    comment: comment || '',
+  });
+  // 200 = todos ok; 207 = parcial; 4xx/5xx = error. El cuerpo es JSON.
+  if (r.status === 200) return r.json || { ok: true };
+  if (r.status === 207) return r.json || { ok: false };
+  throw new Error((r.json && r.json.error) ? r.json.error : `osTicket ${r.status}: ${r.text || 'sin detalle'}`);
+}
+
 /* Resuelve el alcance del usuario: devuelve
      { all:true }                         -> superadmin (todas)
      { codes:[...] }                      -> lista explicita (tienda/admin)
@@ -788,12 +834,11 @@ async function setAttention(env, body, scope) {
     return json({ ok: false, error: 'Ninguno de los reportes esta en tu alcance.' }, 403);
   }
 
-  // 4) Estado de sincronizacion con osTicket. Por ahora SOLO INTERNO:
-  //    - si el reporte tiene osticket_id  -> 'pending' (hay ticket que
-  //      sincronizar cuando se active la integracion)
-  //    - si no tiene osticket_id          -> 'na' (no hay ticket que tocar)
-  //    Cuando la integracion este activa, esto pasara a 'synced'/'failed'
-  //    segun el resultado del llamado a la API (ver bloque OSTICKET abajo).
+  // 4) Estado de sincronizacion con osTicket. Si el reporte tiene tickets
+  //    (osticket_id no nulo) se empuja el estado a osTicket; si no, queda
+  //    'na'. El cambio INTERNO siempre persiste primero: si osTicket falla,
+  //    se marca 'failed' con el error, pero el estado de atencion ya quedo
+  //    guardado (no se revierte).
   const nowIso = new Date().toISOString();
   const withTicket = allowed.filter(r => r.osticket_id);
   const withoutTicket = allowed.filter(r => !r.osticket_id);
@@ -806,15 +851,7 @@ async function setAttention(env, body, scope) {
     attention_at: nowIso,
   };
 
-  // 4a) Reportes CON ticket -> osticket_sync 'pending' (a empujar luego).
-  if (withTicket.length) {
-    const list = withTicket.map(r => r.id).join(',');
-    await sb(env, `reports_log?id=in.(${list})`, {
-      method: 'PATCH',
-      body: JSON.stringify({ ...basePatch, osticket_sync: 'pending', osticket_sync_error: null }),
-    });
-  }
-  // 4b) Reportes SIN ticket -> osticket_sync 'na'.
+  // 4a) Reportes SIN ticket -> osticket_sync 'na' (no hay nada que empujar).
   if (withoutTicket.length) {
     const list = withoutTicket.map(r => r.id).join(',');
     await sb(env, `reports_log?id=in.(${list})`, {
@@ -823,27 +860,52 @@ async function setAttention(env, body, scope) {
     });
   }
 
-  // ───────────────────────────────────────────────────────────────────
-  // >>> OSTICKET <<<  (INTEGRACION PENDIENTE — dejar listo para activar)
-  // Cuando osTicket este conectado, aqui se empuja el estado a cada ticket
-  // que tenga osticket_id, usando OSTICKET_STATE_ID[status]. Patron sugerido:
-  //
-  //   const base = await osticketBase(env);            // de reports.js
-  //   for (const r of withTicket) {
-  //     try {
-  //       await osticketSetStatus(env, base, r.osticket_id, OSTICKET_STATE_ID[status]);
-  //       await sb(env, `reports_log?id=eq.${r.id}`, { method:'PATCH',
-  //         body: JSON.stringify({ osticket_sync:'synced', osticket_sync_at: new Date().toISOString() }) });
-  //     } catch (e) {
-  //       await sb(env, `reports_log?id=eq.${r.id}`, { method:'PATCH',
-  //         body: JSON.stringify({ osticket_sync:'failed', osticket_sync_error: String(e.message||e) }) });
-  //     }
-  //   }
-  //
-  // OJO: un reporte puede tener VARIOS tickets (PLA + N DOC). Para sincronizar
-  // todos habria que consultar gc_report_link por report_code y recorrer cada
-  // ticket_number, no solo osticket_id (que es el PLA). Resolver al activar.
-  // ───────────────────────────────────────────────────────────────────
+  // 4b) Reportes CON ticket -> primero guardar el estado interno (pending),
+  //     luego empujar a osTicket y marcar synced/failed segun resultado.
+  let synced = 0, failedSync = 0;
+  if (withTicket.length) {
+    const list = withTicket.map(r => r.id).join(',');
+    await sb(env, `reports_log?id=in.(${list})`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ...basePatch, osticket_sync: 'pending', osticket_sync_error: null }),
+    });
+
+    // Empujar a osTicket. El estado de atencion -> id de osTicket.
+    const statusId = OSTICKET_STATE_ID[status];
+    let base = '';
+    try { base = await osticketBase(env); } catch { base = ''; }
+
+    for (const r of withTicket) {
+      const code = reportCode(r.id);
+      try {
+        if (!base) throw new Error('osticket_url no configurado');
+        const res = await osticketSetReportStatus(env, base, code, statusId, comment);
+        if (res && res.ok) {
+          synced++;
+          await sb(env, `reports_log?id=eq.${r.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ osticket_sync: 'synced', osticket_sync_at: nowIso, osticket_sync_error: null }),
+          });
+        } else {
+          // Parcial (207) o ok=false: algunos tickets no cambiaron.
+          failedSync++;
+          const detail = res && res.results
+            ? res.results.filter(x => !x.ok).map(x => `${x.number || x.ticket_id}: ${x.error || 'error'}`).join(' | ')
+            : 'sincronizacion parcial';
+          await sb(env, `reports_log?id=eq.${r.id}`, {
+            method: 'PATCH',
+            body: JSON.stringify({ osticket_sync: 'failed', osticket_sync_error: detail.slice(0, 300) }),
+          });
+        }
+      } catch (e) {
+        failedSync++;
+        await sb(env, `reports_log?id=eq.${r.id}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ osticket_sync: 'failed', osticket_sync_error: String(e.message || e).slice(0, 300) }),
+        });
+      }
+    }
+  }
 
   return json({
     ok: true,
@@ -854,7 +916,12 @@ async function setAttention(env, body, scope) {
     attention_at: nowIso,
     attention_by_name: a[0].name || null,
     attention_comment: comment,
-    // resumen de sincronizacion (hoy siempre interno)
-    sync: { with_ticket: withTicket.length, without_ticket: withoutTicket.length },
+    // resumen de sincronizacion con osTicket
+    sync: {
+      with_ticket: withTicket.length,
+      without_ticket: withoutTicket.length,
+      synced,
+      failed: failedSync,
+    },
   });
 }

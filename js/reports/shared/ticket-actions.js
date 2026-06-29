@@ -26,13 +26,13 @@ export function attPill(a) {
   return `<span class="pill ${s.cls}">${s.label}</span>`;
 }
 
-/* Indicador de sincronizacion con osTicket (solo informativo por ahora).
-   na -> nada; synced -> ok; failed -> aviso; pending -> por sincronizar. */
+/* Indicador de sincronizacion con osTicket. na -> nada; synced -> ok;
+   failed -> no se pudo (hover muestra el detalle); pending -> en curso. */
 export function syncPill(s) {
   if (!s || s === 'na') return '';
   if (s === 'synced') return '<span class="pill att-resolved" title="Estado sincronizado con osTicket">\u2713 sinc.</span>';
   if (s === 'failed') return '<span class="pill pill-out" title="No se pudo sincronizar con osTicket">\u26A0 sinc.</span>';
-  return '<span class="pill pill-pend" title="Pendiente de sincronizar con osTicket cuando se active la integracion">\u21BB sinc.</span>';
+  return '<span class="pill pill-pend" title="Sincronizando con osTicket">\u21BB sinc.</span>';
 }
 
 /* timestamptz ISO -> 'DD/MM/AAAA HH:MM a.m./p.m.' en hora Caracas (GMT-4). */
