@@ -38,12 +38,41 @@ async function isActiveAdmin(env, adminId) {
   return r && r.length > 0;
 }
 
+// Valida que la sesion sea de un usuario activo del portal (admin/superadmin/
+// editor O company). Se usa para la accion de SOLO LECTURA 'list_changes',
+// que devuelve las novedades de empresa a cualquiera (son globales, sin
+// filtro de alcance: las ven todos).
+async function isValidSession(env, user) {
+  if (!user) return false;
+  if (user.kind === 'admin' && user.id) {
+    const r = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id`);
+    return r && r.length > 0;
+  }
+  if (user.kind === 'company' && user.companyCode) {
+    const r = await sb(env, `company_users?company_code=eq.${encodeURIComponent(user.companyCode)}&is_active=eq.true&select=company_code`);
+    return r && r.length > 0;
+  }
+  return false;
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'Solicitud inválida.' }, 400); }
   const { action, adminId } = body;
 
   try {
+    // ----- Lectura abierta de novedades de empresa (todos los usuarios) -----
+    // Las novedades de empresa son globales: tiendas, empresas, admin,
+    // superadmin y editor las ven todas, sin filtro de alcance. Esta accion
+    // es SOLO LECTURA (no marca leido); el badge de la campanita del admin lo
+    // siguen manejando get/seen.
+    if (action === 'list_changes') {
+      if (!(await isValidSession(env, body.user || null))) return json({ ok: false, error: 'No autorizado.' }, 403);
+      const items = await sb(env,
+        'company_change?select=id,company_code,business_name,change_type,old_value,new_value,detected_at&order=id.desc&limit=30') || [];
+      return json({ ok: true, items });
+    }
+
     if (!(await isActiveAdmin(env, adminId))) return json({ ok: false, error: 'No autorizado.' }, 403);
 
     if (action === 'get') {

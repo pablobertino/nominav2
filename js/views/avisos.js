@@ -22,6 +22,7 @@ const SVG = {
   cut: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/></svg>',
   pay: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
   man: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 13v-2z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>',
+  ent: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/></svg>',
 };
 const VAR_KEYS = ['#Periodo', '#Fecha_Cierre', '#Fecha_Calculo', '#Fecha_Pago', '#HoraLimite1', '#HoraLimite2'];
 const TPL_LABEL = { calc: 'Último día de cálculo', cut: 'Día de cálculo', pay: 'Día de pago' };
@@ -31,6 +32,7 @@ let AV_USER = null;
 let AV_FEED = null;
 let AV_TPL = null;      // { templates:{calc,cut,pay}, hora1, hora2 }
 let AV_MANUAL = [];     // lista admin
+let AV_CHANGES = [];    // novedades de empresa (globales, todos las ven)
 
 function ensureStyles() {
   if (document.getElementById('avStyles')) return;
@@ -47,7 +49,7 @@ function ensureStyles() {
   .av-row:last-child{border-bottom:0}
   .av-ic{width:38px;height:38px;flex:0 0 auto;border-radius:10px;display:flex;align-items:center;justify-content:center}
   .av-ic svg{width:20px;height:20px}
-  .av-ic.calc{background:#fef3c7;color:#b45309}.av-ic.cut{background:#dbeafe;color:#1e40af}.av-ic.pay{background:#dcfce7;color:#166534}.av-ic.man{background:#f3e8ff;color:#6b21a8}
+  .av-ic.calc{background:#fef3c7;color:#b45309}.av-ic.cut{background:#dbeafe;color:#1e40af}.av-ic.pay{background:#dcfce7;color:#166534}.av-ic.man{background:#f3e8ff;color:#6b21a8}.av-ic.ent{background:#e0f2fe;color:#0369a1}
   .av-body{flex:1;min-width:0}
   .av-title{font-weight:650;font-size:14px;color:var(--ink)}
   .av-text{font-size:12.5px;color:var(--ink-soft,#334155);margin-top:3px;line-height:1.5}
@@ -136,6 +138,18 @@ async function loadAndRender() {
   // marca como visto al entrar a la seccion
   api({ action: 'seen' }).catch(() => {});
 
+  // Novedades de empresa (globales: las ven todos, sin filtro de alcance).
+  try {
+    const u = AV_USER.kind === 'company'
+      ? { kind: 'company', companyCode: AV_USER.companyCode }
+      : { kind: AV_USER.kind, id: AV_USER.id };
+    const ch = await fetch('/api/notifications', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'list_changes', user: u }),
+    }).then(r => r.json()).catch(() => null);
+    AV_CHANGES = (ch && ch.ok) ? (ch.items || []) : [];
+  } catch { AV_CHANGES = []; }
+
   if (canManage) {
     const [tpl, man] = await Promise.all([api({ action: 'tpl_get' }), api({ action: 'list_manual' })]);
     AV_TPL = tpl && tpl.ok ? tpl : null;
@@ -184,18 +198,56 @@ function manualRow(m, admin) {
   </div>`;
 }
 
+/* Fecha+hora de la novedad de empresa (detected_at ISO) en hora Caracas. */
+function fmtChangeWhen(iso) {
+  if (!iso) return '';
+  const dt = new Date(iso);
+  if (isNaN(dt)) return '';
+  const car = new Date(dt.getTime() - 4 * 3600 * 1000);
+  const p = n => String(n).padStart(2, '0');
+  let h = car.getUTCHours(); const ap = h < 12 ? 'a. m.' : 'p. m.';
+  h = h % 12; if (h === 0) h = 12;
+  return `${p(car.getUTCDate())}/${p(car.getUTCMonth() + 1)}/${car.getUTCFullYear()} ${h}:${p(car.getUTCMinutes())} ${ap}`;
+}
+
+/* Fila de novedad de empresa (cambio de estatus / empresa nueva). Son
+   globales: las ven todos los usuarios. Solo lectura. */
+function changeRow(c) {
+  const name = c.business_name ? ` \u2014 ${esc(c.business_name)}` : '';
+  const when = fmtChangeWhen(c.detected_at);
+  let title, text;
+  if (c.change_type === 'new') {
+    title = `Nueva empresa ${esc(c.company_code)}${name}`;
+    text = 'Se agrego al catalogo de empresas.';
+  } else {
+    title = `${esc(c.company_code)}${name}`;
+    text = `Estatus: ${esc(c.old_value || '\u2014')} \u2192 <b>${esc(c.new_value || '\u2014')}</b>`;
+  }
+  return `<div class="av-row">
+    <div class="av-ic ent">${SVG.ent}</div>
+    <div class="av-body">
+      <div class="av-title">${title}</div>
+      <div class="av-text">${text}</div>
+      <div class="av-meta"><span>\u{1F4C5} ${esc(when)}</span></div>
+    </div>
+  </div>`;
+}
+
 /* ---------- vista usuario ---------- */
 function renderUser() {
   const auto = (AV_FEED.auto || []);
   const manual = (AV_FEED.manual || []);
   let html = '';
+  if (AV_CHANGES.length) {
+    html += `<div class="av-sub">Novedades de empresas</div><div class="av-card">${AV_CHANGES.map(changeRow).join('')}</div>`;
+  }
   if (auto.length) {
     html += `<div class="av-sub">Per\u00edodo de n\u00f3mina</div><div class="av-card">${auto.map(autoRow).join('')}</div>`;
   }
   if (manual.length) {
     html += `<div class="av-sub">Comunicados</div><div class="av-card">${manual.map(m => manualRow(m, false)).join('')}</div>`;
   }
-  if (!auto.length && !manual.length) html = `<div class="av-empty">No hay avisos en este momento.</div>`;
+  if (!html) html = `<div class="av-empty">No hay avisos en este momento.</div>`;
   $('#avBody').innerHTML = html;
 }
 
@@ -204,6 +256,9 @@ function renderAdmin() {
   const auto = (AV_FEED.auto || []);
   const canEditTpl = !!(AV_TPL && AV_TPL.can_edit_templates);
   let html = '';
+  if (AV_CHANGES.length) {
+    html += `<div class="av-sub">Novedades de empresas</div><div class="av-card">${AV_CHANGES.map(changeRow).join('')}</div>`;
+  }
   html += `<div class="av-sub">Avisos del per\u00edodo (autom\u00e1ticos)</div>`;
   if (auto.length) {
     html += `<div class="av-card">${auto.map(autoRow).join('')}</div>`;
