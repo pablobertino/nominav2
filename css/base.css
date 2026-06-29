@@ -99,3 +99,48 @@ button { cursor: pointer; border: 0; }
   display: inline-block;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
+
+/* =====================================================================
+   HISTORIAL — estados de atencion (identicos a osTicket) + gestion
+   Pills de los 4 estados, celda de atencion con selector inline, barra
+   de seleccion multiple e icono de ayuda. Reusan .pill (sin vineta).
+   ===================================================================== */
+/* Pills de estado: Abierto (ambar) / Atendido (azul) / Resuelto (teal) /
+   Cerrado (verde). Sin vineta, igual que el resto de pills del historial. */
+.att-open     { background: var(--warn-bg);  color: var(--warn); }
+.att-attended { background: var(--brand-bg); color: #1e40af; }
+.att-resolved { background: #e0f2fe;         color: #0369a1; }
+.att-closed   { background: var(--success-bg); color: #15803d; }
+.att-open::before, .att-attended::before,
+.att-resolved::before, .att-closed::before { display: none; }
+
+/* Celda de atencion: pill + selector inline + indicador de sync, en columna. */
+.att-cell { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.att-row-sel { height: 28px; font-size: 12px; padding: 0 26px 0 9px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  background: var(--surface); color: var(--ink-soft); font-family: inherit;
+  cursor: pointer; outline: none; max-width: 130px; }
+.att-row-sel:focus { border-color: var(--brand); box-shadow: 0 0 0 3px var(--brand-bg); }
+
+/* Icono de ayuda "?" junto al encabezado Atencion. */
+.att-help { display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; border-radius: 50%; font-size: 11px; font-weight: 700;
+  color: var(--brand); background: var(--brand-bg); margin-left: 4px; cursor: help;
+  vertical-align: middle; }
+.att-help:hover { background: var(--brand); color: #fff; }
+
+/* Barra de seleccion multiple (aparece al elegir filas, estilo wizard). */
+.hsel-bar { display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+  background: var(--brand-bg); border: 1px solid #d3e2fd; border-radius: var(--radius-md);
+  padding: 10px 14px; margin-bottom: 14px; font-size: 13px; color: var(--ink-soft); }
+.hsel-bar b { color: var(--brand); }
+.hsel-bar select { height: 32px; font-size: 12.5px; padding: 0 26px 0 10px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
+  font-family: inherit; outline: none; }
+.hsel-bar input { height: 32px; padding: 0 11px; font-size: 12.5px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface);
+  font-family: inherit; outline: none; }
+.hsel-bar select:focus, .hsel-bar input:focus { border-color: var(--brand); box-shadow: 0 0 0 3px rgba(37,99,235,.12); }
+
+/* Checkbox de fila/cabecera del historial. */
+.tablebox .chk { width: 16px; height: 16px; margin: 0; accent-color: var(--brand); cursor: pointer; }

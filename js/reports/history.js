@@ -56,6 +56,32 @@ function downloadText(text, filename) {
   setTimeout(() => URL.revokeObjectURL(url), 1500);
 }
 
+// Pide al backend la plantilla de Excel (.xlsx) regenerada del ticket PLA.
+// Devuelve { base64, filename, mime } o null.
+async function fetchTicketExcel(user, reportId) {
+  const d = await fetch('/api/reports-history', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'ticket_excel', user, report_id: reportId }),
+  }).then(r => r.json()).catch(() => null);
+  if (d && d.ok && d.base64) return d;
+  return null;
+}
+
+// Dispara la descarga de un archivo binario desde base64.
+function downloadBase64(base64, filename, mime) {
+  const bin = atob(base64);
+  const len = bin.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
+  const blob = new Blob([bytes], { type: mime || 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename || 'plantilla.xlsx';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
 const TYPES = {
   marcaje:      { label: 'Marcaje Manual', icon: '🕐' },
   ausencia:     { label: 'Período de Ausencia', icon: '📅' },
@@ -78,10 +104,31 @@ function ymd(d) { return new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/C
 function todayYMD() { return ymd(new Date()); }
 function daysAgoYMD(n) { const d = new Date(); d.setDate(d.getDate() - n); return ymd(d); }
 
+// Estados de atencion (identicos a osTicket). label = nombre visible,
+// cls = clase del pill (color), desc = explicacion para el tooltip "?".
+const ATT_STATES = {
+  open:     { label: 'Abierto',  cls: 'att-open',     desc: 'Sin atender todavia. El reporte llego pero nadie lo ha tomado.' },
+  attended: { label: 'Atendido', cls: 'att-attended', desc: 'En proceso. Capital Humano ya lo esta revisando.' },
+  resolved: { label: 'Resuelto', cls: 'att-resolved', desc: 'Resuelto, pero aun NO cargado en el sistema (AX).' },
+  closed:   { label: 'Cerrado',  cls: 'att-closed',   desc: 'Ya cargado en el sistema (AX). Proceso terminado.' },
+};
+const ATT_ORDER = ['open', 'attended', 'resolved', 'closed'];
+
 function attPill(a) {
-  return a === 'done'
-    ? '<span class="pill pill-set">Atendido</span>'
-    : '<span class="pill pill-pend">Pendiente</span>';
+  const s = ATT_STATES[a] || ATT_STATES.open;
+  return `<span class="pill ${s.cls}">${s.label}</span>`;
+}
+
+// Indicador de sincronizacion con osTicket (solo informativo por ahora).
+//  na      -> no aplica (sin ticket) -> no se muestra nada
+//  pending -> marcado, falta empujar a osTicket cuando se active
+//  synced  -> reflejado en osTicket
+//  failed  -> intento fallido
+function syncPill(s) {
+  if (!s || s === 'na') return '';
+  if (s === 'synced') return '<span class="pill att-resolved" title="Estado sincronizado con osTicket">\u2713 sinc.</span>';
+  if (s === 'failed') return '<span class="pill pill-out" title="No se pudo sincronizar con osTicket">\u26A0 sinc.</span>';
+  return '<span class="pill pill-pend" title="Pendiente de sincronizar con osTicket cuando se active la integracion">\u21BB sinc.</span>';
 }
 function otPill(r) {
   return r.osticket_id
@@ -98,6 +145,9 @@ export function renderHistory(user) {
   const isCompany = user.kind === 'company';
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   const showStore = !isCompany; // admin y superadmin ven columna/filtro tienda
+  // Solo admin/superadmin (NO editor_personal, NO tienda) pueden cambiar el
+  // estado de atencion. Habilita la columna de seleccion + barra de acciones.
+  const canManage = user.kind === 'admin' && (user.role === 'admin' || user.role === 'superadmin');
 
   // estado de la vista
   const ST = {
@@ -106,6 +156,7 @@ export function renderHistory(user) {
                q: '', attention: 'ALL', osticket: 'ALL' },
     page: 1, perPage: 20, total: 0, rows: [],
     companies: [], zones: [], subzones: [], concepts: [], // catalogo para filtros
+    selected: new Set(),   // ids marcados (seleccion multiple)
   };
 
   $('#pnlMain').innerHTML = `
@@ -127,25 +178,43 @@ export function renderHistory(user) {
       <div class="fl fl-search"><label>Buscar</label>
         <div class="hsearch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
           <input id="hQ" placeholder="N° de reporte o responsable…"></div></div>
+      ${canManage ? `<div class="fl"><label>Atención</label>
+        <select id="hAtt">
+          <option value="ALL">Todas</option>
+          ${ATT_ORDER.map(k => `<option value="${k}">${ATT_STATES[k].label}</option>`).join('')}
+        </select></div>` : ''}
     </div>
 
     <div class="chip-row" id="hChips">
       <span style="font-size:12px;color:var(--faint);align-self:center">Atajos:</span>
       <button class="chip on" data-chip="30d">Últimos 30 días</button>
       <button class="chip" data-chip="quincena">Quincena en curso</button>
-      <button class="chip" data-chip="pending">Pendientes</button>
+      <button class="chip" data-chip="pending">Abiertos</button>
       <button class="chip" data-chip="unsent">Sin osTicket</button>
     </div>
 
+    ${canManage ? `<div class="hsel-bar" id="hSelBar" style="display:none">
+      <b><span id="hSelCount">0</span></b> reporte(s) seleccionado(s)
+      <span style="flex:1"></span>
+      <label style="font-size:12px;color:var(--muted)">Marcar como:</label>
+      <select id="hSelStatus">
+        ${ATT_ORDER.map(k => `<option value="${k}">${ATT_STATES[k].label}</option>`).join('')}
+      </select>
+      <input id="hSelComment" placeholder="Comentario (opcional)" style="flex:0 1 220px">
+      <button class="btn btn-sm btn-primary" id="hSelApply">Aplicar</button>
+      <button class="btn btn-sm" id="hSelClear">Limpiar</button>
+    </div>` : ''}
+
     <div class="tablebox">
       <table><thead><tr>
+        ${canManage ? '<th style="width:30px"><input type="checkbox" class="chk" id="hAll"></th>' : ''}
         <th>Tipo / N°</th>
         ${showStore ? '<th>Tienda</th>' : ''}
         <th>Fecha de envío</th>
         <th>Responsable</th>
         <th>Origen</th>
         <th style="text-align:center">Trab.</th>
-        <th>Atención</th>
+        <th>Atención <span class="att-help" id="hAttHelp" title="Ver qué significa cada estado">?</span></th>
         <th>osTicket</th>
         <th style="text-align:right">Acciones</th>
       </tr></thead><tbody id="hBody"></tbody></table>
@@ -161,7 +230,7 @@ export function renderHistory(user) {
       <div class="pages" id="hPages"></div>
     </div>`;
 
-  const ncols = showStore ? 9 : 8;
+  const ncols = (showStore ? 9 : 8) + (canManage ? 1 : 0);
 
   // ---- catalogo (admin/super): tiendas + zonas + subzonas + conceptos ----
   async function loadCompanies() {
@@ -232,7 +301,21 @@ export function renderHistory(user) {
         ? `<td><div class="store-cell">${r.company_code}<div class="sub2">${r.company_name || ''}</div></div></td>` : '';
       const resend = !r.osticket_id
         ? `<button class="btn btn-sm btn-send" data-resend="${r.id}">Enviar a osTicket</button>` : '';
+      const checkTd = canManage
+        ? `<td><input type="checkbox" class="chk hrow-chk" data-pick="${r.id}" ${ST.selected.has(r.id) ? 'checked' : ''}></td>` : '';
+      // Celda de atencion: el pill + (si canManage) un selector inline para
+      // cambiar SOLO esa fila, + el indicador de sincronizacion con osTicket.
+      let attTd;
+      if (canManage) {
+        attTd = `<td><div class="att-cell">${attPill(r.attention)}
+          <select class="att-row-sel" data-attsel="${r.id}" title="Cambiar estado de este reporte">
+            ${ATT_ORDER.map(k => `<option value="${k}" ${k === r.attention ? 'selected' : ''}>${ATT_STATES[k].label}</option>`).join('')}
+          </select>${syncPill(r.osticket_sync)}</div></td>`;
+      } else {
+        attTd = `<td>${attPill(r.attention)}</td>`;
+      }
       return `<tr class="main" data-open="${r.id}">
+        ${checkTd}
         <td><div class="col-type"><span class="ico">${t.icon}</span>
           <div><div class="fol">N° ${r.id}</div><div class="ttl">${t.label}</div></div></div></td>
         ${storeTd}
@@ -240,12 +323,13 @@ export function renderHistory(user) {
         <td>${r.responsible || '—'}<div style="font-size:11.5px;color:var(--faint)">${r.position || ''}</div></td>
         <td>${originPill(r)}</td>
         <td style="text-align:center"><b>${r.workers_count}</b></td>
-        <td>${attPill(r.attention)}</td>
+        ${attTd}
         <td>${otPill(r)}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn btn-sm" data-open="${r.id}">Ver detalle</button>
           <button class="btn btn-sm" data-copytxt="${r.id}" title="Copiar el texto del ticket">\u29C9 Copiar</button>
           <button class="btn btn-sm" data-dltxt="${r.id}" title="Descargar el texto del ticket (.txt)">\u2913 .txt</button>
+          <button class="btn btn-sm" data-dlxls="${r.id}" title="Descargar la plantilla de Excel del ticket (.xlsx)">\u2913 Excel</button>
           ${resend}
         </td>
       </tr>`;
@@ -285,6 +369,82 @@ export function renderHistory(user) {
       b.textContent = '\u2713';
       setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1200);
     }));
+
+    // Descargar la plantilla de Excel del ticket (.xlsx).
+    $('#hBody').querySelectorAll('[data-dlxls]').forEach(b => b.addEventListener('click', async e => {
+      e.stopPropagation();
+      const id = parseInt(b.dataset.dlxls, 10);
+      const orig = b.textContent;
+      b.disabled = true; b.textContent = '…';
+      const r = await fetchTicketExcel(user, id);
+      if (!r) { b.textContent = 'Error'; setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500); return; }
+      downloadBase64(r.base64, r.filename, r.mime);
+      b.textContent = '\u2713';
+      setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1200);
+    }));
+
+    // ---- Gestion de estado de atencion (solo admin/superadmin) ----
+    if (canManage) {
+      // Checkbox por fila -> actualiza la seleccion.
+      $('#hBody').querySelectorAll('[data-pick]').forEach(c => c.addEventListener('click', e => {
+        e.stopPropagation();
+        const id = parseInt(c.dataset.pick, 10);
+        if (c.checked) ST.selected.add(id); else ST.selected.delete(id);
+        updateSelBar();
+      }));
+      // Selector inline por fila -> cambia SOLO ese reporte.
+      $('#hBody').querySelectorAll('[data-attsel]').forEach(s => {
+        s.addEventListener('click', e => e.stopPropagation());
+        s.addEventListener('change', async e => {
+          e.stopPropagation();
+          const id = parseInt(s.dataset.attsel, 10);
+          await applyAttention([id], s.value, null, s);
+        });
+      });
+    }
+    // Reflejar en el header el estado del checkbox "todos".
+    syncHeaderCheckbox();
+  }
+
+  // Actualiza la barra de seleccion multiple (contador + visibilidad).
+  function updateSelBar() {
+    if (!canManage) return;
+    const bar = $('#hSelBar'); if (!bar) return;
+    const n = ST.selected.size;
+    bar.style.display = n ? 'flex' : 'none';
+    if ($('#hSelCount')) $('#hSelCount').textContent = n;
+    syncHeaderCheckbox();
+  }
+
+  // Pone el checkbox "todos" en el estado correcto segun la pagina actual.
+  function syncHeaderCheckbox() {
+    const all = $('#hAll'); if (!all) return;
+    const idsPage = ST.rows.map(r => r.id);
+    const pickedInPage = idsPage.filter(id => ST.selected.has(id)).length;
+    all.checked = idsPage.length > 0 && pickedInPage === idsPage.length;
+    all.indeterminate = pickedInPage > 0 && pickedInPage < idsPage.length;
+  }
+
+  // Aplica un cambio de estado a uno o varios reportes (llamada al backend).
+  // anchorEl: elemento (boton/select) para feedback visual opcional.
+  async function applyAttention(ids, status, comment, anchorEl) {
+    if (!ids.length) return;
+    if (anchorEl) anchorEl.disabled = true;
+    const d = await fetch('/api/reports-history', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'set_attention', user, report_ids: ids, status, comment: comment || null }),
+    }).then(r => r.json()).catch(() => null);
+    if (anchorEl) anchorEl.disabled = false;
+    if (!d || !d.ok) {
+      alert(d ? d.error : 'No se pudo cambiar el estado.');
+      return;
+    }
+    // Actualizar en memoria las filas afectadas y limpiar seleccion.
+    const idset = new Set(ids);
+    ST.rows.forEach(r => { if (idset.has(r.id)) { r.attention = status; } });
+    ST.selected.clear();
+    paintRows();
+    updateSelBar();
   }
 
   function paintPager() {
@@ -350,6 +510,39 @@ export function renderHistory(user) {
   $('#hQ').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(applyFilters, 350); });
   $('#hPer').addEventListener('change', () => { ST.perPage = parseInt($('#hPer').value, 10) || 20; ST.page = 1; load(); });
 
+  // ---- gestion de estado (solo admin/superadmin) ----
+  if (canManage) {
+    // Filtro de atencion.
+    if ($('#hAtt')) $('#hAtt').addEventListener('change', () => {
+      ST.filters.attention = $('#hAtt').value;
+      ST.page = 1; load();
+    });
+    // Checkbox "todos" (de la pagina actual).
+    if ($('#hAll')) $('#hAll').addEventListener('change', e => {
+      if (e.target.checked) ST.rows.forEach(r => ST.selected.add(r.id));
+      else ST.rows.forEach(r => ST.selected.delete(r.id));
+      paintRows(); updateSelBar();
+    });
+    // Barra: aplicar el estado elegido a la seleccion.
+    if ($('#hSelApply')) $('#hSelApply').addEventListener('click', async () => {
+      const ids = [...ST.selected];
+      if (!ids.length) return;
+      const status = $('#hSelStatus').value;
+      const comment = $('#hSelComment') ? $('#hSelComment').value.trim() : '';
+      await applyAttention(ids, status, comment, $('#hSelApply'));
+      if ($('#hSelComment')) $('#hSelComment').value = '';
+    });
+    // Barra: limpiar seleccion.
+    if ($('#hSelClear')) $('#hSelClear').addEventListener('click', () => {
+      ST.selected.clear(); paintRows(); updateSelBar();
+    });
+    // Ayuda "?" con la explicacion de cada estado.
+    if ($('#hAttHelp')) $('#hAttHelp').addEventListener('click', () => {
+      const txt = ATT_ORDER.map(k => `• ${ATT_STATES[k].label}: ${ATT_STATES[k].desc}`).join('\n\n');
+      alert('¿Qué significa cada estado?\n\n' + txt);
+    });
+  }
+
   // ---- atajos (chips) ----
   $('#hChips').querySelectorAll('[data-chip]').forEach(c => c.addEventListener('click', () => {
     $('#hChips').querySelectorAll('.chip').forEach(x => x.classList.remove('on'));
@@ -359,7 +552,7 @@ export function renderHistory(user) {
     const k = c.dataset.chip;
     if (k === '30d') { ST.filters.date_from = daysAgoYMD(30); ST.filters.date_to = todayYMD(); }
     else if (k === 'quincena') { ST.filters.date_from = daysAgoYMD(15); ST.filters.date_to = todayYMD(); }
-    else if (k === 'pending') { ST.filters.attention = 'pending'; }
+    else if (k === 'pending') { ST.filters.attention = 'open'; }
     else if (k === 'unsent') { ST.filters.osticket = 'unsent'; }
     // reflejar fechas en los inputs
     $('#hFrom').value = ST.filters.date_from; $('#hTo').value = ST.filters.date_to;

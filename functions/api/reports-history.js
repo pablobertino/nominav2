@@ -18,11 +18,20 @@
                 guardados. Util cuando osTicket esta caido (copiar/pegar).
                 Devuelve { ok, text, filename }.
                 { action:'ticket_text', user, report_id }
+     - ticket_excel : regenera la PLANTILLA DE EXCEL (.xlsx) que se adjunta
+                al ticket PLA, reusando buildAxWorkbookBase64 con los datos
+                guardados. Devuelve { ok, base64, filename, mime }.
+                { action:'ticket_excel', user, report_id }
+     - set_attention : (solo admin/superadmin con alcance) cambia el estado
+                de atencion de uno o varios reportes y opcionalmente
+                sincroniza el estado en osTicket.
+                { action:'set_attention', user, report_ids:[...], status,
+                  comment?, sync_osticket? }
 
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
-import { buildReportText } from './_ax-template.js';
+import { buildReportText, buildAxWorkbookBase64 } from './_ax-template.js';
 
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -111,6 +120,8 @@ export async function onRequestPost({ request, env }) {
     if (body.action === 'list') return await listReports(env, body, scope);
     if (body.action === 'detail') return await detailReport(env, body, scope);
     if (body.action === 'ticket_text') return await ticketText(env, body, scope);
+    if (body.action === 'ticket_excel') return await ticketExcel(env, body, scope);
+    if (body.action === 'set_attention') return await setAttention(env, body, scope);
     return json({ ok: false, error: 'Accion no reconocida' }, 400);
   } catch (e) {
     return json({ ok: false, error: String(e.message || e) }, 500);
@@ -133,7 +144,8 @@ async function listReports(env, body, scope) {
   const to = from + perPage - 1;
 
   let q = 'reports_log?select=id,company_code,zone_id,subzone_id,topic,sent_at,'
-    + 'responsible,position,workers_count,attention,osticket_id,email_sent,source_kind';
+    + 'responsible,position,workers_count,attention,osticket_id,email_sent,source_kind,'
+    + 'osticket_sync,attention_at,attention_comment';
   q += scopeFilter(scope);
 
   // Filtros
@@ -196,6 +208,9 @@ async function listReports(env, body, scope) {
     workers_count: r.workers_count,
     attention: r.attention,
     osticket_id: r.osticket_id,
+    osticket_sync: r.osticket_sync || 'na',
+    attention_at: r.attention_at || null,
+    attention_comment: r.attention_comment || null,
     email_sent: r.email_sent,
     source_kind: r.source_kind || 'company',
   }));
@@ -515,4 +530,305 @@ async function ticketText(env, body, scope) {
   const filename = `${ymd.replace(/-/g, '')}_${code}_${safeName(cc)}_${safeName(topic)}.txt`;
 
   return json({ ok: true, text, filename });
+}
+
+/* =====================================================================
+   ticket_excel — Regenera la PLANTILLA DE EXCEL (.xlsx) que se adjunta al
+   ticket PLA de un reporte ya enviado, reusando buildAxWorkbookBase64 (la
+   MISMA funcion del envio). Reconstruye ctx.lines con la forma EXACTA que
+   cada builder del Excel espera (distinta a los registros del texto), desde
+   las tablas de detalle. Devuelve { base64, filename, mime } para que el
+   front dispare la descarga del .xlsx.
+   ===================================================================== */
+async function ticketExcel(env, body, scope) {
+  const id = parseInt(body.report_id, 10);
+  if (!id) return json({ ok: false, error: 'Falta report_id' }, 400);
+
+  // Encabezado (con control de alcance).
+  let q = `reports_log?id=eq.${id}&select=id,company_code,topic,sent_at`;
+  q += scopeFilter(scope);
+  const head = await sbJson(env, q);
+  if (!head || !head.length) return json({ ok: false, error: 'Reporte no encontrado o sin acceso.' }, 404);
+  const r = head[0];
+  const topic = r.topic;
+  const cc = r.company_code;
+
+  // Datos de la tienda necesarios para el Excel: data_area (Data ID de AX) y
+  // business_name. El resto de columnas salen de las lineas de detalle.
+  const comp = await sbJson(env,
+    `companies?company_code=eq.${encodeURIComponent(cc)}&select=data_area,business_name`);
+  const c0 = comp && comp[0] ? comp[0] : {};
+  const compDataArea = c0.data_area || '';
+  const compBusinessName = c0.business_name || '';
+
+  // Fecha del reporte (para el nombre de archivo), en hora Venezuela.
+  const sentMs = r.sent_at ? Date.parse(r.sent_at) : Date.now();
+  const car = new Date((isNaN(sentMs) ? Date.now() : sentMs) - 4 * 3600 * 1000);
+  const ymd = car.toISOString().slice(0, 10);
+  const code = reportCode(r.id);
+
+  // Helper: divide un nombre completo en {nombre, apellidos} (ultima palabra
+  // = apellidos), igual heuristica que el envio de egreso.
+  const splitName = (full) => {
+    const parts = String(full || '').trim().split(/\s+/).filter(Boolean);
+    if (parts.length > 1) return { nombre: parts.slice(0, -1).join(' '), apellidos: parts[parts.length - 1] };
+    return { nombre: parts[0] || '', apellidos: '' };
+  };
+
+  // Construir ctx.lines con la forma que cada builder del Excel espera.
+  let lines = [];
+  let kind = topic;   // 'marcaje'|'ausencia'|'ingreso'|'egreso'|'modificacion'
+
+  if (topic === 'marcaje') {
+    const raw = await sbJson(env,
+      `mark_report_lines?report_id=eq.${id}`
+      + `&select=worker_id_number,mark_date,day_type,time_in,time_out,cause_code,cause_other_text,marcaje_causas(label)`
+      + `&order=id.asc`);
+    lines = (raw || []).map(l => ({
+      id_number: l.worker_id_number,
+      date: l.mark_date,
+      time_in: (l.time_in || '').slice(0, 5),
+      time_out: (l.time_out || '').slice(0, 5),
+      tipo: l.day_type === 'D' ? 'D' : 'L',
+      causa_label: l.cause_code === 'other'
+        ? (l.cause_other_text || 'Otros')
+        : ((l.marcaje_causas && l.marcaje_causas.label) || l.cause_code),
+    }));
+
+  } else if (topic === 'ausencia') {
+    const raw = await sbJson(env,
+      `absence_report_lines?report_id=eq.${id}`
+      + `&select=worker_id_number,ax_code,date_from,date_to&order=id.asc`);
+    lines = (raw || []).map(l => ({
+      id_number: l.worker_id_number,
+      date_from: l.date_from,
+      date_to: l.date_to,
+      ax_code: l.ax_code,
+    }));
+
+  } else if (topic === 'ingreso') {
+    const raw = await sbJson(env,
+      `ingreso_report_lines?report_id=eq.${id}`
+      + `&select=worker_id_number,first_name,second_name,last_names,cargo_code,birth_date,gender,`
+      + `marital_status,account_number,email,phone,address,start_date&order=id.asc`);
+    // El Excel de ingreso usa el ax_code del cargo; resolver con lookup.
+    const cargosRows = await sbJson(env, 'cargos?select=code,ax_code');
+    const axByCode = {}; (cargosRows || []).forEach(c => { axByCode[c.code] = c.ax_code || c.code; });
+    lines = (raw || []).map(l => ({
+      id_number: l.worker_id_number,
+      nombre: l.first_name || '',
+      nombre2: l.second_name || '',
+      apellidos: l.last_names || '',
+      correo: l.email || '',
+      fechaIni: l.start_date || '',
+      cargo: axByCode[l.cargo_code] || l.cargo_code || '',
+      direccion: l.address || '',
+      fechaNac: l.birth_date || '',
+      estCivil: l.marital_status || '',
+      telefono: l.phone || '',
+      genero: l.gender || '',
+      cuenta: l.account_number || '',
+    }));
+
+  } else if (topic === 'egreso') {
+    const raw = await sbJson(env,
+      `egress_report_lines?report_id=eq.${id}`
+      + `&select=worker_id_number,worker_name,report_date&order=id.asc`);
+    lines = (raw || []).map(l => {
+      const { nombre, apellidos } = splitName(l.worker_name);
+      return {
+        id_number: l.worker_id_number,
+        nombre, apellidos,
+        fechaFin: l.report_date,
+      };
+    });
+
+  } else if (topic === 'modificacion') {
+    const raw = await sbJson(env,
+      `modificacion_report_lines?report_id=eq.${id}`
+      + `&select=worker_id_number,worker_name,changes&order=id.asc`);
+    // El Excel de modificacion lleva SIEMPRE cedula + nombre dividido; los
+    // campos cambiados en su columna AX, los no cambiados VACIOS. El cargo va
+    // como ax_code; resolver con lookup. El nombre dividido sale de changes
+    // (si se modifico) o del worker_name guardado (ultima palabra = apellidos).
+    const cargosRows = await sbJson(env, 'cargos?select=code,ax_code');
+    const axByCode = {}; (cargosRows || []).forEach(c => { axByCode[c.code] = c.ax_code || c.code; });
+    lines = (raw || []).map(l => {
+      const ch = (l.changes && typeof l.changes === 'object') ? l.changes : {};
+      let nombre, nombre2, apellidos;
+      if ('first_name' in ch || 'last_names' in ch) {
+        nombre = (ch.first_name || '').toUpperCase();
+        nombre2 = (ch.second_name || '').toUpperCase();
+        apellidos = (ch.last_names || '').toUpperCase();
+      } else {
+        const s = splitName(l.worker_name);
+        nombre = s.nombre.toUpperCase(); nombre2 = ''; apellidos = s.apellidos.toUpperCase();
+      }
+      return {
+        id_number: l.worker_id_number,
+        nombre, nombre2, apellidos,
+        correo: ('correo' in ch) ? ch.correo : '',
+        fechaIni: '',
+        fechaFin: '',
+        cargo: ('cargo' in ch) ? (axByCode[ch.cargo] || ch.cargo) : '',
+        direccion: ('direccion' in ch) ? ch.direccion : '',
+        fechaNac: ('fechaNac' in ch) ? ch.fechaNac : '',
+        estCivil: ('estCivil' in ch) ? ch.estCivil : '',
+        telefono: ('telefono' in ch) ? ch.telefono : '',
+        genero: ('sexo' in ch) ? ch.sexo : '',
+        cuenta: ('cuenta' in ch) ? ch.cuenta : '',
+        todoTicket: ('todoTicket' in ch) ? ch.todoTicket : '',
+      };
+    });
+
+  } else {
+    return json({ ok: false, error: `Tipo de reporte no soportado: ${topic}` }, 400);
+  }
+
+  const axCtx = {
+    companyDataArea: compDataArea,
+    companyName: compBusinessName,
+    companyAlias: cc,
+    todayYmd: ymd,         // la fecha del reporte -> nombre de archivo
+    reportCode: code,
+    lines,
+  };
+  const wb = buildAxWorkbookBase64(kind, axCtx);
+  if (!wb) return json({ ok: false, error: 'No se pudo generar la plantilla de Excel.' }, 500);
+
+  return json({
+    ok: true,
+    base64: wb.base64,
+    filename: wb.filename,
+    mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+}
+
+/* =====================================================================
+   set_attention — Cambia el estado de atencion de uno o varios reportes.
+   SOLO admin/superadmin (NO editor_personal, NO tienda). El admin solo
+   puede tocar reportes dentro de su alcance (resolveScope ya lo limita;
+   ademas se filtra el UPDATE por company_code del alcance).
+
+   Estados (identicos a osTicket): open | attended | resolved | closed.
+   Es reversible (se puede volver a cualquier estado). Registra quien y
+   cuando, y un comentario opcional.
+
+   INTEGRACION OSTICKET (pendiente): por ahora el cambio es solo INTERNO.
+   Cuando osTicket este conectado, aqui se empujara el estado al ticket via
+   API y se actualizara osticket_sync (synced/failed). Ver el bloque marcado
+   con  >>> OSTICKET <<<  mas abajo. Mientras tanto, osticket_sync se deja en
+   'pending' si el reporte tiene osticket_id (hay ticket que sincronizar mas
+   tarde) o 'na' si no tiene ticket (no hay nada que sincronizar).
+
+   Body: { action:'set_attention', user, report_ids:[...], status,
+           comment?, sync_osticket? }
+   ===================================================================== */
+
+// Mapa de nuestro estado -> id de estado en osTicket (para la integracion
+// futura). open=Abierto(1), attended=Atendido(6), resolved=Resuelto(2),
+// closed=Cerrado(3).
+const OSTICKET_STATE_ID = { open: 1, attended: 6, resolved: 2, closed: 3 };
+const VALID_ATTENTION = ['open', 'attended', 'resolved', 'closed'];
+
+async function setAttention(env, body, scope) {
+  // 1) Autorizacion: SOLO admin/superadmin reales. El editor_personal tiene
+  //    user.kind='admin' pero role='editor_personal' -> se rechaza. La tienda
+  //    (kind='company') tampoco puede.
+  const user = body.user || {};
+  if (user.kind !== 'admin' || !user.id) {
+    return json({ ok: false, error: 'Solo un administrador puede cambiar el estado de atencion.' }, 403);
+  }
+  const a = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
+  if (!a || !a.length) return json({ ok: false, error: 'Administrador no valido.' }, 403);
+  const role = a[0].role;
+  if (role !== 'admin' && role !== 'superadmin') {
+    return json({ ok: false, error: 'Tu rol no permite cambiar el estado de atencion.' }, 403);
+  }
+
+  // 2) Validar entrada.
+  const status = String(body.status || '').trim();
+  if (!VALID_ATTENTION.includes(status)) {
+    return json({ ok: false, error: 'Estado de atencion invalido.' }, 400);
+  }
+  const ids = Array.isArray(body.report_ids) ? body.report_ids.map(x => parseInt(x, 10)).filter(Boolean) : [];
+  if (!ids.length) return json({ ok: false, error: 'No se indicaron reportes.' }, 400);
+  const comment = body.comment != null ? String(body.comment).trim().slice(0, 300) : null;
+
+  // 3) Filtrar a los reportes que existen Y estan en el alcance del usuario
+  //    (defensa extra ademas de scopeFilter). Solo se actualizan esos.
+  const idList = ids.join(',');
+  let q = `reports_log?id=in.(${idList})&select=id,company_code,osticket_id`;
+  q += scopeFilter(scope);
+  const allowed = await sbJson(env, q) || [];
+  const allowedIds = allowed.map(r => r.id);
+  if (!allowedIds.length) {
+    return json({ ok: false, error: 'Ninguno de los reportes esta en tu alcance.' }, 403);
+  }
+
+  // 4) Estado de sincronizacion con osTicket. Por ahora SOLO INTERNO:
+  //    - si el reporte tiene osticket_id  -> 'pending' (hay ticket que
+  //      sincronizar cuando se active la integracion)
+  //    - si no tiene osticket_id          -> 'na' (no hay ticket que tocar)
+  //    Cuando la integracion este activa, esto pasara a 'synced'/'failed'
+  //    segun el resultado del llamado a la API (ver bloque OSTICKET abajo).
+  const nowIso = new Date().toISOString();
+  const withTicket = allowed.filter(r => r.osticket_id);
+  const withoutTicket = allowed.filter(r => !r.osticket_id);
+
+  // Patch comun de auditoria + estado.
+  const basePatch = {
+    attention: status,
+    attention_comment: comment,
+    attention_by: user.id,
+    attention_at: nowIso,
+  };
+
+  // 4a) Reportes CON ticket -> osticket_sync 'pending' (a empujar luego).
+  if (withTicket.length) {
+    const list = withTicket.map(r => r.id).join(',');
+    await sb(env, `reports_log?id=in.(${list})`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ...basePatch, osticket_sync: 'pending', osticket_sync_error: null }),
+    });
+  }
+  // 4b) Reportes SIN ticket -> osticket_sync 'na'.
+  if (withoutTicket.length) {
+    const list = withoutTicket.map(r => r.id).join(',');
+    await sb(env, `reports_log?id=in.(${list})`, {
+      method: 'PATCH',
+      body: JSON.stringify({ ...basePatch, osticket_sync: 'na', osticket_sync_error: null }),
+    });
+  }
+
+  // ───────────────────────────────────────────────────────────────────
+  // >>> OSTICKET <<<  (INTEGRACION PENDIENTE — dejar listo para activar)
+  // Cuando osTicket este conectado, aqui se empuja el estado a cada ticket
+  // que tenga osticket_id, usando OSTICKET_STATE_ID[status]. Patron sugerido:
+  //
+  //   const base = await osticketBase(env);            // de reports.js
+  //   for (const r of withTicket) {
+  //     try {
+  //       await osticketSetStatus(env, base, r.osticket_id, OSTICKET_STATE_ID[status]);
+  //       await sb(env, `reports_log?id=eq.${r.id}`, { method:'PATCH',
+  //         body: JSON.stringify({ osticket_sync:'synced', osticket_sync_at: new Date().toISOString() }) });
+  //     } catch (e) {
+  //       await sb(env, `reports_log?id=eq.${r.id}`, { method:'PATCH',
+  //         body: JSON.stringify({ osticket_sync:'failed', osticket_sync_error: String(e.message||e) }) });
+  //     }
+  //   }
+  //
+  // OJO: un reporte puede tener VARIOS tickets (PLA + N DOC). Para sincronizar
+  // todos habria que consultar gc_report_link por report_code y recorrer cada
+  // ticket_number, no solo osticket_id (que es el PLA). Resolver al activar.
+  // ───────────────────────────────────────────────────────────────────
+
+  return json({
+    ok: true,
+    updated: allowedIds.length,
+    skipped: ids.length - allowedIds.length,
+    status,
+    // resumen de sincronizacion (hoy siempre interno)
+    sync: { with_ticket: withTicket.length, without_ticket: withoutTicket.length },
+  });
 }
