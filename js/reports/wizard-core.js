@@ -540,7 +540,8 @@ export function launchWizard(user, reportDef, onExit) {
     const rosterActive = (S.roster || []).filter(w => !w.end_date);
     const pickOptions = rosterActive.map(w => {
       const cargo = w.cargo_label || w.role || 'Sin cargo';
-      return `<option value="${w.id_number}">${w.full_name} \u00b7 ${cargo}${w.id_number ? ' \u00b7 ' + w.id_number : ''}</option>`;
+      // Opcion compacta: nombre + cargo (la cedula no, para no ensanchar el select).
+      return `<option value="${w.id_number}">${w.full_name} \u2014 ${cargo}</option>`;
     }).join('');
     ov.innerHTML = `
       <div class="modal">
@@ -550,9 +551,9 @@ export function launchWizard(user, reportDef, onExit) {
         ${rosterActive.length ? `
         <div style="border-top:1px solid var(--border-soft);margin-top:12px;padding-top:14px">
           <label class="flabel">Elegir de la lista de la tienda <span class="hint" style="font-weight:normal">(respeta su cargo)</span></label>
-          <div class="grid2" style="margin:6px 0 0;align-items:end">
-            <select id="rmPick"><option value="">\u2014 Selecciona un trabajador \u2014</option>${pickOptions}</select>
-            <button class="btn btn-sm btn-primary" id="rmAddPick">\uFF0B Agregar de la lista</button>
+          <div style="display:flex;gap:8px;align-items:center;margin:6px 0 0">
+            <select id="rmPick" style="flex:1;min-width:0"><option value="">\u2014 Selecciona un trabajador \u2014</option>${pickOptions}</select>
+            <button class="btn btn-sm btn-primary" id="rmAddPick" style="flex:0 0 auto;white-space:nowrap">\uFF0B Agregar</button>
           </div>
           <span id="rmPickMsg" style="font-size:12px;color:var(--warn)"></span>
         </div>` : ''}
