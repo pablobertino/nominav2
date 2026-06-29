@@ -66,6 +66,7 @@ const I = {
   chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg>',
   bizreport: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l5-4v18"/><path d="M19 21V11l-5-4"/><path d="M9 9v0M9 13v0M9 17v0"/></svg>',
   bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+  megaphone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 13v-2z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>',
 };
 
 const NAV = [
@@ -79,7 +80,8 @@ const NAV = [
   ['historial', I.history, 'Historial'],
   ['estadisticas', I.chart, 'Estadísticas'],
   ['reportempresas', I.bizreport, 'Reportes de empresas'],
-  ['avisos', I.bell, 'Envío de avisos'],
+  ['avisos', I.bell, 'Avisos'],
+  ['avisosconfig', I.megaphone, 'Envío de avisos'],
   ['egmotivos', I.check, 'Ratificar egresos'],
   ['rostersync', I.photo, 'Sinc. Personal'],
   ['equipo', I.team, 'Equipo', 'superonly'],
@@ -110,7 +112,6 @@ function shell(user) {
     ? [['dashboard', I.grid, 'Inicio'], ['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['calendario', I.calendar, 'Calendario'], ['historial', I.history, 'Historial'], ['misstats', I.chart, 'Mis estadísticas'], ['avisos', I.bell, 'Avisos']]
     : isEditorPersonal
       ? NAV.filter(n => ['dashboard', 'tiendas', 'buscar', 'calendario', 'rostersync', 'avisos'].includes(n[0]))
-          .map(n => n[0] === 'avisos' ? [n[0], n[1], 'Avisos'] : n)
       : NAV.filter(n => n[3] !== 'superonly' || isSuper);
 
   return `
@@ -133,7 +134,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.63</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.64</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -3205,7 +3206,8 @@ async function navigate(view, user) {
   else if (view === 'estadisticas') renderReportStats(user);
   else if (view === 'reportempresas') renderCompanyReports(user);
   else if (view === 'misstats') renderMyStats(user);
-  else if (view === 'avisos') renderAvisos(user);
+  else if (view === 'avisos') renderAvisos(user, { mode: 'inbox' });
+  else if (view === 'avisosconfig') renderAvisos(user, { mode: 'config' });
   else if (view === 'egmotivos') renderEgressRatify(user);
   else if (view === 'buscar') renderPersonnelSearch(user);
   else if (view === 'documentos') renderPersonnelDocs(user, null);

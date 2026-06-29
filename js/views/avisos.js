@@ -33,6 +33,7 @@ let AV_FEED = null;
 let AV_TPL = null;      // { templates:{calc,cut,pay}, hora1, hora2 }
 let AV_MANUAL = [];     // lista admin
 let AV_CHANGES = [];    // novedades de empresa (globales, todos las ven)
+let AV_MODE = 'inbox';  // 'inbox' = recepcion (lectura) | 'config' = gestion (envio)
 
 function ensureStyles() {
   if (document.getElementById('avStyles')) return;
@@ -101,31 +102,36 @@ function api(extra) {
   }).then(r => r.json());
 }
 
-/* ---------- entrada ---------- */
+/* ---------- entrada ----------
+   opts.mode: 'inbox' (recepcion/lectura, como las tiendas) | 'config' (gestion).
+   Si no se pasa, se infiere: admin/super -> 'config' por compatibilidad; pero
+   panel.js ahora pasa el modo explicito (avisos=inbox, avisosconfig=config). */
 export async function renderAvisos(user, opts = {}) {
   AV_USER = user;
   ensureStyles();
-  // Solo admin/superadmin GESTIONAN avisos. El editor_personal es admin pero
-  // de solo lectura: ve los avisos dirigidos a "Editores" como un usuario mas.
-  const canManage = user.kind === 'admin' && user.role !== 'editor_personal';
+  // Modo efectivo. La gestion (config) solo la pueden ver admin/superadmin
+  // (NO editor_personal). En 'inbox' todos ven en modo lectura.
+  const canManageRole = user.kind === 'admin' && user.role !== 'editor_personal';
+  AV_MODE = (opts.mode === 'config' && canManageRole) ? 'config' : 'inbox';
+  const isConfig = AV_MODE === 'config';
   $('#pnlMain').innerHTML = `
     <div class="av-head">
-      <div><h1>Avisos</h1>
-        <p>${canManage
-          ? 'Los del per\u00edodo se generan solos (plantillas editables). Crea comunicados para tiendas, empresas, administradores o editores.'
-          : 'Recordatorios del per\u00edodo de n\u00f3mina y comunicados de la administraci\u00f3n.'}</p></div>
-      ${canManage ? `<button class="av-btn av-btn-primary" id="avNew">+ Nuevo aviso</button>` : ''}
+      <div><h1>${isConfig ? 'Env\u00edo de avisos' : 'Avisos'}</h1>
+        <p>${isConfig
+          ? 'Configura los avisos del per\u00edodo (plantillas) y crea comunicados para tiendas, empresas, administradores o editores.'
+          : 'Novedades de empresas, recordatorios del per\u00edodo de n\u00f3mina y comunicados de la administraci\u00f3n.'}</p></div>
+      ${isConfig ? `<button class="av-btn av-btn-primary" id="avNew">+ Nuevo aviso</button>` : ''}
     </div>
     <div id="avBody"><div class="av-empty">Cargando\u2026</div></div>
     <div id="avModals"></div>`;
 
-  if (canManage) $('#avNew').addEventListener('click', () => openManualModal(null));
+  if (isConfig) $('#avNew').addEventListener('click', () => openManualModal(null));
   await loadAndRender();
   if (opts.focusId) setTimeout(() => gotoAviso(opts.focusId), 300);
 }
 
 async function loadAndRender() {
-  const canManage = AV_USER.kind === 'admin' && AV_USER.role !== 'editor_personal';
+  const isConfig = AV_MODE === 'config';
   let feed;
   try {
     feed = await api({ action: 'feed' });
@@ -150,7 +156,7 @@ async function loadAndRender() {
     AV_CHANGES = (ch && ch.ok) ? (ch.items || []) : [];
   } catch { AV_CHANGES = []; }
 
-  if (canManage) {
+  if (isConfig) {
     const [tpl, man] = await Promise.all([api({ action: 'tpl_get' }), api({ action: 'list_manual' })]);
     AV_TPL = tpl && tpl.ok ? tpl : null;
     AV_MANUAL = (man && man.ok) ? man.rows : [];
