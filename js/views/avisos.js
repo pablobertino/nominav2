@@ -26,7 +26,7 @@ const SVG = {
 };
 const VAR_KEYS = ['#Periodo', '#Fecha_Cierre', '#Fecha_Calculo', '#Fecha_Pago', '#HoraLimite1', '#HoraLimite2'];
 const TPL_LABEL = { calc: 'Último día de cálculo', cut: 'Día de cálculo', pay: 'Día de pago' };
-const AUD_LABEL = { all: 'Todos', stores: 'Tiendas', enterprises: 'Empresas', admins: 'Administradores', editors: 'Editores' };
+const AUD_LABEL = { everyone: 'Todos', all: 'Todos (tiendas y empresas)', stores: 'Tiendas', enterprises: 'Empresas', admins: 'Administradores', editors: 'Editores' };
 
 let AV_USER = null;
 let AV_FEED = null;
@@ -434,6 +434,7 @@ function manualModalHtml(m) {
         <div class="av-row2" style="margin-top:12px">
           <div class="av-field"><label>Dirigido a</label>
             <select id="avmAud">
+              <option value="everyone"${m && m.audience === 'everyone' ? ' selected' : ''}>Todos (incluye administradores y editores)</option>
               <option value="all"${m && m.audience === 'all' ? ' selected' : ''}>Todos (tiendas y empresas)</option>
               <option value="stores"${m && m.audience === 'stores' ? ' selected' : ''}>Solo tiendas</option>
               <option value="enterprises"${m && m.audience === 'enterprises' ? ' selected' : ''}>Solo empresas (no tiendas)</option>

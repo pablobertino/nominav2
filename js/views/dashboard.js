@@ -253,8 +253,8 @@ function ensureStyles() {
     align-items:center; justify-content:center; }
   .dash-pbanner .ic svg { width:17px; height:17px; }
   .dash-pbanner .tx { flex:1; min-width:0; }
-  .dash-pbanner .tt { font-size:13px; font-weight:650; line-height:1.25; }
-  .dash-pbanner .ds { font-size:11.5px; opacity:.85; margin-top:1px; line-height:1.3;
+  .dash-pbanner .tt { display:block; font-size:13px; font-weight:650; line-height:1.25; }
+  .dash-pbanner .ds { display:block; font-size:11.5px; opacity:.85; margin-top:1px; line-height:1.3;
     overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
   .dash-pbanner .go { font-size:11px; font-weight:600; flex:0 0 auto; opacity:.8; }
   .dash-pbanner.calc { background:#fffbeb; border-color:#fde68a; color:#92400e; }

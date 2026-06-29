@@ -4,7 +4,8 @@
    manuales (tabla announcements).
 
    AUDIENCIAS (announcements.audience):
-     all | stores | enterprises | admins | editors
+     everyone | all | stores | enterprises | admins | editors
+       everyone     -> TODOS (tiendas + empresas + admin/super + editor)
        all          -> todos los company (tiendas + empresas)
        stores       -> company tipo Tienda
        enterprises  -> company NO tienda
@@ -190,7 +191,7 @@ export async function onRequestPost({ request, env }) {
     if (body.action === 'save_manual') {
       const title = clean(body.title);
       if (!title) return json({ ok: false, error: 'El titulo es obligatorio.' }, 400);
-      const aud = ['all', 'stores', 'enterprises', 'admins', 'editors'].includes(body.audience) ? body.audience : 'all';
+      const aud = ['everyone', 'all', 'stores', 'enterprises', 'admins', 'editors'].includes(body.audience) ? body.audience : 'all';
       const row = {
         title,
         body: String(body.body || ''),
