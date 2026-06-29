@@ -8,6 +8,54 @@
 import { $ } from '../core/dom.js';
 import { showReportDetail } from './report-detail.js';
 
+// Cache de textos de ticket ya regenerados, por report_id, para no pedir dos
+// veces al backend si el usuario copia y luego descarga el mismo reporte.
+const _ticketCache = {};
+
+// Pide al backend el cuerpo de texto regenerado del ticket (reusa la misma
+// regla de construccion que el envio). Devuelve { text, filename } o null.
+async function fetchTicketText(user, reportId) {
+  if (_ticketCache[reportId]) return _ticketCache[reportId];
+  const d = await fetch('/api/reports-history', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'ticket_text', user, report_id: reportId }),
+  }).then(r => r.json()).catch(() => null);
+  if (d && d.ok && d.text) {
+    _ticketCache[reportId] = { text: d.text, filename: d.filename };
+    return _ticketCache[reportId];
+  }
+  return null;
+}
+
+// Copia un texto al portapapeles (con fallback para navegadores viejos).
+async function copyText(text) {
+  try {
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* cae al fallback */ }
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch { return false; }
+}
+
+// Dispara la descarga de un .txt con el nombre dado.
+function downloadText(text, filename) {
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename || 'reporte.txt';
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1500);
+}
+
 const TYPES = {
   marcaje:      { label: 'Marcaje Manual', icon: '🕐' },
   ausencia:     { label: 'Período de Ausencia', icon: '📅' },
@@ -195,7 +243,10 @@ export function renderHistory(user) {
         <td>${attPill(r.attention)}</td>
         <td>${otPill(r)}</td>
         <td style="text-align:right;white-space:nowrap">
-          <button class="btn btn-sm" data-open="${r.id}">Ver detalle</button> ${resend}
+          <button class="btn btn-sm" data-open="${r.id}">Ver detalle</button>
+          <button class="btn btn-sm" data-copytxt="${r.id}" title="Copiar el texto del ticket">\u29C9 Copiar</button>
+          <button class="btn btn-sm" data-dltxt="${r.id}" title="Descargar el texto del ticket (.txt)">\u2913 .txt</button>
+          ${resend}
         </td>
       </tr>`;
     }).join('');
@@ -207,6 +258,32 @@ export function renderHistory(user) {
     $('#hBody').querySelectorAll('[data-resend]').forEach(b => b.addEventListener('click', e => {
       e.stopPropagation();
       alert('El envío a osTicket aún no está habilitado. Quedará disponible cuando se active la integración.');
+    }));
+
+    // Copiar el texto del ticket (regenerado con la misma regla del envio).
+    $('#hBody').querySelectorAll('[data-copytxt]').forEach(b => b.addEventListener('click', async e => {
+      e.stopPropagation();
+      const id = parseInt(b.dataset.copytxt, 10);
+      const orig = b.textContent;
+      b.disabled = true; b.textContent = '…';
+      const r = await fetchTicketText(user, id);
+      if (!r) { b.textContent = 'Error'; setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500); return; }
+      const ok = await copyText(r.text);
+      b.textContent = ok ? '\u2713 Copiado' : 'Error';
+      setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500);
+    }));
+
+    // Descargar el texto del ticket como .txt (nombre AAAAMMDD_NNNN_ALIAS_TIPO).
+    $('#hBody').querySelectorAll('[data-dltxt]').forEach(b => b.addEventListener('click', async e => {
+      e.stopPropagation();
+      const id = parseInt(b.dataset.dltxt, 10);
+      const orig = b.textContent;
+      b.disabled = true; b.textContent = '…';
+      const r = await fetchTicketText(user, id);
+      if (!r) { b.textContent = 'Error'; setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500); return; }
+      downloadText(r.text, r.filename);
+      b.textContent = '\u2713';
+      setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1200);
     }));
   }
 
