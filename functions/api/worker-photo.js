@@ -288,7 +288,26 @@ async function directory(env, cc, table, deptScope) {
     (master || []).forEach(m => { masterByCed[m.id_number] = m; });
   }
 
-  const items = await Promise.all((workers || []).map(async w => {
+  // Firma de URLs con CONCURRENCIA LIMITADA. Firmar todas de golpe con
+  // Promise.all (127 personas x 2 = 254 fetches simultaneos) satura el limite
+  // de subrequests concurrentes del Worker contra el host de Storage: muchas
+  // firmas caen en el catch de storageSignedUrl y devuelven null, dejando
+  // has_photo=true (la ruta existe) pero thumb_url/full_url=null. Procesar en
+  // lotes pequenos en serie evita el desborde y firma todas de forma estable.
+  async function mapWithLimit(arr, limit, fn) {
+    const out = new Array(arr.length);
+    let idx = 0;
+    async function worker() {
+      while (idx < arr.length) {
+        const i = idx++;
+        out[i] = await fn(arr[i], i);
+      }
+    }
+    await Promise.all(Array.from({ length: Math.min(limit, arr.length) }, worker));
+    return out;
+  }
+
+  const items = await mapWithLimit(workers || [], 6, async w => {
     const m = masterByCed[w.id_number] || {};
     const hasPhoto = !!m.photo_thumb_path;
     const thumbUrl = hasPhoto ? await storageSignedUrl(env, m.photo_thumb_path) : null;
@@ -325,7 +344,7 @@ async function directory(env, cc, table, deptScope) {
       updated_at: m.updated_at || null,
       source: w.source || 'report10',
     };
-  }));
+  });
 
   const withPhoto = items.filter(i => i.has_photo).length;
   const manualCount = items.filter(i => i.source === 'manual').length;
