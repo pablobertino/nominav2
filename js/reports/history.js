@@ -12,6 +12,7 @@ import {
   ATT_STATES, ATT_ORDER, attPill, syncDot, attAuditText,
   fetchTicketText, fetchTicketExcel, postSetAttention, postSyncOsticket,
   copyText, downloadText, downloadBase64, showAttHelpModal,
+  confirmModal, noticeModal,
 } from './shared/ticket-actions.js';
 
 // Cache de textos de ticket ya regenerados, por report_id, para no pedir dos
@@ -393,7 +394,7 @@ export function renderHistory(user) {
     const d = await postSetAttention(user, ids, status, comment);
     if (anchorEl) anchorEl.disabled = false;
     if (!d || !d.ok) {
-      alert(d ? d.error : 'No se pudo cambiar el estado.');
+      noticeModal({ title: 'No se pudo cambiar el estado', message: (d && d.error) || 'Error de red.', tone: 'error' });
       return;
     }
     // Actualizar en memoria las filas afectadas (estado + auditoria del
@@ -419,14 +420,14 @@ export function renderHistory(user) {
     const d = await postSyncOsticket(user, opts);
     if (anchorEl) { anchorEl.disabled = false; if (anchorEl.dataset._t) anchorEl.textContent = anchorEl.dataset._t; }
     if (!d || !d.ok && d.failed == null) {
-      alert(d ? (d.error || 'No se pudo sincronizar.') : 'No se pudo sincronizar.');
+      noticeModal({ title: 'No se pudo sincronizar', message: (d && d.error) || 'Error de red.', tone: 'error' });
       return;
     }
     const total = d.total || 0;
     if (total === 0) {
-      alert(d.note || 'No hay reportes con ticket para sincronizar.');
+      noticeModal({ title: 'Sincronizar con osTicket', message: d.note || 'No hay reportes con ticket para sincronizar.' });
     } else if (d.failed > 0) {
-      alert(`Sincronizados ${d.synced} de ${total}. ${d.failed} con error (revisa el indicador de cada reporte).`);
+      noticeModal({ title: 'Sincronizacion parcial', message: `Sincronizados ${d.synced} de ${total}. ${d.failed} con error (revisa el indicador de cada reporte).`, tone: 'error' });
     }
     // Si se sincronizo una seleccion, limpiarla.
     if (opts && opts.reportIds) ST.selected.clear();
@@ -535,7 +536,12 @@ export function renderHistory(user) {
     // Boton global: sincronizar con osTicket todos los pendientes/fallidos
     // del alcance (reenvia su estado actual).
     if ($('#hSyncPending')) $('#hSyncPending').addEventListener('click', async () => {
-      if (!confirm('Reenviar a osTicket el estado de todos los reportes con sincronizacion pendiente o con error dentro de tu alcance. Continuar?')) return;
+      const ok = await confirmModal({
+        title: 'Sincronizar pendientes con osTicket',
+        message: 'Se reenviar\u00e1 a osTicket el estado de todos los reportes con sincronizaci\u00f3n pendiente o con error dentro de tu alcance. \u00bfContinuar?',
+        confirmText: 'Sincronizar',
+      });
+      if (!ok) return;
       await applySync({ mode: 'pending' }, $('#hSyncPending'));
     });
   }

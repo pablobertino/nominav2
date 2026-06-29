@@ -192,6 +192,26 @@ button { cursor: pointer; border: 0; }
 a.ot-link { text-decoration: none; cursor: pointer; }
 a.ot-link:hover { filter: brightness(0.95); text-decoration: underline; }
 
+/* Banda de estado del detalle (Variante A): Atencion + osTicket en una
+   franja propia arriba de la tarjeta, separada de los metadatos. */
+.statusband { display: flex; align-items: center; gap: 24px; flex-wrap: wrap;
+  background: var(--bg); border: 1px solid var(--border); border-radius: var(--radius-md);
+  padding: 14px 18px; margin-bottom: 18px; }
+.sb-block { display: flex; flex-direction: column; gap: 7px; }
+.sb-lbl { font-size: 10.5px; text-transform: uppercase; letter-spacing: .05em;
+  color: var(--faint); font-weight: 700; }
+.sb-row { display: flex; align-items: center; gap: 8px; }
+.sb-audit { font-size: 11px; color: var(--faint); margin-top: 2px; line-height: 1.35; }
+.sb-sep { width: 1px; align-self: stretch; background: var(--border); margin: 0 4px; }
+
+/* Modal de confirmacion / aviso (reemplazan confirm()/alert() nativos). */
+.confirm-modal { max-width: 440px; }
+.confirm-msg { font-size: 14px; color: var(--ink-soft); line-height: 1.55; margin: 4px 0 4px; }
+.notice-error .modal-head span { color: var(--danger); }
+.notice-success .modal-head span { color: var(--success); }
+.btn-danger { color: #fff; background: var(--danger); border-color: var(--danger); }
+.btn-danger:hover { filter: brightness(0.95); }
+
 /* Modal de reenvio a osTicket (opcion D): slots de documentos a re-adjuntar. */
 .resend-modal { max-width: 560px; }
 .rs-intro { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin: 4px 0 14px; }

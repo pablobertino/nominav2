@@ -227,3 +227,94 @@ export function showAttHelpModal() {
   document.getElementById('attHelpOk').addEventListener('click', close);
   document.addEventListener('keydown', onKey);
 }
+
+/* ---------------------------------------------------------------------
+   Modal de CONFIRMACION (reemplaza window.confirm). Devuelve una Promesa
+   que resuelve true si el usuario confirma, false si cancela/cierra.
+   opts: { title, message, confirmText, cancelText, danger }.
+   Reusa .modal-ov / .modal-box del panel; sin onclick inline (CSP).
+   --------------------------------------------------------------------- */
+export function confirmModal(opts = {}) {
+  const {
+    title = 'Confirmar',
+    message = '\u00bfDeseas continuar?',
+    confirmText = 'Aceptar',
+    cancelText = 'Cancelar',
+    danger = false,
+  } = opts;
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.className = 'modal-ov';
+    ov.innerHTML = `
+      <div class="modal-box confirm-modal" role="dialog" aria-modal="true">
+        <div class="modal-head">
+          <span>${title}</span>
+          <button class="modal-x" data-act="cancel" aria-label="Cerrar">\u2715</button>
+        </div>
+        <p class="confirm-msg">${message}</p>
+        <div class="modal-actions">
+          <button class="btn" data-act="cancel">${cancelText}</button>
+          <button class="btn ${danger ? 'btn-danger' : 'btn-primary'}" data-act="ok">${confirmText}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+
+    let done = false;
+    const finish = (val) => {
+      if (done) return; done = true;
+      document.removeEventListener('keydown', onKey);
+      ov.remove();
+      resolve(val);
+    };
+    const onKey = (e) => { if (e.key === 'Escape') finish(false); };
+    ov.addEventListener('click', (e) => { if (e.target === ov) finish(false); });
+    ov.querySelectorAll('[data-act]').forEach(b =>
+      b.addEventListener('click', () => finish(b.dataset.act === 'ok')));
+    document.addEventListener('keydown', onKey);
+    // Foco inicial en el boton principal.
+    const okBtn = ov.querySelector('[data-act="ok"]');
+    if (okBtn) okBtn.focus();
+  });
+}
+
+/* Modal de AVISO (reemplaza window.alert). Devuelve una Promesa que resuelve
+   cuando el usuario cierra. opts: { title, message, okText, tone }.
+   tone: 'info' | 'error' | 'success' (colorea un detalle del encabezado). */
+export function noticeModal(opts = {}) {
+  const {
+    title = 'Aviso',
+    message = '',
+    okText = 'Entendido',
+    tone = 'info',
+  } = opts;
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.className = 'modal-ov';
+    ov.innerHTML = `
+      <div class="modal-box confirm-modal notice-${tone}" role="dialog" aria-modal="true">
+        <div class="modal-head">
+          <span>${title}</span>
+          <button class="modal-x" data-act="ok" aria-label="Cerrar">\u2715</button>
+        </div>
+        <p class="confirm-msg">${message}</p>
+        <div class="modal-actions">
+          <button class="btn btn-primary" data-act="ok">${okText}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+
+    let done = false;
+    const finish = () => {
+      if (done) return; done = true;
+      document.removeEventListener('keydown', onKey);
+      ov.remove();
+      resolve();
+    };
+    const onKey = (e) => { if (e.key === 'Escape') finish(); };
+    ov.addEventListener('click', (e) => { if (e.target === ov) finish(); });
+    ov.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', finish));
+    document.addEventListener('keydown', onKey);
+    const okBtn = ov.querySelector('.btn-primary');
+    if (okBtn) okBtn.focus();
+  });
+}

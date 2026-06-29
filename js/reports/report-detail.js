@@ -16,9 +16,9 @@
 import { $ } from '../core/dom.js';
 import { openResendModal } from './shared/resend-modal.js';
 import {
-  ATT_STATES, ATT_ORDER, attPill, syncPill, attAuditText, fmtStamp,
+  ATT_STATES, ATT_ORDER, attPill, syncDot, attAuditText, fmtStamp,
   fetchTicketText, fetchTicketExcel, postSetAttention, postSyncOsticket,
-  copyText, downloadText, downloadBase64, showAttHelpModal,
+  copyText, downloadText, downloadBase64, showAttHelpModal, noticeModal,
 } from './shared/ticket-actions.js';
 
 const TYPES = {
@@ -133,27 +133,39 @@ export async function showReportDetail({ reportId, user, onBack }) {
   const t = TYPES[r.type] || { label: r.type, icon: '📄' };
   const canResend = !r.osticket_id;
 
-  // Bloque de la celda Atencion: pill + (admin) selector + sync + auditoria.
+  // --- Banda de estado (Variante A): Atencion + osTicket en una franja
+  //     propia, separada de los metadatos del reporte. ---
   const audit = attAuditText(r);
-  const auditHtml = audit ? `<div class="att-audit">${audit}</div>` : '';
+  const auditHtml = audit ? `<div class="sb-audit">${audit}</div>` : '';
   const commentHtml = r.attention_comment
-    ? `<div class="att-comment">“${r.attention_comment}”</div>` : '';
-  let attentionBlock;
+    ? `<div class="sb-audit" style="font-style:italic">“${r.attention_comment}”</div>` : '';
+
+  let attControls;
   if (canManage) {
-    // Boton de re-sincronizar disponible siempre que el reporte tenga ticket
-    // (el estado pudo cambiar en osTicket por otra via).
     const syncBtn = r.osticket_id
-      ? `<button class="btn btn-sm att-syncbtn" id="rdSync" title="Reenviar a osTicket el estado actual de este reporte">\u21BB sinc.</button>`
+      ? `<button class="icon-btn att-syncbtn" id="rdSync" title="Reenviar a osTicket el estado actual de este reporte">\u21BB</button>`
       : '';
-    attentionBlock = `<div class="att-cell">
-      ${attPill(r.attention)}
-      <select class="att-row-sel" id="rdAttSel" title="Cambiar estado de este reporte">
-        ${ATT_ORDER.map(k => `<option value="${k}" ${k === r.attention ? 'selected' : ''}>${ATT_STATES[k].label}</option>`).join('')}
-      </select>
-      ${syncPill(r.osticket_sync)}${syncBtn}${auditHtml}${commentHtml}</div>`;
+    attControls = `<div class="sb-row">
+        <select class="att-row-sel att-${r.attention}" id="rdAttSel" title="Cambiar estado de este reporte">
+          ${ATT_ORDER.map(k => `<option value="${k}" ${k === r.attention ? 'selected' : ''}>${ATT_STATES[k].label}</option>`).join('')}
+        </select>${syncDot(r.osticket_sync)}${syncBtn}
+      </div>${auditHtml}${commentHtml}`;
   } else {
-    attentionBlock = `${attPill(r.attention)}${auditHtml}${commentHtml}`;
+    attControls = `<div class="sb-row">${attPill(r.attention)}</div>${auditHtml}${commentHtml}`;
   }
+
+  const statusBand = `
+    <div class="statusband">
+      <div class="sb-block">
+        <span class="sb-lbl">Atención <span class="att-help" id="rdAttHelp" title="Ver qué significa cada estado">?</span></span>
+        ${attControls}
+      </div>
+      <div class="sb-sep"></div>
+      <div class="sb-block">
+        <span class="sb-lbl">osTicket</span>
+        <div class="sb-row">${otPill(r, osticketUrl)}</div>
+      </div>
+    </div>`;
 
   host.innerHTML = `
     <button class="btn" id="rdBack" style="margin-bottom:18px">← Volver al historial</button>
@@ -163,28 +175,34 @@ export async function showReportDetail({ reportId, user, onBack }) {
         <div><h1 class="rd-title">Reporte #${r.id}</h1><div class="rd-subtype">${t.label}</div></div>
       </div>
       <div class="rd-actions">
-        <button class="btn" id="rdCopy" title="Copiar el texto del ticket">\u29C9 Copiar</button>
-        <button class="btn" id="rdTxt" title="Descargar el texto del ticket (.txt)">\u2913 .txt</button>
-        <button class="btn" id="rdXls" title="Descargar la plantilla de Excel del ticket (.xlsx)">\u2913 Excel</button>
-        ${canResend ? `<button class="btn btn-send" id="rdResend">Enviar a osTicket</button>` : ''}
+        <button class="icon-btn" id="rdCopy" title="Copiar el texto del ticket">\u29C9</button>
+        <button class="icon-btn" id="rdTxt" title="Descargar el texto del ticket (.txt)">\u2913</button>
+        <button class="icon-btn" id="rdXls" title="Descargar la plantilla de Excel del ticket (.xlsx)">\u{1F4C4}</button>
+        ${canResend ? `<button class="btn btn-send" id="rdResend" style="margin-left:8px">Enviar a osTicket</button>` : ''}
       </div>
     </div>
     <p class="rd-sent">Enviado el ${fmtSent(r.sent_at)}</p>
 
     <div class="card">
+      ${statusBand}
       <div class="rd-meta">
         <div><span class="rd-lbl">Tienda</span><span class="rd-val">${r.company_code}${r.company_name ? ' · ' + r.company_name : ''}</span></div>
         <div><span class="rd-lbl">Responsable</span><span class="rd-val">${r.responsible || '—'}${r.position ? ' · ' + r.position : ''}</span></div>
         <div><span class="rd-lbl">Origen</span><span class="rd-val">${originPill(r)}</span></div>
         <div><span class="rd-lbl">Trabajadores</span><span class="rd-val">${r.workers_count}</span></div>
-        <div><span class="rd-lbl">Atención <span class="att-help" id="rdAttHelp" title="Ver qué significa cada estado">?</span></span><span class="rd-val">${attentionBlock}</span></div>
-        <div><span class="rd-lbl">osTicket</span><span class="rd-val">${otPill(r, osticketUrl)}</span></div>
       </div>
       <h3 class="rd-section">Trabajadores del reporte</h3>
       ${linesHtml(r)}
     </div>`;
 
   $('#rdBack').addEventListener('click', onBack);
+
+  // Feedback breve en boton-icono sin tocar el glifo.
+  const flashBtn = (b, ok) => {
+    b.classList.remove('is-busy');
+    b.classList.add(ok ? 'is-ok' : 'is-err');
+    setTimeout(() => { b.classList.remove('is-ok', 'is-err'); b.disabled = false; }, 1200);
+  };
 
   // --- Acciones de ticket (copiar / .txt / excel) ---
   let _txtCache = null;
@@ -196,33 +214,30 @@ export async function showReportDetail({ reportId, user, onBack }) {
   }
 
   $('#rdCopy').addEventListener('click', async () => {
-    const b = $('#rdCopy'); const orig = b.textContent;
-    b.disabled = true; b.textContent = '…';
+    const b = $('#rdCopy');
+    b.disabled = true; b.classList.add('is-busy');
     const d = await getTxt();
-    if (!d) { b.textContent = 'Error'; setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500); return; }
+    if (!d) { flashBtn(b, false); return; }
     const ok = await copyText(d.text);
-    b.textContent = ok ? '\u2713 Copiado' : 'Error';
-    setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500);
+    flashBtn(b, ok);
   });
 
   $('#rdTxt').addEventListener('click', async () => {
-    const b = $('#rdTxt'); const orig = b.textContent;
-    b.disabled = true; b.textContent = '…';
+    const b = $('#rdTxt');
+    b.disabled = true; b.classList.add('is-busy');
     const d = await getTxt();
-    if (!d) { b.textContent = 'Error'; setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500); return; }
+    if (!d) { flashBtn(b, false); return; }
     downloadText(d.text, d.filename);
-    b.textContent = '\u2713';
-    setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1200);
+    flashBtn(b, true);
   });
 
   $('#rdXls').addEventListener('click', async () => {
-    const b = $('#rdXls'); const orig = b.textContent;
-    b.disabled = true; b.textContent = '…';
+    const b = $('#rdXls');
+    b.disabled = true; b.classList.add('is-busy');
     const d = await fetchTicketExcel(user, r.id);
-    if (!d) { b.textContent = 'Error'; setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500); return; }
+    if (!d) { flashBtn(b, false); return; }
     downloadBase64(d.base64, d.filename, d.mime);
-    b.textContent = '\u2713';
-    setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1200);
+    flashBtn(b, true);
   });
 
   // --- Ayuda de estados (modal legible) ---
@@ -236,36 +251,29 @@ export async function showReportDetail({ reportId, user, onBack }) {
       sel.disabled = true;
       const d = await postSetAttention(user, [r.id], status, null);
       sel.disabled = false;
-      if (!d || !d.ok) { alert(d ? d.error : 'No se pudo cambiar el estado.'); return; }
-      // Refrescar en memoria y repintar el bloque de atencion sin recargar todo.
-      r.attention = status;
-      r.attention_at = d.attention_at || r.attention_at;
-      r.attention_by_name = d.attention_by_name || r.attention_by_name;
-      const newAudit = attAuditText(r);
-      const cell = sel.closest('.att-cell');
-      if (cell) {
-        cell.querySelector('.pill').outerHTML = attPill(status);
-        let auditEl = cell.querySelector('.att-audit');
-        if (newAudit) {
-          if (auditEl) auditEl.textContent = newAudit;
-          else { const dv = document.createElement('div'); dv.className = 'att-audit'; dv.textContent = newAudit; cell.appendChild(dv); }
-        }
+      if (!d || !d.ok) {
+        noticeModal({ title: 'No se pudo cambiar el estado', message: (d && d.error) || 'Error de red.', tone: 'error' });
+        return;
       }
+      // Recargar el detalle para reflejar estado + color + auditoria.
+      showReportDetail({ reportId: r.id, user, onBack });
     });
   }
 
   // --- Re-sincronizar el estado con osTicket (solo admin, si hay ticket) ---
   if (canManage && $('#rdSync')) {
     $('#rdSync').addEventListener('click', async () => {
-      const b = $('#rdSync'); const orig = b.textContent;
-      b.disabled = true; b.textContent = '\u2026';
+      const b = $('#rdSync');
+      b.disabled = true; b.classList.add('is-busy');
       const d = await postSyncOsticket(user, { reportIds: [r.id] });
       if (!d || (!d.ok && d.failed == null)) {
-        b.disabled = false; b.textContent = orig;
-        alert(d ? (d.error || 'No se pudo sincronizar.') : 'No se pudo sincronizar.');
+        b.disabled = false; b.classList.remove('is-busy');
+        noticeModal({ title: 'No se pudo sincronizar', message: (d && d.error) || 'Error de red.', tone: 'error' });
         return;
       }
-      if (d.failed > 0) alert(`No se pudo sincronizar (revisa el indicador). ${(d.errors || []).join('; ')}`);
+      if (d.failed > 0) {
+        await noticeModal({ title: 'Sincronizacion con error', message: `No se pudo sincronizar. ${(d.errors || []).join('; ')}`, tone: 'error' });
+      }
       // Recargar el detalle para reflejar el nuevo osticket_sync.
       showReportDetail({ reportId: r.id, user, onBack });
     });
