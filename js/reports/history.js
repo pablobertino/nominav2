@@ -121,6 +121,7 @@ export function renderHistory(user) {
       </select>
       <input id="hSelComment" placeholder="Comentario (opcional)" style="flex:0 1 220px">
       <button class="btn btn-sm btn-primary" id="hSelApply">Aplicar</button>
+      <button class="btn btn-sm" id="hSelSync" title="Reenviar a osTicket el estado actual de los reportes seleccionados">\u21BB Sincronizar</button>
       <button class="btn btn-sm" id="hSelClear">Limpiar</button>
     </div>` : ''}
 
@@ -229,11 +230,11 @@ export function renderHistory(user) {
       const auditHtml = audit ? `<div class="att-audit">${audit}</div>` : '';
       let attTd;
       if (canManage) {
-        // Boton de re-sincronizar visible solo si la sync esta fallida o
-        // pendiente (los que conviene reintentar). Reenvia el estado actual.
-        const needsSync = r.osticket_id && (r.osticket_sync === 'failed' || r.osticket_sync === 'pending');
-        const syncBtn = needsSync
-          ? `<button class="btn btn-sm att-syncbtn" data-syncone="${r.id}" title="Reintentar la sincronizacion con osTicket">\u21BB sinc.</button>`
+        // Boton de re-sincronizar SIEMPRE disponible cuando el reporte tiene
+        // ticket: aunque figure 'synced', el estado pudo cambiar en osTicket
+        // por otra via, asi que siempre se permite reenviar el estado actual.
+        const syncBtn = r.osticket_id
+          ? `<button class="btn btn-sm att-syncbtn" data-syncone="${r.id}" title="Reenviar a osTicket el estado actual de este reporte">\u21BB sinc.</button>`
           : '';
         attTd = `<td><div class="att-cell">${attPill(r.attention)}
           <select class="att-row-sel" data-attsel="${r.id}" title="Cambiar estado de este reporte">
@@ -404,8 +405,11 @@ export function renderHistory(user) {
     } else if (d.failed > 0) {
       alert(`Sincronizados ${d.synced} de ${total}. ${d.failed} con error (revisa el indicador de cada reporte).`);
     }
+    // Si se sincronizo una seleccion, limpiarla.
+    if (opts && opts.reportIds) ST.selected.clear();
     // Recargar para traer el osticket_sync actualizado desde el backend.
     await load();
+    updateSelBar();
   }
 
   function paintPager() {
@@ -496,6 +500,12 @@ export function renderHistory(user) {
     // Barra: limpiar seleccion.
     if ($('#hSelClear')) $('#hSelClear').addEventListener('click', () => {
       ST.selected.clear(); paintRows(); updateSelBar();
+    });
+    // Barra: sincronizar la seleccion con osTicket (reenvia su estado actual).
+    if ($('#hSelSync')) $('#hSelSync').addEventListener('click', async () => {
+      const ids = [...ST.selected];
+      if (!ids.length) return;
+      await applySync({ reportIds: ids }, $('#hSelSync'));
     });
     // Ayuda "?" con la explicacion de cada estado (modal legible).
     if ($('#hAttHelp')) $('#hAttHelp').addEventListener('click', showAttHelpModal);
