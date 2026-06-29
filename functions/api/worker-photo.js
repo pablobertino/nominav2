@@ -190,6 +190,7 @@ export async function onRequestPost({ request, env }) {
     const deptScope = await allowedDeptIds(env, user, cc);
 
     if (action === 'directory') return await directory(env, cc, table, deptScope);
+    if (action === 'sign') return await signPhotos(env, cc, body, table, deptScope);
     if (action === 'save') return await savePhoto(env, cc, body, table, deptScope);
     if (action === 'save_profile') return await saveProfile(env, cc, body, table, deptScope);
     if (action === 'set_department') return await setDepartment(env, cc, body, table, deptScope);
@@ -296,34 +297,15 @@ async function directory(env, cc, table, deptScope) {
     (master || []).forEach(m => { masterByCed[m.id_number] = m; });
   }
 
-  // Firma de URLs con CONCURRENCIA LIMITADA. Firmar todas de golpe con
-  // Promise.all (127 personas x 2 = 254 fetches simultaneos) satura el limite
-  // de subrequests concurrentes del Worker contra el host de Storage: muchas
-  // firmas caen en el catch de storageSignedUrl y devuelven null, dejando
-  // has_photo=true (la ruta existe) pero thumb_url/full_url=null. Procesar en
-  // lotes pequenos en serie evita el desborde y firma todas de forma estable.
-  async function mapWithLimit(arr, limit, fn) {
-    const out = new Array(arr.length);
-    let idx = 0;
-    async function worker() {
-      while (idx < arr.length) {
-        const i = idx++;
-        out[i] = await fn(arr[i], i);
-      }
-    }
-    await Promise.all(Array.from({ length: Math.min(limit, arr.length) }, worker));
-    return out;
-  }
-
-  const items = await mapWithLimit(workers || [], 8, async w => {
+  // El directory NO firma URLs de foto: devuelve solo los datos (livianos) +
+  // has_photo segun la ruta en BD. Las imagenes se piden aparte, una por una,
+  // con la accion 'sign' cuando la tarjeta entra en pantalla (lazy). Asi el
+  // directory es rapido y no satura el limite de subrequests del Worker
+  // firmando 254 URLs de golpe. has_photo por ruta basta porque la imagen
+  // diferida muestra spinner y, si falla su firma puntual, reintenta sola.
+  const items = (workers || []).map(w => {
     const m = masterByCed[w.id_number] || {};
-    // Firmar la miniatura solo si hay ruta. has_photo se decide por la URL
-    // FIRMADA, no por la ruta: si la firma falla, has_photo queda false y la
-    // tarjeta muestra "pendiente" en vez de un "cargada" mentiroso sobre un
-    // avatar vacio. Asi el badge y la imagen son SIEMPRE coherentes.
-    const thumbUrl = m.photo_thumb_path ? await storageSignedUrl(env, m.photo_thumb_path) : null;
-    const fullUrl = m.photo_full_path ? await storageSignedUrl(env, m.photo_full_path) : null;
-    const hasPhoto = !!thumbUrl;
+    const hasPhoto = !!m.photo_thumb_path;
     // Para cada dato personal: gana el master si lo tiene; si no, el del
     // roster (en empresa el Reporte AX lo trae). Asi la ficha muestra los
     // datos aunque workers_master aun no este sincronizado.
@@ -350,8 +332,8 @@ async function directory(env, cc, table, deptScope) {
       department_id: w.department_id || null,
       department_name: w.department_id ? (deptMap[w.department_id] || null) : null,
       has_photo: hasPhoto,
-      thumb_url: thumbUrl,
-      full_url: fullUrl,
+      thumb_url: null,   // se pide aparte (accion 'sign')
+      full_url: null,    // idem
       photo_uploaded_by: m.photo_uploaded_by || null,
       updated_at: m.updated_at || null,
       source: w.source || 'report10',
@@ -373,6 +355,44 @@ async function directory(env, cc, table, deptScope) {
     meta,
     workers: items,
   });
+}
+
+/* ---------- SIGN (firma de fotos a demanda) ----------
+   Recibe una o varias cedulas (id_numbers) y devuelve, para cada una, las
+   URLs firmadas de su miniatura (thumb) y version grande (full). La grilla la
+   llama por lotes pequenos cuando las tarjetas entran en pantalla (lazy), asi
+   nunca se firman 254 URLs de golpe. Valida que cada cedula pertenezca al
+   roster de la empresa y al alcance del que llama. */
+async function signPhotos(env, cc, body, table, deptScope) {
+  table = table || 'store_workers';
+  const ids = Array.isArray(body.id_numbers)
+    ? [...new Set(body.id_numbers.map(x => String(x).replace(/[^0-9]/g, '')).filter(Boolean))].slice(0, 30)
+    : [];
+  if (!ids.length) return json({ ok: true, photos: {} });
+
+  // Solo cedulas que esten en el roster de esta empresa (y en el alcance).
+  const inList = ids.map(c => `"${c}"`).join(',');
+  const inRoster = await sb(env,
+    `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=in.(${inList})&select=id_number,department_id`);
+  const allowed = (inRoster || [])
+    .filter(r => deptOk(deptScope, r.department_id))
+    .map(r => r.id_number);
+  if (!allowed.length) return json({ ok: true, photos: {} });
+
+  // Rutas de foto de esas cedulas.
+  const allowList = allowed.map(c => `"${c}"`).join(',');
+  const master = await sb(env,
+    `workers_master?id_number=in.(${allowList})&select=id_number,photo_thumb_path,photo_full_path`);
+
+  const photos = {};
+  // Concurrencia limitada (lote ya es pequeno, pero por si acaso firmamos en
+  // serie cada par thumb/full).
+  for (const m of (master || [])) {
+    const thumbUrl = m.photo_thumb_path ? await storageSignedUrl(env, m.photo_thumb_path) : null;
+    const fullUrl = m.photo_full_path ? await storageSignedUrl(env, m.photo_full_path) : null;
+    photos[m.id_number] = { thumb_url: thumbUrl, full_url: fullUrl, has_photo: !!thumbUrl };
+  }
+  return json({ ok: true, photos });
 }
 
 /* ---------- SAVE (foto) ---------- */

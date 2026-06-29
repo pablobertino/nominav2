@@ -992,6 +992,14 @@
 .wp-badge { position:absolute; top:8px; right:8px; font-size:10.5px; font-weight:600; padding:3px 8px; border-radius:20px; }
 .wp-badge.has { background:var(--success-bg); color:var(--success); }
 .wp-badge.no { background:var(--warn-bg); color:var(--warn); }
+/* Placeholder mientras se firma/carga la miniatura (lazy). Spinner discreto
+   centrado sobre el fondo gris de la foto. */
+.wp-photoload { display:flex; align-items:center; justify-content:center; width:100%; height:100%; }
+.wp-spin { width:26px; height:26px; border-radius:50%; border:3px solid var(--border);
+  border-top-color:var(--brand); animation:wpspin .7s linear infinite; }
+@keyframes wpspin { to { transform:rotate(360deg); } }
+.wp-photo img.wp-fadein { animation:wpfade .25s ease; }
+@keyframes wpfade { from { opacity:0; } to { opacity:1; } }
 .wp-ov { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity .12s; }
 .wp-photo:hover .wp-ov { opacity:1; background:rgba(15,23,42,.42); }
 .wp-ov span { color:#fff; font-size:12px; font-weight:600; background:var(--brand); padding:7px 12px; border-radius:var(--radius-sm); }

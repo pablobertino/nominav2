@@ -245,6 +245,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
       <div class="pnl-head">
         <div><h1>Personal</h1><p id="wpInfo">Cargando personal de ${esc(companyCode)}…</p></div>
         <div class="head-actions">
+          <button class="btn" id="wpReload" title="Recargar la lista"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Recargar</button>
           <button class="btn" id="wpReporte"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> ${mode === 'enterprise' ? 'Reporte AX (Excel)' : 'Reporte 10'}</button>
           ${(mode === 'store' && isAdmin) ? `<button class="btn" id="wpReporteAX"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Reporte AX (Excel)</button>` : ''}
           ${isAdmin ? `<button class="btn btn-primary" id="wpAxApi"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.8 1 6.4 2.6"/><polyline points="21 3 21 9 15 9"/></svg> Sincronizar</button>` : ''}
@@ -296,6 +297,13 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
     <div id="wpModalHost"></div>`;
 
   if (onExit) $('#wpBack').addEventListener('click', onExit);
+  const reloadBtn = $('#wpReload');
+  if (reloadBtn) reloadBtn.addEventListener('click', async () => {
+    reloadBtn.disabled = true;
+    const info = $('#wpInfo'); if (info) info.textContent = 'Recargando…';
+    await load();
+    reloadBtn.disabled = false;
+  });
   $('#wpSearch').addEventListener('input', e => { STATE.q = e.target.value; paintGrid(); });
   const onFilterChange = () => {
     STATE.fPhoto = $('#wpfPhoto').value;
@@ -334,6 +342,11 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
    Se llama al entrar y despues de cada accion de gestion (actualizar lista,
    agregar manual, limpiar). */
 async function load() {
+  // Reiniciar el estado del lazy-loader de fotos: el directory no firma, asi
+  // que todas las fotos vuelven a pedirse por viewport.
+  PHOTO_QUEUE = new Set();
+  if (PHOTO_TIMER) { clearTimeout(PHOTO_TIMER); PHOTO_TIMER = null; }
+  if (PHOTO_OBS) { PHOTO_OBS.disconnect(); PHOTO_OBS = null; }
   const d = await api({ action: 'directory', company_code: STATE.cc, user: sessionUserPayload(STATE.user) });
   if (!d.ok) {
     $('#wpGrid').innerHTML = `<div class="card"><p class="muted" style="margin:0">No se pudo cargar: ${esc(d.error || 'error')}</p></div>`;
@@ -602,12 +615,19 @@ function paintGrid() {
 
   grid.innerHTML = list.map(w => {
     const ci = avatarColor(w.id_number);
+    // Tres estados de la foto en la tarjeta:
+    //  - thumb_url ya firmada -> <img>.
+    //  - has_photo pero aun sin firmar -> placeholder con spinner (lazy: se
+    //    pide al entrar en pantalla).
+    //  - sin foto -> avatar de iniciales + "Sin foto".
     const photo = w.thumb_url
       ? `<img src="${w.thumb_url}" alt="${esc(w.full_name)}" loading="lazy">`
-      : `<div class="wp-empty">`
-        + `<div class="wp-initials" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>`
-        + `<span class="wp-nophoto"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>Sin foto</span>`
-        + `</div>`;
+      : w.has_photo
+        ? `<div class="wp-photoload"><div class="wp-spin"></div></div>`
+        : `<div class="wp-empty">`
+          + `<div class="wp-initials" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>`
+          + `<span class="wp-nophoto"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>Sin foto</span>`
+          + `</div>`;
     const badge = w.has_photo
       ? '<span class="wp-badge has">✓ cargada</span>'
       : '<span class="wp-badge no">pendiente</span>';
@@ -641,6 +661,120 @@ function paintGrid() {
         paintGrid(); paintSelBar();
       } else openFicha(ced);
     }));
+
+  observePhotos();
+}
+
+/* ===================== LAZY-LOAD DE FOTOS =====================
+   Las fotos NO vienen firmadas del directory (seria una avalancha de firmas).
+   Cada tarjeta con foto (has_photo && sin thumb_url) muestra un spinner; al
+   entrar en pantalla, su cedula se acumula y se pide en lotes a la accion
+   'sign'. Al recibir la URL se actualiza STATE.workers y se reemplaza el
+   spinner de ESA tarjeta por la imagen, sin repintar toda la grilla. El
+   observer se rearma en cada paintGrid (filtros/orden/busqueda repintan). */
+let PHOTO_OBS = null;
+let PHOTO_QUEUE = new Set();
+let PHOTO_TIMER = null;
+const PHOTO_BATCH = 12;
+
+function observePhotos() {
+  const grid = $('#wpGrid');
+  if (!grid) return;
+  if (PHOTO_OBS) { PHOTO_OBS.disconnect(); PHOTO_OBS = null; }
+  if (!('IntersectionObserver' in window)) {
+    // Sin IntersectionObserver: pedir todas las pendientes de una.
+    STATE.workers.forEach(w => { if (w.has_photo && !w.thumb_url) PHOTO_QUEUE.add(String(w.id_number)); });
+    flushPhotoQueue();
+    return;
+  }
+  PHOTO_OBS = new IntersectionObserver((entries) => {
+    let any = false;
+    entries.forEach(en => {
+      if (!en.isIntersecting) return;
+      const ced = String(en.target.dataset.ced || '');
+      const w = STATE.workers.find(x => String(x.id_number) === ced);
+      if (w && w.has_photo && !w.thumb_url) { PHOTO_QUEUE.add(ced); any = true; }
+      PHOTO_OBS.unobserve(en.target);
+    });
+    if (any) schedulePhotoFlush();
+  }, { root: null, rootMargin: '200px 0px', threshold: 0.01 });
+  // Observar solo las tarjetas con spinner (foto pendiente de firmar).
+  grid.querySelectorAll('.wp-card').forEach(el => {
+    const ced = String(el.dataset.ced || '');
+    const w = STATE.workers.find(x => String(x.id_number) === ced);
+    if (w && w.has_photo && !w.thumb_url) PHOTO_OBS.observe(el);
+  });
+}
+
+function schedulePhotoFlush() {
+  if (PHOTO_TIMER) clearTimeout(PHOTO_TIMER);
+  PHOTO_TIMER = setTimeout(flushPhotoQueue, 80);
+}
+
+async function flushPhotoQueue() {
+  if (PHOTO_TIMER) { clearTimeout(PHOTO_TIMER); PHOTO_TIMER = null; }
+  if (!PHOTO_QUEUE.size) return;
+  // Tomar un lote de la cola.
+  const ids = [...PHOTO_QUEUE].slice(0, PHOTO_BATCH);
+  ids.forEach(id => PHOTO_QUEUE.delete(id));
+  const r = await api({ action: 'sign', company_code: STATE.cc, user: sessionUserPayload(STATE.user), id_numbers: ids });
+  if (r && r.ok && r.photos) {
+    Object.entries(r.photos).forEach(([ced, p]) => {
+      const w = STATE.workers.find(x => String(x.id_number) === String(ced));
+      if (!w) return;
+      w.thumb_url = p.thumb_url || null;
+      w.full_url = p.full_url || null;
+      w.has_photo = !!p.has_photo;
+      applyPhotoToCard(String(ced), w);
+    });
+  }
+  // Si quedaron mas en la cola, seguir.
+  if (PHOTO_QUEUE.size) schedulePhotoFlush();
+}
+
+/* Reemplaza el spinner de UNA tarjeta por su imagen (o por avatar si la firma
+   fallo), sin repintar toda la grilla. */
+function applyPhotoToCard(ced, w) {
+  const grid = $('#wpGrid');
+  if (!grid) return;
+  const card = grid.querySelector(`.wp-card[data-ced="${ced}"]`);
+  if (!card) return;
+  const ph = card.querySelector('.wp-photo');
+  if (!ph) return;
+  const load = ph.querySelector('.wp-photoload');
+  if (w.thumb_url) {
+    if (load) load.remove();
+    // Insertar la imagen al principio del .wp-photo (antes del badge/overlay).
+    const img = document.createElement('img');
+    img.src = w.thumb_url;
+    img.alt = w.full_name || '';
+    img.loading = 'lazy';
+    img.className = 'wp-fadein';
+    ph.insertBefore(img, ph.firstChild);
+  } else if (load) {
+    // La firma no se pudo: dejar avatar de iniciales en vez de spinner eterno.
+    const ci = avatarColor(w.id_number);
+    const empty = document.createElement('div');
+    empty.className = 'wp-empty';
+    empty.innerHTML = `<div class="wp-initials" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>`
+      + `<span class="wp-nophoto"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>Sin foto</span>`;
+    load.replaceWith(empty);
+  }
+}
+
+/* Asegura que UNA persona tenga su foto firmada (para ficha/lightbox). Si ya
+   la tiene, no hace nada. Devuelve el worker actualizado. */
+async function ensurePhoto(ced) {
+  const w = STATE.workers.find(x => String(x.id_number) === String(ced));
+  if (!w || !w.has_photo || w.thumb_url) return w;
+  const r = await api({ action: 'sign', company_code: STATE.cc, user: sessionUserPayload(STATE.user), id_numbers: [String(ced)] });
+  if (r && r.ok && r.photos && r.photos[ced]) {
+    const p = r.photos[ced];
+    w.thumb_url = p.thumb_url || null;
+    w.full_url = p.full_url || null;
+    w.has_photo = !!p.has_photo;
+  }
+  return w;
 }
 
 /* ===================== ASIGNACION DE DEPARTAMENTO (masiva) =====================
@@ -735,6 +869,31 @@ function openFicha(ced) {
     ph.addEventListener('click', () => {
       if (host.querySelector('#wpFicha').classList.contains('editing')) return;
       openLightbox(w.full_url || w.thumb_url, `${w.full_name} · ${w.ced_kind}-${w.id_number}`, `${w.ced_kind}-${w.id_number}.jpg`);
+    });
+  } else if (w.has_photo) {
+    // Foto aun no firmada (lazy): mostrar spinner y pedirla on-demand.
+    const sp = document.createElement('div'); sp.className = 'wp-photoload'; sp.innerHTML = '<div class="wp-spin"></div>';
+    ph.insertBefore(sp, ph.firstChild);
+    ensurePhoto(w.id_number).then(() => {
+      // Si seguimos en la misma ficha, repintar la cabecera con la foto.
+      if (CUR && String(CUR.id_number) === String(w.id_number)) {
+        sp.remove();
+        if (w.thumb_url) {
+          const img = document.createElement('img'); img.src = w.thumb_url;
+          ph.insertBefore(img, ph.firstChild);
+          ph.classList.add('has');
+          ph.addEventListener('click', () => {
+            if (host.querySelector('#wpFicha').classList.contains('editing')) return;
+            openLightbox(w.full_url || w.thumb_url, `${w.full_name} · ${w.ced_kind}-${w.id_number}`, `${w.ced_kind}-${w.id_number}.jpg`);
+          });
+          // El boton "Quitar foto" en modo edicion depende de w.thumb_url.
+          const del = host.querySelector('#ffDel');
+          if (del && host.querySelector('#wpFicha').classList.contains('editing')) del.style.display = '';
+        } else {
+          const d = document.createElement('div'); d.className = 'noimg'; d.textContent = 'Sin foto';
+          ph.insertBefore(d, ph.firstChild);
+        }
+      }
     });
   } else {
     const d = document.createElement('div'); d.className = 'noimg'; d.textContent = 'Sin foto';
@@ -1089,6 +1248,17 @@ function openPhotoModal(ced) {
   if (w.thumb_url) {
     cur.innerHTML = `<img src="${w.thumb_url}" alt="actual">` + guideSvg();
     cur.querySelector('img').addEventListener('click', () => openLightbox(w.full_url || w.thumb_url, 'Foto actual', `${w.ced_kind}-${w.id_number}.jpg`));
+  } else if (w.has_photo) {
+    // Foto aun no firmada (lazy): pedirla on-demand para mostrarla aqui.
+    cur.innerHTML = '<div class="wp-photoload"><div class="wp-spin"></div></div>';
+    ensurePhoto(w.id_number).then(() => {
+      if (w.thumb_url) {
+        cur.innerHTML = `<img src="${w.thumb_url}" alt="actual">` + guideSvg();
+        cur.querySelector('img').addEventListener('click', () => openLightbox(w.full_url || w.thumb_url, 'Foto actual', `${w.ced_kind}-${w.id_number}.jpg`));
+      } else {
+        cur.innerHTML = '<div class="empty">Sin foto aun</div>';
+      }
+    });
   }
 
   q('#pmPick').addEventListener('click', () => q('#pmFile').click());
