@@ -23,6 +23,7 @@ import { renderEgressRatify } from './egress-ratify.js';
 import { renderPersonnelSearch } from './personnel-search.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
+import { injectPeriodTimeline } from './period-timeline.js';
 import { renderDepartments } from './departments.js';
 import { axRosterPull, rosterCooldownMessage } from '../reports/shared/roster-ax.js';
 
@@ -134,7 +135,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.67</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.68</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -2326,6 +2327,8 @@ async function viewPeriods(user) {
       viewPeriods(user); // recarga la vista (selector incluye el nuevo año)
     });
   }
+  // Linea de tiempo de la quincena vigente, arriba de la tabla de Quincenas.
+  injectPeriodTimeline($('#pnlMain'));
   load();
 }
 
