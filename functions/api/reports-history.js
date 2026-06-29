@@ -145,7 +145,7 @@ async function listReports(env, body, scope) {
 
   let q = 'reports_log?select=id,company_code,zone_id,subzone_id,topic,sent_at,'
     + 'responsible,position,workers_count,attention,osticket_id,email_sent,source_kind,'
-    + 'osticket_sync,attention_at,attention_comment';
+    + 'osticket_sync,attention_at,attention_comment,attention_by';
   q += scopeFilter(scope);
 
   // Filtros
@@ -197,6 +197,15 @@ async function listReports(env, body, scope) {
     (comps || []).forEach(c => { nameByCode[c.company_code] = c.business_name; });
   }
 
+  // Nombres de los admins que cambiaron estados (para mostrar "quien"), en lote.
+  const adminIds = [...new Set(rows.map(r => r.attention_by).filter(Boolean))];
+  let nameByAdmin = {};
+  if (adminIds.length) {
+    const list = adminIds.join(',');
+    const admins = await sbJson(env, `admin_users?id=in.(${list})&select=id,name`);
+    (admins || []).forEach(x => { nameByAdmin[x.id] = x.name; });
+  }
+
   const out = rows.map(r => ({
     id: r.id,
     type: r.topic,
@@ -211,6 +220,7 @@ async function listReports(env, body, scope) {
     osticket_sync: r.osticket_sync || 'na',
     attention_at: r.attention_at || null,
     attention_comment: r.attention_comment || null,
+    attention_by_name: r.attention_by ? (nameByAdmin[r.attention_by] || null) : null,
     email_sent: r.email_sent,
     source_kind: r.source_kind || 'company',
   }));
@@ -223,7 +233,8 @@ async function detailReport(env, body, scope) {
   if (!id) return json({ ok: false, error: 'Falta report_id' }, 400);
 
   let q = `reports_log?id=eq.${id}&select=id,company_code,zone_id,subzone_id,topic,sent_at,`
-    + 'responsible,position,workers_count,attention,osticket_id,email_sent,notes,source_kind';
+    + 'responsible,position,workers_count,attention,osticket_id,email_sent,notes,source_kind,'
+    + 'osticket_sync,attention_at,attention_comment,attention_by';
   q += scopeFilter(scope);
   const head = await sbJson(env, q);
   if (!head || !head.length) return json({ ok: false, error: 'Reporte no encontrado o sin acceso.' }, 404);
@@ -232,6 +243,13 @@ async function detailReport(env, body, scope) {
   // Nombre de tienda
   const comp = await sbJson(env, `companies?company_code=eq.${encodeURIComponent(r.company_code)}&select=business_name`);
   const companyName = comp && comp[0] ? comp[0].business_name : null;
+
+  // Nombre del admin que cambio el estado de atencion (si lo hay).
+  let attentionByName = null;
+  if (r.attention_by) {
+    const ab = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(r.attention_by)}&select=name`);
+    attentionByName = (ab && ab[0]) ? ab[0].name : null;
+  }
 
   // Lineas segun tipo. Por ahora solo marcaje tiene tabla de detalle.
   let lines = [];
@@ -282,6 +300,10 @@ async function detailReport(env, body, scope) {
       responsible: r.responsible, position: r.position, workers_count: r.workers_count,
       attention: r.attention, osticket_id: r.osticket_id, email_sent: r.email_sent, notes: r.notes,
       source_kind: r.source_kind || 'company',
+      osticket_sync: r.osticket_sync || 'na',
+      attention_at: r.attention_at || null,
+      attention_comment: r.attention_comment || null,
+      attention_by_name: attentionByName,
       lines,
     },
   });
@@ -739,7 +761,7 @@ async function setAttention(env, body, scope) {
   if (user.kind !== 'admin' || !user.id) {
     return json({ ok: false, error: 'Solo un administrador puede cambiar el estado de atencion.' }, 403);
   }
-  const a = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
+  const a = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role,name`);
   if (!a || !a.length) return json({ ok: false, error: 'Administrador no valido.' }, 403);
   const role = a[0].role;
   if (role !== 'admin' && role !== 'superadmin') {
@@ -828,6 +850,10 @@ async function setAttention(env, body, scope) {
     updated: allowedIds.length,
     skipped: ids.length - allowedIds.length,
     status,
+    // auditoria del cambio (para que el front la muestre sin recargar)
+    attention_at: nowIso,
+    attention_by_name: a[0].name || null,
+    attention_comment: comment,
     // resumen de sincronizacion (hoy siempre interno)
     sync: { with_ticket: withTicket.length, without_ticket: withoutTicket.length },
   });

@@ -7,79 +7,22 @@
 
 import { $ } from '../core/dom.js';
 import { showReportDetail } from './report-detail.js';
+import {
+  ATT_STATES, ATT_ORDER, attPill, syncPill, attAuditText,
+  fetchTicketText, fetchTicketExcel, postSetAttention,
+  copyText, downloadText, downloadBase64, showAttHelpModal,
+} from './shared/ticket-actions.js';
 
 // Cache de textos de ticket ya regenerados, por report_id, para no pedir dos
 // veces al backend si el usuario copia y luego descarga el mismo reporte.
 const _ticketCache = {};
 
-// Pide al backend el cuerpo de texto regenerado del ticket (reusa la misma
-// regla de construccion que el envio). Devuelve { text, filename } o null.
-async function fetchTicketText(user, reportId) {
+// Envuelve fetchTicketText con cache local (copiar + descargar reusan).
+async function getTicketText(user, reportId) {
   if (_ticketCache[reportId]) return _ticketCache[reportId];
-  const d = await fetch('/api/reports-history', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'ticket_text', user, report_id: reportId }),
-  }).then(r => r.json()).catch(() => null);
-  if (d && d.ok && d.text) {
-    _ticketCache[reportId] = { text: d.text, filename: d.filename };
-    return _ticketCache[reportId];
-  }
-  return null;
-}
-
-// Copia un texto al portapapeles (con fallback para navegadores viejos).
-async function copyText(text) {
-  try {
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      await navigator.clipboard.writeText(text);
-      return true;
-    }
-  } catch { /* cae al fallback */ }
-  try {
-    const ta = document.createElement('textarea');
-    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
-    document.body.appendChild(ta); ta.focus(); ta.select();
-    const ok = document.execCommand('copy');
-    document.body.removeChild(ta);
-    return ok;
-  } catch { return false; }
-}
-
-// Dispara la descarga de un .txt con el nombre dado.
-function downloadText(text, filename) {
-  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename || 'reporte.txt';
-  document.body.appendChild(a); a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
-}
-
-// Pide al backend la plantilla de Excel (.xlsx) regenerada del ticket PLA.
-// Devuelve { base64, filename, mime } o null.
-async function fetchTicketExcel(user, reportId) {
-  const d = await fetch('/api/reports-history', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'ticket_excel', user, report_id: reportId }),
-  }).then(r => r.json()).catch(() => null);
-  if (d && d.ok && d.base64) return d;
-  return null;
-}
-
-// Dispara la descarga de un archivo binario desde base64.
-function downloadBase64(base64, filename, mime) {
-  const bin = atob(base64);
-  const len = bin.length;
-  const bytes = new Uint8Array(len);
-  for (let i = 0; i < len; i++) bytes[i] = bin.charCodeAt(i);
-  const blob = new Blob([bytes], { type: mime || 'application/octet-stream' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url; a.download = filename || 'plantilla.xlsx';
-  document.body.appendChild(a); a.click();
-  document.body.removeChild(a);
-  setTimeout(() => URL.revokeObjectURL(url), 1500);
+  const d = await fetchTicketText(user, reportId);
+  if (d) _ticketCache[reportId] = { text: d.text, filename: d.filename };
+  return _ticketCache[reportId] || null;
 }
 
 const TYPES = {
@@ -104,32 +47,6 @@ function ymd(d) { return new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/C
 function todayYMD() { return ymd(new Date()); }
 function daysAgoYMD(n) { const d = new Date(); d.setDate(d.getDate() - n); return ymd(d); }
 
-// Estados de atencion (identicos a osTicket). label = nombre visible,
-// cls = clase del pill (color), desc = explicacion para el tooltip "?".
-const ATT_STATES = {
-  open:     { label: 'Abierto',  cls: 'att-open',     desc: 'Sin atender todavia. El reporte llego pero nadie lo ha tomado.' },
-  attended: { label: 'Atendido', cls: 'att-attended', desc: 'En proceso. Capital Humano ya lo esta revisando.' },
-  resolved: { label: 'Resuelto', cls: 'att-resolved', desc: 'Resuelto, pero aun NO cargado en el sistema (AX).' },
-  closed:   { label: 'Cerrado',  cls: 'att-closed',   desc: 'Ya cargado en el sistema (AX). Proceso terminado.' },
-};
-const ATT_ORDER = ['open', 'attended', 'resolved', 'closed'];
-
-function attPill(a) {
-  const s = ATT_STATES[a] || ATT_STATES.open;
-  return `<span class="pill ${s.cls}">${s.label}</span>`;
-}
-
-// Indicador de sincronizacion con osTicket (solo informativo por ahora).
-//  na      -> no aplica (sin ticket) -> no se muestra nada
-//  pending -> marcado, falta empujar a osTicket cuando se active
-//  synced  -> reflejado en osTicket
-//  failed  -> intento fallido
-function syncPill(s) {
-  if (!s || s === 'na') return '';
-  if (s === 'synced') return '<span class="pill att-resolved" title="Estado sincronizado con osTicket">\u2713 sinc.</span>';
-  if (s === 'failed') return '<span class="pill pill-out" title="No se pudo sincronizar con osTicket">\u26A0 sinc.</span>';
-  return '<span class="pill pill-pend" title="Pendiente de sincronizar con osTicket cuando se active la integracion">\u21BB sinc.</span>';
-}
 function otPill(r) {
   return r.osticket_id
     ? `<span class="pill pill-set">#${r.osticket_id}</span>`
@@ -304,15 +221,18 @@ export function renderHistory(user) {
       const checkTd = canManage
         ? `<td><input type="checkbox" class="chk hrow-chk" data-pick="${r.id}" ${ST.selected.has(r.id) ? 'checked' : ''}></td>` : '';
       // Celda de atencion: el pill + (si canManage) un selector inline para
-      // cambiar SOLO esa fila, + el indicador de sincronizacion con osTicket.
+      // cambiar SOLO esa fila, + el indicador de sincronizacion con osTicket,
+      // + la auditoria (quien/cuando) del ultimo cambio.
+      const audit = attAuditText(r);
+      const auditHtml = audit ? `<div class="att-audit">${audit}</div>` : '';
       let attTd;
       if (canManage) {
         attTd = `<td><div class="att-cell">${attPill(r.attention)}
           <select class="att-row-sel" data-attsel="${r.id}" title="Cambiar estado de este reporte">
             ${ATT_ORDER.map(k => `<option value="${k}" ${k === r.attention ? 'selected' : ''}>${ATT_STATES[k].label}</option>`).join('')}
-          </select>${syncPill(r.osticket_sync)}</div></td>`;
+          </select>${syncPill(r.osticket_sync)}${auditHtml}</div></td>`;
       } else {
-        attTd = `<td>${attPill(r.attention)}</td>`;
+        attTd = `<td>${attPill(r.attention)}${auditHtml}</td>`;
       }
       return `<tr class="main" data-open="${r.id}">
         ${checkTd}
@@ -350,7 +270,7 @@ export function renderHistory(user) {
       const id = parseInt(b.dataset.copytxt, 10);
       const orig = b.textContent;
       b.disabled = true; b.textContent = '…';
-      const r = await fetchTicketText(user, id);
+      const r = await getTicketText(user, id);
       if (!r) { b.textContent = 'Error'; setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500); return; }
       const ok = await copyText(r.text);
       b.textContent = ok ? '\u2713 Copiado' : 'Error';
@@ -363,7 +283,7 @@ export function renderHistory(user) {
       const id = parseInt(b.dataset.dltxt, 10);
       const orig = b.textContent;
       b.disabled = true; b.textContent = '…';
-      const r = await fetchTicketText(user, id);
+      const r = await getTicketText(user, id);
       if (!r) { b.textContent = 'Error'; setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500); return; }
       downloadText(r.text, r.filename);
       b.textContent = '\u2713';
@@ -430,18 +350,23 @@ export function renderHistory(user) {
   async function applyAttention(ids, status, comment, anchorEl) {
     if (!ids.length) return;
     if (anchorEl) anchorEl.disabled = true;
-    const d = await fetch('/api/reports-history', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'set_attention', user, report_ids: ids, status, comment: comment || null }),
-    }).then(r => r.json()).catch(() => null);
+    const d = await postSetAttention(user, ids, status, comment);
     if (anchorEl) anchorEl.disabled = false;
     if (!d || !d.ok) {
       alert(d ? d.error : 'No se pudo cambiar el estado.');
       return;
     }
-    // Actualizar en memoria las filas afectadas y limpiar seleccion.
+    // Actualizar en memoria las filas afectadas (estado + auditoria del
+    // response) y limpiar seleccion, para reflejar quien/cuando sin recargar.
     const idset = new Set(ids);
-    ST.rows.forEach(r => { if (idset.has(r.id)) { r.attention = status; } });
+    ST.rows.forEach(r => {
+      if (idset.has(r.id)) {
+        r.attention = status;
+        r.attention_at = d.attention_at || r.attention_at;
+        r.attention_by_name = d.attention_by_name || r.attention_by_name;
+        r.attention_comment = (comment != null ? comment : r.attention_comment);
+      }
+    });
     ST.selected.clear();
     paintRows();
     updateSelBar();
@@ -536,11 +461,8 @@ export function renderHistory(user) {
     if ($('#hSelClear')) $('#hSelClear').addEventListener('click', () => {
       ST.selected.clear(); paintRows(); updateSelBar();
     });
-    // Ayuda "?" con la explicacion de cada estado.
-    if ($('#hAttHelp')) $('#hAttHelp').addEventListener('click', () => {
-      const txt = ATT_ORDER.map(k => `• ${ATT_STATES[k].label}: ${ATT_STATES[k].desc}`).join('\n\n');
-      alert('¿Qué significa cada estado?\n\n' + txt);
-    });
+    // Ayuda "?" con la explicacion de cada estado (modal legible).
+    if ($('#hAttHelp')) $('#hAttHelp').addEventListener('click', showAttHelpModal);
   }
 
   // ---- atajos (chips) ----
