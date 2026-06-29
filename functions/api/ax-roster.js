@@ -372,6 +372,18 @@ export async function onRequestPost({ request, env }) {
         source: 'ax_api',
       }));
       await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify(payload) });
+
+      // Sembrar/renovar responsables (gerentes/subgerentes detectados) para
+      // que el paso "Responsable" del wizard los tenga. Solo TIENDAS; las
+      // empresas no-tienda no usan responsables. No es critico: si falla, el
+      // roster ya quedo guardado.
+      try {
+        await sb(env, 'rpc/seed_store_managers', {
+          method: 'POST', body: JSON.stringify({ p_company_code: cc }),
+        });
+      } catch (e) {
+        warnings.push('Responsables no sembrados: ' + String(e.message || e));
+      }
     } else {
       // --- EMPRESA NO-TIENDA: enterprise_workers ---
       // Conservar telefono/correo/direccion/department_id previos (la API no

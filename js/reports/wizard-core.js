@@ -421,7 +421,44 @@ export function launchWizard(user, reportDef, onExit) {
   async function loadResponsables() {
     const r = await Resp.contactsList(companyCode);
     if (r.ok) S.responsables = r.contacts || [];
+    // Opcion 2 (red de seguridad): si no hay responsables sembrados pero el
+    // roster ya trae gerentes/subgerentes detectados (manager_role), se
+    // ofrecen al vuelo para que el paso "Responsable" no quede vacio en
+    // tiendas cargadas antes de la siembra automatica. Son "virtuales":
+    // no tienen id de store_contacts; al elegir uno, se persiste recien al
+    // confirmar (ver materializeVirtualResp).
+    if ((!S.responsables || !S.responsables.length) && Array.isArray(S.roster)) {
+      const detected = S.roster
+        .filter(w => !w.end_date && w.manager_role)
+        .slice(0, Resp.RESP_MAX)
+        .map((w, i) => ({
+          id: 'v' + i,            // id virtual (string con prefijo 'v')
+          full_name: w.full_name,
+          role: w.manager_role,
+          id_number: w.id_number,
+          _virtual: true,
+        }));
+      if (detected.length) S.responsables = detected;
+    }
     return r;
+  }
+
+  // Si el responsable elegido es "virtual" (detectado del roster, aun no
+  // persistido en store_contacts), lo crea ahora y devuelve su fila real.
+  // Devuelve null si no habia que materializar nada.
+  async function materializeVirtualResp() {
+    if (S.selResp == null || S.selResp === NO_MANAGER) return null;
+    const sel = S.responsables.find(r => r.id === S.selResp);
+    if (!sel || !sel._virtual) return null;
+    const res = await Resp.contactsAdd(companyCode, sel.full_name, sel.role, sel.id_number);
+    if (res && res.ok && res.contact) {
+      // refrescar la lista real y reapuntar la seleccion al id persistido
+      await loadResponsables();
+      const real = S.responsables.find(r => String(r.id_number || '') === String(sel.id_number || '') && !r._virtual);
+      S.selResp = real ? real.id : null;
+      return real || null;
+    }
+    return null;
   }
 
   function stepResp() {
@@ -444,7 +481,20 @@ export function launchWizard(user, reportDef, onExit) {
     bindRespCards();
     $('#respManageBtn').addEventListener('click', openRespManage);
     $('#respBack').addEventListener('click', () => setStep(1));
-    $('#respNext').addEventListener('click', () => setStep(skipWorkers ? 4 : 3));
+    $('#respNext').addEventListener('click', async () => {
+      // Si el seleccionado es un responsable detectado al vuelo (virtual),
+      // se persiste en store_contacts antes de continuar.
+      const btn = $('#respNext');
+      if (S.selResp !== NO_MANAGER) {
+        const sel = S.responsables.find(r => r.id === S.selResp);
+        if (sel && sel._virtual) {
+          btn.disabled = true; btn.textContent = 'Guardando\u2026';
+          await materializeVirtualResp();
+          btn.textContent = 'Siguiente \u2192';
+        }
+      }
+      setStep(skipWorkers ? 4 : 3);
+    });
   }
 
   // Centinela para "Sin gerente asignado". Solo se ofrece cuando la tienda
@@ -473,7 +523,10 @@ export function launchWizard(user, reportDef, onExit) {
   function bindRespCards() {
     $('#respList').querySelectorAll('.resp-card').forEach(c => c.addEventListener('click', () => {
       const raw = c.dataset.id;
-      S.selResp = raw === NO_MANAGER ? NO_MANAGER : parseInt(raw, 10);
+      // NO_MANAGER y los ids virtuales ('v0','v1'...) se conservan como string;
+      // los responsables reales (store_contacts) son numericos.
+      S.selResp = raw === NO_MANAGER ? NO_MANAGER
+        : (/^v\d+$/.test(raw) ? raw : parseInt(raw, 10));
       $('#respList').innerHTML = respCards(); bindRespCards();
       $('#respNext').disabled = false;
     }));
@@ -482,17 +535,34 @@ export function launchWizard(user, reportDef, onExit) {
   function openRespManage() {
     const ov = document.createElement('div');
     ov.className = 'modal-ov';
+    // Empleados vigentes del roster, para el combo "elegir de la lista".
+    // Se respeta su cargo real (cargo_label o role); no se les cambia.
+    const rosterActive = (S.roster || []).filter(w => !w.end_date);
+    const pickOptions = rosterActive.map(w => {
+      const cargo = w.cargo_label || w.role || 'Sin cargo';
+      return `<option value="${w.id_number}">${w.full_name} \u00b7 ${cargo}${w.id_number ? ' \u00b7 ' + w.id_number : ''}</option>`;
+    }).join('');
     ov.innerHTML = `
       <div class="modal">
         <h3>Gestionar responsables</h3>
-        <p class="who">Tienda ${companyCode} · máximo ${Resp.RESP_MAX}. También accesible por el administrador.</p>
+        <p class="who">Tienda ${companyCode} \u00b7 m\u00e1ximo ${Resp.RESP_MAX}. Tambi\u00e9n accesible por el administrador.</p>
         <div id="rmList"></div>
+        ${rosterActive.length ? `
         <div style="border-top:1px solid var(--border-soft);margin-top:12px;padding-top:14px">
+          <label class="flabel">Elegir de la lista de la tienda <span class="hint" style="font-weight:normal">(respeta su cargo)</span></label>
+          <div class="grid2" style="margin:6px 0 0;align-items:end">
+            <select id="rmPick"><option value="">\u2014 Selecciona un trabajador \u2014</option>${pickOptions}</select>
+            <button class="btn btn-sm btn-primary" id="rmAddPick">\uFF0B Agregar de la lista</button>
+          </div>
+          <span id="rmPickMsg" style="font-size:12px;color:var(--warn)"></span>
+        </div>` : ''}
+        <div style="border-top:1px solid var(--border-soft);margin-top:12px;padding-top:14px">
+          <label class="flabel" style="display:block;margin-bottom:6px">O agregar manualmente</label>
           <div class="grid2" style="margin-bottom:10px">
             <div><label class="flabel">Nombre</label><input id="rmName" placeholder="Nombre y apellido"></div>
             <div><label class="flabel">Cargo</label><input id="rmRole" placeholder="ej. Gerente"></div>
           </div>
-          <button class="btn btn-sm btn-primary" id="rmAdd">＋ Agregar responsable</button>
+          <button class="btn btn-sm btn-primary" id="rmAdd">\uFF0B Agregar responsable</button>
           <span id="rmLimit" style="font-size:12px;color:var(--warn);margin-left:10px"></span>
         </div>
         <div class="wiz-foot" style="margin-top:16px"><span></span>
@@ -504,11 +574,20 @@ export function launchWizard(user, reportDef, onExit) {
       ov.querySelector('#rmList').innerHTML = S.responsables.length
         ? S.responsables.map(r => `<div class="resp-manage-row">
             <div class="resp-info"><div class="resp-name">${r.full_name}</div><div class="resp-role">${r.role}</div></div>
-            <button class="x-btn" data-del="${r.id}">✕</button></div>`).join('')
+            <button class="x-btn" data-del="${r.id}">\u2715</button></div>`).join('')
         : '<div class="empty" style="padding:14px">Sin responsables.</div>';
       const full = S.responsables.length >= Resp.RESP_MAX;
-      ov.querySelector('#rmAdd').disabled = full;
-      ov.querySelector('#rmLimit').textContent = full ? `Máximo ${Resp.RESP_MAX} alcanzado` : '';
+      const addBtn = ov.querySelector('#rmAdd'); if (addBtn) addBtn.disabled = full;
+      const pickBtn = ov.querySelector('#rmAddPick'); if (pickBtn) pickBtn.disabled = full;
+      ov.querySelector('#rmLimit').textContent = full ? `M\u00e1ximo ${Resp.RESP_MAX} alcanzado` : '';
+      // ocultar del combo a quienes ya son responsables (por cedula)
+      const pickSel = ov.querySelector('#rmPick');
+      if (pickSel) {
+        const taken = new Set(S.responsables.map(r => String(r.id_number || '')));
+        [...pickSel.options].forEach(o => {
+          if (o.value) o.hidden = taken.has(o.value);
+        });
+      }
       ov.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', async () => {
         await Resp.contactsRemove(parseInt(b.dataset.del, 10));
         if (S.selResp === parseInt(b.dataset.del, 10)) S.selResp = null;
@@ -516,6 +595,23 @@ export function launchWizard(user, reportDef, onExit) {
       }));
     };
     paint();
+
+    // Agregar desde el combo del roster (respeta el cargo real del trabajador).
+    const addPickBtn = ov.querySelector('#rmAddPick');
+    if (addPickBtn) addPickBtn.addEventListener('click', async () => {
+      const sel = ov.querySelector('#rmPick');
+      const ced = sel.value;
+      const msg = ov.querySelector('#rmPickMsg');
+      msg.textContent = '';
+      if (!ced) { msg.textContent = 'Selecciona un trabajador.'; return; }
+      const w = (S.roster || []).find(x => x.id_number === ced);
+      if (!w) { msg.textContent = 'No se encontro el trabajador en la lista.'; return; }
+      const cargo = w.cargo_label || w.role || 'Responsable';
+      const r = await Resp.contactsAdd(companyCode, w.full_name, cargo, w.id_number);
+      if (!r.ok) { msg.textContent = r.error || 'No se pudo agregar.'; return; }
+      sel.value = '';
+      await loadResponsables(); paint();
+    });
 
     ov.querySelector('#rmAdd').addEventListener('click', async () => {
       const name = ov.querySelector('#rmName').value.trim();

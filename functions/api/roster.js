@@ -681,6 +681,20 @@ export async function onRequestPost({ request, env }) {
       }));
       await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify(payload) });
 
+      // Sembrar/renovar responsables (gerentes/subgerentes detectados del
+      // roster) para que el paso "Responsable" del wizard los tenga. El
+      // Reporte AX no trae cargo pero el cargo previo se conservo arriba
+      // (roleByCed), asi que la deteccion funciona. Solo TIENDAS.
+      let contactsSeeded = 0;
+      try {
+        const seedRes = await sb(env, 'rpc/seed_store_managers', {
+          method: 'POST', body: JSON.stringify({ p_company_code: cc }),
+        });
+        contactsSeeded = typeof seedRes === 'number' ? seedRes : (seedRes || 0);
+      } catch (e) {
+        warnings.push('Responsables no sembrados: ' + String(e.message || e));
+      }
+
       // Sincronizar workers_master por cedula. Reusa el upsert del Reporte 10
       // (no pisa foto; agrega datos personales solo si vienen con valor).
       let masterSynced = 0;
@@ -720,6 +734,7 @@ export async function onRequestPost({ request, env }) {
           active: activos.length,
           terminated: egresados.length,
           master_synced: masterSynced,
+          contacts_seeded: contactsSeeded,
           source: 'reporte_ax',
           warnings,
         },
