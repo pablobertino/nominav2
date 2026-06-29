@@ -133,7 +133,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.62</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.63</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navItems.map(([id, ic, label]) =>
@@ -220,10 +220,10 @@ function bellEmpresaHtml(c) {
   const when = fmtDeadline(c.detected_at);
   const name = c.business_name ? ` \u2014 ${escHtml(c.business_name)}` : '';
   if (c.change_type === 'new') {
-    return `<div class="pnl-bell-item"><span class="ic">\u2795</span><div><b>Nueva empresa</b> ${escHtml(c.company_code)}${name}`
+    return `<div class="pnl-bell-item" data-goto-ent="1" style="cursor:pointer"><span class="ic">\u2795</span><div><b>Nueva empresa</b> ${escHtml(c.company_code)}${name}`
       + `<div class="muted" style="font-size:11px;margin-top:2px">${when}</div></div></div>`;
   }
-  return `<div class="pnl-bell-item"><span class="ic">\u{1F504}</span><div><b>${escHtml(c.company_code)}</b>${name}`
+  return `<div class="pnl-bell-item" data-goto-ent="1" style="cursor:pointer"><span class="ic">\u{1F504}</span><div><b>${escHtml(c.company_code)}</b>${name}`
     + `<div style="margin-top:2px">Estatus: ${escHtml(c.old_value || '\u2014')} \u2192 <b>${escHtml(c.new_value || '\u2014')}</b></div>`
     + `<div class="muted" style="font-size:11px;margin-top:2px">${when}</div></div></div>`;
 }
@@ -251,6 +251,13 @@ function bellRender() {
       pop.hidden = true;
       navigate('avisos', BELL_USER);
       setTimeout(() => { try { avisosGoto(el.dataset.goto); } catch (_) {} }, 350);
+    }));
+  // clic en una novedad de empresa -> ir a la pantalla de Avisos (seccion
+  // Novedades de empresas). Son globales y de solo lectura; solo navegamos.
+  pop.querySelectorAll('[data-goto-ent]').forEach(el =>
+    el.addEventListener('click', () => {
+      pop.hidden = true;
+      navigate('avisos', BELL_USER);
     }));
 }
 async function bellLoad(user) {
@@ -3141,7 +3148,7 @@ function cfgIncDocModal(user, inc, d) {
 
 /* Recarga catalogos (tras un cambio) sin recargar toda la vista */
 async function cfgReloadCatalogs(user) {
-  const [ty, ca, cg, bn, op, di, de] = await Promise.all([
+  const [ty, ca, cg, bn, op, di, de, er] = await Promise.all([
     cfgCatalogs({ action: 'absence_list', adminId: user.id }),
     cfgCatalogs({ action: 'causa_list', adminId: user.id }),
     cfgCatalogs({ action: 'cargo_list', adminId: user.id }),
