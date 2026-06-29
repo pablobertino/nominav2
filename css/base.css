@@ -163,3 +163,21 @@ button { cursor: pointer; border: 0; }
 .att-syncbtn { font-size: 11px; padding: 2px 8px; color: var(--brand);
   border-color: #bfdbfe; background: var(--brand-bg); }
 .att-syncbtn:hover { background: #dbeafe; }
+
+/* Enlace directo al ticket en osTicket (pill con # clicable). */
+a.ot-link { text-decoration: none; cursor: pointer; }
+a.ot-link:hover { filter: brightness(0.95); text-decoration: underline; }
+
+/* Modal de reenvio a osTicket (opcion D): slots de documentos a re-adjuntar. */
+.resend-modal { max-width: 560px; }
+.rs-intro { font-size: 13px; color: var(--ink-soft); line-height: 1.5; margin: 4px 0 14px; }
+.rs-error { color: var(--danger); font-size: 13px; }
+.rs-ok { color: var(--brand); font-size: 13px; font-weight: 600; }
+.rs-status { margin-top: 10px; min-height: 18px; }
+.rs-slots { display: flex; flex-direction: column; gap: 8px; max-height: 340px; overflow-y: auto; }
+.rs-slot { display: flex; align-items: center; gap: 12px; padding: 10px 12px;
+  border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--surface); }
+.rs-slot-info { flex: 1; min-width: 0; }
+.rs-slot-info .ced { font-size: 11px; color: var(--faint); margin-left: 4px; }
+.rs-slot-doc { font-size: 12px; color: var(--muted); margin-top: 3px; display: flex; align-items: center; gap: 6px; }
+.rs-slot-file { flex: 0 0 auto; }

@@ -97,6 +97,40 @@ export async function postSyncOsticket(user, { reportIds, mode } = {}) {
   }).then(r => r.json()).catch(() => null);
 }
 
+/* Pide al backend que documentos hay que re-adjuntar para (re)generar los
+   tickets de un reporte sin osTicket. Devuelve { ok, needs_docs, slots, ... }. */
+export async function fetchResendInfo(user, reportId) {
+  return fetch('/api/reports-history', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'resend_info', user, report_id: reportId }),
+  }).then(r => r.json()).catch(() => null);
+}
+
+/* Genera los tickets del reporte en osTicket con los archivos re-adjuntados.
+   files: [{ key, file_name, file_b64, file_type }]. */
+export async function postResendOsticket(user, reportId, files) {
+  return fetch('/api/reports-history', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'resend_osticket', user, report_id: reportId, files: files || [] }),
+  }).then(r => r.json()).catch(() => null);
+}
+
+/* Lee un File a base64 (sin el prefijo data:). Devuelve
+   { name, b64, type } o null. Mismo mecanismo que los formularios. */
+export function readFileB64(file) {
+  return new Promise(resolve => {
+    if (!file) return resolve(null);
+    const reader = new FileReader();
+    reader.onload = () => resolve({
+      name: file.name,
+      b64: String(reader.result).split(',')[1] || '',
+      type: file.type || 'application/octet-stream',
+    });
+    reader.onerror = () => resolve(null);
+    reader.readAsDataURL(file);
+  });
+}
+
 /* ---------------------------------------------------------------------
    Portapapeles + descargas.
    --------------------------------------------------------------------- */

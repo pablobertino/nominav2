@@ -7,6 +7,7 @@
 
 import { $ } from '../core/dom.js';
 import { showReportDetail } from './report-detail.js';
+import { openResendModal } from './shared/resend-modal.js';
 import {
   ATT_STATES, ATT_ORDER, attPill, syncPill, attAuditText,
   fetchTicketText, fetchTicketExcel, postSetAttention, postSyncOsticket,
@@ -47,10 +48,16 @@ function ymd(d) { return new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/C
 function todayYMD() { return ymd(new Date()); }
 function daysAgoYMD(n) { const d = new Date(); d.setDate(d.getDate() - n); return ymd(d); }
 
-function otPill(r) {
-  return r.osticket_id
-    ? `<span class="pill pill-set">#${r.osticket_id}</span>`
-    : '<span class="pill pill-out">No enviado</span>';
+function otPill(r, osticketUrl) {
+  if (!r.osticket_id) return '<span class="pill pill-out">No enviado</span>';
+  // Si conocemos la URL base de osTicket, el numero es un enlace directo al
+  // ticket en el SCP (acepta ?number=). target=_blank y stopPropagation en
+  // el listener para no disparar "Ver detalle".
+  if (osticketUrl) {
+    const href = `${osticketUrl}/scp/tickets.php?number=${encodeURIComponent(r.osticket_id)}`;
+    return `<a class="pill pill-set ot-link" href="${href}" target="_blank" rel="noopener" data-otlink title="Abrir el ticket en osTicket">#${r.osticket_id}</a>`;
+  }
+  return `<span class="pill pill-set">#${r.osticket_id}</span>`;
 }
 function originPill(r) {
   return r.source_kind === 'admin'
@@ -74,6 +81,7 @@ export function renderHistory(user) {
     page: 1, perPage: 20, total: 0, rows: [],
     companies: [], zones: [], subzones: [], concepts: [], // catalogo para filtros
     selected: new Set(),   // ids marcados (seleccion multiple)
+    osticketUrl: '',       // base URL de osTicket (para el enlace al ticket)
   };
 
   $('#pnlMain').innerHTML = `
@@ -207,6 +215,7 @@ export function renderHistory(user) {
       return;
     }
     ST.rows = d.rows; ST.total = d.total; ST.page = d.page; ST.perPage = d.per_page;
+    ST.osticketUrl = d.osticket_url || '';
     paintRows(); paintPager();
   }
 
@@ -253,7 +262,7 @@ export function renderHistory(user) {
         <td>${originPill(r)}</td>
         <td style="text-align:center"><b>${r.workers_count}</b></td>
         ${attTd}
-        <td>${otPill(r)}</td>
+        <td>${otPill(r, ST.osticketUrl)}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn btn-sm" data-open="${r.id}">Ver detalle</button>
           <button class="btn btn-sm" data-copytxt="${r.id}" title="Copiar el texto del ticket">\u29C9 Copiar</button>
@@ -270,7 +279,16 @@ export function renderHistory(user) {
     }));
     $('#hBody').querySelectorAll('[data-resend]').forEach(b => b.addEventListener('click', e => {
       e.stopPropagation();
-      alert('El envío a osTicket aún no está habilitado. Quedará disponible cuando se active la integración.');
+      const id = parseInt(b.dataset.resend, 10);
+      const row = ST.rows.find(x => x.id === id) || { id };
+      openResendModal(user, {
+        id, type: row.type, company_code: row.company_code, company_name: row.company_name,
+      }, () => load());
+    }));
+
+    // Enlace al ticket en osTicket: no debe disparar "Ver detalle" de la fila.
+    $('#hBody').querySelectorAll('[data-otlink]').forEach(a => a.addEventListener('click', e => {
+      e.stopPropagation();
     }));
 
     // Copiar el texto del ticket (regenerado con la misma regla del envio).

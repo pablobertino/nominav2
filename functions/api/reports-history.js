@@ -127,6 +127,38 @@ async function osticketSetReportStatus(env, base, reportCodeStr, statusId, comme
   throw new Error((r.json && r.json.error) ? r.json.error : `osTicket ${r.status}: ${r.text || 'sin detalle'}`);
 }
 
+// Crea un ticket en osTicket (mismo patron que reports.js). Devuelve el
+// NUMERO del ticket (texto, ej '002140') o lanza Error. La API responde 201
+// con el numero como cuerpo (texto plano, a veces con comillas).
+async function osticketCreateTicket(env, base, payload) {
+  const r = await osticketPost(env, base, '/api/tickets.json', payload);
+  if (r.status !== 201) {
+    throw new Error(`osTicket ticket ${r.status}: ${r.text || 'sin detalle'}`);
+  }
+  return (r.text || '').trim().replace(/^"|"$/g, '');
+}
+
+// Registra la relacion ticket<->reporte (gc_report_link). No critico.
+async function gcReportLink(env, base, data) {
+  try {
+    const r = await osticketPost(env, base, '/api/gc-report.json', data);
+    return r.ok || r.status === 201;
+  } catch { return false; }
+}
+
+// Crea/actualiza el usuario-tienda (From). Idempotente. Devuelve user_id|null.
+async function gcUser(env, base, data) {
+  try {
+    const r = await osticketPost(env, base, '/api/gc-user.json', data);
+    return (r.json && r.json.user_id) ? r.json.user_id : null;
+  } catch { return null; }
+}
+
+// Adjunto en el formato de la API de osTicket: { "nombre.ext": "data:MIME;base64,XXXX" }.
+function osAttach(filename, base64, mime) {
+  return { [filename]: `data:${mime || 'application/octet-stream'};base64,${base64}` };
+}
+
 /* Resuelve el alcance del usuario: devuelve
      { all:true }                         -> superadmin (todas)
      { codes:[...] }                      -> lista explicita (tienda/admin)
@@ -169,6 +201,8 @@ export async function onRequestPost({ request, env }) {
     if (body.action === 'ticket_excel') return await ticketExcel(env, body, scope);
     if (body.action === 'set_attention') return await setAttention(env, body, scope);
     if (body.action === 'sync_osticket') return await syncOsticket(env, body, scope);
+    if (body.action === 'resend_info') return await resendInfo(env, body, scope);
+    if (body.action === 'resend_osticket') return await resendOsticket(env, body, scope);
     return json({ ok: false, error: 'Accion no reconocida' }, 400);
   } catch (e) {
     return json({ ok: false, error: String(e.message || e) }, 500);
@@ -272,7 +306,13 @@ async function listReports(env, body, scope) {
     source_kind: r.source_kind || 'company',
   }));
 
-  return json({ ok: true, rows: out, total, page, per_page: perPage });
+  // URL base de osTicket (sin barra final) para que el front arme el enlace
+  // directo al ticket en el SCP: {base}/scp/tickets.php?number={osticket_id}.
+  // Se lee una sola vez por pagina (no por fila).
+  let osticketUrl = '';
+  try { osticketUrl = await osticketBase(env); } catch { osticketUrl = ''; }
+
+  return json({ ok: true, rows: out, total, page, per_page: perPage, osticket_url: osticketUrl });
 }
 
 async function detailReport(env, body, scope) {
@@ -1000,5 +1040,526 @@ async function syncOsticket(env, body, scope) {
     total: withTicket.length,
     synced: res.synced,
     failed: res.failed,
+  });
+}
+
+/* =====================================================================
+   REENVIO / GENERACION DE TICKETS (opcion D)
+   Para reportes que NO tienen ticket (osticket_id nulo): permite generar
+   los tickets en osTicket re-adjuntando los documentos (que no se guardan
+   en BD). Dos pasos:
+     - resend_info: dice que documentos pide cada tipo (slots por trabajador)
+       y datos del reporte, para que el front arme el modal.
+     - resend_osticket: recibe los archivos re-adjuntados y crea PLA + DOCs
+       igual que el envio original, registra gc_report_link y actualiza
+       reports_log (osticket_id + email_sent). SOLO admin/superadmin.
+   ===================================================================== */
+
+// Carga el contexto comun de un reporte para (re)generar sus tickets:
+// encabezado + datos de tienda + nombres de zona/subzona/marca + fecha/hora
+// de envio. Devuelve null si no existe o esta fuera de alcance.
+async function loadReportContext(env, id, scope) {
+  let q = `reports_log?id=eq.${id}&select=id,company_code,zone_id,subzone_id,topic,sent_at,`
+    + 'responsible,position,osticket_id';
+  q += scopeFilter(scope);
+  const head = await sbJson(env, q);
+  if (!head || !head.length) return null;
+  const r = head[0];
+  const cc = r.company_code;
+
+  const comp = await sbJson(env,
+    `companies?company_code=eq.${encodeURIComponent(cc)}&select=data_area,business_name,email,phone,zone_id,subzone_id,concept_id`);
+  const c0 = comp && comp[0] ? comp[0] : {};
+  const zoneId = r.zone_id != null ? r.zone_id : c0.zone_id;
+  const subzoneId = r.subzone_id != null ? r.subzone_id : c0.subzone_id;
+
+  let zonaName = '', subzonaName = '', marcaName = '';
+  if (subzoneId != null) {
+    const sz = await sbJson(env, `subzones?id=eq.${encodeURIComponent(subzoneId)}&select=name`);
+    subzonaName = sz && sz[0] ? (sz[0].name || '') : '';
+  }
+  if (zoneId != null) {
+    const zn = await sbJson(env, `zones?id=eq.${encodeURIComponent(zoneId)}&select=name`);
+    zonaName = zn && zn[0] ? (zn[0].name || '') : '';
+  }
+  if (c0.concept_id != null) {
+    const cn = await sbJson(env, `concepts?id=eq.${encodeURIComponent(c0.concept_id)}&select=name`);
+    marcaName = cn && cn[0] ? (cn[0].name || '') : '';
+  }
+
+  const sentMs = r.sent_at ? Date.parse(r.sent_at) : Date.now();
+  const car = new Date((isNaN(sentMs) ? Date.now() : sentMs) - 4 * 3600 * 1000);
+  const ymd = car.toISOString().slice(0, 10);
+  const hh = String(car.getUTCHours()).padStart(2, '0');
+  const mi = String(car.getUTCMinutes()).padStart(2, '0');
+
+  return {
+    report: r,
+    cc,
+    dataArea: c0.data_area || '',
+    businessName: c0.business_name || '',
+    email: c0.email || '',
+    phone: c0.phone || '',
+    mallZona: subzonaName || zonaName || '',
+    marca: marcaName,
+    ymd,
+    fecha: dmy(ymd),
+    hora: `${hh}:${mi}`,
+    code: reportCode(r.id),
+  };
+}
+
+// Etiqueta del topic (igual redaccion que reports.js / ticket_text).
+const TOPIC_LABEL = {
+  marcaje: 'Marcaje Manual',
+  ausencia: 'Período de Ausencia',
+  ingreso: 'Ingreso',
+  egreso: 'Egreso',
+  modificacion: 'Modificación de Datos',
+};
+
+/* resend_info — Describe que necesita el reenvio de un reporte sin ticket.
+   Devuelve, ademas de datos basicos, la lista de "slots" de documentos que
+   la tienda debe re-adjuntar (vacia para marcaje/modificacion). Cada slot:
+   { key, worker_id, worker_name, doc_name, required_doc_id?, required }.
+   key identifica el slot para emparejar el archivo en resend_osticket. */
+async function resendInfo(env, body, scope) {
+  const id = parseInt(body.report_id, 10);
+  if (!id) return json({ ok: false, error: 'Falta report_id' }, 400);
+  const ctx = await loadReportContext(env, id, scope);
+  if (!ctx) return json({ ok: false, error: 'Reporte no encontrado o sin acceso.' }, 404);
+  if (ctx.report.osticket_id) {
+    return json({ ok: false, error: 'Este reporte ya tiene ticket en osTicket.' }, 409);
+  }
+  const topic = ctx.report.topic;
+  const slots = [];
+
+  if (topic === 'ausencia') {
+    // Un slot por linea que tenga documento esperado (status adjunto/pendiente).
+    const lines = await sbJson(env,
+      `absence_report_lines?report_id=eq.${id}`
+      + `&select=id,worker_id_number,worker_name,absence_report_docs(doc_name,enforcement,status)&order=id.asc`);
+    (lines || []).forEach(l => {
+      const d = (l.absence_report_docs && l.absence_report_docs.length) ? l.absence_report_docs[0] : null;
+      if (d) {
+        slots.push({
+          key: `L${l.id}`,
+          worker_id: l.worker_id_number,
+          worker_name: l.worker_name,
+          doc_name: d.doc_name,
+          required: (d.enforcement === 'block'),
+        });
+      }
+    });
+  } else if (topic === 'egreso') {
+    // Un slot por linea con has_document (carta de renuncia adjunta originalmente).
+    const lines = await sbJson(env,
+      `egress_report_lines?report_id=eq.${id}`
+      + `&select=id,worker_id_number,worker_name,has_document&order=id.asc`);
+    (lines || []).forEach(l => {
+      if (l.has_document) {
+        slots.push({
+          key: `L${l.id}`,
+          worker_id: l.worker_id_number,
+          worker_name: l.worker_name,
+          doc_name: 'Carta de renuncia',
+          required: false,
+        });
+      }
+    });
+  } else if (topic === 'ingreso') {
+    // Un slot por cada recaudo (ingreso_report_docs) de cada linea.
+    const lines = await sbJson(env,
+      `ingreso_report_lines?report_id=eq.${id}`
+      + `&select=id,worker_id_number,worker_name,ingreso_report_docs(id,required_doc_id,doc_name,enforcement,status)&order=id.asc`);
+    (lines || []).forEach(l => {
+      (l.ingreso_report_docs || []).forEach(d => {
+        slots.push({
+          key: `D${d.id}`,
+          worker_id: l.worker_id_number,
+          worker_name: l.worker_name,
+          doc_name: d.doc_name,
+          required_doc_id: d.required_doc_id,
+          required: (d.enforcement === 'block'),
+        });
+      });
+    });
+  }
+  // marcaje / modificacion -> sin slots (solo PLA).
+
+  return json({
+    ok: true,
+    report_id: id,
+    topic,
+    topic_label: TOPIC_LABEL[topic] || topic,
+    company_code: ctx.cc,
+    company_name: ctx.businessName,
+    needs_docs: slots.length > 0,
+    slots,
+  });
+}
+
+/* resend_osticket — Genera los tickets de un reporte sin ticket. Reconstruye
+   el contexto desde la BD y crea PLA + DOCs (con los archivos re-adjuntados
+   que vengan en body.files). SOLO admin/superadmin.
+
+   body.files: array de { key, file_name, file_b64, file_type } (los slots
+   que la tienda re-adjunto; pueden faltar los no obligatorios).
+   ===================================================================== */
+async function resendOsticket(env, body, scope) {
+  const user = body.user || {};
+  if (user.kind !== 'admin' || !user.id) {
+    return json({ ok: false, error: 'Solo un administrador puede reenviar a osTicket.' }, 403);
+  }
+  const a = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
+  if (!a || !a.length || (a[0].role !== 'admin' && a[0].role !== 'superadmin')) {
+    return json({ ok: false, error: 'Tu rol no permite reenviar a osTicket.' }, 403);
+  }
+
+  const id = parseInt(body.report_id, 10);
+  if (!id) return json({ ok: false, error: 'Falta report_id' }, 400);
+  const ctx = await loadReportContext(env, id, scope);
+  if (!ctx) return json({ ok: false, error: 'Reporte no encontrado o sin acceso.' }, 404);
+  if (ctx.report.osticket_id) {
+    return json({ ok: false, error: 'Este reporte ya tiene ticket en osTicket.' }, 409);
+  }
+
+  const base = await osticketBase(env);
+  if (!base || !env.osticket_api_key) {
+    return json({ ok: false, error: 'osTicket no esta configurado (url o api key).' }, 500);
+  }
+
+  // Archivos re-adjuntados, indexados por key del slot.
+  const filesByKey = {};
+  (Array.isArray(body.files) ? body.files : []).forEach(f => {
+    if (f && f.key && f.file_b64) {
+      filesByKey[f.key] = {
+        name: String(f.file_name || 'documento').trim(),
+        b64: String(f.file_b64),
+        type: String(f.file_type || 'application/octet-stream'),
+      };
+    }
+  });
+
+  const topic = ctx.report.topic;
+  const code = ctx.code;
+  const fromEmail = ctx.email || 'portal-nomina@grupocanaima.com';
+  const fromName = `${ctx.cc} - ${ctx.businessName || ctx.cc}`;
+  const topicSettingKey = {
+    marcaje: 'osticket_topic_marcaje', ausencia: 'osticket_topic_ausencia',
+    ingreso: 'osticket_topic_ingreso', egreso: 'osticket_topic_egreso',
+    modificacion: 'osticket_topic_modificacion',
+  }[topic];
+  const topicDefault = { marcaje: 19, ausencia: 20, ingreso: 31, egreso: 33, modificacion: 32 }[topic];
+  const topicId = parseInt(await getSetting(env, topicSettingKey, String(topicDefault)), 10) || topicDefault;
+
+  // Construir registros del PLA + lista de DOCs a crear, segun el tipo.
+  // Cada DOC: { ced, worker_name, doc_label, file:{name,b64,type}, slotKey }.
+  let plaRegistros = [];
+  let plaTopicLabel = TOPIC_LABEL[topic] || topic;
+  const docTickets = [];
+  let axKind = topic, axLines = [];
+
+  if (topic === 'marcaje') {
+    const raw = await sbJson(env,
+      `mark_report_lines?report_id=eq.${id}`
+      + `&select=worker_id_number,worker_name,mark_date,day_type,time_in,time_out,cause_code,cause_other_text,marcaje_causas(label)&order=id.asc`);
+    plaRegistros = (raw || []).map(l => {
+      const causa = l.cause_code === 'other' ? (l.cause_other_text || 'Otros')
+        : ((l.marcaje_causas && l.marcaje_causas.label) || l.cause_code);
+      const campos = [
+        ['Trabajador', l.worker_name], ['Cédula', l.worker_id_number],
+        ['Fecha', dmy(l.mark_date)],
+        ['Tipo de día', l.day_type === 'D' ? 'Descanso (D)' : 'Laborable (L)'],
+      ];
+      if (l.day_type !== 'D') { campos.push(['Entrada', (l.time_in || '').slice(0, 5)]); campos.push(['Salida', (l.time_out || '').slice(0, 5)]); }
+      campos.push(['Causa', causa]);
+      return campos;
+    });
+    axLines = (raw || []).map(l => ({
+      id_number: l.worker_id_number, date: l.mark_date,
+      time_in: (l.time_in || '').slice(0, 5), time_out: (l.time_out || '').slice(0, 5),
+      tipo: l.day_type === 'D' ? 'D' : 'L',
+      causa_label: l.cause_code === 'other' ? (l.cause_other_text || 'Otros') : ((l.marcaje_causas && l.marcaje_causas.label) || l.cause_code),
+    }));
+
+  } else if (topic === 'ausencia') {
+    const raw = await sbJson(env,
+      `absence_report_lines?report_id=eq.${id}`
+      + `&select=id,worker_id_number,worker_name,ax_code,date_from,date_to,note,absence_types(label),absence_report_docs(doc_name)&order=id.asc`);
+    const firstType = (raw && raw[0] && raw[0].absence_types && raw[0].absence_types.label) || '';
+    if (firstType) plaTopicLabel = `Período de Ausencia — ${firstType}`;
+    plaRegistros = (raw || []).map(l => {
+      const hasDoc = (l.absence_report_docs && l.absence_report_docs.length);
+      const campos = [
+        ['Trabajador', l.worker_name], ['Cédula', l.worker_id_number],
+        ['Desde', dmy(l.date_from)], ['Hasta', dmy(l.date_to)],
+        ['Justificación', l.ax_code],
+      ];
+      if (l.note) campos.push(['Nota', l.note]);
+      if (hasDoc) {
+        const f = filesByKey[`L${l.id}`];
+        campos.push(['Documento', f ? 'adjunto (ticket DOC aparte)' : 'pendiente']);
+      }
+      return campos;
+    });
+    axLines = (raw || []).map(l => ({
+      id_number: l.worker_id_number, date_from: l.date_from, date_to: l.date_to, ax_code: l.ax_code,
+    }));
+    // DOC por linea con documento y archivo re-adjuntado.
+    (raw || []).forEach(l => {
+      const hasDoc = (l.absence_report_docs && l.absence_report_docs.length);
+      const f = filesByKey[`L${l.id}`];
+      if (hasDoc && f) {
+        const periodo = l.date_from === l.date_to ? dmy(l.date_from) : `${dmy(l.date_from)} a ${dmy(l.date_to)}`;
+        docTickets.push({
+          ced: l.worker_id_number, worker_name: l.worker_name,
+          file: f, subjectExtra: l.worker_id_number,
+          registros: [[['Trabajador', l.worker_name], ['Cédula', l.worker_id_number], ['Período', periodo], ['Justificación', l.ax_code]]],
+        });
+      }
+    });
+
+  } else if (topic === 'egreso') {
+    const raw = await sbJson(env,
+      `egress_report_lines?report_id=eq.${id}`
+      + `&select=id,worker_id_number,worker_name,report_date,real_date,has_document,doc_cause,doc_waived,reason_code,reason_comment&order=id.asc`);
+    const [reasonsRows, causesRows] = await Promise.all([
+      sbJson(env, 'egress_reasons?select=code,label'),
+      sbJson(env, 'egress_doc_causes?select=code,label'),
+    ]);
+    const reasonMap = {}; (reasonsRows || []).forEach(x => { reasonMap[x.code] = x.label; });
+    const causeMap = {}; (causesRows || []).forEach(x => { causeMap[x.code] = x.label; });
+    plaRegistros = (raw || []).map(l => {
+      const adjusted = l.real_date && l.report_date && l.real_date !== l.report_date;
+      const campos = [
+        ['Trabajador', l.worker_name], ['Cédula', l.worker_id_number],
+        ['Tipo', 'Baja (B)'], ['Fecha de egreso', dmy(l.report_date)],
+      ];
+      if (adjusted) campos.push(['Fecha real de egreso', dmy(l.real_date)]);
+      campos.push(['Motivo', reasonMap[l.reason_code] || l.reason_code || '']);
+      if (l.reason_comment) campos.push(['Comentario', l.reason_comment]);
+      if (l.has_document) {
+        const f = filesByKey[`L${l.id}`];
+        campos.push(['Carta de renuncia', f ? 'adjunta (ticket DOC aparte)' : 'pendiente']);
+      } else {
+        const suf = l.doc_waived ? '' : ' — pendiente';
+        campos.push(['Carta de renuncia', `${causeMap[l.doc_cause] || l.doc_cause || '—'}${suf}`]);
+      }
+      return campos;
+    });
+    axLines = (raw || []).map(l => {
+      const parts = String(l.worker_name).trim().split(/\s+/);
+      const apellidos = parts.length > 1 ? parts[parts.length - 1] : '';
+      const nombre = parts.length > 1 ? parts.slice(0, -1).join(' ') : parts[0];
+      return { id_number: l.worker_id_number, nombre, apellidos, fechaFin: l.report_date };
+    });
+    (raw || []).forEach(l => {
+      const f = filesByKey[`L${l.id}`];
+      if (l.has_document && f) {
+        docTickets.push({
+          ced: l.worker_id_number, worker_name: l.worker_name, file: f, subjectExtra: l.worker_id_number,
+          registros: [[['Trabajador', l.worker_name], ['Cédula', l.worker_id_number], ['Tipo', 'Baja (B)'], ['Fecha de egreso', dmy(l.report_date)], ['Documento', 'Carta de renuncia']]],
+        });
+      }
+    });
+
+  } else if (topic === 'ingreso') {
+    const raw = await sbJson(env,
+      `ingreso_report_lines?report_id=eq.${id}`
+      + `&select=id,worker_id_number,ced_kind,worker_name,first_name,second_name,last_names,cargo_code,birth_date,gender,marital_status,account_number,bank_name,email,phone,address,start_date,ingreso_report_docs(id,doc_name)&order=id.asc`);
+    const cargosRows = await sbJson(env, 'cargos?select=code,label,ax_code');
+    const cargoLbl = {}; const cargoAx = {};
+    (cargosRows || []).forEach(c => { cargoLbl[c.code] = c.label; cargoAx[c.code] = c.ax_code || c.code; });
+    const maritalLbl = { S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a' };
+    const phoneNat = (intl) => intl ? '0' + String(intl).replace(/^\+58/, '') : '—';
+    plaRegistros = (raw || []).map(l => ([
+      ['Trabajador', l.worker_name], ['Cedula', `${l.ced_kind || 'V'}-${l.worker_id_number}`],
+      ['Tipo', 'Alta (A)'], ['Cargo', cargoLbl[l.cargo_code] || l.cargo_code || ''],
+      ['Fecha de ingreso', dmy(l.start_date)], ['Fecha de nacimiento', dmy(l.birth_date)],
+      ['Genero', l.gender === 'M' ? 'Masculino' : (l.gender === 'F' ? 'Femenino' : (l.gender || '—'))],
+      ['Estado civil', maritalLbl[l.marital_status] || l.marital_status || '—'],
+      ['Cuenta', l.account_number ? `${l.account_number}${l.bank_name ? ` (${l.bank_name})` : ''}` : '—'],
+      ['Correo', l.email || '—'], ['Telefono', phoneNat(l.phone)], ['Direccion', l.address || '—'],
+    ]));
+    axLines = (raw || []).map(l => ({
+      id_number: l.worker_id_number, nombre: l.first_name || '', nombre2: l.second_name || '',
+      apellidos: l.last_names || '', correo: l.email || '', fechaIni: l.start_date || '',
+      cargo: cargoAx[l.cargo_code] || l.cargo_code || '', direccion: l.address || '',
+      fechaNac: l.birth_date || '', estCivil: l.marital_status || '', telefono: l.phone || '',
+      genero: l.gender || '', cuenta: l.account_number || '',
+    }));
+    // DOC por cada recaudo con archivo re-adjuntado.
+    (raw || []).forEach(l => {
+      (l.ingreso_report_docs || []).forEach(d => {
+        const f = filesByKey[`D${d.id}`];
+        if (f) {
+          docTickets.push({
+            ced: l.worker_id_number, worker_name: l.worker_name, file: f,
+            subjectExtra: `${l.worker_id_number} ${d.doc_name}`, topicLabelDoc: `Ingreso — ${d.doc_name}`,
+            registros: [[['Trabajador', l.worker_name], ['Cédula', `${l.ced_kind || 'V'}-${l.worker_id_number}`], ['Tipo', 'Alta (A)'], ['Recaudo', d.doc_name]]],
+          });
+        }
+      });
+    });
+
+  } else if (topic === 'modificacion') {
+    const raw = await sbJson(env,
+      `modificacion_report_lines?report_id=eq.${id}&select=worker_id_number,worker_name,changes&order=id.asc`);
+    const [cargosRows, bancosRows] = await Promise.all([
+      sbJson(env, 'cargos?select=code,label,ax_code'),
+      sbJson(env, 'bancos?select=code,name'),
+    ]);
+    const cargoLbl = {}; const cargoAx = {};
+    (cargosRows || []).forEach(c => { cargoLbl[c.code] = c.label; cargoAx[c.code] = c.ax_code || c.code; });
+    const bancoMap = {}; (bancosRows || []).forEach(b => { bancoMap[b.code] = b.name; });
+    const maritalLbl = { S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a' };
+    const phoneNat = (intl) => intl ? '0' + String(intl).replace(/^\+58/, '') : intl;
+    const cedKind = (ced) => parseInt(ced, 10) >= 80000000 ? 'E' : 'V';
+    const splitName = (full) => {
+      const parts = String(full || '').trim().toUpperCase().split(/\s+/).filter(Boolean);
+      if (parts.length > 1) return { f: parts.slice(0, -1).join(' '), s: '', l: parts[parts.length - 1] };
+      return { f: parts[0] || '', s: '', l: '' };
+    };
+    plaTopicLabel = 'Modificación de Datos';
+    plaRegistros = (raw || []).map(l => {
+      const ch = (l.changes && typeof l.changes === 'object') ? l.changes : {};
+      const campos = [
+        ['Trabajador', l.worker_name], ['Cédula', `${cedKind(l.worker_id_number)}-${l.worker_id_number}`],
+        ['Tipo', 'Modificación (M)'],
+      ];
+      if ('first_name' in ch || 'last_names' in ch) campos.push(['Nombre', [ch.first_name, ch.second_name, ch.last_names].filter(Boolean).join(' ')]);
+      if ('cargo' in ch) campos.push(['Cargo', cargoLbl[ch.cargo] || ch.cargo]);
+      if ('cuenta' in ch) campos.push(['Cuenta', `${ch.cuenta} (${bancoMap[String(ch.cuenta).slice(0, 4)] || ''})`]);
+      if ('telefono' in ch) campos.push(['Telefono', phoneNat(ch.telefono)]);
+      if ('correo' in ch) campos.push(['Correo', ch.correo]);
+      if ('direccion' in ch) campos.push(['Direccion', ch.direccion]);
+      if ('estCivil' in ch) campos.push(['Estado civil', maritalLbl[ch.estCivil] || ch.estCivil]);
+      if ('sexo' in ch) campos.push(['Sexo', ch.sexo === 'M' ? 'Masculino' : (ch.sexo === 'F' ? 'Femenino' : ch.sexo)]);
+      if ('fechaNac' in ch) campos.push(['Fecha de nacimiento', dmy(ch.fechaNac)]);
+      if ('todoTicket' in ch) campos.push(['TodoTicket', ch.todoTicket === 'S' ? 'Si' : 'No']);
+      return campos;
+    });
+    axLines = (raw || []).map(l => {
+      const ch = (l.changes && typeof l.changes === 'object') ? l.changes : {};
+      let nm;
+      if ('first_name' in ch || 'last_names' in ch) nm = { f: (ch.first_name || '').toUpperCase(), s: (ch.second_name || '').toUpperCase(), l: (ch.last_names || '').toUpperCase() };
+      else nm = splitName(l.worker_name);
+      return {
+        id_number: l.worker_id_number, nombre: nm.f, nombre2: nm.s, apellidos: nm.l,
+        correo: ('correo' in ch) ? ch.correo : '', fechaIni: '', fechaFin: '',
+        cargo: ('cargo' in ch) ? (cargoAx[ch.cargo] || ch.cargo) : '',
+        direccion: ('direccion' in ch) ? ch.direccion : '', fechaNac: ('fechaNac' in ch) ? ch.fechaNac : '',
+        estCivil: ('estCivil' in ch) ? ch.estCivil : '', telefono: ('telefono' in ch) ? ch.telefono : '',
+        genero: ('sexo' in ch) ? ch.sexo : '', cuenta: ('cuenta' in ch) ? ch.cuenta : '',
+        todoTicket: ('todoTicket' in ch) ? ch.todoTicket : '',
+      };
+    });
+  } else {
+    return json({ ok: false, error: `Tipo de reporte no soportado: ${topic}` }, 400);
+  }
+
+  const nDocs = docTickets.length;
+  const totalPieces = 1 + nDocs;
+  const result = { osticket_pla: null, tickets_ok: 0, tickets_fail: 0, ticket_errors: [] };
+
+  // Usuario-tienda (idempotente).
+  const ostUserId = await gcUser(env, base, { email: fromEmail, name: fromName, phone: ctx.phone });
+  if (ostUserId) {
+    try {
+      await sb(env, `companies?company_code=eq.${encodeURIComponent(ctx.cc)}`, {
+        method: 'PATCH',
+        body: JSON.stringify({ osticket_user_id: ostUserId, osticket_synced_at: new Date().toISOString() }),
+      });
+    } catch { /* no critico */ }
+  }
+
+  // PLA con Excel adjunto.
+  let plaAttachments;
+  try {
+    const wb = buildAxWorkbookBase64(axKind, {
+      companyDataArea: ctx.dataArea, companyName: ctx.businessName, companyAlias: ctx.cc,
+      todayYmd: ctx.ymd, reportCode: code, lines: axLines,
+    });
+    if (wb) plaAttachments = [osAttach(wb.filename, wb.base64, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')];
+  } catch (e) {
+    result.ticket_errors.push(`Plantilla AX: ${String(e.message || e)}`);
+  }
+
+  const plaBody = buildReportText({
+    pieceLabel: 'PLANTILLA', reportCode: code, piece: 1, totalPieces,
+    topicLabel: plaTopicLabel, fecha: ctx.fecha, hora: ctx.hora,
+    alias: ctx.cc, razon: ctx.businessName, zona: ctx.mallZona, marca: ctx.marca,
+    correoTienda: ctx.email, responsable: ctx.report.responsible || '', cargo: ctx.report.position || '',
+    telefono: ctx.phone, correoResp: ctx.email, registros: plaRegistros,
+  });
+
+  try {
+    const plaNum = await osticketCreateTicket(env, base, {
+      email: fromEmail, name: fromName,
+      subject: `[${code}] [1/${totalPieces}] PLA`,
+      message: plaBody, topicId, source: 'API', alert: false, autorespond: false,
+      report_code: code, report_kind: 'PLA',
+      ...(plaAttachments ? { attachments: plaAttachments } : {}),
+    });
+    result.osticket_pla = plaNum;
+    result.tickets_ok++;
+    await gcReportLink(env, base, { report_code: code, ticket_number: plaNum, kind: 'PLA', company: ctx.cc, report_type: topic, doc_total: nDocs });
+  } catch (e) {
+    result.tickets_fail++;
+    result.ticket_errors.push(`PLA: ${String(e.message || e)}`);
+  }
+
+  // DOCs (uno por archivo re-adjuntado).
+  for (let i = 0; i < docTickets.length; i++) {
+    const d = docTickets[i];
+    const piece = i + 2;
+    const docBody = buildReportText({
+      pieceLabel: 'DOCUMENTO', reportCode: code, piece, totalPieces,
+      topicLabel: d.topicLabelDoc || plaTopicLabel, fecha: ctx.fecha, hora: ctx.hora,
+      alias: ctx.cc, razon: ctx.businessName, zona: ctx.mallZona, marca: ctx.marca,
+      correoTienda: ctx.email, responsable: ctx.report.responsible || '', cargo: ctx.report.position || '',
+      telefono: ctx.phone, correoResp: ctx.email, registros: d.registros,
+    });
+    try {
+      const docNum = await osticketCreateTicket(env, base, {
+        email: fromEmail, name: fromName,
+        subject: `[${code}] [${piece}/${totalPieces}] DOC ${d.subjectExtra}`,
+        message: docBody, topicId, source: 'API', alert: false, autorespond: false,
+        report_code: code, report_kind: 'DOC',
+        attachments: [osAttach(d.file.name, d.file.b64, d.file.type)],
+      });
+      result.tickets_ok++;
+      await gcReportLink(env, base, {
+        report_code: code, ticket_number: docNum, kind: 'DOC', company: ctx.cc, report_type: topic,
+        worker_id: d.ced, worker_name: d.worker_name, doc_pos: piece, doc_total: totalPieces,
+      });
+    } catch (e) {
+      result.tickets_fail++;
+      result.ticket_errors.push(`DOC ${d.ced}: ${String(e.message || e)}`);
+    }
+  }
+
+  // Actualizar reports_log si el PLA se creo (osticket_id + email_sent +
+  // osticket_sync 'synced' porque acabamos de crear con el estado abierto).
+  if (result.osticket_pla) {
+    try {
+      await sb(env, `reports_log?id=eq.${id}`, {
+        method: 'PATCH',
+        body: JSON.stringify({
+          osticket_id: result.osticket_pla, email_sent: true,
+          osticket_sync: 'synced', osticket_sync_at: new Date().toISOString(), osticket_sync_error: null,
+        }),
+      });
+    } catch { /* el reporte ya esta en BD */ }
+  }
+
+  return json({
+    ok: !!result.osticket_pla,
+    report_id: id,
+    osticket_id: result.osticket_pla,
+    tickets_ok: result.tickets_ok,
+    tickets_fail: result.tickets_fail,
+    errors: result.ticket_errors,
   });
 }
