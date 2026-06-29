@@ -157,3 +157,9 @@ button { cursor: pointer; border: 0; }
 .att-help-list li { display: grid; grid-template-columns: 92px 1fr; align-items: start; gap: 12px; }
 .att-help-list li .pill { justify-self: start; }
 .att-help-desc { font-size: 13px; color: var(--ink-soft); line-height: 1.5; }
+
+/* Mini boton de re-sincronizar con osTicket (en la celda de Atencion, solo
+   cuando la sincronizacion fallo o esta pendiente). */
+.att-syncbtn { font-size: 11px; padding: 2px 8px; color: var(--brand);
+  border-color: #bfdbfe; background: var(--brand-bg); }
+.att-syncbtn:hover { background: #dbeafe; }

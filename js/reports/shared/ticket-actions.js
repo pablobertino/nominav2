@@ -84,6 +84,19 @@ export async function postSetAttention(user, reportIds, status, comment) {
   }).then(r => r.json()).catch(() => null);
 }
 
+/* (Re)sincroniza con osTicket el estado actual de uno o varios reportes,
+   sin cambiar el estado interno. Pasa report_ids para puntuales, o
+   mode:'pending' para todos los pendientes/fallidos del alcance. */
+export async function postSyncOsticket(user, { reportIds, mode } = {}) {
+  const payload = { action: 'sync_osticket', user };
+  if (mode) payload.mode = mode;
+  if (reportIds) payload.report_ids = reportIds;
+  return fetch('/api/reports-history', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then(r => r.json()).catch(() => null);
+}
+
 /* ---------------------------------------------------------------------
    Portapapeles + descargas.
    --------------------------------------------------------------------- */

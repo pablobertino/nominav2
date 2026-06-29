@@ -9,7 +9,7 @@ import { $ } from '../core/dom.js';
 import { showReportDetail } from './report-detail.js';
 import {
   ATT_STATES, ATT_ORDER, attPill, syncPill, attAuditText,
-  fetchTicketText, fetchTicketExcel, postSetAttention,
+  fetchTicketText, fetchTicketExcel, postSetAttention, postSyncOsticket,
   copyText, downloadText, downloadBase64, showAttHelpModal,
 } from './shared/ticket-actions.js';
 
@@ -78,7 +78,9 @@ export function renderHistory(user) {
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Historial de reportes</h1>
-      <p>${isCompany ? 'Tus reportes enviados a Capital Humano.' : isSuper ? 'Todos los reportes del grupo.' : 'Reportes de las tiendas dentro de tu alcance.'}</p></div></div>
+      <p>${isCompany ? 'Tus reportes enviados a Capital Humano.' : isSuper ? 'Todos los reportes del grupo.' : 'Reportes de las tiendas dentro de tu alcance.'}</p></div>
+      ${canManage ? `<div class="head-actions"><button class="btn" id="hSyncPending" title="Reenviar a osTicket el estado de los reportes pendientes o con error de sincronizacion">\u21BB Sincronizar pendientes</button></div>` : ''}
+    </div>
 
     <div class="hist-filters">
       <div class="fl"><label>Tipo</label>
@@ -227,10 +229,16 @@ export function renderHistory(user) {
       const auditHtml = audit ? `<div class="att-audit">${audit}</div>` : '';
       let attTd;
       if (canManage) {
+        // Boton de re-sincronizar visible solo si la sync esta fallida o
+        // pendiente (los que conviene reintentar). Reenvia el estado actual.
+        const needsSync = r.osticket_id && (r.osticket_sync === 'failed' || r.osticket_sync === 'pending');
+        const syncBtn = needsSync
+          ? `<button class="btn btn-sm att-syncbtn" data-syncone="${r.id}" title="Reintentar la sincronizacion con osTicket">\u21BB sinc.</button>`
+          : '';
         attTd = `<td><div class="att-cell">${attPill(r.attention)}
           <select class="att-row-sel" data-attsel="${r.id}" title="Cambiar estado de este reporte">
             ${ATT_ORDER.map(k => `<option value="${k}" ${k === r.attention ? 'selected' : ''}>${ATT_STATES[k].label}</option>`).join('')}
-          </select>${syncPill(r.osticket_sync)}${auditHtml}</div></td>`;
+          </select>${syncPill(r.osticket_sync)}${syncBtn}${auditHtml}</div></td>`;
       } else {
         attTd = `<td>${attPill(r.attention)}${auditHtml}</td>`;
       }
@@ -321,6 +329,14 @@ export function renderHistory(user) {
           await applyAttention([id], s.value, null, s);
         });
       });
+      // Boton re-sincronizar por fila -> reenvia el estado actual a osTicket.
+      $('#hBody').querySelectorAll('[data-syncone]').forEach(b => {
+        b.addEventListener('click', async e => {
+          e.stopPropagation();
+          const id = parseInt(b.dataset.syncone, 10);
+          await applySync({ reportIds: [id] }, b);
+        });
+      });
     }
     // Reflejar en el header el estado del checkbox "todos".
     syncHeaderCheckbox();
@@ -370,6 +386,26 @@ export function renderHistory(user) {
     ST.selected.clear();
     paintRows();
     updateSelBar();
+  }
+
+  // (Re)sincroniza con osTicket. opts = { reportIds:[...] } o { mode:'pending' }.
+  // Tras sincronizar, recarga la pagina para reflejar el nuevo osticket_sync.
+  async function applySync(opts, anchorEl) {
+    if (anchorEl) { anchorEl.disabled = true; anchorEl.dataset._t = anchorEl.textContent; anchorEl.textContent = '\u2026'; }
+    const d = await postSyncOsticket(user, opts);
+    if (anchorEl) { anchorEl.disabled = false; if (anchorEl.dataset._t) anchorEl.textContent = anchorEl.dataset._t; }
+    if (!d || !d.ok && d.failed == null) {
+      alert(d ? (d.error || 'No se pudo sincronizar.') : 'No se pudo sincronizar.');
+      return;
+    }
+    const total = d.total || 0;
+    if (total === 0) {
+      alert(d.note || 'No hay reportes con ticket para sincronizar.');
+    } else if (d.failed > 0) {
+      alert(`Sincronizados ${d.synced} de ${total}. ${d.failed} con error (revisa el indicador de cada reporte).`);
+    }
+    // Recargar para traer el osticket_sync actualizado desde el backend.
+    await load();
   }
 
   function paintPager() {
@@ -463,6 +499,12 @@ export function renderHistory(user) {
     });
     // Ayuda "?" con la explicacion de cada estado (modal legible).
     if ($('#hAttHelp')) $('#hAttHelp').addEventListener('click', showAttHelpModal);
+    // Boton global: sincronizar con osTicket todos los pendientes/fallidos
+    // del alcance (reenvia su estado actual).
+    if ($('#hSyncPending')) $('#hSyncPending').addEventListener('click', async () => {
+      if (!confirm('Reenviar a osTicket el estado de todos los reportes con sincronizacion pendiente o con error dentro de tu alcance. Continuar?')) return;
+      await applySync({ mode: 'pending' }, $('#hSyncPending'));
+    });
   }
 
   // ---- atajos (chips) ----
