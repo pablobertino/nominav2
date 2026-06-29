@@ -35,6 +35,15 @@ export function syncPill(s) {
   return '<span class="pill pill-pend" title="Sincronizando con osTicket">\u21BB sinc.</span>';
 }
 
+/* Variante COMPACTA del indicador de sync: solo un punto/icono con tooltip,
+   sin la palabra "sinc.". Para grillas densas. Devuelve '' si na/vacio. */
+export function syncDot(s) {
+  if (!s || s === 'na') return '';
+  if (s === 'synced') return '<span class="sync-dot sd-ok" title="Sincronizado con osTicket">\u2713</span>';
+  if (s === 'failed') return '<span class="sync-dot sd-fail" title="No se pudo sincronizar con osTicket">\u26A0</span>';
+  return '<span class="sync-dot sd-pend" title="Sincronizando con osTicket">\u21BB</span>';
+}
+
 /* timestamptz ISO -> 'DD/MM/AAAA HH:MM a.m./p.m.' en hora Caracas (GMT-4). */
 export function fmtStamp(iso) {
   if (!iso) return '';

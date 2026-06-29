@@ -9,7 +9,7 @@ import { $ } from '../core/dom.js';
 import { showReportDetail } from './report-detail.js';
 import { openResendModal } from './shared/resend-modal.js';
 import {
-  ATT_STATES, ATT_ORDER, attPill, syncPill, attAuditText,
+  ATT_STATES, ATT_ORDER, attPill, syncDot, attAuditText,
   fetchTicketText, fetchTicketExcel, postSetAttention, postSyncOsticket,
   copyText, downloadText, downloadBase64, showAttHelpModal,
 } from './shared/ticket-actions.js';
@@ -63,6 +63,13 @@ function originPill(r) {
   return r.source_kind === 'admin'
     ? '<span class="pill pill-origin-admin">Administrador</span>'
     : '<span class="pill pill-origin-company">Empresa</span>';
+}
+
+/* Feedback breve en un boton-icono SIN tocar su glifo: marca .is-ok o
+   .is-err por ~1.2s y lo rehabilita. */
+function flashBtn(b, ok) {
+  b.classList.add(ok ? 'is-ok' : 'is-err');
+  setTimeout(() => { b.classList.remove('is-ok', 'is-err'); b.disabled = false; }, 1200);
 }
 
 export function renderHistory(user) {
@@ -240,15 +247,15 @@ export function renderHistory(user) {
       let attTd;
       if (canManage) {
         // Boton de re-sincronizar SIEMPRE disponible cuando el reporte tiene
-        // ticket: aunque figure 'synced', el estado pudo cambiar en osTicket
-        // por otra via, asi que siempre se permite reenviar el estado actual.
+        // ticket (el estado pudo cambiar en osTicket por otra via). Compacto:
+        // selector de estado + punto de sync + boton refrescar en UNA linea.
         const syncBtn = r.osticket_id
-          ? `<button class="btn btn-sm att-syncbtn" data-syncone="${r.id}" title="Reenviar a osTicket el estado actual de este reporte">\u21BB sinc.</button>`
+          ? `<button class="icon-btn att-syncbtn" data-syncone="${r.id}" title="Reenviar a osTicket el estado actual de este reporte">\u21BB</button>`
           : '';
-        attTd = `<td><div class="att-cell">${attPill(r.attention)}
-          <select class="att-row-sel" data-attsel="${r.id}" title="Cambiar estado de este reporte">
+        attTd = `<td><div class="att-cell">
+          <select class="att-row-sel att-${r.attention}" data-attsel="${r.id}" title="Cambiar estado de este reporte">
             ${ATT_ORDER.map(k => `<option value="${k}" ${k === r.attention ? 'selected' : ''}>${ATT_STATES[k].label}</option>`).join('')}
-          </select>${syncPill(r.osticket_sync)}${syncBtn}${auditHtml}</div></td>`;
+          </select>${syncDot(r.osticket_sync)}${syncBtn}</div>${auditHtml}</td>`;
       } else {
         attTd = `<td>${attPill(r.attention)}${auditHtml}</td>`;
       }
@@ -265,9 +272,9 @@ export function renderHistory(user) {
         <td>${otPill(r, ST.osticketUrl)}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn btn-sm" data-open="${r.id}">Ver detalle</button>
-          <button class="btn btn-sm" data-copytxt="${r.id}" title="Copiar el texto del ticket">\u29C9 Copiar</button>
-          <button class="btn btn-sm" data-dltxt="${r.id}" title="Descargar el texto del ticket (.txt)">\u2913 .txt</button>
-          <button class="btn btn-sm" data-dlxls="${r.id}" title="Descargar la plantilla de Excel del ticket (.xlsx)">\u2913 Excel</button>
+          <button class="icon-btn" data-copytxt="${r.id}" title="Copiar el texto del ticket">\u29C9</button>
+          <button class="icon-btn" data-dltxt="${r.id}" title="Descargar el texto del ticket (.txt)">\u2913</button>
+          <button class="icon-btn" data-dlxls="${r.id}" title="Descargar la plantilla de Excel del ticket (.xlsx)">\u{1F4C4}</button>
           ${resend}
         </td>
       </tr>`;
@@ -292,42 +299,40 @@ export function renderHistory(user) {
     }));
 
     // Copiar el texto del ticket (regenerado con la misma regla del envio).
+    // Feedback por clase (no se toca el glifo del boton-icono).
     $('#hBody').querySelectorAll('[data-copytxt]').forEach(b => b.addEventListener('click', async e => {
       e.stopPropagation();
       const id = parseInt(b.dataset.copytxt, 10);
-      const orig = b.textContent;
-      b.disabled = true; b.textContent = '…';
+      b.disabled = true; b.classList.add('is-busy');
       const r = await getTicketText(user, id);
-      if (!r) { b.textContent = 'Error'; setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500); return; }
+      b.classList.remove('is-busy');
+      if (!r) { flashBtn(b, false); return; }
       const ok = await copyText(r.text);
-      b.textContent = ok ? '\u2713 Copiado' : 'Error';
-      setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500);
+      flashBtn(b, ok);
     }));
 
     // Descargar el texto del ticket como .txt (nombre AAAAMMDD_NNNN_ALIAS_TIPO).
     $('#hBody').querySelectorAll('[data-dltxt]').forEach(b => b.addEventListener('click', async e => {
       e.stopPropagation();
       const id = parseInt(b.dataset.dltxt, 10);
-      const orig = b.textContent;
-      b.disabled = true; b.textContent = '…';
+      b.disabled = true; b.classList.add('is-busy');
       const r = await getTicketText(user, id);
-      if (!r) { b.textContent = 'Error'; setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500); return; }
+      b.classList.remove('is-busy');
+      if (!r) { flashBtn(b, false); return; }
       downloadText(r.text, r.filename);
-      b.textContent = '\u2713';
-      setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1200);
+      flashBtn(b, true);
     }));
 
     // Descargar la plantilla de Excel del ticket (.xlsx).
     $('#hBody').querySelectorAll('[data-dlxls]').forEach(b => b.addEventListener('click', async e => {
       e.stopPropagation();
       const id = parseInt(b.dataset.dlxls, 10);
-      const orig = b.textContent;
-      b.disabled = true; b.textContent = '…';
+      b.disabled = true; b.classList.add('is-busy');
       const r = await fetchTicketExcel(user, id);
-      if (!r) { b.textContent = 'Error'; setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1500); return; }
+      b.classList.remove('is-busy');
+      if (!r) { flashBtn(b, false); return; }
       downloadBase64(r.base64, r.filename, r.mime);
-      b.textContent = '\u2713';
-      setTimeout(() => { b.textContent = orig; b.disabled = false; }, 1200);
+      flashBtn(b, true);
     }));
 
     // ---- Gestion de estado de atencion (solo admin/superadmin) ----
