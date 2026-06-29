@@ -77,21 +77,29 @@ async function storageRemove(env, paths) {
 }
 async function storageSignedUrl(env, path) {
   if (!path) return null;
-  try {
-    const res = await fetch(`${env.supabase_url}/storage/v1/object/sign/${BUCKET}/${path}`, {
-      method: 'POST',
-      headers: {
-        apikey: env.supabase_service_role,
-        Authorization: `Bearer ${env.supabase_service_role}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ expiresIn: SIGNED_TTL }),
-    });
-    if (!res.ok) return null;
-    const js = await res.json();
-    const rel = js && (js.signedURL || js.signedUrl);
-    return rel ? `${env.supabase_url}/storage/v1${rel}` : null;
-  } catch { return null; }
+  // Hasta 3 intentos: bajo carga, la primera firma puede fallar por saturacion
+  // momentanea; un reintento corto recupera la gran mayoria sin que la foto se
+  // pierda. Devuelve null solo si los 3 intentos fallan.
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      const res = await fetch(`${env.supabase_url}/storage/v1/object/sign/${BUCKET}/${path}`, {
+        method: 'POST',
+        headers: {
+          apikey: env.supabase_service_role,
+          Authorization: `Bearer ${env.supabase_service_role}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ expiresIn: SIGNED_TTL }),
+      });
+      if (res.ok) {
+        const js = await res.json();
+        const rel = js && (js.signedURL || js.signedUrl);
+        if (rel) return `${env.supabase_url}/storage/v1${rel}`;
+      }
+    } catch { /* reintenta */ }
+    if (attempt < 2) await new Promise(r => setTimeout(r, 120 * (attempt + 1)));
+  }
+  return null;
 }
 
 /* ---------- Helpers ---------- */
@@ -307,11 +315,15 @@ async function directory(env, cc, table, deptScope) {
     return out;
   }
 
-  const items = await mapWithLimit(workers || [], 6, async w => {
+  const items = await mapWithLimit(workers || [], 8, async w => {
     const m = masterByCed[w.id_number] || {};
-    const hasPhoto = !!m.photo_thumb_path;
-    const thumbUrl = hasPhoto ? await storageSignedUrl(env, m.photo_thumb_path) : null;
+    // Firmar la miniatura solo si hay ruta. has_photo se decide por la URL
+    // FIRMADA, no por la ruta: si la firma falla, has_photo queda false y la
+    // tarjeta muestra "pendiente" en vez de un "cargada" mentiroso sobre un
+    // avatar vacio. Asi el badge y la imagen son SIEMPRE coherentes.
+    const thumbUrl = m.photo_thumb_path ? await storageSignedUrl(env, m.photo_thumb_path) : null;
     const fullUrl = m.photo_full_path ? await storageSignedUrl(env, m.photo_full_path) : null;
+    const hasPhoto = !!thumbUrl;
     // Para cada dato personal: gana el master si lo tiene; si no, el del
     // roster (en empresa el Reporte AX lo trae). Asi la ficha muestra los
     // datos aunque workers_master aun no este sincronizado.
