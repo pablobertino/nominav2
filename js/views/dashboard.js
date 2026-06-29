@@ -16,6 +16,7 @@
 
 import { $ } from '../core/dom.js';
 import { gotoAviso } from './avisos.js';
+import { injectPeriodTimeline } from './period-timeline.js';
 
 /* ---------- helpers ---------- */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -470,7 +471,7 @@ async function renderCompanyDash(user) {
   $('#dashDemo').innerHTML = demoHtml(workers);
   $('#dashBdays').innerHTML = bdaysSectionHtml(today, upcoming, false);
 
-  injectPeriodBanner(user);
+  injectPeriodTimeline($('#pnlMain'));
 }
 
 /* ===================== DASHBOARD ADMIN ===================== */
@@ -584,7 +585,7 @@ async function renderAdminDash(user) {
 
   $('#dashBdays').innerHTML = bdaysSectionHtml(bdToday, bdUpcoming, true);
 
-  injectPeriodBanner(user);
+  injectPeriodTimeline($('#pnlMain'));
 }
 
 /* ===================== demografia (sexo / edades / estado civil) ===================== */

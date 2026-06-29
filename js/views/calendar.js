@@ -10,6 +10,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { injectPeriodTimeline } from './period-timeline.js';
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -166,6 +167,9 @@ function paint(periods) {
     $('#pnlMain').querySelectorAll('.cal-month').forEach(e => e.remove());
     await loadYear();
   });
+
+  // Linea de tiempo de la quincena vigente, arriba de todo.
+  injectPeriodTimeline($('#pnlMain'));
 }
 
 function cardHtml(p, today, nowId, nextId) {

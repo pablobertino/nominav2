@@ -103,6 +103,20 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, years });
     }
 
+    // Periodo vigente para la linea de tiempo del dashboard/calendario.
+    // Lectura abierta. Devuelve el periodo que contiene hoy; si no hay, el
+    // proximo por iniciar. Fechas en ISO (YYYY-MM-DD) para el front.
+    if (action === 'current') {
+      const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Caracas' }).format(new Date());
+      let rows = await sb(env,
+        `payroll_periods?range_start=lte.${today}&range_end=gte.${today}&order=range_start&limit=1&select=name,year,period_no,range_start,range_end,milestone_date,cutoff_date,pay_date`);
+      if (!rows || !rows.length) {
+        rows = await sb(env,
+          `payroll_periods?range_start=gte.${today}&order=range_start&limit=1&select=name,year,period_no,range_start,range_end,milestone_date,cutoff_date,pay_date`);
+      }
+      return json({ ok: true, today, period: (rows && rows[0]) || null });
+    }
+
     // ---- Escritura: solo superadmin ----
     const { adminId } = body;
     if (!(await isSuperadmin(env, adminId))) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
