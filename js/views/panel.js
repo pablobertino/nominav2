@@ -170,7 +170,7 @@ const NAV_EDITOR_GROUPS = [
 ];
 
 /* Etiquetas legibles de rol para la topbar. */
-const ROLE_LABELS = { superadmin: 'superadmin', admin: 'admin', editor_personal: 'editor_personal' };
+const ROLE_LABELS = { superadmin: 'superadmin', admin: 'admin', editor_personal: 'editor_personal', gestor_empresa: 'gestor de empresa' };
 
 /* ---------- shell ---------- */
 function shell(user) {
@@ -236,7 +236,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.98</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.99</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2059,6 +2059,7 @@ async function viewEquipo(user) {
         <td><span class="pill ${a.role === 'superadmin' ? 'pill-proj' : 'pill-gray'}">${ROLE_LABELS[a.role] || a.role}</span></td>
         <td>${a.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>'}</td>
         <td style="text-align:right;white-space:nowrap">
+          ${a.role === 'superadmin' ? '' : `<button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas" style="margin-right:4px">${I.sliders} Tiendas</button><button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas" style="margin-right:4px">${I.sliders} Empresas</button>`}
           <button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>
           <button class="btn btn-mini" data-act="toggle" data-id="${a.id}" data-active="${a.is_active}">${a.is_active ? 'Desactivar' : 'Activar'}</button>
         </td></tr>`).join('')}
@@ -2092,6 +2093,8 @@ function auCreateModal(user) {
   });
 }
 function auAction(ds, user) {
+  if (ds.act === 'scope-store') { openScopeEditor(user, ds.id, ds.u, 'store'); return; }
+  if (ds.act === 'scope-ent') { openScopeEditor(user, ds.id, ds.u, 'enterprise'); return; }
   if (ds.act === 'toggle') {
     auApi({ action: 'toggle', adminId: user.id, id: ds.id, isActive: !(ds.active === 'true') }).then(() => viewEquipo(user));
     return;
@@ -2174,6 +2177,7 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store') {
             : '<option value="zone">Zona</option><option value="subzone">Subzona</option><option value="company">Tienda</option>'}
         </select>
         <div class="search" style="flex:1">${I.search}<input id="scSearch" placeholder="Buscar…" autocomplete="off"></div>
+        ${SCOPE.isEnt ? `<button class="btn" id="scNewDept" title="Crear un departamento" style="white-space:nowrap;display:none">${I.plus} Nuevo departamento</button>` : ''}
       </div>
       <div id="scResults" class="sc-results"></div>
     </div>
@@ -2198,10 +2202,78 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store') {
   $('#scSave').addEventListener('click', () => saveScope(user));
 
   const lvl = $('#scLevel'), search = $('#scSearch');
-  lvl.addEventListener('change', () => { search.value = ''; renderScResults(); });
+  const newDeptBtn = $('#scNewDept');
+  // El boton "Nuevo departamento" solo aplica al nivel Departamento.
+  function syncNewDeptBtn() {
+    if (newDeptBtn) newDeptBtn.style.display = (lvl.value === 'department') ? '' : 'none';
+  }
+  lvl.addEventListener('change', () => { search.value = ''; syncNewDeptBtn(); renderScResults(); });
   search.addEventListener('input', renderScResults);
+  if (newDeptBtn) newDeptBtn.addEventListener('click', () => openScNewDeptModal(user));
+  syncNewDeptBtn();
   renderScopeLists();
   renderScResults();
+}
+
+/* Modal para crear un departamento SIN salir del editor de alcance.
+   Pide empresa (no-tienda del catalogo del scope) + nombre, crea via
+   /api/departments y recarga SCOPE.departments conservando lo ya marcado
+   (include/exclude en memoria). Tras crear, deja el nivel en Departamento y
+   filtra por la empresa elegida para ubicar el nuevo facilmente. */
+function openScNewDeptModal(user) {
+  const nonStore = (SCOPE.companies || []).filter(c => NON_STORE_TYPES.has(c.company_type));
+  if (!nonStore.length) {
+    openModal(`
+      <div class="modal-head"><span>Nuevo departamento</span><button class="modal-x" id="mX">\u2715</button></div>
+      <p class="muted" style="font-size:13px;margin:0">No hay empresas (no tiendas) en el cat\u00e1logo para crear un departamento.</p>
+      <div class="modal-actions"><button class="btn btn-primary" id="mOk">Entendido</button></div>`);
+    $('#mX').addEventListener('click', closeModal);
+    $('#mOk').addEventListener('click', closeModal);
+    return;
+  }
+  const opts = nonStore
+    .sort((a, b) => a.company_code.localeCompare(b.company_code))
+    .map(c => `<option value="${c.company_code}">${c.company_code} \u00b7 ${(c.business_name || '').replace(/"/g, '&quot;')}</option>`).join('');
+  openModal(`
+    <div class="modal-head"><span>Nuevo departamento</span><button class="modal-x" id="mX">\u2715</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 16px">Se crea el departamento en la empresa elegida; luego puedes incluirlo en el alcance.</p>
+    <label class="flabel">Empresa</label>
+    <select id="scdCompany" style="width:100%;margin-bottom:12px">${opts}</select>
+    <label class="flabel">Nombre del departamento</label>
+    <input type="text" id="scdName" placeholder="ej. Tributos" style="margin-bottom:6px">
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Crear departamento</button>
+    </div>`);
+  setTimeout(() => { const i = document.getElementById('scdName'); if (i) i.focus(); }, 30);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const cc = $('#scdCompany').value;
+    const name = $('#scdName').value.trim();
+    if (!name) { alert('Falta el nombre del departamento.'); return; }
+    const btn = $('#mOk'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Creando\u2026';
+    const r = await fetch('/api/departments', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'create', adminId: user.id, company_code: cc, name }),
+    }).then(x => x.json()).catch(() => ({ ok: false, error: 'Error de red.' }));
+    if (!r.ok) { alert(r.error || 'No se pudo crear.'); btn.disabled = false; btn.textContent = orig; return; }
+    // Recargar SOLO el catalogo de departamentos del scope, conservando lo
+    // que el usuario ya marco (include/exclude viven en memoria en SCOPE).
+    try {
+      const d = await fetch('/api/admin-scope', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'get', adminId: user.id, targetId: SCOPE.target }),
+      }).then(x => x.json());
+      if (d.ok) SCOPE.departments = d.departments || SCOPE.departments;
+    } catch { /* si falla, el nuevo aparecera al reabrir */ }
+    closeModal();
+    // Dejar el nivel en Departamento y filtrar por la empresa para ubicarlo.
+    const lvl = $('#scLevel'); if (lvl) lvl.value = 'department';
+    const search = $('#scSearch'); if (search) search.value = cc;
+    const newDeptBtn = $('#scNewDept'); if (newDeptBtn) newDeptBtn.style.display = '';
+    renderScResults();
+  });
 }
 
 // Etiqueta legible de un item de alcance

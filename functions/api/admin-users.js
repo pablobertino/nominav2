@@ -61,7 +61,7 @@ export async function onRequestPost({ request, env }) {
     if (action === 'create') {
       const { username, name, email, role, password, useTemp } = body;
       if (!username) return json({ ok: false, error: 'Falta el usuario.' }, 400);
-      const ALLOWED_ROLES = ['admin', 'superadmin', 'editor_personal'];
+      const ALLOWED_ROLES = ['admin', 'superadmin', 'editor_personal', 'gestor_empresa'];
       const r = ALLOWED_ROLES.includes(role) ? role : 'admin';
       const pwd = useTemp ? genTempPassword() : password;
       if (!pwd || pwd.length < 6) return json({ ok: false, error: 'Contraseña inválida (mín. 6).' }, 400);
