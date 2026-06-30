@@ -83,6 +83,17 @@ function ensureStyles() {
   .egr-modal select,.egr-modal textarea{width:100%;font:inherit;font-size:13px;padding:9px 11px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--ink);box-sizing:border-box}
   .egr-modal textarea{margin-top:12px;resize:vertical;min-height:64px}
   .egr-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:18px}
+  /* Confirmacion propia (no usar confirm() nativo) */
+  .egr-cfx h3{margin:0 0 6px;font-size:17px}
+  .egr-cfx p{margin:0 0 4px;color:var(--muted);font-size:13px;line-height:1.5}
+  .egr-cfx .egr-cfx-strong{color:var(--ink);font-weight:600}
+  /* Toast de confirmacion tras una accion */
+  .egr-toast-wrap{position:fixed;left:50%;bottom:26px;transform:translateX(-50%);z-index:120;display:flex;flex-direction:column;gap:8px;align-items:center;pointer-events:none}
+  .egr-toast{pointer-events:auto;display:flex;align-items:center;gap:10px;background:var(--ink,#0f172a);color:#fff;font-size:13px;font-weight:500;padding:11px 16px;border-radius:11px;box-shadow:0 10px 30px rgba(15,23,42,.28);opacity:0;transform:translateY(8px);transition:opacity .18s,transform .18s;max-width:90vw}
+  .egr-toast.show{opacity:1;transform:translateY(0)}
+  .egr-toast .egr-toast-ico{display:inline-flex;width:20px;height:20px;border-radius:999px;align-items:center;justify-content:center;font-size:12px;flex:none}
+  .egr-toast-ok .egr-toast-ico{background:#16a34a;color:#fff}
+  .egr-toast-info .egr-toast-ico{background:#2563eb;color:#fff}
   `;
   document.head.appendChild(st);
 }
@@ -91,6 +102,68 @@ function reasonLabel(code) {
   if (!code) return null;
   const r = REASONS.find(x => x.code === code);
   return r ? r.label : code;
+}
+
+/* Toast breve de confirmacion (esquina inferior). kind: 'ok' | 'info'.
+   No bloquea; se va solo a los ~2.6s. Reemplaza al alert() para los avisos
+   de exito (los errores siguen mostrandose con noticeModal, mas visible). */
+let _toastWrap = null;
+function toast(msg, kind = 'ok') {
+  if (!_toastWrap) {
+    _toastWrap = document.createElement('div');
+    _toastWrap.className = 'egr-toast-wrap';
+    document.body.appendChild(_toastWrap);
+  }
+  const t = document.createElement('div');
+  t.className = `egr-toast egr-toast-${kind === 'info' ? 'info' : 'ok'}`;
+  const ico = kind === 'info' ? '\u2139' : '\u2713';
+  t.innerHTML = `<span class="egr-toast-ico">${ico}</span><span>${esc(msg)}</span>`;
+  _toastWrap.appendChild(t);
+  requestAnimationFrame(() => t.classList.add('show'));
+  setTimeout(() => {
+    t.classList.remove('show');
+    setTimeout(() => t.remove(), 220);
+  }, 2600);
+}
+
+/* Confirmacion propia (modal), en vez de confirm() nativo. Devuelve Promise
+   que resuelve true/false. tone: 'default' | 'danger' para el boton de OK. */
+function confirmModal({ title, bodyHtml, okLabel = 'Aceptar', cancelLabel = 'Cancelar', tone = 'default' }) {
+  return new Promise(resolve => {
+    const ov = document.createElement('div');
+    ov.className = 'egr-ov';
+    const okClass = tone === 'danger' ? 'egr-b egr-b-rec' : 'egr-b egr-b-rat';
+    ov.innerHTML = `
+      <div class="egr-modal egr-cfx">
+        <h3>${esc(title || '\u00bfConfirmar?')}</h3>
+        ${bodyHtml ? `<div>${bodyHtml}</div>` : ''}
+        <div class="egr-foot">
+          <button class="egr-b" data-cfx-cancel>${esc(cancelLabel)}</button>
+          <button class="${okClass}" data-cfx-ok>${esc(okLabel)}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(ov);
+    const done = (val) => { ov.remove(); resolve(val); };
+    ov.querySelector('[data-cfx-cancel]').addEventListener('click', () => done(false));
+    ov.querySelector('[data-cfx-ok]').addEventListener('click', () => done(true));
+    ov.addEventListener('click', e => { if (e.target === ov) done(false); });
+  });
+}
+
+/* Aviso propio de error (modal de una sola accion), en vez de alert(). */
+function noticeModal(msg) {
+  const ov = document.createElement('div');
+  ov.className = 'egr-ov';
+  ov.innerHTML = `
+    <div class="egr-modal egr-cfx">
+      <h3>Aviso</h3>
+      <p>${esc(msg)}</p>
+      <div class="egr-foot"><button class="egr-b egr-b-rat" data-cfx-ok>Entendido</button></div>
+    </div>`;
+  document.body.appendChild(ov);
+  const close = () => ov.remove();
+  ov.querySelector('[data-cfx-ok]').addEventListener('click', close);
+  ov.addEventListener('click', e => { if (e.target === ov) close(); });
 }
 
 async function loadReasons() {
@@ -222,17 +295,33 @@ async function reloadAndRepaint() {
 async function doRatify(lineId) {
   const row = ALL_ROWS.find(r => r.line_id === lineId);
   if (!row) return;
-  if (!confirm(`Ratificar el motivo "${reasonLabel(row.reason_code) || ''}" indicado por la tienda?`)) return;
+  const ok = await confirmModal({
+    title: 'Ratificar egreso',
+    bodyHtml: `<p>Vas a aceptar el motivo indicado por la tienda:</p>
+      <p class="egr-cfx-strong">${esc(reasonLabel(row.reason_code) || '\u2014')}</p>
+      <p>${esc(row.worker_name)} \u00b7 ${esc(row.company_code)} \u00b7 egreso ${esc(fmtDate(row.report_date))}</p>`,
+    okLabel: '\u2713 Ratificar', tone: 'default',
+  });
+  if (!ok) return;
   const r = await apply({ action: 'apply', line_id: lineId, mode: 'ratificar' });
-  if (!r.ok) { alert(r.error || 'No se pudo ratificar.'); return; }
+  if (!r.ok) { noticeModal(r.error || 'No se pudo ratificar.'); return; }
   await reloadAndRepaint();
+  toast(`Egreso ratificado \u00b7 movido a \u201cRatificados\u201d`);
 }
 
 async function doReopen(lineId) {
-  if (!confirm('Reabrir esta línea y borrar la decisión del admin?')) return;
+  const row = ALL_ROWS.find(r => r.line_id === lineId);
+  const ok = await confirmModal({
+    title: 'Reabrir egreso',
+    bodyHtml: `<p>Esto borra la decisi\u00f3n del admin y devuelve la l\u00ednea a <span class="egr-cfx-strong">pendiente</span>.</p>
+      ${row ? `<p>${esc(row.worker_name)} \u00b7 ${esc(row.company_code)}</p>` : ''}`,
+    okLabel: 'Reabrir', tone: 'danger',
+  });
+  if (!ok) return;
   const r = await apply({ action: 'apply', line_id: lineId, mode: 'pendiente' });
-  if (!r.ok) { alert(r.error || 'No se pudo reabrir.'); return; }
+  if (!r.ok) { noticeModal(r.error || 'No se pudo reabrir.'); return; }
   await reloadAndRepaint();
+  toast('Egreso reabierto \u00b7 movido a \u201cPendientes\u201d', 'info');
 }
 
 function openRectify(lineId) {
@@ -276,10 +365,12 @@ function openRectify(lineId) {
   ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
   save.addEventListener('click', async () => {
     if (!sel.value) return;
-    save.disabled = true; save.textContent = 'Guardando…';
+    save.disabled = true; save.textContent = 'Guardando\u2026';
+    const wasRect = row.admin_reason_status === 'rectificado';
     const r = await apply({ action: 'apply', line_id: lineId, mode: 'rectificar', admin_code: sel.value, admin_comment: cmt.value });
-    if (!r.ok) { alert(r.error || 'No se pudo rectificar.'); save.disabled = false; save.textContent = 'Guardar rectificación'; return; }
+    if (!r.ok) { noticeModal(r.error || 'No se pudo rectificar.'); save.disabled = false; save.textContent = 'Guardar rectificaci\u00f3n'; return; }
     ov.remove();
     await reloadAndRepaint();
+    toast(wasRect ? 'Motivo actualizado' : 'Egreso rectificado \u00b7 movido a \u201cRectificados\u201d');
   });
 }
