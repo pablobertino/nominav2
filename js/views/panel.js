@@ -236,7 +236,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.87</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.88</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2125,6 +2125,104 @@ async function syncCfgApi(payload) {
   }).then(r => r.json());
 }
 
+/* ---------- Estado de pago: programacion del cron (config propia) ----------
+   Tarjeta DENTRO de la pantalla de Sincronizacion. Frecuencia variable por
+   dia (segun el calendario de quincenas): Dia de Calculo -> cada X min;
+   Dia de Pago -> cada Y min; resto -> 1 vez al dia a una hora. Mas un boton
+   para refrescar la tabla cache ahora mismo. Endpoint: /api/pay-sync-config. */
+async function paySyncApi(payload) {
+  return fetch('/api/pay-sync-config', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then(r => r.json());
+}
+
+async function renderPaySyncCard(user) {
+  const host = document.getElementById('payCfgCard');
+  if (!host) return;
+  const escH = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+  const res = await paySyncApi({ action: 'get', adminId: user.id });
+  if (!res.ok) {
+    host.innerHTML = `<div class="card"><p class="muted" style="margin:0">Estado de pago: no se pudo cargar la configuracion (${escH(res.error || 'error')}).</p></div>`;
+    return;
+  }
+  const cfg = res.config || { enabled: true, calc_minutes: 60, pay_minutes: 60, daily_hour: 6 };
+
+  const lastHtml = (c) => {
+    if (!c || !c.last_run_at) return '<span class="muted">Aun no se ha ejecutado.</span>';
+    const when = fmtDeadline(c.last_run_at);
+    const src = c.last_source === 'cron' ? 'automatica' : 'manual';
+    const dur = c.last_duration_ms != null ? ` \u00b7 ${(c.last_duration_ms / 1000).toFixed(1)} s` : '';
+    if (c.last_status === 'ok') {
+      const r = c.last_result || {};
+      return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="pill pill-open">\u2705 OK</span><b>${when}</b><span class="muted">${src}${dur}</span></div>`
+        + `<div style="margin-top:8px">${r.companies || 0} empresas \u00b7 ${r.rows || 0} registros (index 0 y -1)</div>`;
+    }
+    const err = (c.last_result && c.last_result.error) || 'error desconocido';
+    return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="pill pill-closed">\u274c Error</span><b>${when}</b><span class="muted">${src}${dur}</span></div>`
+      + `<div style="margin-top:8px;color:var(--danger)">${escH(err)}</div>`;
+  };
+  const hourOpts = Array.from({ length: 24 }, (_, h) =>
+    `<option value="${h}" ${cfg.daily_hour === h ? 'selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('');
+
+  host.innerHTML = `
+    <div class="card">
+      <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">Estado de pago del periodo</h3>
+        <div class="head-actions"><button class="btn" id="payRunBtn">${I.sync} Actualizar ahora</button></div>
+      </div>
+      <p class="cfg-desc" style="margin:0 0 6px">Refresca la tabla con el estado de pago (index 0 y -1) de todas las empresas; de ahi leen la tienda, el admin y el superadmin. Asi no se llama al API en cada visita.</p>
+      <div id="payLast" style="margin:0 0 12px">${lastHtml(cfg)}</div>
+      <p class="cfg-desc" style="margin:0 0 12px">El cron revisa cada ~15 min y actualiza con mayor frecuencia el <b>Dia de Calculo</b> y el <b>Dia de Pago</b> (cuando los estatus cambian); el resto de los dias, una vez al dia.</p>
+      <div class="cfg-grid3">
+        <div><label class="flabel">Estado</label>
+          <select id="payEnabled"><option value="1" ${cfg.enabled ? 'selected' : ''}>Activa</option><option value="0" ${!cfg.enabled ? 'selected' : ''}>Inactiva</option></select></div>
+        <div><label class="flabel">Dia de Calculo <span class="muted">(cada X min)</span></label>
+          <input type="number" id="payCalcMin" min="1" max="1440" value="${cfg.calc_minutes ?? 60}"></div>
+        <div><label class="flabel">Dia de Pago <span class="muted">(cada Y min)</span></label>
+          <input type="number" id="payPayMin" min="1" max="1440" value="${cfg.pay_minutes ?? 60}"></div>
+      </div>
+      <div class="cfg-grid3" style="margin-top:12px">
+        <div><label class="flabel">Resto de dias <span class="muted">(hora, Caracas)</span></label>
+          <select id="payDailyHour">${hourOpts}</select></div>
+      </div>
+      <details style="margin-top:14px">
+        <summary class="muted" style="cursor:pointer;font-size:12.5px">Opciones avanzadas</summary>
+        <div style="margin-top:10px"><label class="flabel">URL del portal <span class="muted">(donde corre /api/sync-period-pay)</span></label>
+          <input type="text" id="payUrl" value="${escH(cfg.endpoint_url || '')}" placeholder="https://nominav2.pages.dev">
+          <p class="muted" style="font-size:11.5px;margin:6px 0 0">El cron llama a esta URL para refrescar la tabla. Si se deja vacio, usa el valor por defecto.</p></div>
+      </details>
+      <div class="cfg-foot"><span class="cfg-saved" id="paySaved">\u2713 Guardado</span><button class="btn btn-primary" id="paySave">Guardar programacion</button></div>
+    </div>`;
+
+  $('#paySave').addEventListener('click', async () => {
+    const btn = $('#paySave'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Guardando\u2026';
+    const r = await paySyncApi({
+      action: 'set', adminId: user.id,
+      enabled: $('#payEnabled').value === '1',
+      calc_minutes: parseInt($('#payCalcMin').value, 10),
+      pay_minutes: parseInt($('#payPayMin').value, 10),
+      daily_hour: parseInt($('#payDailyHour').value, 10),
+      endpoint_url: $('#payUrl').value.trim(),
+    });
+    btn.disabled = false; btn.textContent = orig;
+    if (!r.ok) { alert(r.error || 'No se pudo guardar.'); return; }
+    const sv = $('#paySaved'); if (sv) { sv.style.display = 'inline'; setTimeout(() => sv.style.display = 'none', 1800); }
+  });
+
+  $('#payRunBtn').addEventListener('click', async () => {
+    const btn = $('#payRunBtn'); btn.disabled = true; const orig = btn.innerHTML; btn.textContent = 'Actualizando\u2026';
+    const last = $('#payLast'); if (last) last.innerHTML = '<span class="muted">Actualizando la tabla\u2026</span>';
+    let r;
+    try { r = await paySyncApi({ action: 'run', adminId: user.id }); }
+    catch (e) { r = { ok: false, error: String(e.message || e) }; }
+    const fresh = await paySyncApi({ action: 'get', adminId: user.id });
+    if (fresh.ok && last) last.innerHTML = lastHtml(fresh.config || {});
+    btn.disabled = false; btn.innerHTML = orig;
+    if (r && !r.ok) { alert(r.error || 'No se pudo actualizar.'); }
+  });
+}
+
 async function viewSync(user) {
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Sincronización</h1><p>Catálogo de empresas · AX → Supabase</p></div></div>`
@@ -2242,10 +2340,14 @@ async function viewSync(user) {
       <div class="cfg-foot"><button class="btn btn-primary" id="syncSave">Guardar programación</button></div>
     </div>
 
+    <div id="payCfgCard"></div>
+
     <div id="syncRuns">${runsHtml(cfgRes.runs)}</div>`;
 
   wireRunToggles();
   applySyncCooldown(cfg);
+  // Tarjeta de programacion del Estado de pago (cron aparte, config propia).
+  renderPaySyncCard(user);
 
   // Mostrar/ocultar la hora según la frecuencia elegida
   $('#syncFreq').addEventListener('change', (e) => {

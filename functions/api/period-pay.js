@@ -1,25 +1,22 @@
 /* =====================================================================
    functions/api/period-pay.js  →  POST /api/period-pay
-   Estado de pago del periodo de nomina, leido EN VIVO de la API de
-   periodos de AX (api3.grupocanaima.com). La key vive en el servidor
-   (env.canaima_apikey, header X-API-Key) y NUNCA viaja al navegador.
+   LECTURA del estado de pago del periodo desde la tabla cache
+   nomina_v2.period_pay_status (la alimenta el cron sync-period-pay).
+   NO llama al API de AX: lee de la tabla, que es lo eficiente y alimenta
+   por igual a tienda, admin y superadmin.
 
    Dos acciones:
-   - action 'card'  -> una empresa (alias). Para la tarjeta de la tienda
-                       en su Inicio. Estrategia: pedir por la fecha de hoy;
-                       si viene vacio (periodo actual sin pago calculado),
-                       reintentar con hoy-15d y marcar usedFallback=true.
-   - action 'grid'  -> todas las empresas del alcance del admin. Una sola
-                       llamada al API sin alias (filtrada por fecha), y se
-                       intersecta con get_admin_companies. superadmin = todas.
+   - action 'card'  -> una empresa (alias). Para la tarjeta de la tienda.
+                       Devuelve el registro de mayor index (0 si existe,
+                       si no -1). usedFallback=true si solo hay anterior.
+   - action 'grid'  -> todas las empresas del alcance del admin (una fila
+                       por empresa, su index mas alto). superadmin = todas.
 
-   Estados de pago (status del API): "Pago calculado" -> "Pago cargado"
-   -> "Pago enviado" -> "Pagado".
+   El refresco de la tabla lo hace el cron (frecuencia variable por dia) o
+   el boton manual de Sincronizacion -> /api/sync-period-pay.
 
-   Secrets: canaima_apikey, supabase_url, supabase_service_role
+   Secrets: supabase_url, supabase_service_role
    ===================================================================== */
-
-const PERIODOS_API = 'https://api3.grupocanaima.com/empresas/periodos/v1';
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -59,54 +56,19 @@ async function allowedCompanies(env, admin) {
   return new Set((rows || []).map(r => r.company_code));
 }
 
-/* --- Fechas (UTC, formato YYYY-MM-DD) --- */
-function ymd(d) { return d.toISOString().slice(0, 10); }
-function todayYMD() { return ymd(new Date()); }
-function minusDaysYMD(fecha, days) {
-  const d = new Date(fecha + 'T12:00:00Z');
-  d.setUTCDate(d.getUTCDate() - days);
-  return ymd(d);
-}
-
-/* --- Llama al API de periodos con una fecha; devuelve array (puede ser []) --- */
-async function fetchPeriodos(env, alias, fecha) {
-  let url = `${PERIODOS_API}?fecha=${encodeURIComponent(fecha)}`;
-  if (alias) url += `&alias=${encodeURIComponent(alias)}`;
-  const r = await fetch(url, {
-    headers: { Accept: 'application/json', 'X-API-Key': env.canaima_apikey },
-  });
-  if (!r.ok) throw new Error(`API periodos respondio ${r.status}`);
-  const j = await r.json();
-  return Array.isArray(j) ? j : (j.data || j.items || []);
-}
-
-/* Estrategia: pedir por la fecha dada; si viene vacio, reintentar con -15d
-   (periodo anterior). Devuelve { data, usedFallback }. */
-async function fetchConFallback(env, alias, fecha) {
-  let data = await fetchPeriodos(env, alias, fecha);
-  if (data.length) return { data, usedFallback: false };
-  data = await fetchPeriodos(env, alias, minusDaysYMD(fecha, 15));
-  return { data, usedFallback: true };
-}
-
-/* De varios registros, el de mayor index (0 si existe, si no -1, etc.). */
-function masReciente(rows) {
-  if (!rows || !rows.length) return null;
-  return rows.slice().sort((a, b) => parseInt(b.index, 10) - parseInt(a.index, 10))[0];
-}
-
-/* Solo los campos que el cliente necesita (no exponer de mas). */
-function slim(p) {
-  if (!p) return null;
+/* Fila de la tabla -> shape que espera el cliente (camelCase del API). */
+function slim(r) {
+  if (!r) return null;
   return {
-    alias: p.alias || null,
-    index: p.index != null ? String(p.index) : null,
-    periodoNomina: p.periodoNomina || null,
-    periodoPago: p.periodoPago || null,
-    pagoDesde: p.pagoDesde || null,
-    pagoHasta: p.pagoHasta || null,
-    status: p.status || null,
-    tag: p.tag || null,
+    alias: r.alias,
+    index: r.idx != null ? String(r.idx) : null,
+    periodoNomina: r.periodo_nomina || null,
+    periodoPago: r.periodo_pago || null,
+    pagoDesde: r.pago_desde || null,
+    pagoHasta: r.pago_hasta || null,
+    status: r.status || null,
+    tag: r.tag || null,
+    fetchedAt: r.fetched_at || null,
   };
 }
 
@@ -116,18 +78,22 @@ export async function onRequestPost({ request, env }) {
   catch { return json({ ok: false, error: 'Solicitud invalida.' }, 400); }
 
   const action = body.action || 'card';
-  const fecha = (body.fecha && /^\d{4}-\d{2}-\d{2}$/.test(body.fecha)) ? body.fecha : todayYMD();
 
   // ===== TARJETA TIENDA (una empresa) =====
   if (action === 'card') {
     const alias = (body.alias || body.companyCode || '').trim();
     if (!alias) return json({ ok: false, error: 'Falta el alias de la empresa.' }, 400);
     try {
-      const { data, usedFallback } = await fetchConFallback(env, alias, fecha);
-      const reg = masReciente(data);
+      // Traer 0 y -1 de esa empresa; ordenar por idx desc y tomar el mayor.
+      const rows = await sb(env,
+        `period_pay_status?alias=eq.${encodeURIComponent(alias)}&order=idx.desc&select=*`) || [];
+      const reg = rows[0] || null;
+      // usedFallback: el mas reciente es el anterior (idx < 0) -> el actual
+      // aun no tiene pago calculado.
+      const usedFallback = !!(reg && reg.idx != null && Number(reg.idx) < 0);
       return json({ ok: true, period: slim(reg), usedFallback });
     } catch (e) {
-      return json({ ok: false, error: 'No se pudo consultar el estado de pago: ' + e.message }, 502);
+      return json({ ok: false, error: 'No se pudo leer el estado de pago: ' + e.message }, 500);
     }
   }
 
@@ -140,22 +106,20 @@ export async function onRequestPost({ request, env }) {
     catch (e) { return json({ ok: false, error: 'Error resolviendo el alcance: ' + e.message }, 500); }
 
     try {
-      // Una sola llamada SIN alias (todas), con fallback a -15d si hoy viene vacio.
-      const { data, usedFallback } = await fetchConFallback(env, '', fecha);
-      // Quedarnos con el registro de mayor index por alias.
+      const all = await sb(env, `period_pay_status?order=alias.asc,idx.desc&select=*`) || [];
+      // Una fila por empresa: el index mas alto (ya viene ordenado idx desc).
       const byAlias = {};
-      for (const p of data) {
-        const k = p.alias;
-        if (!k) continue;
-        if (!byAlias[k] || parseInt(p.index, 10) > parseInt(byAlias[k].index, 10)) byAlias[k] = p;
+      for (const r of all) {
+        if (!byAlias[r.alias]) byAlias[r.alias] = r;
       }
       let rows = Object.values(byAlias);
-      // Filtrar por alcance (superadmin = todas).
-      if (allowed !== null) rows = rows.filter(p => allowed.has(p.alias));
+      if (allowed !== null) rows = rows.filter(r => allowed.has(r.alias));
+      // usedFallback global: si TODAS las visibles son anteriores (idx < 0).
+      const usedFallback = rows.length > 0 && rows.every(r => Number(r.idx) < 0);
       rows = rows.map(slim).sort((a, b) => (a.alias || '').localeCompare(b.alias || ''));
       return json({ ok: true, rows, usedFallback });
     } catch (e) {
-      return json({ ok: false, error: 'No se pudo consultar el estado de pago: ' + e.message }, 502);
+      return json({ ok: false, error: 'No se pudo leer el estado de pago: ' + e.message }, 500);
     }
   }
 
