@@ -616,13 +616,13 @@ function paintGrid() {
   grid.innerHTML = list.map(w => {
     const ci = avatarColor(w.id_number);
     // Tres estados de la foto en la tarjeta:
-    //  - thumb_url ya firmada -> <img>.
-    //  - has_photo pero aun sin firmar -> placeholder con spinner (lazy: se
-    //    pide al entrar en pantalla).
+    //  - thumb_url presente (esquema nuevo: URL publica directa) -> <img> ya.
+    //  - needs_sign (foto vieja sin firmar) -> spinner; el lazy-loader la
+    //    pide con 'sign' al entrar en pantalla.
     //  - sin foto -> avatar de iniciales + "Sin foto".
     const photo = w.thumb_url
       ? `<img src="${w.thumb_url}" alt="${esc(w.full_name)}" loading="lazy">`
-      : w.has_photo
+      : w.needs_sign
         ? `<div class="wp-photoload"><div class="wp-spin"></div></div>`
         : `<div class="wp-empty">`
           + `<div class="wp-initials" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>`
@@ -665,12 +665,11 @@ function paintGrid() {
   observePhotos();
 }
 
-/* ===================== LAZY-LOAD DE FOTOS =====================
-   Las fotos NO vienen firmadas del directory (seria una avalancha de firmas).
-   Cada tarjeta con foto (has_photo && sin thumb_url) muestra un spinner; al
-   entrar en pantalla, su cedula se acumula y se pide en lotes a la accion
-   'sign'. Al recibir la URL se actualiza STATE.workers y se reemplaza el
-   spinner de ESA tarjeta por la imagen, sin repintar toda la grilla. El
+/* ===================== LAZY-LOAD DE FOTOS (solo esquema viejo) =====================
+   Las fotos NUEVAS (photo_key) ya vienen con su URL publica directa en
+   thumb_url, asi que la grilla las pinta de una. Solo las fotos VIEJAS
+   (needs_sign) necesitan firma: muestran spinner y, al entrar en pantalla, se
+   piden en lotes con 'sign'. Esto queda como fallback hasta migrar todo. El
    observer se rearma en cada paintGrid (filtros/orden/busqueda repintan). */
 let PHOTO_OBS = null;
 let PHOTO_QUEUE = new Set();
@@ -682,8 +681,8 @@ function observePhotos() {
   if (!grid) return;
   if (PHOTO_OBS) { PHOTO_OBS.disconnect(); PHOTO_OBS = null; }
   if (!('IntersectionObserver' in window)) {
-    // Sin IntersectionObserver: pedir todas las pendientes de una.
-    STATE.workers.forEach(w => { if (w.has_photo && !w.thumb_url) PHOTO_QUEUE.add(String(w.id_number)); });
+    // Sin IntersectionObserver: pedir todas las viejas pendientes de una.
+    STATE.workers.forEach(w => { if (w.needs_sign && !w.thumb_url) PHOTO_QUEUE.add(String(w.id_number)); });
     flushPhotoQueue();
     return;
   }
@@ -693,16 +692,16 @@ function observePhotos() {
       if (!en.isIntersecting) return;
       const ced = String(en.target.dataset.ced || '');
       const w = STATE.workers.find(x => String(x.id_number) === ced);
-      if (w && w.has_photo && !w.thumb_url) { PHOTO_QUEUE.add(ced); any = true; }
+      if (w && w.needs_sign && !w.thumb_url) { PHOTO_QUEUE.add(ced); any = true; }
       PHOTO_OBS.unobserve(en.target);
     });
     if (any) schedulePhotoFlush();
   }, { root: null, rootMargin: '200px 0px', threshold: 0.01 });
-  // Observar solo las tarjetas con spinner (foto pendiente de firmar).
+  // Observar solo las tarjetas con spinner (foto vieja pendiente de firmar).
   grid.querySelectorAll('.wp-card').forEach(el => {
     const ced = String(el.dataset.ced || '');
     const w = STATE.workers.find(x => String(x.id_number) === ced);
-    if (w && w.has_photo && !w.thumb_url) PHOTO_OBS.observe(el);
+    if (w && w.needs_sign && !w.thumb_url) PHOTO_OBS.observe(el);
   });
 }
 
@@ -725,6 +724,7 @@ async function flushPhotoQueue() {
       w.thumb_url = p.thumb_url || null;
       w.full_url = p.full_url || null;
       w.has_photo = !!p.has_photo;
+      w.needs_sign = false;   // ya firmada (o intentada)
       applyPhotoToCard(String(ced), w);
     });
   }
@@ -773,6 +773,22 @@ async function ensurePhoto(ced) {
     w.thumb_url = p.thumb_url || null;
     w.full_url = p.full_url || null;
     w.has_photo = !!p.has_photo;
+    w.needs_sign = false;
+  }
+  return w;
+}
+
+/* Asegura que UNA persona tenga su URL grande (full) firmada, para abrir el
+   visor a 800px. En el esquema nuevo la thumb es publica pero la full se firma
+   on-demand; esto la pide. Reusa 'sign' (que devuelve thumb + full). */
+async function ensureFull(ced) {
+  const w = STATE.workers.find(x => String(x.id_number) === String(ced));
+  if (!w || !w.has_photo || w.full_url) return w;
+  const r = await api({ action: 'sign', company_code: STATE.cc, user: sessionUserPayload(STATE.user), id_numbers: [String(ced)] });
+  if (r && r.ok && r.photos && r.photos[ced]) {
+    const p = r.photos[ced];
+    if (p.thumb_url) w.thumb_url = p.thumb_url;
+    w.full_url = p.full_url || null;
   }
   return w;
 }
@@ -862,16 +878,21 @@ function openFicha(ced) {
 
   // Cabecera: foto + clic para ver grande
   const ph = host.querySelector('#ffPh');
+  // Abre el visor con la version grande. Si la full aun no esta firmada
+  // (esquema nuevo: el directory no la firma), la pide on-demand antes de abrir
+  // para mostrar 800px y no la miniatura.
+  const openBig = async () => {
+    if (host.querySelector('#wpFicha').classList.contains('editing')) return;
+    if (!w.full_url) await ensureFull(w.id_number);
+    openLightbox(w.full_url || w.thumb_url, `${w.full_name} · ${w.ced_kind}-${w.id_number}`, `${w.ced_kind}-${w.id_number}.jpg`);
+  };
   if (w.thumb_url) {
     const img = document.createElement('img'); img.src = w.thumb_url;
     ph.insertBefore(img, ph.firstChild);
     ph.classList.add('has');
-    ph.addEventListener('click', () => {
-      if (host.querySelector('#wpFicha').classList.contains('editing')) return;
-      openLightbox(w.full_url || w.thumb_url, `${w.full_name} · ${w.ced_kind}-${w.id_number}`, `${w.ced_kind}-${w.id_number}.jpg`);
-    });
+    ph.addEventListener('click', openBig);
   } else if (w.has_photo) {
-    // Foto aun no firmada (lazy): mostrar spinner y pedirla on-demand.
+    // Foto vieja aun no firmada (lazy): mostrar spinner y pedirla on-demand.
     const sp = document.createElement('div'); sp.className = 'wp-photoload'; sp.innerHTML = '<div class="wp-spin"></div>';
     ph.insertBefore(sp, ph.firstChild);
     ensurePhoto(w.id_number).then(() => {
@@ -882,10 +903,7 @@ function openFicha(ced) {
           const img = document.createElement('img'); img.src = w.thumb_url;
           ph.insertBefore(img, ph.firstChild);
           ph.classList.add('has');
-          ph.addEventListener('click', () => {
-            if (host.querySelector('#wpFicha').classList.contains('editing')) return;
-            openLightbox(w.full_url || w.thumb_url, `${w.full_name} · ${w.ced_kind}-${w.id_number}`, `${w.ced_kind}-${w.id_number}.jpg`);
-          });
+          ph.addEventListener('click', openBig);
           // El boton "Quitar foto" en modo edicion depende de w.thumb_url.
           const del = host.querySelector('#ffDel');
           if (del && host.querySelector('#wpFicha').classList.contains('editing')) del.style.display = '';
@@ -1345,6 +1363,7 @@ function openPhotoModal(ced) {
     });
     if (!r.ok) { saveB.disabled = false; saveB.textContent = 'Guardar'; alert(r.error || 'No se pudo guardar la foto.'); return; }
     w.has_photo = true;
+    w.needs_sign = false;
     w.thumb_url = r.thumb_url || w.thumb_url;
     w.full_url = r.full_url || w.full_url;
     w.photo_uploaded_by = uploadedBy;
@@ -1359,7 +1378,7 @@ function openPhotoModal(ced) {
     if (!confirm(`¿Quitar la foto de ${w.full_name}?`)) return;
     const r = await api({ action: 'remove', company_code: STATE.cc, user: sessionUserPayload(STATE.user), id_number: w.id_number });
     if (!r.ok) { alert(r.error || 'No se pudo quitar.'); return; }
-    w.has_photo = false; w.thumb_url = null; w.full_url = null;
+    w.has_photo = false; w.needs_sign = false; w.thumb_url = null; w.full_url = null;
     closeModal();
     paintGrid();
     if (CUR && CUR.id_number === w.id_number) openFicha(w.id_number);

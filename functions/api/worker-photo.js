@@ -2,28 +2,47 @@
    functions/api/worker-photo.js  →  /api/worker-photo
    Personal de una empresa: directorio + foto + perfil (workers_master).
 
-   Foto en Storage privado 'worker-photos' (dos versiones cuadradas):
-     - thumb/  300x300  (grid)
-     - full/   800x800  (visor / export a AX)
-   workers_master guarda solo rutas + metadatos, nunca el binario.
+   ESQUEMA DE FOTO (a partir de v2.80 - por photo_key uuid):
+     - miniatura (300x300) -> bucket PUBLICO 'worker-thumbs', archivo
+       "<photo_key>.jpg". URL fija y cacheable, sin firmar. El uuid no
+       revela la cedula y, al cambiar la foto, cambia el uuid -> cambia la
+       URL -> se invalida el cache. Esta es la que pinta la grilla.
+     - version grande (800x800) -> bucket PRIVADO 'worker-photos', archivo
+       "full/<photo_key>.jpg". Se firma on-demand solo al abrir el visor o
+       exportar a AX (una a la vez, nunca en masa).
+   workers_master guarda photo_key + rutas + metadatos, nunca el binario.
+
+   ESQUEMA VIEJO (fallback, sigue vigente): fotos sin photo_key, ambas en el
+   bucket privado 'worker-photos' como 'thumb/V-cedula.jpg' y
+   'full/V-cedula.jpg'. Se leen firmando on-demand. Se migran con la accion
+   'migrate_thumbs' (copia, no borra los originales).
 
    Acciones (POST {action}):
-     - directory    : roster de la empresa + estado de foto + URL firmada
-                      de la miniatura + datos de la empresa + catalogo de
-                      bancos (para mostrar/validar la cuenta).
-     - save         : sube las dos versiones (ya comprimidas) y graba
-                      rutas/metadatos en workers_master. Devuelve URLs
-                      firmadas (thumb + full).
-     - save_profile : PATCH de los datos de la persona en workers_master
-                      (nombre, nacimiento, genero, banco, contacto...).
-     - remove       : quita la foto (bucket + columnas photo_*).
+     - directory      : roster + datos empresa + bancos. Para fotos del
+                        esquema nuevo devuelve la URL publica directa de la
+                        thumb (sin firmar). Para fotos viejas (sin
+                        photo_key) marca needs_sign para que el front las
+                        pida con 'sign' (fallback lazy).
+     - sign           : firma on-demand (fallback viejo + la full del visor).
+     - save           : sube thumb->publico y full->privado con photo_key
+                        nuevo, borra la foto nueva anterior.
+     - save_profile   : PATCH de los datos de la persona.
+     - migrate_thumbs : un solo uso. Copia las fotos viejas al esquema nuevo.
+     - remove         : quita la foto (ambos buckets + columnas photo_*).
 
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
-const BUCKET = 'worker-photos';
+const BUCKET = 'worker-photos';          // privado: full (y thumb viejas)
+const PUBLIC_BUCKET = 'worker-thumbs';   // publico: miniaturas nuevas
 const SIGNED_TTL = 60 * 60;          // 1h
 const MAX_FULL_BYTES = 400 * 1024;   // tope server-side de la version grande
+
+// URL publica fija de un objeto del bucket publico (sin firmar, cacheable).
+function publicUrl(env, bucket, path) {
+  if (!path) return null;
+  return `${env.supabase_url}/storage/v1/object/public/${bucket}/${path}`;
+}
 
 const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
 
@@ -48,8 +67,12 @@ async function sb(env, path, opts = {}) {
 }
 
 /* ---------- Storage ---------- */
-async function storageUpload(env, path, bytes, mime) {
-  const res = await fetch(`${env.supabase_url}/storage/v1/object/${BUCKET}/${path}`, {
+// Sube a un bucket arbitrario (por defecto el privado). El bucket publico
+// 'worker-thumbs' se usa para miniaturas; el privado 'worker-photos' para
+// las full (y las thumb del esquema viejo).
+async function storageUpload(env, path, bytes, mime, bucket) {
+  bucket = bucket || BUCKET;
+  const res = await fetch(`${env.supabase_url}/storage/v1/object/${bucket}/${path}`, {
     method: 'POST',
     headers: {
       apikey: env.supabase_service_role,
@@ -63,9 +86,10 @@ async function storageUpload(env, path, bytes, mime) {
   if (!res.ok) throw new Error(`Storage upload ${res.status}: ${await res.text()}`);
   return true;
 }
-async function storageRemove(env, paths) {
+async function storageRemove(env, paths, bucket) {
+  bucket = bucket || BUCKET;
   if (!paths || !paths.length) return;
-  await fetch(`${env.supabase_url}/storage/v1/object/${BUCKET}`, {
+  await fetch(`${env.supabase_url}/storage/v1/object/${bucket}`, {
     method: 'DELETE',
     headers: {
       apikey: env.supabase_service_role,
@@ -75,14 +99,26 @@ async function storageRemove(env, paths) {
     body: JSON.stringify({ prefixes: paths }),
   }).catch(() => { /* no critico */ });
 }
-async function storageSignedUrl(env, path) {
+// Descarga los bytes de un objeto (para copiar entre buckets en la migracion).
+async function storageDownload(env, bucket, path) {
+  const res = await fetch(`${env.supabase_url}/storage/v1/object/${bucket}/${path}`, {
+    headers: {
+      apikey: env.supabase_service_role,
+      Authorization: `Bearer ${env.supabase_service_role}`,
+    },
+  });
+  if (!res.ok) return null;
+  return new Uint8Array(await res.arrayBuffer());
+}
+async function storageSignedUrl(env, path, bucket) {
+  bucket = bucket || BUCKET;
   if (!path) return null;
   // Hasta 3 intentos: bajo carga, la primera firma puede fallar por saturacion
   // momentanea; un reintento corto recupera la gran mayoria sin que la foto se
   // pierda. Devuelve null solo si los 3 intentos fallan.
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const res = await fetch(`${env.supabase_url}/storage/v1/object/sign/${BUCKET}/${path}`, {
+      const res = await fetch(`${env.supabase_url}/storage/v1/object/sign/${bucket}/${path}`, {
         method: 'POST',
         headers: {
           apikey: env.supabase_service_role,
@@ -117,6 +153,16 @@ function extFromMime(mime) {
   if (m.includes('png')) return 'png';
   if (m.includes('webp')) return 'webp';
   return 'jpg';
+}
+// uuid v4 (Cloudflare Workers expone crypto.randomUUID). Identificador por
+// foto: nombre del archivo en Storage = "<uuid>.jpg".
+function newPhotoKey() {
+  if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID();
+  // Fallback improbable.
+  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, c => {
+    const r = Math.random() * 16 | 0, v = c === 'x' ? r : (r & 0x3 | 0x8);
+    return v.toString(16);
+  });
 }
 
 async function userCanAccess(env, user, cc) {
@@ -182,6 +228,10 @@ export async function onRequestPost({ request, env }) {
   const user = body.user || null;
 
   try {
+    // migrate_thumbs es global (no por empresa): solo superadmin. Se valida
+    // aparte porque no requiere company_code.
+    if (action === 'migrate_thumbs') return await migrateThumbs(env, user);
+
     if (!cc) return json({ ok: false, error: 'Falta la empresa.' }, 400);
     if (!(await userCanAccess(env, user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
 
@@ -293,19 +343,25 @@ async function directory(env, cc, table, deptScope) {
       `workers_master?id_number=in.(${inList})`
       + `&select=id_number,first_name,second_name,last_names,full_name,role,birth_date,gender,marital_status,`
       + `account_number,bank_code,phone,email,address,data_id,`
-      + `photo_thumb_path,photo_full_path,photo_uploaded_by,photo_uploaded_at,updated_at`);
+      + `photo_key,photo_thumb_path,photo_full_path,photo_uploaded_by,photo_uploaded_at,updated_at`);
     (master || []).forEach(m => { masterByCed[m.id_number] = m; });
   }
 
-  // El directory NO firma URLs de foto: devuelve solo los datos (livianos) +
-  // has_photo segun la ruta en BD. Las imagenes se piden aparte, una por una,
-  // con la accion 'sign' cuando la tarjeta entra en pantalla (lazy). Asi el
-  // directory es rapido y no satura el limite de subrequests del Worker
-  // firmando 254 URLs de golpe. has_photo por ruta basta porque la imagen
-  // diferida muestra spinner y, si falla su firma puntual, reintenta sola.
+  // Resolucion de la foto en el directory:
+  //  - Esquema NUEVO (tiene photo_key): la miniatura esta en el bucket
+  //    publico como "<photo_key>.jpg" -> URL publica directa, sin firmar,
+  //    cacheable. Se devuelve en thumb_url y la grilla la pinta de una.
+  //  - Esquema VIEJO (sin photo_key pero con photo_thumb_path): la miniatura
+  //    esta en el bucket privado por cedula -> hay que firmarla. Se marca
+  //    needs_sign:true y thumb_url:null; el front la pide con 'sign' (lazy).
+  //  - Sin foto: has_photo:false.
+  // La full NUNCA se firma aqui (solo on-demand al abrir el visor).
   const items = (workers || []).map(w => {
     const m = masterByCed[w.id_number] || {};
-    const hasPhoto = !!m.photo_thumb_path;
+    const hasPhoto = !!(m.photo_key || m.photo_thumb_path);
+    const isNew = !!m.photo_key;
+    const thumbUrl = isNew ? publicUrl(env, PUBLIC_BUCKET, `${m.photo_key}.jpg`) : null;
+    const needsSign = hasPhoto && !isNew;   // foto vieja: requiere firma lazy
     // Para cada dato personal: gana el master si lo tiene; si no, el del
     // roster (en empresa el Reporte AX lo trae). Asi la ficha muestra los
     // datos aunque workers_master aun no este sincronizado.
@@ -332,8 +388,9 @@ async function directory(env, cc, table, deptScope) {
       department_id: w.department_id || null,
       department_name: w.department_id ? (deptMap[w.department_id] || null) : null,
       has_photo: hasPhoto,
-      thumb_url: null,   // se pide aparte (accion 'sign')
-      full_url: null,    // idem
+      needs_sign: needsSign,   // true = foto vieja, pedir con 'sign'
+      thumb_url: thumbUrl,     // URL publica directa (esquema nuevo) o null
+      full_url: null,          // la full se firma on-demand al abrir el visor
       photo_uploaded_by: m.photo_uploaded_by || null,
       updated_at: m.updated_at || null,
       source: w.source || 'report10',
@@ -358,11 +415,15 @@ async function directory(env, cc, table, deptScope) {
 }
 
 /* ---------- SIGN (firma de fotos a demanda) ----------
-   Recibe una o varias cedulas (id_numbers) y devuelve, para cada una, las
-   URLs firmadas de su miniatura (thumb) y version grande (full). La grilla la
-   llama por lotes pequenos cuando las tarjetas entran en pantalla (lazy), asi
-   nunca se firman 254 URLs de golpe. Valida que cada cedula pertenezca al
-   roster de la empresa y al alcance del que llama. */
+   Devuelve, para cada cedula pedida, las URLs de su miniatura y su version
+   grande. Sirve para dos casos:
+     - Foto NUEVA (photo_key): la thumb es publica (URL directa, no se firma);
+       solo se firma la full del bucket privado (para el visor).
+     - Foto VIEJA (sin photo_key): ambas estan en el bucket privado por
+       cedula y se firman (fallback del esquema anterior).
+   La grilla solo llama esto para fotos viejas (needs_sign); la ficha/visor lo
+   llama para obtener la full firmada de cualquier foto. Valida roster +
+   alcance. */
 async function signPhotos(env, cc, body, table, deptScope) {
   table = table || 'store_workers';
   const ids = Array.isArray(body.id_numbers)
@@ -379,17 +440,23 @@ async function signPhotos(env, cc, body, table, deptScope) {
     .map(r => r.id_number);
   if (!allowed.length) return json({ ok: true, photos: {} });
 
-  // Rutas de foto de esas cedulas.
+  // Datos de foto de esas cedulas (incluye photo_key para distinguir esquema).
   const allowList = allowed.map(c => `"${c}"`).join(',');
   const master = await sb(env,
-    `workers_master?id_number=in.(${allowList})&select=id_number,photo_thumb_path,photo_full_path`);
+    `workers_master?id_number=in.(${allowList})&select=id_number,photo_key,photo_thumb_path,photo_full_path`);
 
   const photos = {};
-  // Concurrencia limitada (lote ya es pequeno, pero por si acaso firmamos en
-  // serie cada par thumb/full).
   for (const m of (master || [])) {
-    const thumbUrl = m.photo_thumb_path ? await storageSignedUrl(env, m.photo_thumb_path) : null;
-    const fullUrl = m.photo_full_path ? await storageSignedUrl(env, m.photo_full_path) : null;
+    let thumbUrl = null, fullUrl = null;
+    if (m.photo_key) {
+      // Esquema nuevo: thumb publica directa; full firmada del privado.
+      thumbUrl = publicUrl(env, PUBLIC_BUCKET, `${m.photo_key}.jpg`);
+      fullUrl = await storageSignedUrl(env, `full/${m.photo_key}.jpg`, BUCKET);
+    } else {
+      // Esquema viejo: ambas firmadas del bucket privado, por su path.
+      thumbUrl = m.photo_thumb_path ? await storageSignedUrl(env, m.photo_thumb_path, BUCKET) : null;
+      fullUrl = m.photo_full_path ? await storageSignedUrl(env, m.photo_full_path, BUCKET) : null;
+    }
     photos[m.id_number] = { thumb_url: thumbUrl, full_url: fullUrl, has_photo: !!thumbUrl };
   }
   return json({ ok: true, photos });
@@ -411,22 +478,32 @@ async function savePhoto(env, cc, body, table, deptScope) {
   if (!fullB64 || !thumbB64) return json({ ok: false, error: 'Faltan las imagenes (grande y miniatura).' }, 400);
 
   const mime = String(body.mime || 'image/jpeg');
-  const ext = extFromMime(mime);
   const fullBytes = b64ToBytes(fullB64);
   const thumbBytes = b64ToBytes(thumbB64);
   if (fullBytes.length > MAX_FULL_BYTES) {
     return json({ ok: false, error: 'La foto pesa demasiado. Reintenta (deberia comprimirse sola).' }, 413);
   }
 
-  const tag = `${cedKind(ced)}-${ced}`;
-  const fullPath = `full/${tag}.${ext}`;
-  const thumbPath = `thumb/${tag}.${ext}`;
-  await storageUpload(env, fullPath, fullBytes, mime);
-  await storageUpload(env, thumbPath, thumbBytes, mime);
+  // photo_key anterior (si existia) para borrar la foto vieja despues de subir
+  // la nueva. Tambien rescatamos los paths viejos (esquema por cedula) para
+  // limpiarlos si esta persona aun estaba en el esquema anterior.
+  const prevRows = await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=id_number,photo_key,photo_thumb_path,photo_full_path`);
+  const prev = prevRows && prevRows[0] ? prevRows[0] : null;
+
+  // Esquema NUEVO: un uuid por subida. La miniatura va al bucket PUBLICO como
+  // "<key>.jpg" (URL fija, cacheable, sin firmar). La full va al bucket
+  // PRIVADO como "full/<key>.jpg" (se firma on-demand). Al cambiar la foto,
+  // cambia el uuid -> cambia la URL publica -> se invalida el cache solo.
+  const key = newPhotoKey();
+  const thumbPath = `${key}.jpg`;          // en PUBLIC_BUCKET
+  const fullPath = `full/${key}.jpg`;      // en BUCKET (privado)
+  await storageUpload(env, thumbPath, thumbBytes, mime, PUBLIC_BUCKET);
+  await storageUpload(env, fullPath, fullBytes, mime, BUCKET);
 
   const photoPatch = {
+    photo_key: key,
     photo_full_path: fullPath,
-    photo_thumb_path: thumbPath,
+    photo_thumb_path: thumbPath,   // path dentro del bucket publico
     photo_w: parseInt(body.width, 10) || null,
     photo_h: parseInt(body.height, 10) || null,
     photo_bytes: fullBytes.length,
@@ -435,8 +512,7 @@ async function savePhoto(env, cc, body, table, deptScope) {
     last_source_company: cc,
   };
 
-  const exists = await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=id_number`);
-  if (exists && exists.length) {
+  if (prev) {
     await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, { method: 'PATCH', body: JSON.stringify(photoPatch) });
   } else {
     const w = inStore[0];
@@ -450,8 +526,24 @@ async function savePhoto(env, cc, body, table, deptScope) {
     });
   }
 
-  const [thumbUrl, fullUrl] = await Promise.all([storageSignedUrl(env, thumbPath), storageSignedUrl(env, fullPath)]);
-  return json({ ok: true, id_number: ced, thumb_url: thumbUrl, full_url: fullUrl, bytes: fullBytes.length });
+  // Borrar la foto ANTERIOR de esta persona (no las historicas migradas de
+  // otros). Si tenia photo_key previo, borrar su thumb publica y su full
+  // privada. Si venia del esquema viejo (sin key), borrar sus paths por cedula
+  // del bucket privado. No es critico si falla (no rompe la subida nueva).
+  if (prev) {
+    if (prev.photo_key && prev.photo_key !== key) {
+      await storageRemove(env, [`${prev.photo_key}.jpg`], PUBLIC_BUCKET);
+      await storageRemove(env, [`full/${prev.photo_key}.jpg`], BUCKET);
+    } else if (!prev.photo_key) {
+      // Esquema viejo: thumb y full por cedula en el bucket privado.
+      await storageRemove(env, [prev.photo_thumb_path, prev.photo_full_path].filter(Boolean), BUCKET);
+    }
+  }
+
+  // Devolver la thumb publica directa y la full firmada (para refrescar la UI).
+  const thumbUrl = publicUrl(env, PUBLIC_BUCKET, thumbPath);
+  const fullUrl = await storageSignedUrl(env, fullPath, BUCKET);
+  return json({ ok: true, id_number: ced, photo_key: key, thumb_url: thumbUrl, full_url: fullUrl, bytes: fullBytes.length });
 }
 
 /* ---------- SAVE_PROFILE (datos de la persona) ---------- */
@@ -580,13 +672,21 @@ async function removePhoto(env, cc, body, table, deptScope) {
   if (!inStore || !inStore.length) return json({ ok: false, error: 'Ese trabajador no esta en la lista de la empresa.' }, 404);
   if (!deptOk(deptScope, inStore[0].department_id)) return json({ ok: false, error: 'Ese trabajador esta fuera de tu alcance (departamento).' }, 403);
 
-  const rows = await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=photo_full_path,photo_thumb_path`);
+  const rows = await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=photo_key,photo_full_path,photo_thumb_path`);
   const m = rows && rows[0];
   if (m) {
-    await storageRemove(env, [m.photo_full_path, m.photo_thumb_path].filter(Boolean));
+    if (m.photo_key) {
+      // Esquema nuevo: thumb en bucket publico, full en privado.
+      await storageRemove(env, [`${m.photo_key}.jpg`], PUBLIC_BUCKET);
+      await storageRemove(env, [`full/${m.photo_key}.jpg`], BUCKET);
+    } else {
+      // Esquema viejo: ambas por cedula en el bucket privado.
+      await storageRemove(env, [m.photo_full_path, m.photo_thumb_path].filter(Boolean), BUCKET);
+    }
     await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
       method: 'PATCH',
       body: JSON.stringify({
+        photo_key: null,
         photo_full_path: null, photo_thumb_path: null,
         photo_w: null, photo_h: null, photo_bytes: null,
         photo_uploaded_at: null, photo_uploaded_by: null,
@@ -594,4 +694,62 @@ async function removePhoto(env, cc, body, table, deptScope) {
     });
   }
   return json({ ok: true, id_number: ced, removed: true });
+}
+
+/* ---------- MIGRATE_THUMBS (un solo uso) ----------
+   Migra las fotos del esquema viejo (sin photo_key, ambas en el bucket privado
+   por cedula) al esquema nuevo: genera un photo_key, COPIA la thumb al bucket
+   publico como "<key>.jpg" y la full al privado como "full/<key>.jpg", y
+   actualiza workers_master (photo_key + paths nuevos). NO borra los archivos
+   viejos (quedan como respaldo; se limpian aparte cuando se confirme todo).
+   Solo superadmin. Procesa en serie (son pocas). Idempotente: las que ya
+   tienen photo_key se saltan. Devuelve el detalle por cedula. */
+async function migrateThumbs(env, user) {
+  // Solo superadmin.
+  if (!user || user.kind !== 'admin' || !user.id) return json({ ok: false, error: 'Solo superadmin.' }, 403);
+  const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
+  if (!a || !a.length || a[0].role !== 'superadmin') return json({ ok: false, error: 'Solo superadmin.' }, 403);
+
+  // Fotos viejas pendientes: con thumb path pero sin photo_key.
+  const pend = await sb(env,
+    `workers_master?photo_key=is.null&photo_thumb_path=not.is.null`
+    + `&select=id_number,photo_thumb_path,photo_full_path&limit=500`);
+  const list = pend || [];
+  let migrated = 0, failed = 0;
+  const errors = [];
+
+  for (const m of list) {
+    try {
+      const key = newPhotoKey();
+      // Copiar thumb vieja -> bucket publico como <key>.jpg.
+      const thumbBytes = await storageDownload(env, BUCKET, m.photo_thumb_path);
+      if (!thumbBytes) { failed++; errors.push(`${m.id_number}: thumb no encontrada`); continue; }
+      await storageUpload(env, `${key}.jpg`, thumbBytes, 'image/jpeg', PUBLIC_BUCKET);
+      // Copiar full vieja -> privado como full/<key>.jpg (si existe).
+      let newFullPath = null;
+      if (m.photo_full_path) {
+        const fullBytes = await storageDownload(env, BUCKET, m.photo_full_path);
+        if (fullBytes) {
+          newFullPath = `full/${key}.jpg`;
+          await storageUpload(env, newFullPath, fullBytes, 'image/jpeg', BUCKET);
+        }
+      }
+      // Actualizar BD: photo_key + paths nuevos. La full vieja se conserva
+      // fisicamente; si no se pudo copiar, dejamos el path viejo como respaldo.
+      await sb(env, `workers_master?id_number=eq.${encodeURIComponent(m.id_number)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          photo_key: key,
+          photo_thumb_path: `${key}.jpg`,
+          photo_full_path: newFullPath || m.photo_full_path,
+        }),
+      });
+      migrated++;
+    } catch (e) {
+      failed++;
+      errors.push(`${m.id_number}: ${String(e.message || e)}`);
+    }
+  }
+
+  return json({ ok: true, pending: list.length, migrated, failed, errors: errors.slice(0, 20) });
 }
