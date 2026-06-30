@@ -117,6 +117,55 @@ const NAV_GROUPS = [
 /* Todos los view validos para admin/super (para resaltar el activo, etc.). */
 const NAV_ALL = [...NAV_LOOSE, ...NAV_GROUPS.flatMap(g => g.items.map(it => [...it, g.superonly ? 'superonly' : null]))];
 
+/* ---------- NAVEGACION (tienda / company) ----------
+   Mismo esquema agrupado que admin/super (items sueltos arriba + grupos
+   colapsables), basado en la estructura del superadmin. Los `view` no cambian.
+   Sueltos: Inicio, Mi empresa, Calendario.
+   Personal: Personal (fichas/fotos), Documentos.
+   Reportes: Historial, Mis estadisticas.
+   Comunicacion: Avisos. */
+const NAV_COMPANY_LOOSE = [
+  ['dashboard', I.grid, 'Inicio'],
+  ['miempresa', I.store, 'Mi empresa'],
+  ['calendario', I.calendar, 'Calendario'],
+];
+const NAV_COMPANY_GROUPS = [
+  { title: 'Personal', items: [
+    ['fotos', I.photo, 'Personal'],
+    ['documentos', I.docs, 'Documentos'],
+  ] },
+  { title: 'Reportes', items: [
+    ['historial', I.history, 'Historial'],
+    ['misstats', I.chart, 'Mis estadísticas'],
+  ] },
+  { title: 'Comunicación', items: [
+    ['avisos', I.bell, 'Avisos'],
+  ] },
+];
+
+/* ---------- NAVEGACION (editor de personal) ----------
+   Mismo esquema agrupado que admin/super. Los `view` no cambian.
+   Sueltos: Inicio, Calendario.
+   Organizacion: Empresas.
+   Personal: Buscar, Carga de personal.
+   Comunicacion: Avisos. */
+const NAV_EDITOR_LOOSE = [
+  ['dashboard', I.grid, 'Inicio'],
+  ['calendario', I.calendar, 'Calendario'],
+];
+const NAV_EDITOR_GROUPS = [
+  { title: 'Organización', items: [
+    ['tiendas', I.store, 'Empresas'],
+  ] },
+  { title: 'Personal', items: [
+    ['buscar', I.search, 'Buscar'],
+    ['rostersync', I.sync, 'Carga de personal'],
+  ] },
+  { title: 'Comunicación', items: [
+    ['avisos', I.bell, 'Avisos'],
+  ] },
+];
+
 /* Etiquetas legibles de rol para la topbar. */
 const ROLE_LABELS = { superadmin: 'superadmin', admin: 'admin', editor_personal: 'editor_personal' };
 
@@ -134,32 +183,28 @@ function shell(user) {
   const initials = (nameLabel || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   const email = (user.email || '').trim().toLowerCase();
 
-  // Navegación según rol.
-  //  - company y editor_personal: lista PLANA (pocos items, sin agrupar).
-  //  - admin / superadmin: menú AGRUPADO (items sueltos arriba + grupos).
-  // navFlat: arreglo de [view, icon, label] para los roles planos.
-  // navGroups: null salvo para admin/super (alli se usa el agrupado).
-  let navFlat = null, navGroups = null;
+  // Navegación según rol. Todos los roles usan el MISMO esquema agrupado
+  // (items sueltos arriba + grupos colapsables), basado en el del superadmin.
+  //  - company:        NAV_COMPANY_LOOSE + NAV_COMPANY_GROUPS
+  //  - editor_personal:NAV_EDITOR_LOOSE  + NAV_EDITOR_GROUPS
+  //  - admin/super:    NAV_LOOSE         + NAV_GROUPS (Administracion solo super)
+  let navLoose, navGroups;
   if (isCompany) {
-    navFlat = [['dashboard', I.grid, 'Inicio'], ['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['calendario', I.calendar, 'Calendario'], ['historial', I.history, 'Historial'], ['misstats', I.chart, 'Mis estadísticas'], ['avisos', I.bell, 'Avisos']];
+    navLoose = NAV_COMPANY_LOOSE; navGroups = NAV_COMPANY_GROUPS;
   } else if (isEditorPersonal) {
-    const allow = ['dashboard', 'tiendas', 'buscar', 'calendario', 'rostersync', 'avisos'];
-    navFlat = NAV_ALL.filter(n => allow.includes(n[0])).map(n => [n[0], n[1], n[2]]);
+    navLoose = NAV_EDITOR_LOOSE; navGroups = NAV_EDITOR_GROUPS;
   } else {
-    navGroups = NAV_GROUPS.filter(g => !g.superonly || isSuper);
+    navLoose = NAV_LOOSE; navGroups = NAV_GROUPS.filter(g => !g.superonly || isSuper);
   }
 
   // Botón de navegación. data-label alimenta el tooltip del modo riel.
   const navBtn = ([id, ic, label]) =>
     `<button data-view="${id}" data-label="${label}" class="${id === currentView ? 'active' : ''}">${ic}<span>${label}</span></button>`;
 
-  // HTML del nav: plano (navFlat, dentro de .nav-loose) o agrupado
-  // (NAV_LOOSE en .nav-loose + grupos con encabezado-chevron).
+  // HTML del nav: items sueltos en .nav-loose + grupos con encabezado-chevron.
   const chev = '<svg class="nav-ghead-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
-  const navHtml = navFlat
-    ? `<div class="nav-loose">${navFlat.map(navBtn).join('')}</div>`
-    : `<div class="nav-loose">${NAV_LOOSE.map(navBtn).join('')}</div>`
-      + navGroups.map((g, gi) => `
+  const navHtml = `<div class="nav-loose">${navLoose.map(navBtn).join('')}</div>`
+    + navGroups.map((g, gi) => `
         <div class="nav-group" data-group="${gi}">
           <button type="button" class="nav-ghead" data-group-toggle="${gi}"><span class="gh-label">${g.title}</span>${chev}</button>
           <div class="nav-gitems">${g.items.map(navBtn).join('')}</div>
@@ -188,7 +233,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.85</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.86</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
