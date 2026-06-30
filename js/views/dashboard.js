@@ -17,6 +17,7 @@
 import { $ } from '../core/dom.js';
 import { gotoAviso } from './avisos.js';
 import { injectPeriodTimeline } from './period-timeline.js';
+import { injectPayCard } from './pay-card.js';
 
 /* ---------- helpers ---------- */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -472,6 +473,8 @@ async function renderCompanyDash(user) {
   $('#dashBdays').innerHTML = bdaysSectionHtml(today, upcoming, false);
 
   injectPeriodTimeline($('#pnlMain'));
+  // Tarjeta de estado de pago del periodo, JUSTO debajo de la linea de tiempo.
+  injectPayCard($('#pnlMain'), user.companyCode);
 }
 
 /* ===================== DASHBOARD ADMIN ===================== */

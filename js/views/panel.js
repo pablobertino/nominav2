@@ -24,6 +24,7 @@ import { renderPersonnelSearch } from './personnel-search.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { injectPeriodTimeline } from './period-timeline.js';
+import { renderPayGrid } from './pay-grid.js';
 import { renderDepartments } from './departments.js';
 import { axRosterPull, rosterCooldownMessage } from '../reports/shared/roster-ax.js';
 
@@ -68,6 +69,7 @@ const I = {
   bizreport: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l5-4v18"/><path d="M19 21V11l-5-4"/><path d="M9 9v0M9 13v0M9 17v0"/></svg>',
   bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
   megaphone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 13v-2z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>',
+  wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
 };
 
 /* ---------- NAVEGACION (admin / superadmin) ----------
@@ -101,6 +103,7 @@ const NAV_GROUPS = [
     ['historial', I.history, 'Historial'],
     ['estadisticas', I.chart, 'Estadísticas'],
     ['reportempresas', I.bizreport, 'Análisis'],
+    ['estadopago', I.wallet, 'Estado de pago'],
   ] },
   { title: 'Comunicación', items: [
     ['avisos', I.bell, 'Avisos'],
@@ -233,7 +236,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.86</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.87</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3405,6 +3408,7 @@ async function navigate(view, user) {
   else if (view === 'historial') renderHistory(user);
   else if (view === 'estadisticas') renderReportStats(user);
   else if (view === 'reportempresas') renderCompanyReports(user);
+  else if (view === 'estadopago') renderPayGrid(user);
   else if (view === 'misstats') renderMyStats(user);
   else if (view === 'avisos') renderAvisos(user, { mode: 'inbox' });
   else if (view === 'avisosconfig') renderAvisos(user, { mode: 'config' });
