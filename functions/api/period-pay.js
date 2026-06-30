@@ -116,8 +116,45 @@ export async function onRequestPost({ request, env }) {
       if (allowed !== null) rows = rows.filter(r => allowed.has(r.alias));
       // usedFallback global: si TODAS las visibles son anteriores (idx < 0).
       const usedFallback = rows.length > 0 && rows.every(r => Number(r.idx) < 0);
-      rows = rows.map(slim).sort((a, b) => (a.alias || '').localeCompare(b.alias || ''));
-      return json({ ok: true, rows, usedFallback });
+      rows = rows.sort((a, b) => (a.alias || '').localeCompare(b.alias || ''));
+
+      // Enriquecer con datos de la empresa (razon social, RIF, tipo, estatus,
+      // zona/subzona/concepto). Se cargan companies + catalogos una vez y se
+      // cruzan por codigo en memoria.
+      let info = {};
+      try {
+        const codes = rows.map(r => r.alias);
+        if (codes.length) {
+          const inList = codes.map(c => encodeURIComponent(c)).join(',');
+          const [comps, zones, subs, concepts] = await Promise.all([
+            sb(env, `companies?company_code=in.(${inList})&select=company_code,business_name,tax_id,company_type,status,zone_id,subzone_id,concept_id`),
+            sb(env, `zones?select=id,name`),
+            sb(env, `subzones?select=id,name`),
+            sb(env, `concepts?select=id,name`),
+          ]);
+          const zName = {}; (zones || []).forEach(z => { zName[z.id] = z.name; });
+          const sName = {}; (subs || []).forEach(s => { sName[s.id] = s.name; });
+          const cName = {}; (concepts || []).forEach(c => { cName[c.id] = c.name; });
+          (comps || []).forEach(c => {
+            info[c.company_code] = {
+              businessName: c.business_name || null,
+              taxId: c.tax_id || null,
+              type: c.company_type || null,
+              companyStatus: c.status || null,
+              zone: c.zone_id ? (zName[c.zone_id] || null) : null,
+              subzone: c.subzone_id ? (sName[c.subzone_id] || null) : null,
+              concept: c.concept_id ? (cName[c.concept_id] || null) : null,
+            };
+          });
+        }
+      } catch (_) { /* si falla el enriquecido, igual devolvemos los alias */ }
+
+      const out = rows.map(r => {
+        const s = slim(r);
+        const ci = info[r.alias] || {};
+        return { ...s, ...ci };
+      });
+      return json({ ok: true, rows: out, usedFallback });
     } catch (e) {
       return json({ ok: false, error: 'No se pudo leer el estado de pago: ' + e.message }, 500);
     }
