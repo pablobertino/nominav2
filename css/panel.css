@@ -1,7 +1,7 @@
 /* =====================================================================
    panel.css — Panel principal: sidebar + secciones
    ===================================================================== */
-.pnl-layout { display:flex; min-height:100vh; }
+.pnl-layout { display:flex; min-height:100vh; position:relative; }
 
 /* Sidebar */
 .pnl-side {
@@ -24,13 +24,15 @@
 .pnl-bver { font-size:11px; color:var(--faint); margin-top:1px; }
 
 .pnl-nav { flex:1; padding:6px 12px; display:flex; flex-direction:column; gap:1px; overflow-y:auto; }
-.pnl-nav button { display:flex; align-items:center; gap:11px; padding:9px 12px; width:100%;
-  border:0; background:none; color:var(--ink-soft); font-size:13.5px; cursor:pointer;
+.pnl-nav button { display:flex; align-items:center; gap:11px; padding:8px 12px; width:100%;
+  border:0; background:none; color:var(--ink-soft); font-size:13px; cursor:pointer;
   font-family:inherit; text-align:left; border-radius:var(--radius-sm); font-weight:500;
-  transition:background .12s,color .12s; }
-.pnl-nav button svg { width:18px; height:18px; flex-shrink:0; }
+  line-height:1.2; transition:background .12s,color .12s; }
+.pnl-nav button svg { width:17px; height:17px; flex-shrink:0; opacity:.85; }
 .pnl-nav button:hover { background:var(--border-soft); color:var(--ink); }
+.pnl-nav button:hover svg { opacity:1; }
 .pnl-nav button.active { color:var(--brand); background:var(--brand-bg); font-weight:600; }
+.pnl-nav button.active svg { opacity:1; }
 
 /* --- Menú agrupado (admin / superadmin) ---
    Items sueltos arriba (separados por una linea) + grupos colapsables. El
@@ -50,19 +52,26 @@
   transition:max-height .2s ease, opacity .15s ease; max-height:600px; opacity:1; }
 .nav-group.collapsed .nav-gitems { max-height:0; opacity:0; }
 
-/* --- Modo RIEL (solo iconos) --- */
+/* --- Modo RIEL (solo iconos) ---
+   El boton de la marca (#pnlRail) SIGUE visible en riel para poder volver
+   a expandir; solo se centra. Sin scroll horizontal: el nav no desborda. */
 .pnl-layout.rail .pnl-side { width:64px; }
 .pnl-layout.rail .pnl-bname,
 .pnl-layout.rail .pnl-bver,
 .pnl-layout.rail .pnl-nav button span,
 .pnl-layout.rail .gh-label,
 .pnl-layout.rail .nav-ghead-chev { display:none; }
-.pnl-layout.rail .pnl-brand { justify-content:center; padding:4px 0 14px; }
-.pnl-layout.rail .pnl-collapse { display:none; }
+.pnl-layout.rail .pnl-brand { justify-content:center; padding:8px 0 14px; gap:0; }
+.pnl-layout.rail .pnl-brand > .pnl-bwrap { display:none; }
+.pnl-layout.rail .pnl-logo { display:none; }
+.pnl-layout.rail .pnl-collapse { margin-left:0; }
+/* la flecha del boton apunta a la derecha (expandir) en modo riel */
+.pnl-layout.rail .pnl-collapse svg { transform:rotate(180deg); }
 .pnl-layout.rail .nav-ghead { justify-content:center; padding:8px 0 4px; pointer-events:none; }
 .pnl-layout.rail .nav-ghead::after { content:""; width:18px; height:1px; background:var(--border); }
-.pnl-layout.rail .pnl-nav { padding:6px 8px; align-items:center; }
-.pnl-layout.rail .nav-loose { padding-bottom:4px; margin-bottom:0; }
+.pnl-layout.rail .pnl-nav { padding:6px 0; align-items:center; overflow-x:hidden; }
+.pnl-layout.rail .nav-loose { padding-bottom:4px; margin-bottom:0; width:100%; align-items:center; }
+.pnl-layout.rail .nav-gitems { width:100%; align-items:center; }
 .pnl-layout.rail .pnl-nav button { justify-content:center; padding:9px 0; width:44px; position:relative; }
 .pnl-layout.rail .nav-gitems { max-height:none !important; opacity:1 !important; }
 /* tooltip al pasar el mouse en modo riel (usa data-label del boton) */
@@ -71,8 +80,13 @@
   transform:translateY(-50%); background:var(--ink); color:#fff; font-size:12px; font-weight:500;
   padding:5px 9px; border-radius:6px; white-space:nowrap; z-index:50; box-shadow:0 4px 12px rgba(0,0,0,.18); }
 
-/* --- Modo OCULTO (off-canvas) --- */
-.pnl-layout.hidden-nav .pnl-side { margin-left:-260px; }
+/* --- Modo OCULTO (off-canvas) ---
+   El sidebar sale del flujo (position:absolute) y se desplaza fuera de
+   pantalla, asi el contenido ocupa todo el ancho sin huecos. Un boton
+   flotante arriba a la izquierda lo trae de vuelta. */
+.pnl-layout.hidden-nav .pnl-side {
+  position:absolute; left:0; top:0; height:100vh;
+  transform:translateX(-100%); box-shadow:none; }
 .nav-reopen { display:none; position:fixed; top:14px; left:14px; z-index:40;
   width:40px; height:40px; border-radius:10px; border:1px solid var(--border); background:var(--surface);
   align-items:center; justify-content:center; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.08); }
