@@ -70,26 +70,52 @@ const I = {
   megaphone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 13v-2z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>',
 };
 
-const NAV = [
+/* ---------- NAVEGACION (admin / superadmin) ----------
+   Estructura agrupada para el sidebar. Los `view` (data-view) NO cambian:
+   son los identificadores internos que enruta navigate(). Solo cambian las
+   ETIQUETAS visibles y la organizacion en grupos colapsables.
+   Renombres visibles respecto a la version anterior:
+     catalogos      -> "Estructura"
+     rostersync     -> "Carga de personal"  (antes "Sinc. Personal")
+     reportempresas -> "Analisis"           (antes "Reportes de empresas")
+     avisosconfig   -> "Envio de avisos"
+   `superonly:true` en un item lo limita a superadmin.
+   Los items SUELTOS (sin grupo) van arriba; el resto en grupos. */
+const NAV_LOOSE = [
   ['dashboard', I.grid, 'Inicio'],
-  ['tiendas', I.store, 'Empresas'],
-  ['buscar', I.search, 'Buscar personal'],
-  ['catalogos', I.catalog, 'Catálogos'],
   ['usuarios', I.users, 'Usuarios'],
-  ['calendario', I.calendar, 'Calendario'],
   ['documentos', I.docs, 'Documentos'],
-  ['historial', I.history, 'Historial'],
-  ['estadisticas', I.chart, 'Estadísticas'],
-  ['reportempresas', I.bizreport, 'Reportes de empresas'],
-  ['avisos', I.bell, 'Avisos'],
-  ['avisosconfig', I.megaphone, 'Envío de avisos'],
-  ['egmotivos', I.check, 'Ratificar egresos'],
-  ['rostersync', I.photo, 'Sinc. Personal'],
-  ['equipo', I.team, 'Equipo', 'superonly'],
-  ['permisos', I.shield, 'Permisos', 'superonly'],
-  ['sync', I.sync, 'Sincronización', 'superonly'],
-  ['config', I.cog, 'Configuración', 'superonly'],
+  ['calendario', I.calendar, 'Calendario'],
 ];
+const NAV_GROUPS = [
+  { title: 'Organización', items: [
+    ['tiendas', I.store, 'Empresas'],
+    ['catalogos', I.catalog, 'Estructura'],
+  ] },
+  { title: 'Personal', items: [
+    ['buscar', I.search, 'Buscar'],
+    ['egmotivos', I.check, 'Ratificar egresos'],
+    ['rostersync', I.sync, 'Carga de personal'],
+  ] },
+  { title: 'Reportes', items: [
+    ['historial', I.history, 'Historial'],
+    ['estadisticas', I.chart, 'Estadísticas'],
+    ['reportempresas', I.bizreport, 'Análisis'],
+  ] },
+  { title: 'Comunicación', items: [
+    ['avisos', I.bell, 'Avisos'],
+    ['avisosconfig', I.megaphone, 'Envío de avisos'],
+  ] },
+  { title: 'Administración', superonly: true, items: [
+    ['equipo', I.team, 'Equipo'],
+    ['permisos', I.shield, 'Permisos'],
+    ['sync', I.sync, 'Sincronización'],
+    ['config', I.cog, 'Configuración'],
+  ] },
+];
+
+/* Todos los view validos para admin/super (para resaltar el activo, etc.). */
+const NAV_ALL = [...NAV_LOOSE, ...NAV_GROUPS.flatMap(g => g.items.map(it => [...it, g.superonly ? 'superonly' : null]))];
 
 /* Etiquetas legibles de rol para la topbar. */
 const ROLE_LABELS = { superadmin: 'superadmin', admin: 'admin', editor_personal: 'editor_personal' };
@@ -108,12 +134,35 @@ function shell(user) {
   const initials = (nameLabel || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   const email = (user.email || '').trim().toLowerCase();
 
-  // Navegación según rol: la tienda ve "Mi empresa" y su "Historial".
-  const navItems = isCompany
-    ? [['dashboard', I.grid, 'Inicio'], ['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['calendario', I.calendar, 'Calendario'], ['historial', I.history, 'Historial'], ['misstats', I.chart, 'Mis estadísticas'], ['avisos', I.bell, 'Avisos']]
-    : isEditorPersonal
-      ? NAV.filter(n => ['dashboard', 'tiendas', 'buscar', 'calendario', 'rostersync', 'avisos'].includes(n[0]))
-      : NAV.filter(n => n[3] !== 'superonly' || isSuper);
+  // Navegación según rol.
+  //  - company y editor_personal: lista PLANA (pocos items, sin agrupar).
+  //  - admin / superadmin: menú AGRUPADO (items sueltos arriba + grupos).
+  // navFlat: arreglo de [view, icon, label] para los roles planos.
+  // navGroups: null salvo para admin/super (alli se usa el agrupado).
+  let navFlat = null, navGroups = null;
+  if (isCompany) {
+    navFlat = [['dashboard', I.grid, 'Inicio'], ['miempresa', I.store, 'Mi empresa'], ['fotos', I.photo, 'Personal'], ['documentos', I.docs, 'Documentos'], ['calendario', I.calendar, 'Calendario'], ['historial', I.history, 'Historial'], ['misstats', I.chart, 'Mis estadísticas'], ['avisos', I.bell, 'Avisos']];
+  } else if (isEditorPersonal) {
+    const allow = ['dashboard', 'tiendas', 'buscar', 'calendario', 'rostersync', 'avisos'];
+    navFlat = NAV_ALL.filter(n => allow.includes(n[0])).map(n => [n[0], n[1], n[2]]);
+  } else {
+    navGroups = NAV_GROUPS.filter(g => !g.superonly || isSuper);
+  }
+
+  // Botón de navegación (igual estructura que antes: data-view + active).
+  const navBtn = ([id, ic, label]) =>
+    `<button data-view="${id}" class="${id === currentView ? 'active' : ''}">${ic}<span>${label}</span></button>`;
+
+  // HTML del nav: plano (navFlat) o agrupado (NAV_LOOSE + navGroups).
+  const chev = '<svg class="nav-ghead-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
+  const navHtml = navFlat
+    ? navFlat.map(navBtn).join('')
+    : NAV_LOOSE.map(navBtn).join('')
+      + navGroups.map((g, gi) => `
+        <div class="nav-group" data-group="${gi}">
+          <button type="button" class="nav-ghead" data-group-toggle="${gi}">${chev}<span>${g.title}</span></button>
+          <div class="nav-gitems">${g.items.map(navBtn).join('')}</div>
+        </div>`).join('');
 
   return `
   <style>
@@ -135,12 +184,10 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.80</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.81</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
-        ${navItems.map(([id, ic, label]) =>
-          `<button data-view="${id}" class="${id === currentView ? 'active' : ''}">${ic}<span>${label}</span></button>`
-        ).join('')}
+        ${navHtml}
       </nav>
     </aside>
     <div class="pnl-content">
@@ -3376,8 +3423,14 @@ export function renderPanel() {
   mount(shell(user));
   loadAvatar((user.email || '').trim().toLowerCase());
   $('#logoutBtn').addEventListener('click', () => { clearSession(); go('/login'); });
-  document.querySelectorAll('#pnlNav button').forEach(b =>
+  document.querySelectorAll('#pnlNav button[data-view]').forEach(b =>
     b.addEventListener('click', () => navigate(b.dataset.view, user)));
+  // Toggle de los grupos colapsables del menú (admin/super). Por CSP no se usa
+  // onclick inline. Todos arrancan desplegados; este boton pliega/despliega.
+  // El boton de encabezado NO tiene data-view, asi que el wiring de arriba lo
+  // ignora; aqui le damos su propio handler.
+  document.querySelectorAll('#pnlNav [data-group-toggle]').forEach(h =>
+    h.addEventListener('click', () => h.closest('.nav-group').classList.toggle('collapsed')));
   // Campanita de novedades (solo admins; si no existe el boton, no hace nada).
   initBell(user);
   // Landing unificado: ambos arrancan en el Dashboard (Inicio).
