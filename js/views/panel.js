@@ -236,7 +236,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.92</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.93</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1032,38 +1032,509 @@ function openSyncAllModal(user, rows) {
   });
 }
 
-/* ---------- VISTA: CATÁLOGOS ---------- */
+/* ---------- VISTA: ESTRUCTURA (antes "Catalogos") ----------
+   Dos vistas jerarquicas que COMPARTEN el mismo filtro de estados:
+   - Zonas y subzonas: expandir una zona muestra sus subzonas, con barra de
+     distribucion por estado y conteo de empresas.
+   - Conceptos: expandir un concepto muestra en que zonas esta presente.
+   Todo se calcula EN VIVO desde CATALOG (ya filtrado por alcance en el
+   backend). 4 stat-cards + filtro de estados (Activas por defecto) +
+   exportar (xlsx/csv/txt) respetando el filtro. No usa datos hardcodeados.
+
+   Estados reales de companies.status -> 5 claves del grafico:
+     Abierto -> open · Cerrada temporal -> temp · Cerrado -> closed
+     Proyectada -> proj · Nulo/vacio -> none */
+const EST_ST_KEYS = ['open', 'temp', 'closed', 'proj', 'none'];
+const EST_ST_LABEL = { open: 'Abierta', temp: 'Cerrada temporal', closed: 'Cerrada', proj: 'Proyectada', none: 'Sin estado' };
+const EST_ST_COLOR = { open: '#16a34a', temp: '#d97706', closed: '#dc2626', proj: '#7c3aed', none: '#cbd5e1' };
+
+/* status real -> indice 0..4 en el vector [open,temp,closed,proj,none] */
+function estStatusKey(status) {
+  const x = (status || '').toLowerCase();
+  if (x.includes('abier')) return 'open';
+  if (x.includes('cerrad') && x.includes('temp')) return 'temp';
+  if (x.includes('cerrad')) return 'closed';
+  if (x.includes('proyect')) return 'proj';
+  return 'none';   // Nulo, vacio o desconocido
+}
+
+/* Estado del modulo Estructura (persistido entre re-renders de la vista). */
+let EST_TAB = 'zonas';
+const EST_EXP_Z = new Set();   // zonas expandidas (por id)
+const EST_EXP_C = new Set();   // conceptos expandidos (por nombre)
+let EST_SEL = null;            // Set de estados seleccionados; null = init (Activas)
+
+function estSelSet() {
+  if (!EST_SEL) EST_SEL = new Set(['open', 'temp']);   // Activas por defecto
+  return EST_SEL;
+}
+function estSumSel(vec) {
+  const sel = estSelSet();
+  return EST_ST_KEYS.reduce((a, k, i) => a + (sel.has(k) ? vec[i] : 0), 0);
+}
+function estSumVecs(vecs) {
+  const out = [0, 0, 0, 0, 0];
+  vecs.forEach(v => v.forEach((n, i) => out[i] += n));
+  return out;
+}
+
+/* Construye la estructura de datos desde CATALOG (en vivo):
+   zones: [{id,name,letter, subs:[{id,name, vec:[5]}], vec:[5]}]
+   concepts: [{name, zonas:[{id,letter,name, vec:[5]}], vec:[5]}] */
+function estBuildData() {
+  const comps = CATALOG.companies || [];
+  const zById = {}; (CATALOG.zones || []).forEach(z => { zById[z.id] = z; });
+  const sById = {}; (CATALOG.subzones || []).forEach(s => { sById[s.id] = s; });
+
+  // ---- Zonas y subzonas ----
+  const zoneMap = {};   // zoneId -> { id,name,letter, subMap:{subId:{id,name,vec}}, vec, noSub:vec }
+  (CATALOG.zones || []).forEach(z => {
+    zoneMap[z.id] = { id: z.id, name: z.name, letter: z.letter || '', subMap: {}, vec: [0,0,0,0,0] };
+  });
+  comps.forEach(c => {
+    const zid = c.zoneId;
+    if (zid == null || !zoneMap[zid]) return;   // empresa sin zona valida -> fuera del arbol de zonas
+    const ki = EST_ST_KEYS.indexOf(estStatusKey(c.status));
+    zoneMap[zid].vec[ki]++;
+    const sid = c.subzoneId;
+    if (sid != null && sById[sid]) {
+      if (!zoneMap[zid].subMap[sid]) zoneMap[zid].subMap[sid] = { id: sid, name: sById[sid].name, vec: [0,0,0,0,0] };
+      zoneMap[zid].subMap[sid].vec[ki]++;
+    }
+  });
+  const zones = Object.values(zoneMap).map(z => ({
+    id: z.id, name: z.name, letter: z.letter,
+    vec: z.vec,
+    subs: Object.values(z.subMap),
+  }));
+
+  // ---- Conceptos -> zonas ----
+  // company.concept es el NOMBRE del concepto (string) o null.
+  const cMap = {};   // conceptName -> { name, zMap:{zoneId:{id,letter,name,vec}} }
+  comps.forEach(c => {
+    const cn = c.concept;
+    if (!cn) return;   // sin concepto -> fuera de la vista de conceptos
+    if (!cMap[cn]) cMap[cn] = { name: cn, zMap: {} };
+    const zid = c.zoneId;
+    const z = zid != null ? zById[zid] : null;
+    const zkey = z ? z.id : '__none__';
+    if (!cMap[cn].zMap[zkey]) {
+      cMap[cn].zMap[zkey] = { id: zkey, letter: z ? (z.letter || '') : '', name: z ? z.name : 'Sin zona', vec: [0,0,0,0,0] };
+    }
+    const ki = EST_ST_KEYS.indexOf(estStatusKey(c.status));
+    cMap[cn].zMap[zkey].vec[ki]++;
+  });
+  const concepts = Object.values(cMap).map(c => ({
+    name: c.name,
+    zonas: Object.values(c.zMap),
+    vec: estSumVecs(Object.values(c.zMap).map(z => z.vec)),
+  }));
+
+  return { zones, concepts };
+}
+
+function estEnsureStyles() {
+  if (document.getElementById('estStyles')) return;
+  const st = document.createElement('style');
+  st.id = 'estStyles';
+  st.textContent = `
+  .est-tabs{display:flex;gap:4px;border-bottom:0;margin-bottom:0;}
+  .est-tab{font-family:inherit;font-size:13.5px;font-weight:600;padding:9px 16px;border:0;background:none;
+    color:var(--muted,#64748b);cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px;display:flex;align-items:center;gap:7px;}
+  .est-tab:hover{color:var(--ink,#0f172a);}
+  .est-tab.on{color:var(--brand,#2563eb);border-bottom-color:var(--brand,#2563eb);}
+  .est-tab .cnt{font-size:11px;background:var(--border-soft,#f1f4f8);color:var(--muted,#64748b);border-radius:20px;padding:1px 7px;font-weight:700;}
+  .est-tab.on .cnt{background:var(--brand-bg,#eff4ff);color:var(--brand,#2563eb);}
+  .est-tabbar{display:flex;align-items:flex-end;justify-content:space-between;gap:12px;flex-wrap:wrap;
+    border-bottom:1px solid var(--border,#e6eaf0);margin-bottom:14px;}
+  .est-bar-wrap{display:flex;align-items:center;gap:10px;min-width:160px;}
+  .est-bar-track{flex:1;height:9px;background:var(--border-soft,#f1f4f8);border-radius:6px;overflow:hidden;display:flex;}
+  .est-bar-seg{height:100%;}
+  .est-bar-n{font-weight:700;font-variant-numeric:tabular-nums;min-width:24px;text-align:right;}
+  .est-pchip{display:inline-flex;align-items:center;justify-content:center;height:26px;border-radius:8px;
+    font-weight:700;font-size:12px;margin-right:10px;flex-shrink:0;padding:0 8px;}
+  .est-pchip.zone{min-width:26px;background:var(--brand-bg,#eff4ff);color:var(--brand,#2563eb);}
+  .est-pchip.concept{background:#f3eefe;color:#7c3aed;}
+  .est-pname{font-weight:600;}
+  .est-chev{width:13px;height:13px;stroke:var(--faint,#94a3b8);transition:transform .15s;margin-right:4px;vertical-align:middle;}
+  tr.est-open .est-chev{transform:rotate(90deg);}
+  tr.est-exp{cursor:pointer;}
+  tr.est-exp:hover .est-pname{color:var(--brand,#2563eb);}
+  tr.est-sub{background:#fbfcfe;}
+  tr.est-sub td{padding-top:8px;padding-bottom:8px;font-size:13px;color:var(--ink-soft,#475569);}
+  tr.est-sub td:first-child{padding-left:48px;position:relative;}
+  tr.est-sub.est-hidden{display:none;}
+  .est-subtag{display:inline-flex;align-items:center;justify-content:center;min-width:30px;height:24px;
+    background:#eef2f8;color:var(--ink-soft,#475569);font-size:12px;font-weight:700;border-radius:7px;padding:0 7px;margin-right:9px;}
+  .est-legend{display:flex;gap:16px;flex-wrap:wrap;margin:12px 2px 0;font-size:12px;color:var(--muted,#64748b);}
+  .est-legend span{display:inline-flex;align-items:center;gap:6px;}
+  .est-legend i{width:10px;height:10px;border-radius:3px;display:inline-block;}
+  .est-ms-menu{position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--border,#e6eaf0);
+    border-radius:10px;box-shadow:0 12px 28px rgba(15,23,42,.14);z-index:30;min-width:230px;padding:6px;}
+  .est-ms-quick{display:flex;gap:4px;padding:4px;}
+  .est-ms-quick button{flex:1;font-family:inherit;font-size:12px;font-weight:600;padding:6px 4px;border-radius:7px;
+    border:1px solid var(--border,#e6eaf0);background:#fff;color:var(--ink-soft,#475569);cursor:pointer;}
+  .est-ms-quick button:hover{background:var(--brand-bg,#eff4ff);color:var(--brand,#2563eb);border-color:var(--brand-bg,#eff4ff);}
+  .est-ms-sep{height:1px;background:var(--border,#e6eaf0);margin:6px 2px;}
+  .est-ms-opt{display:flex;align-items:center;gap:9px;padding:7px 8px;border-radius:7px;cursor:pointer;font-size:13px;}
+  .est-ms-opt:hover{background:var(--border-soft,#f1f4f8);}
+  .est-ms-opt .dot{width:9px;height:9px;border-radius:3px;flex-shrink:0;}
+  .est-ms-opt span.lbl{flex:1;}
+  .est-ms-opt .est-ms-count{color:var(--muted,#64748b);font-size:12px;font-variant-numeric:tabular-nums;}
+  `;
+  document.head.appendChild(st);
+}
+
+/* barra de distribucion por estado (solo los estados seleccionados). */
+function estSegHtml(vec, maxRef) {
+  const sel = estSelSet();
+  const total = estSumSel(vec);
+  if (!total) return '<div class="est-bar-track"></div>';
+  const segs = EST_ST_KEYS.map((k, i) => {
+    if (!sel.has(k) || !vec[i]) return '';
+    return `<div class="est-bar-seg" style="width:${vec[i] / maxRef * 100}%;background:${EST_ST_COLOR[k]}" title="${EST_ST_LABEL[k]}: ${vec[i]}"></div>`;
+  }).join('');
+  return `<div class="est-bar-track">${segs}</div>`;
+}
+
+let EST_DATA = null;   // { zones, concepts } construido en vivo
+
+function estStLabelText() {
+  const sel = estSelSet();
+  const n = sel.size;
+  if (n === 0) return 'Sin estados';
+  if (n === 5) return 'Todos';
+  if (n === 2 && sel.has('open') && sel.has('temp')) return 'Activas';
+  if (n === 1) return EST_ST_LABEL[[...sel][0]];
+  return `${n} estados`;
+}
+
 function viewCatalogos() {
+  estEnsureStyles();
+  EST_DATA = estBuildData();
+  const sel = estSelSet();
+
+  // Conteos por estado (universo completo, para el menu de estados).
+  const allVec = estSumVecs(EST_DATA.zones.map(z => z.vec));
+  // Empresas sin zona no entran en el arbol de zonas; para el total de
+  // empresas del filtro usamos el conteo real sobre companies.
+  const compByKey = [0,0,0,0,0];
+  (CATALOG.companies || []).forEach(c => { compByKey[EST_ST_KEYS.indexOf(estStatusKey(c.status))]++; });
+
   $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Catálogos</h1>
-      <p>${CATALOG.zones.length} zonas · ${CATALOG.subzones.length} subzonas · ${CATALOG.concepts.length} conceptos</p></div></div>
-    <div class="card">
-      <h3>Zonas y subzonas</h3>
-      <div id="treeBox"></div>
+    <div class="pnl-head">
+      <div><h1>Estructura</h1><p id="estSubtitle">Zonas y subzonas de la organizaci\u00f3n</p></div>
+      <div class="head-actions">
+        <div class="export-wrap">
+          <button class="btn" id="estExportBtn">Exportar \u25be</button>
+          <div class="export-menu" id="estExportMenu" hidden>
+            <button data-fmt="xlsx">Excel (.xlsx)</button>
+            <button data-fmt="csv">CSV (.csv)</button>
+            <button data-fmt="txt">Texto (.txt)</button>
+          </div>
+        </div>
+      </div>
     </div>
-    <div class="card">
-      <h3>Conceptos <span class="muted">(${CATALOG.concepts.length})</span></h3>
-      <div class="concepts">${CATALOG.concepts.map(c => `<span class="concept-tag">${c.name}</span>`).join('')}</div>
+    <div id="estStats"></div>
+    <div class="est-tabbar">
+      <div class="est-tabs">
+        <button class="est-tab on" data-tab="zonas">Zonas y subzonas <span class="cnt">${EST_DATA.zones.length}</span></button>
+        <button class="est-tab" data-tab="conceptos">Conceptos <span class="cnt">${EST_DATA.concepts.length}</span></button>
+      </div>
+      <div class="ms-wrap" id="estStWrap" style="position:relative;margin-bottom:8px">
+        <button class="ms-toggle" id="estStBtn"><span style="color:var(--faint,#94a3b8);font-weight:600;font-size:12px;text-transform:uppercase;letter-spacing:.04em;margin-right:2px">Estados:</span> <span id="estStLabel">${estStLabelText()}</span>
+          ${I.chevron.replace('<svg', '<svg class="ms-caret"')}</button>
+        <div class="est-ms-menu" id="estStMenu" hidden>
+          <div class="est-ms-quick">
+            <button data-q="active">Activas</button>
+            <button data-q="all">Todos</button>
+            <button data-q="none">Ninguno</button>
+          </div>
+          <div class="est-ms-sep"></div>
+          ${EST_ST_KEYS.map((k, i) => `<label class="est-ms-opt"><input type="checkbox" value="${k}" ${sel.has(k) ? 'checked' : ''}><i class="dot" style="background:${EST_ST_COLOR[k]}"></i><span class="lbl">${EST_ST_LABEL[k]}</span><span class="est-ms-count">${compByKey[i]}</span></label>`).join('')}
+        </div>
+      </div>
+    </div>
+    <div id="estTabZonas">
+      <div class="pnl-filters">
+        <div class="search">${I.search}<input id="estZSearch" placeholder="Buscar zona, subzona o c\u00f3digo\u2026"></div>
+        <select id="estZSort">
+          <option value="emp_desc">Orden: M\u00e1s empresas</option>
+          <option value="emp_asc">Orden: Menos empresas</option>
+          <option value="name">Orden: Nombre (A\u2192Z)</option>
+          <option value="letter">Orden: Letra</option>
+        </select>
+        <button class="btn" id="estZExpand">Expandir todo</button>
+      </div>
+      <div class="tablebox scroll-x">
+        <table><thead><tr><th>Zona</th><th style="text-align:right">Subzonas</th><th style="text-align:right">Empresas</th><th>Distribuci\u00f3n por estado</th></tr></thead>
+        <tbody id="estZBody"></tbody></table>
+      </div>
+    </div>
+    <div id="estTabConceptos" hidden>
+      <div class="pnl-filters">
+        <div class="search">${I.search}<input id="estCSearch" placeholder="Buscar concepto o zona\u2026"></div>
+        <select id="estCSort">
+          <option value="emp_desc">Orden: M\u00e1s empresas</option>
+          <option value="name">Orden: Nombre (A\u2192Z)</option>
+        </select>
+        <button class="btn" id="estCExpand">Expandir todo</button>
+      </div>
+      <div class="tablebox scroll-x">
+        <table><thead><tr><th>Concepto</th><th style="text-align:right">Zonas</th><th style="text-align:right">Empresas</th><th>Distribuci\u00f3n por estado</th></tr></thead>
+        <tbody id="estCBody"></tbody></table>
+      </div>
+    </div>
+    <div class="est-legend">
+      ${EST_ST_KEYS.map(k => `<span><i style="background:${EST_ST_COLOR[k]}"></i>${EST_ST_LABEL[k]}</span>`).join('')}
     </div>`;
 
-  const tree = $('#treeBox');
-  CATALOG.zones.forEach(z => {
-    const subs = CATALOG.subzones.filter(s => s.zone_id === z.id);
-    const total = CATALOG.companies.filter(c => c.zoneId === z.id).length;
-    const wrap = document.createElement('div');
-    wrap.innerHTML = `
-      <div class="tree-zone">
-        <span class="zname">${I.chevron} ${z.name} <span class="muted">(${z.letter || ''})</span></span>
-        <span class="muted">${subs.length} sub · ${total}</span>
-      </div>
-      <div class="tree-subs">${subs.map(s => {
-        const n = CATALOG.companies.filter(c => c.subzoneId === s.id).length;
-        return `<div class="tree-sub"><span>${s.name}</span><span class="muted">${n}</span></div>`;
-      }).join('')}</div>`;
-    const head = wrap.querySelector('.tree-zone'), body = wrap.querySelector('.tree-subs');
-    head.addEventListener('click', () => { head.classList.toggle('open'); body.classList.toggle('open'); });
-    tree.appendChild(wrap);
+  // Pestanas
+  $('#pnlMain').querySelectorAll('.est-tab').forEach(b =>
+    b.addEventListener('click', () => {
+      EST_TAB = b.dataset.tab;
+      $('#pnlMain').querySelectorAll('.est-tab').forEach(x => x.classList.toggle('on', x === b));
+      $('#estTabZonas').hidden = EST_TAB !== 'zonas';
+      $('#estTabConceptos').hidden = EST_TAB !== 'conceptos';
+      $('#estSubtitle').textContent = EST_TAB === 'zonas'
+        ? 'Zonas y subzonas de la organizaci\u00f3n'
+        : 'Conceptos y las zonas donde est\u00e1n presentes';
+    }));
+  // estado inicial de pestana
+  $('#pnlMain').querySelectorAll('.est-tab').forEach(b => b.classList.toggle('on', b.dataset.tab === EST_TAB));
+  $('#estTabZonas').hidden = EST_TAB !== 'zonas';
+  $('#estTabConceptos').hidden = EST_TAB !== 'conceptos';
+  $('#estSubtitle').textContent = EST_TAB === 'zonas'
+    ? 'Zonas y subzonas de la organizaci\u00f3n' : 'Conceptos y las zonas donde est\u00e1n presentes';
+
+  // Menu de estados (compartido)
+  const stBtn = $('#estStBtn'), stMenu = $('#estStMenu');
+  stBtn.addEventListener('click', (e) => { e.stopPropagation(); stMenu.hidden = !stMenu.hidden; });
+  stMenu.addEventListener('click', (e) => e.stopPropagation());
+  stMenu.querySelectorAll('input[type=checkbox]').forEach(cb =>
+    cb.addEventListener('change', () => {
+      if (cb.checked) sel.add(cb.value); else sel.delete(cb.value);
+      $('#estStLabel').textContent = estStLabelText();
+      estRerender();
+    }));
+  stMenu.querySelectorAll('.est-ms-quick button').forEach(b =>
+    b.addEventListener('click', () => {
+      sel.clear();
+      if (b.dataset.q === 'all') EST_ST_KEYS.forEach(k => sel.add(k));
+      else if (b.dataset.q === 'active') { sel.add('open'); sel.add('temp'); }
+      stMenu.querySelectorAll('input[type=checkbox]').forEach(cb => cb.checked = sel.has(cb.value));
+      $('#estStLabel').textContent = estStLabelText();
+      estRerender();
+    }));
+  document.addEventListener('click', () => { if (stMenu) stMenu.hidden = true; });
+
+  // Filtros / orden / expandir
+  $('#estZSearch').addEventListener('input', estRenderZonas);
+  $('#estZSort').addEventListener('change', estRenderZonas);
+  $('#estZExpand').addEventListener('click', () => {
+    if (EST_EXP_Z.size >= EST_DATA.zones.length) { EST_EXP_Z.clear(); $('#estZExpand').textContent = 'Expandir todo'; }
+    else { EST_DATA.zones.forEach(z => EST_EXP_Z.add(z.id)); $('#estZExpand').textContent = 'Contraer todo'; }
+    estRenderZonas();
   });
+  $('#estCSearch').addEventListener('input', estRenderConceptos);
+  $('#estCSort').addEventListener('change', estRenderConceptos);
+  $('#estCExpand').addEventListener('click', () => {
+    if (EST_EXP_C.size >= EST_DATA.concepts.length) { EST_EXP_C.clear(); $('#estCExpand').textContent = 'Expandir todo'; }
+    else { EST_DATA.concepts.forEach(c => EST_EXP_C.add(c.name)); $('#estCExpand').textContent = 'Contraer todo'; }
+    estRenderConceptos();
+  });
+
+  // Exportacion
+  const expBtn = $('#estExportBtn'), expMenu = $('#estExportMenu');
+  expBtn.addEventListener('click', (e) => { e.stopPropagation(); expMenu.hidden = !expMenu.hidden; });
+  document.addEventListener('click', () => { expMenu.hidden = true; });
+  expMenu.querySelectorAll('button').forEach(b =>
+    b.addEventListener('click', () => { expMenu.hidden = true; estExport(b.dataset.fmt); }));
+
+  estRerender();
+}
+
+/* Re-pinta stats + ambas tablas (tras cambiar el filtro de estados). */
+function estRerender() {
+  estRenderStats();
+  estRenderZonas();
+  estRenderConceptos();
+}
+
+function estRenderStats() {
+  const host = $('#estStats');
+  if (!host) return;
+  const zonasVis = EST_DATA.zones.filter(z => estSumSel(z.vec) > 0).length;
+  const subsVis = EST_DATA.zones.reduce((a, z) => a + z.subs.filter(s => estSumSel(s.vec) > 0).length, 0);
+  const concVis = EST_DATA.concepts.filter(c => estSumSel(c.vec) > 0).length;
+  const empTotal = (CATALOG.companies || []).reduce((a, c) => a + (estSelSet().has(estStatusKey(c.status)) ? 1 : 0), 0);
+  const sel = estSelSet();
+  const hint = (sel.size === 2 && sel.has('open') && sel.has('temp')) ? 'activas (abierta + cerr. temporal)'
+    : sel.size === 5 ? 'todos los estados' : 'con el filtro actual';
+  host.innerHTML = `
+    <div class="emp-stats"><div class="emp-srow">
+      <div class="emp-stat"><div class="k">Zonas</div><div class="v">${zonasVis}</div><div class="hint">con empresas visibles</div></div>
+      <div class="emp-stat"><div class="k">Subzonas</div><div class="v">${subsVis}</div><div class="hint">con empresas visibles</div></div>
+      <div class="emp-stat"><div class="k">Conceptos</div><div class="v">${concVis}</div><div class="hint">marcas / formatos</div></div>
+      <div class="emp-stat"><div class="k">Empresas</div><div class="v">${empTotal}</div><div class="hint">${hint}</div></div>
+    </div></div>`;
+}
+
+function estRenderZonas() {
+  const body = $('#estZBody');
+  if (!body) return;
+  const q = ($('#estZSearch') && $('#estZSearch').value || '').toLowerCase().trim();
+  let rows = EST_DATA.zones.map(z => ({ ...z, sel: estSumSel(z.vec) })).filter(z => z.sel > 0);
+  if (q) {
+    rows = rows.filter(z => z.name.toLowerCase().includes(q) || (z.letter || '').toLowerCase() === q
+      || z.subs.some(s => s.name.toLowerCase().includes(q) || ((z.letter || '') + (s.name || '')).toLowerCase().includes(q)));
+    rows.forEach(z => { if (z.subs.some(s => s.name.toLowerCase().includes(q))) EST_EXP_Z.add(z.id); });
+  }
+  const maxRef = Math.max(1, ...rows.map(z => z.sel));
+  const sort = ($('#estZSort') && $('#estZSort').value) || 'emp_desc';
+  rows.sort((a, b) => {
+    if (sort === 'emp_desc') return b.sel - a.sel || a.name.localeCompare(b.name, 'es');
+    if (sort === 'emp_asc') return a.sel - b.sel || a.name.localeCompare(b.name, 'es');
+    if (sort === 'letter') return (a.letter || '').localeCompare(b.letter || '');
+    return a.name.localeCompare(b.name, 'es');
+  });
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="4" class="empty">Sin zonas con empresas en los estados elegidos.</td></tr>'; return; }
+  body.innerHTML = rows.map(z => {
+    const isOpen = EST_EXP_Z.has(z.id);
+    const head = `<tr class="est-exp ${isOpen ? 'est-open' : ''}" data-z="${z.id}">
+      <td><svg class="est-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg><span class="est-pchip zone">${z.letter || '\u2014'}</span><span class="est-pname">${z.name}</span></td>
+      <td style="text-align:right">${z.subs.filter(s => estSumSel(s.vec) > 0).length}</td>
+      <td style="text-align:right;font-weight:600">${z.sel}</td>
+      <td><div class="est-bar-wrap">${estSegHtml(z.vec, maxRef)}<span class="est-bar-n">${z.sel}</span></div></td></tr>`;
+    const subs = z.subs.map(s => ({ ...s, sel: estSumSel(s.vec) })).filter(s => s.sel > 0)
+      .sort((a, b) => b.sel - a.sel || a.name.localeCompare(b.name, 'es'))
+      .map(s => `<tr class="est-sub ${isOpen ? '' : 'est-hidden'}">
+        <td><span class="est-subtag">${z.letter || ''}</span>${s.name}</td>
+        <td style="text-align:right" class="muted">\u2014</td>
+        <td style="text-align:right;font-weight:600">${s.sel}</td>
+        <td><div class="est-bar-wrap">${estSegHtml(s.vec, maxRef)}<span class="est-bar-n">${s.sel}</span></div></td></tr>`).join('');
+    return head + subs;
+  }).join('');
+  body.querySelectorAll('.est-exp').forEach(tr => tr.addEventListener('click', () => {
+    const id = tr.dataset.z;
+    // los ids de zona pueden ser numericos o string; comparar laxo
+    const zid = EST_DATA.zones.find(z => String(z.id) === String(id)).id;
+    if (EST_EXP_Z.has(zid)) EST_EXP_Z.delete(zid); else EST_EXP_Z.add(zid);
+    estRenderZonas();
+  }));
+}
+
+function estRenderConceptos() {
+  const body = $('#estCBody');
+  if (!body) return;
+  const q = ($('#estCSearch') && $('#estCSearch').value || '').toLowerCase().trim();
+  let rows = EST_DATA.concepts.map(c => {
+    const zs = c.zonas.map(z => ({ ...z, sel: estSumSel(z.vec) })).filter(z => z.sel > 0);
+    return { name: c.name, zonas: zs, sel: zs.reduce((a, z) => a + z.sel, 0), zoneCount: zs.length, vec: estSumVecs(zs.map(z => z.vec)) };
+  }).filter(c => c.sel > 0);
+  if (q) {
+    rows = rows.filter(c => c.name.toLowerCase().includes(q) || c.zonas.some(z => z.name.toLowerCase().includes(q)));
+    rows.forEach(c => { if (c.zonas.some(z => z.name.toLowerCase().includes(q))) EST_EXP_C.add(c.name); });
+  }
+  const maxRef = Math.max(1, ...rows.map(c => c.sel));
+  const sort = ($('#estCSort') && $('#estCSort').value) || 'emp_desc';
+  rows.sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name, 'es') : (b.sel - a.sel || a.name.localeCompare(b.name, 'es')));
+  if (!rows.length) { body.innerHTML = '<tr><td colspan="4" class="empty">Sin conceptos con empresas en los estados elegidos.</td></tr>'; return; }
+  body.innerHTML = rows.map(c => {
+    const isOpen = EST_EXP_C.has(c.name);
+    const head = `<tr class="est-exp ${isOpen ? 'est-open' : ''}" data-c="${c.name.replace(/"/g, '&quot;')}">
+      <td><svg class="est-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg><span class="est-pchip concept">${c.name}</span></td>
+      <td style="text-align:right">${c.zoneCount}</td>
+      <td style="text-align:right;font-weight:600">${c.sel}</td>
+      <td><div class="est-bar-wrap">${estSegHtml(c.vec, maxRef)}<span class="est-bar-n">${c.sel}</span></div></td></tr>`;
+    const childs = c.zonas.slice().sort((a, b) => b.sel - a.sel).map(z =>
+      `<tr class="est-sub ${isOpen ? '' : 'est-hidden'}">
+        <td><span class="est-subtag">${z.letter || ''}</span>${z.name}</td>
+        <td style="text-align:right" class="muted">\u2014</td>
+        <td style="text-align:right;font-weight:600">${z.sel}</td>
+        <td><div class="est-bar-wrap">${estSegHtml(z.vec, maxRef)}<span class="est-bar-n">${z.sel}</span></div></td></tr>`).join('');
+    return head + childs;
+  }).join('');
+  body.querySelectorAll('.est-exp').forEach(tr => tr.addEventListener('click', () => {
+    const name = tr.dataset.c;
+    if (EST_EXP_C.has(name)) EST_EXP_C.delete(name); else EST_EXP_C.add(name);
+    estRenderConceptos();
+  }));
+}
+
+/* Exporta la pestana activa (xlsx/csv/txt) respetando el filtro de estados.
+   Zonas: una fila por zona y subzona. Conceptos: una fila por concepto y
+   zona. Reusa downloadBlob/tstamp del modulo. */
+async function estExport(fmt) {
+  const sel = estSelSet();
+  const selKeys = EST_ST_KEYS.filter(k => sel.has(k));
+  let data, sheet, fbase;
+  if (EST_TAB === 'zonas') {
+    data = [];
+    EST_DATA.zones.map(z => ({ ...z, sel: estSumSel(z.vec) })).filter(z => z.sel > 0)
+      .sort((a, b) => b.sel - a.sel).forEach(z => {
+        const row = { 'Nivel': 'Zona', 'Zona': z.name, 'Letra': z.letter || '', 'Subzona': '', 'Empresas': z.sel };
+        selKeys.forEach(k => row[EST_ST_LABEL[k]] = z.vec[EST_ST_KEYS.indexOf(k)]);
+        data.push(row);
+        z.subs.map(s => ({ ...s, sel: estSumSel(s.vec) })).filter(s => s.sel > 0)
+          .sort((a, b) => b.sel - a.sel).forEach(s => {
+            const sr = { 'Nivel': 'Subzona', 'Zona': z.name, 'Letra': z.letter || '', 'Subzona': s.name, 'Empresas': s.sel };
+            selKeys.forEach(k => sr[EST_ST_LABEL[k]] = s.vec[EST_ST_KEYS.indexOf(k)]);
+            data.push(sr);
+          });
+      });
+    sheet = 'Zonas'; fbase = 'estructura_zonas';
+  } else {
+    data = [];
+    EST_DATA.concepts.map(c => {
+      const zs = c.zonas.map(z => ({ ...z, sel: estSumSel(z.vec) })).filter(z => z.sel > 0);
+      return { name: c.name, zonas: zs, sel: zs.reduce((a, z) => a + z.sel, 0), vec: estSumVecs(zs.map(z => z.vec)) };
+    }).filter(c => c.sel > 0).sort((a, b) => b.sel - a.sel).forEach(c => {
+      const row = { 'Nivel': 'Concepto', 'Concepto': c.name, 'Zona': '', 'Empresas': c.sel };
+      selKeys.forEach(k => row[EST_ST_LABEL[k]] = c.vec[EST_ST_KEYS.indexOf(k)]);
+      data.push(row);
+      c.zonas.slice().sort((a, b) => b.sel - a.sel).forEach(z => {
+        const zr = { 'Nivel': 'Zona', 'Concepto': c.name, 'Zona': z.name, 'Empresas': z.sel };
+        selKeys.forEach(k => zr[EST_ST_LABEL[k]] = z.vec[EST_ST_KEYS.indexOf(k)]);
+        data.push(zr);
+      });
+    });
+    sheet = 'Conceptos'; fbase = 'estructura_conceptos';
+  }
+  if (!data.length) { alert('No hay datos para exportar con el filtro actual.'); return; }
+  const headers = Object.keys(data[0]);
+  const fname = `${fbase}_${tstamp()}`;
+
+  if (fmt === 'csv') {
+    const esc = (v) => { const s = String(v ?? ''); return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+    const lines = [headers.join(';')].concat(data.map(r => headers.map(h => esc(r[h])).join(';')));
+    downloadBlob('\uFEFF' + lines.join('\r\n'), `${fname}.csv`, 'text/csv;charset=utf-8');
+    return;
+  }
+  if (fmt === 'txt') {
+    const widths = headers.map(h => Math.max(h.length, ...data.map(r => String(r[h] ?? '').length)));
+    const fmtRow = (cells) => cells.map((c, i) => String(c ?? '').padEnd(widths[i])).join('  ');
+    const lines = [fmtRow(headers), widths.map(w => '-'.repeat(w)).join('  ')].concat(data.map(r => fmtRow(headers.map(h => r[h]))));
+    downloadBlob(lines.join('\r\n'), `${fname}.txt`, 'text/plain;charset=utf-8');
+    return;
+  }
+  if (fmt === 'xlsx') {
+    try {
+      if (!window.XLSX) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          s.onload = resolve; s.onerror = () => reject(new Error('No se pudo cargar la librer\u00eda Excel.'));
+          document.head.appendChild(s);
+        });
+      }
+      const ws = window.XLSX.utils.json_to_sheet(data, { header: headers });
+      const wb = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(wb, ws, sheet);
+      window.XLSX.writeFile(wb, `${fname}.xlsx`);
+    } catch (e) { alert(e.message + ' Revisa tu conexi\u00f3n e int\u00e9ntalo de nuevo.'); }
+    return;
+  }
 }
 
 /* ---------- helper: modal ---------- */
