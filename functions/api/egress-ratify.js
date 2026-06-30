@@ -46,6 +46,8 @@ async function resolveAdmin(env, adminId) {
   if (!adminId) return null;
   const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(adminId)}&is_active=eq.true&select=id,role`);
   if (!a || !a.length) return null;
+  // El gestor de empresa NO ratifica egresos (es atribucion de admin/superadmin).
+  if (a[0].role === 'gestor_empresa') return null;
   if (a[0].role === 'superadmin') return { id: a[0].id, role: a[0].role, codes: null };
   const rows = await sb(env, 'rpc/get_admin_companies', {
     method: 'POST', body: JSON.stringify({ p_admin_id: a[0].id }),

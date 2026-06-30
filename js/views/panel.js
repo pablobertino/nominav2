@@ -169,6 +169,40 @@ const NAV_EDITOR_GROUPS = [
   ] },
 ];
 
+/* ---------- NAVEGACION (gestor de empresa) ----------
+   Rol para personas que gestionan una o varias empresas (no-tienda) dentro
+   de su alcance, con o sin departamento. Puede CONSULTAR, REPORTAR y
+   GESTIONAR el personal de sus empresas, pero NO administrar el portal
+   (sin Estructura, Ratificar egresos, Carga de personal, Analisis, Estado
+   de pago, Envio de avisos, ni el grupo Administracion). El alcance lo
+   limita el backend igual que a un admin (no es superadmin -> filtra por
+   get_admin_companies). Los `view` no cambian.
+   Sueltos: Inicio, Documentos, Calendario.
+   Organizacion: Empresas (desde ahi entra a Personal y a Reportar).
+   Personal: Buscar.
+   Reportes: Historial, Mis estadisticas.
+   Comunicacion: Avisos. */
+const NAV_GESTOR_LOOSE = [
+  ['dashboard', I.grid, 'Inicio'],
+  ['documentos', I.docs, 'Documentos'],
+  ['calendario', I.calendar, 'Calendario'],
+];
+const NAV_GESTOR_GROUPS = [
+  { title: 'Organización', items: [
+    ['tiendas', I.store, 'Empresas'],
+  ] },
+  { title: 'Personal', items: [
+    ['buscar', I.search, 'Buscar'],
+  ] },
+  { title: 'Reportes', items: [
+    ['historial', I.history, 'Historial'],
+    ['reportempresas', I.bizreport, 'Análisis'],
+  ] },
+  { title: 'Comunicación', items: [
+    ['avisos', I.bell, 'Avisos'],
+  ] },
+];
+
 /* Etiquetas legibles de rol para la topbar. */
 const ROLE_LABELS = { superadmin: 'superadmin', admin: 'admin', editor_personal: 'editor_personal', gestor_empresa: 'gestor de empresa' };
 
@@ -177,6 +211,7 @@ function shell(user) {
   const isCompany = user.kind === 'company';
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   const isEditorPersonal = user.kind === 'admin' && user.role === 'editor_personal';
+  const isGestor = user.kind === 'admin' && user.role === 'gestor_empresa';
   // La campanita se muestra para admin/superadmin, editor_personal Y usuarios
   // company. El editor solo recibe avisos dirigidos a "Editores" (solo lectura);
   // no gestiona el seteo de avisos.
@@ -196,6 +231,8 @@ function shell(user) {
     navLoose = NAV_COMPANY_LOOSE; navGroups = NAV_COMPANY_GROUPS;
   } else if (isEditorPersonal) {
     navLoose = NAV_EDITOR_LOOSE; navGroups = NAV_EDITOR_GROUPS;
+  } else if (isGestor) {
+    navLoose = NAV_GESTOR_LOOSE; navGroups = NAV_GESTOR_GROUPS;
   } else {
     navLoose = NAV_LOOSE; navGroups = NAV_GROUPS.filter(g => !g.superonly || isSuper);
   }
@@ -236,7 +273,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.99</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.00</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -579,6 +616,13 @@ function empStatsHtml(companies) {
 function viewTiendas(user) {
   const isAdmin = user.kind === 'admin';
   const isEditor = user.kind === 'admin' && user.role === 'editor_personal';
+  const isGestor = user.kind === 'admin' && user.role === 'gestor_empresa';
+  // El gestor de empresa NO administra: sin "Sincronizar todo", sin editar
+  // contacto y sin Departamentos; pero SI puede entrar a Personal y Reportar.
+  const canSyncAll = isAdmin && !isGestor;
+  const canEditContact = !isEditor && !isGestor;
+  const canDepartments = !isEditor && !isGestor;
+  const canReport = !isEditor;   // gestor si reporta; editor no
   const types = [...new Set(CATALOG.companies.map(c => c.type).filter(Boolean))].sort();
   const statuses = [...new Set(CATALOG.companies.map(c => c.status).filter(Boolean))].sort();
   const concepts = CATALOG.concepts.map(c => c.name);
@@ -595,7 +639,7 @@ function viewTiendas(user) {
     <div class="pnl-head">
       <div><h1>Empresas</h1><p id="tCount"></p></div>
       <div style="display:flex;gap:8px;align-items:center">
-        ${isAdmin ? `<button class="btn btn-primary" id="syncAllBtn">${I.sync} Sincronizar todo</button>` : ''}
+        ${canSyncAll ? `<button class="btn btn-primary" id="syncAllBtn">${I.sync} Sincronizar todo</button>` : ''}
         <div class="export-wrap">
           <button class="btn" id="exportBtn">Exportar ▾</button>
           <div class="export-menu" id="exportMenu" hidden>
@@ -764,7 +808,7 @@ function viewTiendas(user) {
             <span class="${c.email ? '' : 'muted'}">${c.email || 'sin correo'}</span>
             <span class="muted" style="font-size:12px">${telLine}</span>
           </div>
-          ${isEditor ? '' : `<button class="email-edit" data-code="${c.code}" data-name="${(c.name||'').replace(/"/g,'')}" data-email="${c.email||''}" data-phone="${c.phone||''}" data-phone2="${c.phone2||''}" title="Editar contacto">${I.pencil}</button>`}
+          ${canEditContact ? `<button class="email-edit" data-code="${c.code}" data-name="${(c.name||'').replace(/"/g,'')}" data-email="${c.email||''}" data-phone="${c.phone||''}" data-phone2="${c.phone2||''}" title="Editar contacto">${I.pencil}</button>` : ''}
         </div>`;
       return `
       <tr>
@@ -776,7 +820,7 @@ function viewTiendas(user) {
         <td>${personalCell(c)}</td>
         <td>${statusPill(c.status)}</td>
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
-        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" style="margin-right:4px">Personal</button>${(!isEditor && NON_STORE_TYPES.has(c.type)) ? `<button class="btn btn-mini" data-dep-code="${c.code}" style="margin-right:4px">Departamentos</button>` : ''}${isEditor ? '' : `<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button>`}</td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" style="margin-right:4px">Personal</button>${(canDepartments && NON_STORE_TYPES.has(c.type)) ? `<button class="btn btn-mini" data-dep-code="${c.code}" style="margin-right:4px">Departamentos</button>` : ''}${canReport ? `<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button>` : ''}</td>
       </tr>`;
     }).join('') || '<tr><td colspan="9" class="empty">Sin resultados.</td></tr>';
 
@@ -2075,7 +2119,7 @@ function auCreateModal(user) {
     <label class="flabel">Nombre</label><input id="auN" placeholder="Nombre completo" style="margin-bottom:12px">
     <label class="flabel">Correo <span class="muted">(opcional)</span></label><input id="auE" placeholder="correo@grupocanaima.com" style="margin-bottom:12px">
     <label class="flabel">Rol</label>
-    <select id="auR" style="margin-bottom:14px;width:100%"><option value="admin">admin</option><option value="editor_personal">Editor de personal</option><option value="superadmin">superadmin</option></select>
+    <select id="auR" style="margin-bottom:14px;width:100%"><option value="admin">admin</option><option value="gestor_empresa">Gestor de empresa</option><option value="editor_personal">Editor de personal</option><option value="superadmin">superadmin</option></select>
     ${pwdBlockHtml()}
     <div class="modal-actions"><button class="btn" id="mCancel">Cancelar</button><button class="btn btn-primary" id="mOk">Crear</button></div>`);
   wirePwdBlock();
