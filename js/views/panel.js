@@ -236,7 +236,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.94</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.95</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1169,6 +1169,8 @@ function estEnsureStyles() {
   .est-legend{display:flex;gap:16px;flex-wrap:wrap;margin:12px 2px 0;font-size:12px;color:var(--muted,#64748b);}
   .est-legend span{display:inline-flex;align-items:center;gap:6px;}
   .est-legend i{width:10px;height:10px;border-radius:3px;display:inline-block;}
+  #estStWrap{flex:0 0 auto;}
+  #estStBtn{width:auto;white-space:nowrap;}
   .est-ms-menu{position:absolute;right:0;top:calc(100% + 6px);background:#fff;border:1px solid var(--border,#e6eaf0);
     border-radius:10px;box-shadow:0 12px 28px rgba(15,23,42,.14);z-index:30;min-width:230px;padding:6px;}
   .est-ms-quick{display:flex;gap:4px;padding:4px;}
