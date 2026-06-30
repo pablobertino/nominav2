@@ -120,7 +120,13 @@ async function listTiendas(env) {
   return json({ ok: true, tiendas, summary });
 }
 
-/* Sincroniza una o varias tiendas con osTicket (crea/actualiza usuario). */
+/* Sincroniza una o varias tiendas con osTicket (crea/actualiza usuario).
+   Por limite de subrequests de Cloudflare (~50 fetch salientes por
+   invocacion) NO se procesan todas de un golpe cuando se pide all:true:
+   se procesa una TANDA (limit, default 12, cada tienda usa 2 fetch ->
+   ~24 subrequests) y se devuelve remaining/done para que el cliente
+   vuelva a llamar en bucle. Con codes:[...] se procesan las indicadas
+   (el cliente ya las acota). */
 async function syncTiendas(env, body) {
   const base = await osticketBase(env);
   if (!base || !env.osticket_api_key) {
@@ -128,10 +134,15 @@ async function syncTiendas(env, body) {
   }
 
   // Resolver el conjunto de tiendas a sincronizar.
-  let filter;
+  let filter, isAll = false, limit = 0;
   if (body.all === true) {
-    // Todas las tiendas con correo (sin correo no se puede crear el usuario).
-    filter = `company_type=eq.Tienda&email=not.is.null`;
+    isAll = true;
+    // Tope de tienda(s) por tanda. Cada tienda hace 2 fetch (gc-user + PATCH);
+    // 12 -> ~24 subrequests, bajo el limite de Cloudflare. Maximo 20.
+    limit = Math.min(Math.max(parseInt(body.limit, 10) || 12, 1), 20);
+    // Solo PENDIENTES con correo: las que aun no tienen osticket_user_id.
+    // Asi cada tanda avanza sobre las que faltan (idempotente y sin repetir).
+    filter = `company_type=eq.Tienda&email=not.is.null&osticket_user_id=is.null&order=company_code&limit=${limit}`;
   } else if (Array.isArray(body.codes) && body.codes.length) {
     const list = body.codes.map(c => encodeURIComponent(String(c))).join(',');
     filter = `company_code=in.(${list})`;
@@ -142,7 +153,7 @@ async function syncTiendas(env, body) {
   const tiendas = await sb(env,
     `companies?${filter}&select=company_code,business_name,email,phone`);
   if (!tiendas || !tiendas.length) {
-    return json({ ok: true, processed: 0, ok_count: 0, fail_count: 0, results: [], note: 'No hay tiendas que sincronizar.' });
+    return json({ ok: true, processed: 0, ok_count: 0, fail_count: 0, results: [], remaining: 0, done: true, note: 'No hay tiendas que sincronizar.' });
   }
 
   const results = [];
@@ -173,11 +184,26 @@ async function syncTiendas(env, body) {
     }
   }
 
+  // Cuando es all:true, calcular cuantas pendientes quedan (con correo y sin
+  // user_id) para que el cliente sepa si debe seguir iterando. Si en la tanda
+  // hubo fallos, esas siguen contando como pendientes (no se marcaron) y el
+  // cliente las reintentara; para evitar bucle infinito, el cliente corta si
+  // remaining no baja entre llamadas.
+  let remaining = 0, done = true;
+  if (isAll) {
+    const pend = await sb(env,
+      `companies?company_type=eq.Tienda&email=not.is.null&osticket_user_id=is.null&select=company_code`);
+    remaining = (pend || []).length;
+    done = remaining === 0;
+  }
+
   return json({
     ok: true,
     processed: tiendas.length,
     ok_count: okCount,
     fail_count: failCount,
     results,
+    remaining,
+    done,
   });
 }

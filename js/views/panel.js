@@ -184,7 +184,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.81</div></div>
+        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.82</div></div>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navHtml}
@@ -1331,18 +1331,58 @@ async function ouSyncOne(user, code, btn) {
   usuariosOsticketTab(user, $('#usersBody'));
 }
 
-/* Sincroniza TODAS las pendientes con correo (boton masivo). */
+/* Sincroniza TODAS las pendientes con correo (boton masivo).
+   Por el limite de subrequests de Cloudflare, el servidor procesa por
+   TANDAS (all:true + limit). Aqui llamamos en bucle hasta done, mostrando
+   progreso. Corte de seguridad: si remaining no baja entre tandas (todas
+   fallan), se detiene para no quedar en bucle infinito. */
 async function ouSyncAll(user) {
   user = user || OU_USER;   // respaldo: nunca depender de un user nulo
   const pend = OU_SUMMARY ? OU_SUMMARY.pending : 0;
   if (!pend) { alert('No hay tiendas pendientes con correo para sincronizar.'); return; }
-  if (!confirm(`Se crearan/actualizaran ${pend} usuario(s)-tienda en osTicket. Continuar?`)) return;
+
+  if (!confirm(`Se crearan/actualizaran las ${pend} tienda(s) pendientes en osTicket, por tandas. Puede tardar un momento. Continuar?`)) return;
+
   const btn = $('#ouSyncAll'); const orig = btn.innerHTML;
-  btn.disabled = true; btn.textContent = 'Sincronizando todas…';
-  const d = await ouApi({ action: 'sync', adminId: user.id, all: true });
+  btn.disabled = true;
+
+  const LIMIT = 12;          // tiendas por tanda (servidor tope 20)
+  let okTotal = 0, failTotal = 0, batches = 0;
+  let lastRemaining = Infinity;
+  let guard = 0;             // tope duro de tandas por si algo se descontrola
+  const maxGuard = Math.ceil(pend / LIMIT) + 6;
+
+  while (true) {
+    guard++;
+    if (guard > maxGuard) break;
+    btn.textContent = `Sincronizando\u2026 (tanda ${batches + 1})`;
+    let d;
+    try {
+      d = await ouApi({ action: 'sync', adminId: user.id, all: true, limit: LIMIT });
+    } catch (e) {
+      alert('Error de conexion durante la sincronizacion: ' + (e && e.message || e)
+        + `\n\nSe alcanzaron a sincronizar ${okTotal} en esta corrida. Puedes volver a intentar.`);
+      break;
+    }
+    if (!d.ok) { alert(d.error || 'No se pudo sincronizar.'); break; }
+    okTotal += d.ok_count || 0;
+    failTotal += d.fail_count || 0;
+    batches++;
+    btn.textContent = `Sincronizadas ${okTotal}\u2026 (quedan ${d.remaining})`;
+    if (d.done || d.remaining === 0) break;
+    // Corte de seguridad: si no avanzamos (remaining no baja), detener.
+    if (d.remaining >= lastRemaining) {
+      alert(`Se detuvo el avance: ${d.remaining} tienda(s) no se pudieron sincronizar `
+        + `(probable error de osTicket o datos). Sincronizadas: ${okTotal}, con error: ${failTotal}.`);
+      break;
+    }
+    lastRemaining = d.remaining;
+    // Pequena pausa entre tandas para no presionar a osTicket.
+    await new Promise(r => setTimeout(r, 400));
+  }
+
   btn.disabled = false; btn.innerHTML = orig;
-  if (!d.ok) { alert(d.error || 'No se pudo sincronizar.'); return; }
-  alert(`Listo: ${d.ok_count} sincronizada(s), ${d.fail_count} con error (de ${d.processed}).`);
+  alert(`Listo: ${okTotal} sincronizada(s)${failTotal ? `, ${failTotal} con error` : ''} en ${batches} tanda(s).`);
   usuariosOsticketTab(user, $('#usersBody'));
 }
 
