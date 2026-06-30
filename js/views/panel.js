@@ -123,19 +123,19 @@ const NAV_ALL = [...NAV_LOOSE, ...NAV_GROUPS.flatMap(g => g.items.map(it => [...
 /* ---------- NAVEGACION (tienda / company) ----------
    Mismo esquema agrupado que admin/super (items sueltos arriba + grupos
    colapsables), basado en la estructura del superadmin. Los `view` no cambian.
-   Sueltos: Inicio, Mi empresa, Calendario.
-   Personal: Personal (fichas/fotos), Documentos.
+   Sueltos: Inicio, Mi empresa, Documentos, Calendario.
+   Personal: Personal (fichas/fotos).
    Reportes: Historial, Mis estadisticas.
    Comunicacion: Avisos. */
 const NAV_COMPANY_LOOSE = [
   ['dashboard', I.grid, 'Inicio'],
   ['miempresa', I.store, 'Mi empresa'],
+  ['documentos', I.docs, 'Documentos'],
   ['calendario', I.calendar, 'Calendario'],
 ];
 const NAV_COMPANY_GROUPS = [
   { title: 'Personal', items: [
     ['fotos', I.photo, 'Personal'],
-    ['documentos', I.docs, 'Documentos'],
   ] },
   { title: 'Reportes', items: [
     ['historial', I.history, 'Historial'],
@@ -236,7 +236,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.88</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.89</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>

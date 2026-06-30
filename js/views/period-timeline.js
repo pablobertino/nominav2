@@ -32,7 +32,7 @@ function tlEnsureStyles() {
   const st = document.createElement('style');
   st.id = 'tlStyles';
   st.textContent = `
-  .tl{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg,14px);padding:18px 30px 20px;box-shadow:var(--shadow-sm);margin-bottom:18px}
+  .tl{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius-lg,14px);padding:16px 30px 14px;box-shadow:var(--shadow-sm);margin-bottom:18px}
   .tl-top{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:8px;gap:12px;flex-wrap:wrap}
   .tl-title{font-size:14px;font-weight:600;color:var(--ink)}
   .tl-title small{font-weight:400;color:var(--muted);margin-left:6px;font-size:12.5px}
@@ -41,7 +41,7 @@ function tlEnsureStyles() {
   .tl-countdown.pay-today{background:#ecfdf5;border-color:#a7f3d0}
   .tl-countdown.pay-today b{color:#166534}
   .tl-track-wrap{position:relative;padding:0 8px}
-  .tl-track{position:relative;height:8px;border-radius:6px;background:var(--border-soft,#eef0f3);margin:56px 0 80px}
+  .tl-track{position:relative;height:8px;border-radius:6px;background:var(--border-soft,#eef0f3);margin:52px 0 46px}
   .tl-fill{position:absolute;top:0;left:0;height:100%;border-radius:6px;background:linear-gradient(90deg,#93c5fd,#2563eb)}
   .tl-mk{position:absolute;top:50%;transform:translate(-50%,-50%);z-index:2}
   .tl-ic{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--surface);border:2.5px solid var(--faint,#94a3b8);color:var(--faint,#94a3b8);box-shadow:0 0 0 4px var(--surface);transition:transform .15s}
