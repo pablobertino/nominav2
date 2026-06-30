@@ -244,6 +244,7 @@ function ensureStyles() {
   .dash-mov2 { display:grid; grid-template-columns:1fr 1fr; gap:12px; }
   .dash-movh { font-size:12.5px; font-weight:600; color:var(--ink-soft); margin:0 2px 8px;
     display:flex; align-items:center; gap:6px; }
+  .dash-movh .dash-movsub { font-weight:400; color:var(--muted); }
   @media (max-width:760px){ .dash-demo2, .dash-mov2 { grid-template-columns:1fr; } }
 
   /* Banner de dia especial (cierre/calculo/pago) — franja delgada arriba */

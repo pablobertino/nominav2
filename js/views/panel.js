@@ -273,7 +273,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.00</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.01</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2104,8 +2104,9 @@ async function viewEquipo(user) {
         <td>${a.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>'}</td>
         <td style="text-align:right;white-space:nowrap">
           ${a.role === 'superadmin' ? '' : `<button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas" style="margin-right:4px">${I.sliders} Tiendas</button><button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas" style="margin-right:4px">${I.sliders} Empresas</button>`}
+          ${String(a.id) === String(user.id) ? '' : `<button class="btn btn-mini" data-act="role" data-id="${a.id}" data-u="${a.username}" data-role="${a.role}" title="Cambiar rol" style="margin-right:4px">Rol</button>`}
           <button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>
-          <button class="btn btn-mini" data-act="toggle" data-id="${a.id}" data-active="${a.is_active}">${a.is_active ? 'Desactivar' : 'Activar'}</button>
+          ${a.role === 'superadmin' ? '' : `<button class="btn btn-mini" data-act="toggle" data-id="${a.id}" data-active="${a.is_active}">${a.is_active ? 'Desactivar' : 'Activar'}</button>`}
         </td></tr>`).join('')}
     </tbody></table></div>`;
   $('#auNew').addEventListener('click', () => auCreateModal(user));
@@ -2139,6 +2140,7 @@ function auCreateModal(user) {
 function auAction(ds, user) {
   if (ds.act === 'scope-store') { openScopeEditor(user, ds.id, ds.u, 'store'); return; }
   if (ds.act === 'scope-ent') { openScopeEditor(user, ds.id, ds.u, 'enterprise'); return; }
+  if (ds.act === 'role') { auRoleModal(ds, user); return; }
   if (ds.act === 'toggle') {
     auApi({ action: 'toggle', adminId: user.id, id: ds.id, isActive: !(ds.active === 'true') }).then(() => viewEquipo(user));
     return;
@@ -2165,6 +2167,52 @@ async function auApi(payload) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   });
   return res.json();
+}
+
+/* Modal para cambiar el rol de un miembro del Equipo. Solo superadmin (lo
+   exige el backend). El <select> ofrece admin / gestor de empresa / editor de
+   personal (superadmin no es elegible aqui). Preselecciona el rol actual
+   (ds.role). El backend rechaza: cambiar el propio rol y quitar el ultimo
+   superadmin. El error se muestra dentro del modal (sin alert nativo). */
+function auRoleModal(ds, user) {
+  const ROLE_OPTS = [
+    { v: 'admin', l: 'admin' },
+    { v: 'gestor_empresa', l: 'gestor de empresa' },
+    { v: 'editor_personal', l: 'editor de personal' },
+  ];
+  const cur = ds.role || '';
+  const opts = ROLE_OPTS.map(o =>
+    `<option value="${o.v}"${o.v === cur ? ' selected' : ''}>${o.l}</option>`).join('');
+  openModal(`
+    <div class="modal-head"><span>Cambiar rol</span><button class="modal-x" id="mX">\u2715</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 16px">${ds.u}</p>
+    <label class="flabel">Rol</label>
+    <select id="auRoleSel" style="width:100%;margin-bottom:8px">${opts}</select>
+    <p class="muted" style="font-size:11.5px;margin:0">Rol actual: <b>${ROLE_LABELS[cur] || cur || '\u2014'}</b>. El superadmin no se asigna desde aqui.</p>
+    <p id="auRoleErr" style="color:var(--danger);font-size:12.5px;margin:10px 0 0;display:none"></p>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Guardar rol</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const role = $('#auRoleSel').value;
+    const err = $('#auRoleErr');
+    if (role === cur) { closeModal(); return; }
+    const btn = $('#mOk'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Guardando\u2026';
+    let d;
+    try { d = await auApi({ action: 'update_role', adminId: user.id, id: ds.id, role }); }
+    catch (e) { d = { ok: false, error: 'Error de conexion: ' + (e && e.message || e) }; }
+    if (!d.ok) {
+      err.textContent = d.error || 'No se pudo cambiar el rol.';
+      err.style.display = 'block';
+      btn.disabled = false; btn.textContent = orig;
+      return;
+    }
+    closeModal();
+    viewEquipo(user);
+  });
 }
 
 /* ---------- VISTA: PERMISOS (editor de alcance) ---------- */

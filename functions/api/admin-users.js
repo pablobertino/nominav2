@@ -90,9 +90,42 @@ export async function onRequestPost({ request, env }) {
 
     if (action === 'toggle') {
       const { id, isActive } = body;
+      // No permitir auto-desactivarse.
+      if (!isActive && String(id) === String(adminId)) {
+        return json({ ok: false, error: 'No puedes desactivar tu propio usuario.' }, 400);
+      }
+      // No dejar el sistema sin ningun superadmin activo.
+      if (!isActive) {
+        const target = await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}&select=role`);
+        if (target && target.length && target[0].role === 'superadmin') {
+          const supers = await sb(env, 'admin_users?role=eq.superadmin&is_active=eq.true&select=id');
+          if ((supers || []).length <= 1) {
+            return json({ ok: false, error: 'No puedes desactivar el ultimo superadmin del sistema.' }, 400);
+          }
+        }
+      }
       await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({ is_active: !!isActive }),
+      });
+      return json({ ok: true });
+    }
+
+    if (action === 'update_role') {
+      const { id, role } = body;
+      if (!id) return json({ ok: false, error: 'Falta el usuario.' }, 400);
+      const ALLOWED_ROLES = ['admin', 'superadmin', 'editor_personal', 'gestor_empresa'];
+      if (!ALLOWED_ROLES.includes(role)) return json({ ok: false, error: 'Rol no valido.' }, 400);
+      if (String(id) === String(adminId)) return json({ ok: false, error: 'No puedes cambiar tu propio rol.' }, 400);
+      const target = await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}&select=role,is_active`);
+      if (!target || !target.length) return json({ ok: false, error: 'Usuario no encontrado.' }, 404);
+      if (target[0].role === 'superadmin' && role !== 'superadmin') {
+        const supers = await sb(env, 'admin_users?role=eq.superadmin&is_active=eq.true&select=id');
+        if (supers && supers.length <= 1) return json({ ok: false, error: 'No puedes quitar el ultimo superadmin del sistema.' }, 400);
+      }
+      await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ role }),
       });
       return json({ ok: true });
     }
