@@ -162,7 +162,17 @@ function osAttach(filename, base64, mime) {
 /* Resuelve el alcance del usuario: devuelve
      { all:true }                         -> superadmin (todas)
      { codes:[...] }                      -> lista explicita (tienda/admin)
-   o { codes:[] } si no tiene acceso.     */
+   o { codes:[] } si no tiene acceso.
+
+   Para ADMIN ademas se incluye:
+     adminId        -> id del admin (para "ver siempre los suyos").
+     deptByCompany  -> { [company_code]: [dept_id, ...] } para las empresas
+                       donde el admin tiene alcance SOLO por departamento
+                       (get_admin_dept_ids devuelve un array). En esas
+                       empresas, en el Historial solo ve los reportes de
+                       esos departamentos (o los suyos). Las empresas con
+                       acceso completo (get_admin_dept_ids -> null) NO entran
+                       aqui: se ven sin restriccion de departamento. */
 async function resolveScope(env, user) {
   if (!user) return { codes: [] };
   if (user.kind === 'company') {
@@ -174,11 +184,23 @@ async function resolveScope(env, user) {
   if (user.kind === 'admin' && user.id) {
     const a = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
     if (!a || !a.length) return { codes: [] };
-    if (a[0].role === 'superadmin') return { all: true };
+    if (a[0].role === 'superadmin') return { all: true, adminId: a[0].id };
     const rows = await sbJson(env, 'rpc/get_admin_companies', {
       method: 'POST', body: JSON.stringify({ p_admin_id: a[0].id }),
     });
-    return { codes: (rows || []).map(r => r.company_code) };
+    const codes = (rows || []).map(r => r.company_code);
+    // Para cada empresa del alcance, ver si esta restringida por departamento.
+    // get_admin_dept_ids -> null (empresa completa) | array (solo esos deptos).
+    const deptByCompany = {};
+    for (const cc of codes) {
+      try {
+        const ids = await sbJson(env, 'rpc/get_admin_dept_ids', {
+          method: 'POST', body: JSON.stringify({ p_admin_id: a[0].id, p_company_code: cc }),
+        });
+        if (Array.isArray(ids) && ids.length) deptByCompany[cc] = ids.map(Number);
+      } catch { /* si falla, se trata como empresa completa */ }
+    }
+    return { codes, adminId: a[0].id, deptByCompany };
   }
   return { codes: [] };
 }
@@ -217,6 +239,51 @@ function scopeFilter(scope) {
   return `&company_code=in.(${list})`;
 }
 
+/* Filtro FINO de visibilidad por departamento + autoria, para el Historial.
+   Reglas (ademas del filtro por empresa de scopeFilter):
+     - superadmin: sin restriccion.
+     - admin con empresas de alcance COMPLETO (sin dept scope): ve todos los
+       reportes de esas empresas.
+     - admin con empresas restringidas por DEPARTAMENTO (deptByCompany): en
+       esas empresas solo ve los reportes cuyo department_id este en su
+       alcance, MAS los reportes hechos por el mismo (source_admin_id).
+   Devuelve un segmento PostgREST que empieza con '&' (o '' si no aplica).
+
+   Implementacion: un solo and=() con un or() interno:
+     or(
+       company_code.in.(<empresas completas>),         // ven todo
+       and(company_code.in.(<emp con depto>), department_id.in.(<deptos>)),
+       source_admin_id.eq.<adminId>                     // siempre los suyos
+     )
+   Si el admin no tiene ninguna empresa restringida por departamento, no se
+   agrega nada (scopeFilter por empresa basta). */
+function scopeDeptAuthorFilter(scope) {
+  if (scope.all) return '';
+  const deptBy = scope.deptByCompany || {};
+  const deptCompanies = Object.keys(deptBy);
+  // Sin restriccion por departamento en ninguna empresa: no hace falta filtro fino.
+  if (!deptCompanies.length) return '';
+
+  const fullCompanies = (scope.codes || []).filter(cc => !deptBy[cc]);
+  const ors = [];
+  // (a) Empresas de alcance completo: se ven enteras.
+  if (fullCompanies.length) {
+    ors.push(`company_code.in.(${fullCompanies.map(c => `"${c}"`).join(',')})`);
+  }
+  // (b) Cada empresa restringida por departamento: solo esos department_id.
+  for (const cc of deptCompanies) {
+    const ids = deptBy[cc];
+    if (ids && ids.length) {
+      ors.push(`and(company_code.eq."${cc}",department_id.in.(${ids.join(',')}))`);
+    }
+  }
+  // (c) Siempre los reportes hechos por el propio admin.
+  if (scope.adminId) ors.push(`source_admin_id.eq.${scope.adminId}`);
+
+  if (!ors.length) return '';
+  return `&or=(${ors.join(',')})`;
+}
+
 async function listReports(env, body, scope) {
   const f = body.filters || {};
   const page = Math.max(1, parseInt(body.page, 10) || 1);
@@ -228,6 +295,7 @@ async function listReports(env, body, scope) {
     + 'responsible,position,workers_count,attention,osticket_id,email_sent,source_kind,'
     + 'osticket_sync,attention_at,attention_comment,attention_by';
   q += scopeFilter(scope);
+  q += scopeDeptAuthorFilter(scope);   // restriccion fina por depto + autoria
 
   // Filtros
   if (f.type && f.type !== 'ALL') q += `&topic=eq.${encodeURIComponent(f.type)}`;
@@ -323,6 +391,7 @@ async function detailReport(env, body, scope) {
     + 'responsible,position,workers_count,attention,osticket_id,email_sent,notes,source_kind,'
     + 'osticket_sync,attention_at,attention_comment,attention_by';
   q += scopeFilter(scope);
+  q += scopeDeptAuthorFilter(scope);   // no abrir reportes fuera de depto/autoria
   const head = await sbJson(env, q);
   if (!head || !head.length) return json({ ok: false, error: 'Reporte no encontrado o sin acceso.' }, 404);
   const r = head[0];
@@ -419,6 +488,7 @@ async function ticketText(env, body, scope) {
   let q = `reports_log?id=eq.${id}&select=id,company_code,zone_id,subzone_id,topic,sent_at,`
     + 'responsible,position,workers_count,source_kind';
   q += scopeFilter(scope);
+  q += scopeDeptAuthorFilter(scope);
   const head = await sbJson(env, q);
   if (!head || !head.length) return json({ ok: false, error: 'Reporte no encontrado o sin acceso.' }, 404);
   const r = head[0];
@@ -657,6 +727,7 @@ async function ticketExcel(env, body, scope) {
   // Encabezado (con control de alcance).
   let q = `reports_log?id=eq.${id}&select=id,company_code,topic,sent_at`;
   q += scopeFilter(scope);
+  q += scopeDeptAuthorFilter(scope);
   const head = await sbJson(env, q);
   if (!head || !head.length) return json({ ok: false, error: 'Reporte no encontrado o sin acceso.' }, 404);
   const r = head[0];
@@ -870,6 +941,7 @@ async function setAttention(env, body, scope) {
   const idList = ids.join(',');
   let q = `reports_log?id=in.(${idList})&select=id,company_code,osticket_id`;
   q += scopeFilter(scope);
+  q += scopeDeptAuthorFilter(scope);
   const allowed = await sbJson(env, q) || [];
   const allowedIds = allowed.map(r => r.id);
   if (!allowedIds.length) {
@@ -1014,6 +1086,7 @@ async function syncOsticket(env, body, scope) {
     let q = 'reports_log?select=id,attention,osticket_id,osticket_sync'
       + '&osticket_id=not.is.null&osticket_sync=in.(pending,failed)';
     q += scopeFilter(scope);
+    q += scopeDeptAuthorFilter(scope);
     q += '&order=id.desc&limit=500';
     rows = (await sbJson(env, q)) || [];
   } else {
@@ -1021,6 +1094,7 @@ async function syncOsticket(env, body, scope) {
     if (!ids.length) return json({ ok: false, error: 'No se indicaron reportes.' }, 400);
     let q = `reports_log?id=in.(${ids.join(',')})&select=id,attention,osticket_id,osticket_sync`;
     q += scopeFilter(scope);
+    q += scopeDeptAuthorFilter(scope);
     rows = (await sbJson(env, q)) || [];
   }
 
@@ -1063,6 +1137,7 @@ async function loadReportContext(env, id, scope) {
   let q = `reports_log?id=eq.${id}&select=id,company_code,zone_id,subzone_id,topic,sent_at,`
     + 'responsible,position,osticket_id';
   q += scopeFilter(scope);
+  q += scopeDeptAuthorFilter(scope);
   const head = await sbJson(env, q);
   if (!head || !head.length) return null;
   const r = head[0];

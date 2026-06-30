@@ -157,6 +157,25 @@ function reportCode(id) {
   return String(id).padStart(4, '0');
 }
 
+// Departamento comun del reporte (empresas no-tienda). Devuelve el
+// department_id si TODOS los trabajadores indicados comparten un mismo
+// departamento no nulo en esa empresa; null en otro caso (mezcla, sin
+// departamento, o tienda). Se guarda en reports_log.department_id para que
+// el Historial pueda filtrar por alcance empresa-departamento. No critico:
+// si falla, devuelve null (el reporte se guarda sin departamento).
+async function commonDepartment(env, cc, ceds) {
+  try {
+    const arr = [...new Set((ceds || []).map(c => String(c).replace(/[^0-9]/g, '')).filter(Boolean))];
+    if (!arr.length) return null;
+    const r = await sb(env, 'rpc/report_common_department', {
+      method: 'POST',
+      body: JSON.stringify({ p_company_code: cc, p_ceds: arr }),
+    });
+    // La RPC devuelve un escalar (bigint) o null.
+    return (r === null || r === undefined || r === '') ? null : Number(r);
+  } catch { return null; }
+}
+
 // Construye un adjunto en el formato que ESPERA la API de osTicket:
 //   { "nombre.ext": "data:MIME;base64,XXXX" }
 // (objeto con la clave = nombre de archivo). NO {name,data,...}.
@@ -366,6 +385,7 @@ async function submitMarcaje(env, body) {
   const mallZona = subzonaName || zonaName || '';
 
   // --- Encabezado en reports_log ---
+  const reportDeptId = await commonDepartment(env, cc, clean.map(l => l.worker_id_number));
   const header = await sb(env, 'reports_log', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
@@ -380,6 +400,7 @@ async function submitMarcaje(env, body) {
       email_sent: false,
       source_kind: sourceKind,
       source_admin_id: sourceAdminId,
+      department_id: reportDeptId,
     }),
   });
   const reportId = header && header[0] && header[0].id;
@@ -741,6 +762,7 @@ async function submitAusencia(env, body) {
   const mallZona = subzonaName || zonaName || '';
 
   // --- Encabezado en reports_log ---
+  const reportDeptId = await commonDepartment(env, cc, clean.map(l => l.worker_id_number));
   const header = await sb(env, 'reports_log', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
@@ -755,6 +777,7 @@ async function submitAusencia(env, body) {
       email_sent: false,
       source_kind: sourceKind,
       source_admin_id: sourceAdminId,
+      department_id: reportDeptId,
     }),
   });
   const reportId = header && header[0] && header[0].id;
@@ -1231,6 +1254,7 @@ async function submitEgreso(env, body) {
   const mallZona = subzonaName || zonaName || '';
 
   // --- Encabezado en reports_log ---
+  const reportDeptId = await commonDepartment(env, cc, clean.map(l => l.worker_id_number));
   const header = await sb(env, 'reports_log', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
@@ -1245,6 +1269,7 @@ async function submitEgreso(env, body) {
       email_sent: false,
       source_kind: sourceKind,
       source_admin_id: sourceAdminId,
+      department_id: reportDeptId,
     }),
   });
   const reportId = header && header[0] && header[0].id;
@@ -1741,6 +1766,8 @@ async function submitIngreso(env, body) {
   const mallZona = subzonaName || zonaName || '';
 
   // --- Encabezado en reports_log ---
+  // (Ingreso: personal nuevo aun sin departamento asignado -> normalmente null.)
+  const reportDeptId = await commonDepartment(env, cc, clean.map(l => l.worker_id_number));
   const header = await sb(env, 'reports_log', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
@@ -1755,6 +1782,7 @@ async function submitIngreso(env, body) {
       email_sent: false,
       source_kind: sourceKind,
       source_admin_id: sourceAdminId,
+      department_id: reportDeptId,
     }),
   });
   const reportId = header && header[0] && header[0].id;
@@ -2308,6 +2336,7 @@ async function submitModificacion(env, body) {
   const mallZona = subzonaName || zonaName || '';
 
   // --- Encabezado en reports_log ---
+  const reportDeptId = await commonDepartment(env, cc, clean.map(l => l.worker_id_number));
   const header = await sb(env, 'reports_log', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
@@ -2322,6 +2351,7 @@ async function submitModificacion(env, body) {
       email_sent: false,
       source_kind: sourceKind,
       source_admin_id: sourceAdminId,
+      department_id: reportDeptId,
     }),
   });
   const reportId = header && header[0] && header[0].id;
