@@ -8,15 +8,22 @@
   width:208px; background:var(--surface); border-right:1px solid var(--border);
   flex-shrink:0; display:flex; flex-direction:column; padding:16px 0;
   position:sticky; top:0; height:100vh;
+  transition:width .2s ease, margin-left .2s ease;
 }
-.pnl-brand { display:flex; align-items:center; gap:10px; padding:4px 18px 16px; }
+.pnl-brand { display:flex; align-items:center; gap:10px; padding:4px 18px 14px; }
+.pnl-brand > .pnl-bwrap { flex:1; min-width:0; }
+/* boton para colapsar a riel (junto a la marca) */
+.pnl-collapse { margin-left:auto; background:none; border:0; cursor:pointer; color:var(--faint);
+  padding:5px; border-radius:7px; display:flex; align-items:center; transition:background .12s,color .12s; }
+.pnl-collapse:hover { background:var(--border-soft); color:var(--ink); }
+.pnl-collapse svg { width:18px; height:18px; }
 .pnl-logo { width:38px; height:38px; border-radius:11px; background:var(--brand-bg);
   display:flex; align-items:center; justify-content:center; flex-shrink:0; }
 .pnl-logo svg { width:21px; height:21px; stroke:var(--brand); }
 .pnl-bname { font-weight:650; font-size:14px; letter-spacing:-.01em; }
 .pnl-bver { font-size:11px; color:var(--faint); margin-top:1px; }
 
-.pnl-nav { flex:1; padding:8px 12px; display:flex; flex-direction:column; gap:2px; }
+.pnl-nav { flex:1; padding:6px 12px; display:flex; flex-direction:column; gap:1px; overflow-y:auto; }
 .pnl-nav button { display:flex; align-items:center; gap:11px; padding:9px 12px; width:100%;
   border:0; background:none; color:var(--ink-soft); font-size:13.5px; cursor:pointer;
   font-family:inherit; text-align:left; border-radius:var(--radius-sm); font-weight:500;
@@ -26,22 +33,56 @@
 .pnl-nav button.active { color:var(--brand); background:var(--brand-bg); font-weight:600; }
 
 /* --- Menú agrupado (admin / superadmin) ---
-   Items sueltos arriba (botones normales .pnl-nav button) + grupos
-   colapsables. Encabezado de grupo = etiqueta pequeña en mayúsculas con
-   un chevron a la izquierda. Todos los grupos arrancan desplegados; al
-   plegar se agrega .collapsed (oculta .nav-gitems y rota el chevron). */
-.nav-group { display:flex; flex-direction:column; }
-.nav-group + .nav-group { margin-top:2px; }
+   Items sueltos arriba (separados por una linea) + grupos colapsables. El
+   encabezado de grupo es una etiqueta pequeña en mayúsculas con chevron.
+   Todos los grupos arrancan desplegados; al plegar se agrega .collapsed. */
+.nav-loose { display:flex; flex-direction:column; gap:1px; padding-bottom:5px;
+  margin-bottom:3px; border-bottom:1px solid var(--border-soft); }
+.nav-group { display:flex; flex-direction:column; margin-top:11px; }
 .nav-ghead { display:flex; align-items:center; gap:6px; width:100%; border:0; background:none;
-  cursor:pointer; font-family:inherit; text-align:left; padding:10px 12px 5px;
-  color:var(--faint); font-size:10.5px; font-weight:700; text-transform:uppercase;
-  letter-spacing:.05em; }
+  cursor:pointer; font-family:inherit; padding:6px 12px 5px; color:var(--faint);
+  font-size:10.5px; font-weight:700; text-transform:uppercase; letter-spacing:.06em; }
+.nav-ghead .gh-label { flex:1; text-align:left; }
 .nav-ghead:hover { color:var(--muted); }
-.nav-ghead-chev { width:11px; height:11px; flex-shrink:0; transition:transform .15s;
-  transform:rotate(90deg); }
-.nav-group.collapsed .nav-ghead-chev { transform:rotate(0deg); }
-.nav-gitems { display:flex; flex-direction:column; gap:2px; overflow:hidden; }
-.nav-group.collapsed .nav-gitems { display:none; }
+.nav-ghead-chev { width:13px; height:13px; flex-shrink:0; transition:transform .18s; }
+.nav-group.collapsed .nav-ghead-chev { transform:rotate(-90deg); }
+.nav-gitems { display:flex; flex-direction:column; gap:1px; overflow:hidden;
+  transition:max-height .2s ease, opacity .15s ease; max-height:600px; opacity:1; }
+.nav-group.collapsed .nav-gitems { max-height:0; opacity:0; }
+
+/* --- Modo RIEL (solo iconos) --- */
+.pnl-layout.rail .pnl-side { width:64px; }
+.pnl-layout.rail .pnl-bname,
+.pnl-layout.rail .pnl-bver,
+.pnl-layout.rail .pnl-nav button span,
+.pnl-layout.rail .gh-label,
+.pnl-layout.rail .nav-ghead-chev { display:none; }
+.pnl-layout.rail .pnl-brand { justify-content:center; padding:4px 0 14px; }
+.pnl-layout.rail .pnl-collapse { display:none; }
+.pnl-layout.rail .nav-ghead { justify-content:center; padding:8px 0 4px; pointer-events:none; }
+.pnl-layout.rail .nav-ghead::after { content:""; width:18px; height:1px; background:var(--border); }
+.pnl-layout.rail .pnl-nav { padding:6px 8px; align-items:center; }
+.pnl-layout.rail .nav-loose { padding-bottom:4px; margin-bottom:0; }
+.pnl-layout.rail .pnl-nav button { justify-content:center; padding:9px 0; width:44px; position:relative; }
+.pnl-layout.rail .nav-gitems { max-height:none !important; opacity:1 !important; }
+/* tooltip al pasar el mouse en modo riel (usa data-label del boton) */
+.pnl-layout.rail .pnl-nav button[data-label]:hover::after {
+  content:attr(data-label); position:absolute; left:calc(100% + 8px); top:50%;
+  transform:translateY(-50%); background:var(--ink); color:#fff; font-size:12px; font-weight:500;
+  padding:5px 9px; border-radius:6px; white-space:nowrap; z-index:50; box-shadow:0 4px 12px rgba(0,0,0,.18); }
+
+/* --- Modo OCULTO (off-canvas) --- */
+.pnl-layout.hidden-nav .pnl-side { margin-left:-260px; }
+.nav-reopen { display:none; position:fixed; top:14px; left:14px; z-index:40;
+  width:40px; height:40px; border-radius:10px; border:1px solid var(--border); background:var(--surface);
+  align-items:center; justify-content:center; cursor:pointer; box-shadow:0 2px 8px rgba(0,0,0,.08); }
+.pnl-layout.hidden-nav .nav-reopen { display:flex; }
+.nav-reopen svg { width:20px; height:20px; stroke:var(--ink-soft); }
+/* hamburguesa en la topbar (alterna ocultar) */
+.pnl-ham { background:none; border:0; cursor:pointer; color:var(--ink-soft); padding:6px; border-radius:7px;
+  display:flex; align-items:center; margin-right:auto; }
+.pnl-ham:hover { background:var(--border-soft); }
+.pnl-ham svg { width:20px; height:20px; }
 
 /* Columna de contenido: topbar + main */
 .pnl-content { flex:1; min-width:0; display:flex; flex-direction:column; }
@@ -323,9 +364,10 @@
 .cfg-secret-note { font-size:11px; color:var(--faint); }
 
 @media (max-width:720px) {
-  .pnl-side { width:64px; }
-  .pnl-bname, .pnl-bver, .pnl-nav span, .pnl-uinfo { display:none; }
-  .pnl-nav button { justify-content:center; }
+  /* En pantallas chicas el sidebar arranca oculto; se reabre con la
+     hamburguesa de la topbar (no forzamos riel para no pelear con los
+     modos manuales). */
+  .pnl-side { position:fixed; z-index:45; box-shadow:0 8px 30px rgba(0,0,0,.18); }
 }
 
 /* =====================================================================

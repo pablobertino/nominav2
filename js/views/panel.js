@@ -149,18 +149,19 @@ function shell(user) {
     navGroups = NAV_GROUPS.filter(g => !g.superonly || isSuper);
   }
 
-  // Botón de navegación (igual estructura que antes: data-view + active).
+  // Botón de navegación. data-label alimenta el tooltip del modo riel.
   const navBtn = ([id, ic, label]) =>
-    `<button data-view="${id}" class="${id === currentView ? 'active' : ''}">${ic}<span>${label}</span></button>`;
+    `<button data-view="${id}" data-label="${label}" class="${id === currentView ? 'active' : ''}">${ic}<span>${label}</span></button>`;
 
-  // HTML del nav: plano (navFlat) o agrupado (NAV_LOOSE + navGroups).
-  const chev = '<svg class="nav-ghead-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
+  // HTML del nav: plano (navFlat, dentro de .nav-loose) o agrupado
+  // (NAV_LOOSE en .nav-loose + grupos con encabezado-chevron).
+  const chev = '<svg class="nav-ghead-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
   const navHtml = navFlat
-    ? navFlat.map(navBtn).join('')
-    : NAV_LOOSE.map(navBtn).join('')
+    ? `<div class="nav-loose">${navFlat.map(navBtn).join('')}</div>`
+    : `<div class="nav-loose">${NAV_LOOSE.map(navBtn).join('')}</div>`
       + navGroups.map((g, gi) => `
         <div class="nav-group" data-group="${gi}">
-          <button type="button" class="nav-ghead" data-group-toggle="${gi}">${chev}<span>${g.title}</span></button>
+          <button type="button" class="nav-ghead" data-group-toggle="${gi}"><span class="gh-label">${g.title}</span>${chev}</button>
           <div class="nav-gitems">${g.items.map(navBtn).join('')}</div>
         </div>`).join('');
 
@@ -180,11 +181,17 @@ function shell(user) {
     .pnl-bell-item:last-child{border-bottom:0}
     .pnl-bell-empty{padding:18px 14px;color:var(--muted);font-size:12.5px;text-align:center}
   </style>
-  <div class="pnl-layout">
+  <div class="pnl-layout" id="pnlLayout">
+    <button class="nav-reopen" id="pnlReopen" title="Mostrar menú" aria-label="Mostrar menú">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+    </button>
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.82</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v2.83</div></div>
+        <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
+        </button>
       </div>
       <nav class="pnl-nav" id="pnlNav">
         ${navHtml}
@@ -192,6 +199,9 @@ function shell(user) {
     </aside>
     <div class="pnl-content">
       <header class="pnl-topbar">
+        <button class="pnl-ham" id="pnlHam" title="Ocultar/mostrar menú" aria-label="Ocultar o mostrar menú">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        </button>
         <div class="pnl-user">
           <div class="pnl-avatar" id="pnlAvatar">${initials}</div>
           <div class="pnl-uinfo"><div class="pnl-uname">${nameLabel}</div><div class="pnl-urole">${roleLabel}</div></div>
@@ -3467,10 +3477,21 @@ export function renderPanel() {
     b.addEventListener('click', () => navigate(b.dataset.view, user)));
   // Toggle de los grupos colapsables del menú (admin/super). Por CSP no se usa
   // onclick inline. Todos arrancan desplegados; este boton pliega/despliega.
-  // El boton de encabezado NO tiene data-view, asi que el wiring de arriba lo
-  // ignora; aqui le damos su propio handler.
+  // En modo riel no se pliega (los grupos se muestran como iconos sueltos).
+  const layout = document.getElementById('pnlLayout');
   document.querySelectorAll('#pnlNav [data-group-toggle]').forEach(h =>
-    h.addEventListener('click', () => h.closest('.nav-group').classList.toggle('collapsed')));
+    h.addEventListener('click', () => {
+      if (layout && layout.classList.contains('rail')) return;
+      h.closest('.nav-group').classList.toggle('collapsed');
+    }));
+  // Controles del menú: riel (solo iconos) y ocultar (off-canvas). No se
+  // recuerda el estado entre sesiones: arranca siempre expandido y visible.
+  const railBtn = document.getElementById('pnlRail');
+  const hamBtn = document.getElementById('pnlHam');
+  const reopenBtn = document.getElementById('pnlReopen');
+  if (railBtn && layout) railBtn.addEventListener('click', () => layout.classList.toggle('rail'));
+  if (hamBtn && layout) hamBtn.addEventListener('click', () => layout.classList.toggle('hidden-nav'));
+  if (reopenBtn && layout) reopenBtn.addEventListener('click', () => layout.classList.remove('hidden-nav'));
   // Campanita de novedades (solo admins; si no existe el boton, no hace nada).
   initBell(user);
   // Landing unificado: ambos arrancan en el Dashboard (Inicio).
