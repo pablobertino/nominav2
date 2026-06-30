@@ -631,19 +631,35 @@ export function launchWizard(user, reportDef, onExit) {
   }
 
   /* ---------- PASO 3: trabajadores ---------- */
+  // Etiqueta de la pestania "De mi ..." segun el contexto:
+  //  - tienda            -> "De mi tienda"
+  //  - empresa (no tienda) -> "De mi empresa"
+  //  - empresa con roster acotado a un solo departamento (alcance por
+  //    departamento, ej. yanmira/Tributos) -> "De <Departamento>"
+  // El nombre del departamento se infiere del roster cargado: si todos los
+  // trabajadores visibles comparten el mismo department_name, se usa ese.
+  function rosterTabLabel() {
+    if (!isEnterprise) return 'De mi tienda';
+    const names = [...new Set((S.roster || [])
+      .map(w => w.department_name).filter(Boolean))];
+    if (names.length === 1) return `De ${names[0]}`;
+    return 'De mi empresa';
+  }
+
   function stepWorkers() {
     const panel = $('#wzPanel');
-    // Si la tienda no tiene lista cargada, la pestania "De mi tienda" no
+    // Si la empresa/tienda no tiene lista cargada, la pestania "De mi ..." no
     // aporta nada: arrancamos directamente en "Agregar manual".
     const noList = S.roster.length === 0;
+    const rTabLabel = rosterTabLabel();
     panel.innerHTML = `
       <h2>Trabajadores afectados</h2>
       <p class="hint">${noList
-        ? 'Esta tienda no tiene lista cargada, así que agrega a los trabajadores a mano (cédula y nombre). Si subes el Reporte 10 más adelante, podrás elegirlos de la lista.'
-        : 'Marca a varios y agrégalos en bloque, o usa “Agregar” individual. También puedes ordenar y buscar. Para quien no esté en la lista, usa “Agregar manual”.'}</p>
+        ? `Esta ${entidad === 'la empresa' ? 'empresa' : 'tienda'} no tiene lista cargada, as\u00ed que agrega a los trabajadores a mano (c\u00e9dula y nombre).${isEnterprise ? '' : ' Si subes el Reporte 10 m\u00e1s adelante, podr\u00e1s elegirlos de la lista.'}`
+        : 'Marca a varios y agr\u00e9galos en bloque, o usa \u201cAgregar\u201d individual. Tambi\u00e9n puedes ordenar y buscar. Para quien no est\u00e9 en la lista, usa \u201cAgregar manual\u201d.'}</p>
 
       <div class="subtabs" id="wTabs">
-        <div class="subtab ${noList ? '' : 'on'}" data-tab2="roster">De mi tienda</div>
+        <div class="subtab ${noList ? '' : 'on'}" data-tab2="roster">${rTabLabel}</div>
         <div class="subtab ${noList ? 'on' : ''}" data-tab2="manual">Agregar manual</div>
       </div>
 
