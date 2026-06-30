@@ -230,7 +230,7 @@ export async function onRequestPost({ request, env }) {
   try {
     // migrate_thumbs es global (no por empresa): solo superadmin. Se valida
     // aparte porque no requiere company_code.
-    if (action === 'migrate_thumbs') return await migrateThumbs(env, user);
+    if (action === 'migrate_thumbs') return await migrateThumbs(env, user, body);
 
     if (!cc) return json({ ok: false, error: 'Falta la empresa.' }, 400);
     if (!(await userCanAccess(env, user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
@@ -704,16 +704,29 @@ async function removePhoto(env, cc, body, table, deptScope) {
    viejos (quedan como respaldo; se limpian aparte cuando se confirme todo).
    Solo superadmin. Procesa en serie (son pocas). Idempotente: las que ya
    tienen photo_key se saltan. Devuelve el detalle por cedula. */
-async function migrateThumbs(env, user) {
+async function migrateThumbs(env, user, body) {
   // Solo superadmin.
   if (!user || user.kind !== 'admin' || !user.id) return json({ ok: false, error: 'Solo superadmin.' }, 403);
   const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
   if (!a || !a.length || a[0].role !== 'superadmin') return json({ ok: false, error: 'Solo superadmin.' }, 403);
 
-  // Fotos viejas pendientes: con thumb path pero sin photo_key.
+  // Cloudflare limita ~50 subrequests por invocacion del Worker. Cada foto
+  // hace ~5 subrequests (descargar thumb + subir thumb + descargar full +
+  // subir full + PATCH). Por eso se migra en TANDAS pequenas: se llama esta
+  // accion varias veces con un limit bajo (8 por defecto = ~40 subrequests).
+  // Es idempotente (las ya migradas tienen photo_key y no se vuelven a tomar),
+  // asi que basta repetir hasta que remaining llegue a 0.
+  const lim = Math.min(Math.max(parseInt(body && body.limit, 10) || 8, 1), 9);
+
+  // Cuantas quedan pendientes en total (con thumb path pero sin photo_key).
+  const allPend = await sb(env,
+    `workers_master?photo_key=is.null&photo_thumb_path=not.is.null&select=id_number`);
+  const totalPending = (allPend || []).length;
+
+  // Tanda de esta llamada.
   const pend = await sb(env,
     `workers_master?photo_key=is.null&photo_thumb_path=not.is.null`
-    + `&select=id_number,photo_thumb_path,photo_full_path&limit=500`);
+    + `&select=id_number,photo_thumb_path,photo_full_path&limit=${lim}`);
   const list = pend || [];
   let migrated = 0, failed = 0;
   const errors = [];
@@ -751,5 +764,15 @@ async function migrateThumbs(env, user) {
     }
   }
 
-  return json({ ok: true, pending: list.length, migrated, failed, errors: errors.slice(0, 20) });
+  // remaining = cuantas siguen pendientes despues de esta tanda (aprox: las
+  // que fallaron siguen sin photo_key, asi que se reintentan en la proxima).
+  const remaining = totalPending - migrated;
+  return json({
+    ok: true,
+    batch: list.length,
+    migrated, failed,
+    remaining: remaining < 0 ? 0 : remaining,
+    done: remaining <= 0,
+    errors: errors.slice(0, 20),
+  });
 }
