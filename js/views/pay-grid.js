@@ -160,7 +160,7 @@ function renderRows() {
     return `<tr>
       <td>${emp}</td>
       <td>${compStatusPill(r.companyStatus)}${r.type ? `<div class="pg-type">${esc(r.type)}</div>` : ''}</td>
-      <td><div class="pg-per"><div class="top">${esc(r.periodoNomina || '\u2014')}</div></div></td>
+      <td><div class="pg-per"><div class="top">${esc(r.periodoNomina || '\u2014')}</div><div class="sub">${esc(fmtRango(r.nominaDesde, r.nominaHasta))}</div></div></td>
       <td><div class="pg-per"><div class="top">${esc(r.periodoPago || '\u2014')}</div><div class="sub">${esc(fmtRango(r.pagoDesde, r.pagoHasta))}</div></div></td>
       <td><span class="pst ${st.cls}">${esc(st.txt)}</span></td>
     </tr>`;

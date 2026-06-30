@@ -64,6 +64,8 @@ function slim(r) {
     index: r.idx != null ? String(r.idx) : null,
     periodoNomina: r.periodo_nomina || null,
     periodoPago: r.periodo_pago || null,
+    nominaDesde: r.nomina_desde || null,
+    nominaHasta: r.nomina_hasta || null,
     pagoDesde: r.pago_desde || null,
     pagoHasta: r.pago_hasta || null,
     status: r.status || null,
