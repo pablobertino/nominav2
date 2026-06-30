@@ -86,6 +86,10 @@ export async function onRequestPost({ request, env }) {
           p_codes: admin.codes, p_q: q,
           p_gender: gender, p_age_min: ageMin, p_age_max: ageMax,
           p_zone: zone, p_subzone: subzone, p_concept: concept, p_status: cstatus, p_limit: 80,
+          // Filtro por departamento: para admins con alcance por departamento
+          // en una empresa, su personal se limita a esos departamentos.
+          // superadmin pasa null (sin restriccion).
+          p_admin_id: admin.role === 'superadmin' ? null : admin.id,
         }),
       });
       return json({ ok: true, rows: rows || [] });
