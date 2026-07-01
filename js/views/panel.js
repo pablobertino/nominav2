@@ -273,7 +273,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.02</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.03</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2233,25 +2233,68 @@ function auRoleModal(ds, user) {
 }
 
 /* Crea/actualiza UN gestor_empresa como cliente de osTicket (boton por fila).
-   El backend valida rol y correo. Muestra el resultado en un modal propio
-   (sin alert nativo) y recarga Equipo para refrescar el chip de estado. */
-async function auSyncClientOne(ds, user) {
-  const btn = document.querySelector(`button[data-act="osticket"][data-id="${ds.id}"]`);
-  if (btn) { btn.disabled = true; btn.textContent = 'osTicket\u2026'; }
-  let d;
-  try { d = await auApi({ action: 'sync_client', adminId: user.id, id: ds.id }); }
-  catch (e) { d = { ok: false, error: 'Error de conexion: ' + (e && e.message || e) }; }
-  const okMsg = d.ok
-    ? `Cliente osTicket ${d.created ? 'creado' : 'actualizado'} para <b>${ds.u}</b>${d.user_id ? ` <span class="muted">(#${d.user_id})</span>` : ''}.`
-    : '';
+   Abre un modal que pide el usuario (prellenado con el del portal) y una clave
+   FIJA que tu defines; con eso el gestor entra al portal de clientes de
+   osTicket con usuario + clave (osTicket no le fuerza el cambio). El backend
+   valida rol y correo. Sin alert nativo. */
+function auSyncClientOne(ds, user) {
   openModal(`
-    <div class="modal-head"><span>${d.ok ? 'osTicket' : 'No se pudo sincronizar'}</span><button class="modal-x" id="mX">\u2715</button></div>
-    <p style="margin:0 0 4px">${d.ok ? '\u2705 ' + okMsg : '\u26a0\ufe0f ' + (d.error || 'Error desconocido.')}</p>
-    ${d.ok ? '' : '<p class="muted" style="font-size:12px;margin:8px 0 0">Revisa que el gestor tenga correo cargado y que osTicket este configurado.</p>'}
-    <div class="modal-actions"><button class="btn btn-primary" id="mClose">Listo</button></div>`);
-  const finish = () => { closeModal(); viewEquipo(user); };
-  $('#mX').addEventListener('click', finish);
-  $('#mClose').addEventListener('click', finish);
+    <div class="modal-head"><span>Acceso osTicket del gestor</span><button class="modal-x" id="mX">\u2715</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 16px">${ds.u} \u00b7 se crea/actualiza su cliente de osTicket y su acceso (usuario + clave).</p>
+    <label class="flabel">Usuario (osTicket)</label>
+    <input type="text" id="ocUser" value="${ds.u}" style="margin-bottom:12px">
+    <label class="flabel">Clave</label>
+    <input type="text" id="ocPass" placeholder="minimo 6 caracteres" autocomplete="off" style="margin-bottom:6px">
+    <p class="muted" style="font-size:11.5px;margin:0">La clave es fija (no se fuerza el cambio al entrar). Se mostrara aqui para que se la entregues; anotala.</p>
+    <p id="ocErr" style="color:var(--danger);font-size:12.5px;margin:10px 0 0;display:none"></p>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Crear acceso</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const uname = $('#ocUser').value.trim();
+    const pass = $('#ocPass').value;
+    const err = $('#ocErr');
+    if (!uname) { err.textContent = 'Indica el usuario.'; err.style.display = 'block'; return; }
+    if (!pass || pass.length < 6) { err.textContent = 'La clave debe tener al menos 6 caracteres.'; err.style.display = 'block'; return; }
+    const btn = $('#mOk'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Creando\u2026';
+    let d;
+    try { d = await auApi({ action: 'sync_client', adminId: user.id, id: ds.id, username: uname, password: pass }); }
+    catch (e) { d = { ok: false, error: 'Error de conexion: ' + (e && e.message || e) }; }
+    if (!d.ok) {
+      err.textContent = d.error || 'No se pudo crear el acceso.';
+      err.style.display = 'block';
+      btn.disabled = false; btn.textContent = orig;
+      return;
+    }
+    // Exito: mostrar credenciales copiables.
+    openModal(`
+      <div class="modal-head"><span>Acceso osTicket listo</span><button class="modal-x" id="mX">\u2715</button></div>
+      <p style="margin:0 0 4px">\u2705 Cliente osTicket ${d.created ? 'creado' : 'actualizado'} y acceso ${d.account_created ? 'creado' : 'actualizado'} para <b>${ds.u}</b>.</p>
+      <div style="margin-top:12px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--bg-soft,#f7f7f9)">
+        ${copyFieldHtml('Usuario', uname, 'ocrUser')}
+        ${copyFieldHtml('Clave', pass, 'ocrPass')}
+        <button class="btn" data-copy-all type="button" style="width:100%;margin-top:2px">Copiar usuario y clave</button>
+        <p class="muted" style="font-size:11.5px;margin:10px 0 0;line-height:1.5">Entregaselo a <b>${ds.u}</b>. Entra en el portal de clientes de osTicket con ese usuario y clave.</p>
+      </div>
+      <div class="modal-actions"><button class="btn btn-primary" id="mClose">Listo</button></div>`);
+    const finish = () => { closeModal(); viewEquipo(user); };
+    $('#mX').addEventListener('click', finish);
+    $('#mClose').addEventListener('click', finish);
+    document.querySelectorAll('[data-copy]').forEach(b =>
+      b.addEventListener('click', () => {
+        const el = document.getElementById(b.dataset.copy);
+        if (el) { el.select(); copyToClipboard(el.value, b); }
+      }));
+    const all = document.querySelector('[data-copy-all]');
+    if (all) all.addEventListener('click', () => {
+      const us = document.getElementById('ocrUser');
+      const pw = document.getElementById('ocrPass');
+      copyToClipboard(`Usuario: ${us ? us.value : ''}\nClave: ${pw ? pw.value : ''}`, all);
+    });
+  });
 }
 
 /* Crea/actualiza TODOS los gestor_empresa activos con correo como clientes de

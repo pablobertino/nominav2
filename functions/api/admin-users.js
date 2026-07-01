@@ -77,16 +77,22 @@ async function gcUser(env, base, data) {
 
 // Sincroniza UN admin (debe ser gestor_empresa con correo) como cliente
 // osTicket. Guarda osticket_user_id + fecha. Devuelve el resultado por fila.
-async function syncClientOne(env, base, u) {
+// Si se pasa username/password, crea/actualiza tambien la cuenta de acceso
+// del cliente (login local con clave fija) via gc-user.json.
+async function syncClientOne(env, base, u, opts = {}) {
   const email = (u.email || '').trim();
   if (!email) return { id: u.id, username: u.username, ok: false, error: 'Sin correo.' };
   const name = (u.name || u.username || email).trim();
-  const r = await gcUser(env, base, { email, name });
+  const payload = { email, name };
+  if (opts.username) payload.username = String(opts.username).trim();
+  if (opts.password) payload.password = String(opts.password);
+  const r = await gcUser(env, base, payload);
   await sb(env, `admin_users?id=eq.${encodeURIComponent(u.id)}`, {
     method: 'PATCH', headers: { Prefer: 'return=minimal' },
     body: JSON.stringify({ osticket_user_id: r.user_id, osticket_user_synced_at: new Date().toISOString() }),
   });
-  return { id: u.id, username: u.username, ok: true, user_id: r.user_id, created: r.created };
+  return { id: u.id, username: u.username, ok: true, user_id: r.user_id, created: r.created,
+    account_created: r.account_created, account_updated: r.account_updated };
 }
 
 export async function onRequestPost({ request, env }) {
@@ -175,8 +181,11 @@ export async function onRequestPost({ request, env }) {
     }
 
     // Crea/actualiza UN gestor_empresa como cliente de osTicket.
+    // Opcional: si viene password, crea/actualiza la cuenta de acceso
+    // (login local) con username (por defecto el username del portal) y esa
+    // clave FIJA (osTicket no fuerza el cambio).
     if (action === 'sync_client') {
-      const { id } = body;
+      const { id, username, password } = body;
       if (!id) return json({ ok: false, error: 'Falta el usuario.' }, 400);
       const base = await osticketBase(env);
       if (!base || !env.osticket_api_key) return json({ ok: false, error: 'osTicket no esta configurado (URL o clave API).' }, 400);
@@ -184,10 +193,20 @@ export async function onRequestPost({ request, env }) {
       if (!rows || !rows.length) return json({ ok: false, error: 'Usuario no encontrado.' }, 404);
       const u = rows[0];
       if (u.role !== 'gestor_empresa') return json({ ok: false, error: 'Solo el gestor de empresa se crea como cliente de osTicket.' }, 400);
+      if (password != null && String(password).length && String(password).length < 6) {
+        return json({ ok: false, error: 'La clave debe tener al menos 6 caracteres.' }, 400);
+      }
+      const opts = {};
+      if (password != null && String(password).length) {
+        opts.password = String(password);
+        opts.username = (username && String(username).trim()) || u.username;
+      }
       try {
-        const r = await syncClientOne(env, base, u);
+        const r = await syncClientOne(env, base, u, opts);
         if (!r.ok) return json({ ok: false, error: r.error }, 400);
-        return json({ ok: true, user_id: r.user_id, created: r.created });
+        return json({ ok: true, user_id: r.user_id, created: r.created,
+          account_created: r.account_created, account_updated: r.account_updated,
+          username: opts.username || null });
       } catch (e) {
         return json({ ok: false, error: String(e.message || e) }, 500);
       }
