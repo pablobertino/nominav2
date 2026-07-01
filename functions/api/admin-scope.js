@@ -144,6 +144,18 @@ export async function onRequestPost({ request, env }) {
         `admin_users?id=eq.${encodeURIComponent(targetId)}&select=id,username,name,email,role,osticket_staff_id`);
       const target = arr && arr[0];
       if (!target) return json({ ok: false, error: 'Admin objetivo no encontrado.' }, 404);
+
+      // Solo admin/superadmin son AGENTES de osTicket. Los gestores son
+      // CLIENTES (se sincronizan con action 'sync_client' en admin-users) y
+      // los editores no tienen osTicket. Si el target no es agente NO se crea
+      // agente: se informa skipped para que el front solo guarde el alcance en
+      // el portal y vuelva sin pedir credenciales.
+      if (target.role !== 'admin' && target.role !== 'superadmin') {
+        return json({ ok: true, skipped: true, reason: target.role,
+          message: target.role === 'gestor_empresa'
+            ? 'Los gestores son clientes de osTicket, no agentes: el alcance se guardo; sincroniza su usuario cliente desde el boton osTicket de su fila.'
+            : 'Este rol no tiene agente en osTicket; el alcance se guardo en el portal.' });
+      }
       if (!target.email) return json({ ok: false, error: 'El admin no tiene correo; es obligatorio para crear el agente en osTicket.' }, 400);
 
       const hasAgent = !!target.osticket_staff_id;

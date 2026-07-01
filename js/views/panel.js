@@ -273,7 +273,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.10</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.11</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3177,10 +3177,22 @@ async function saveScope(user) {
 
   let p = await pushScope();
 
+  // 2z) El target no es agente (gestor/editor): el backend no crea agente.
+  //     El alcance ya quedo guardado en el portal; volvemos sin pedir clave.
+  //     La sincronizacion osTicket del gestor se hace como CLIENTE desde el
+  //     boton osTicket de su fila (no aqui).
+  if (p && p.ok && p.skipped) {
+    backTo();
+    return;
+  }
+
   // 2a) El agente aun no existe: el backend pide crearlo. Lanzamos el modal de
   //     creacion (usuario + clave temporal/definida) y, al confirmar, se
   //     re-empuja el alcance con esas credenciales.
   if (p && p.ok && p.needs_agent) {
+    // El alcance ya se guardo; restauramos el boton por si se cancela el modal
+    // (evita que quede colgado en "Sincronizando...").
+    btn.disabled = false; btn.textContent = 'Guardar alcance';
     agentModal(user, { id: targetId, username: p.username, name: p.name, mode: 'create' }, async (creds) => {
       const btn2 = $('#mOk'); if (btn2) { btn2.disabled = true; btn2.textContent = 'Creando agente\u2026'; }
       const p2 = await pushScope({ username: creds.username, password: creds.password });
