@@ -121,21 +121,40 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (action === 'push_to_osticket') {
-      // Empuja el alcance del admin objetivo a osTicket. Tres pasos:
-      //  1) Asegurar el agente (upsert_agent) -> staff_id; guardarlo en
-      //     admin_users.osticket_staff_id.
-      //  2) Resolver el alcance a user_ids (resolve_admin_scope).
+      // Empuja el alcance COMPLETO del admin objetivo a osTicket (tiendas +
+      // empresas no-tienda + departamentos): el agente ve en su bandeja los
+      // usuarios (remitentes) de TODO su alcance. Pasos:
+      //  1) Asegurar el agente (upsert_agent) -> staff_id.
+      //     - Si NO existe agente y NO viene credencial (username/password),
+      //       NO se crea a ciegas: se devuelve needs_agent:true para que el
+      //       front lance el modal de creacion (clave temporal o definida).
+      //  2) Resolver alcance completo a user_ids (resolve_admin_scope_full).
       //  3) sync_scope con esos user_ids.
+      // Parametros opcionales del body:
+      //   username        -> usuario del agente (por defecto admin.username)
+      //   password        -> clave a fijar (si se crea o se resetea)
+      //   reset_password   -> true: forzar reset de clave aunque ya exista
       const base = await osticketBase(env);
       if (!base || !env.osticket_api_key) {
         return json({ ok: false, error: 'osTicket no esta configurado (URL o clave API).' }, 400);
       }
+      const { username, password, reset_password } = body;
       // Datos del admin objetivo (para crear/actualizar el agente).
       const arr = await sb(env,
-        `admin_users?id=eq.${encodeURIComponent(targetId)}&select=id,username,name,email,osticket_staff_id`);
+        `admin_users?id=eq.${encodeURIComponent(targetId)}&select=id,username,name,email,role,osticket_staff_id`);
       const target = arr && arr[0];
       if (!target) return json({ ok: false, error: 'Admin objetivo no encontrado.' }, 404);
       if (!target.email) return json({ ok: false, error: 'El admin no tiene correo; es obligatorio para crear el agente en osTicket.' }, 400);
+
+      const hasAgent = !!target.osticket_staff_id;
+      const gotPwd = password != null && String(password).length > 0;
+      // Si aun no hay agente y no vino clave, el front debe pedir la creacion.
+      if (!hasAgent && !gotPwd) {
+        return json({ ok: true, needs_agent: true, username: target.username, name: target.name || target.username });
+      }
+      if (gotPwd && String(password).length < 6) {
+        return json({ ok: false, error: 'La clave debe tener al menos 6 caracteres.' }, 400);
+      }
 
       // Nombre: partir 'name' en primero/resto. Si no hay name, usar username.
       const fullName = (target.name || target.username || '').trim();
@@ -143,19 +162,21 @@ export async function onRequestPost({ request, env }) {
       const firstname = parts.shift() || target.username || 'Agente';
       const lastname = parts.join(' ') || '.';
 
-      // 1) upsert_agent. Si el admin aun no tiene staff vinculado, generamos
-      //    una clave temporal (se devuelve UNA vez al superadmin).
-      let tempPwd = null;
+      // 1) upsert_agent. Fija clave si: se esta creando (gotPwd), o se pidio
+      //    reset explicito. change_passwd:true = osTicket exige cambio al
+      //    entrar. Si el usuario definio una clave manual, respetamos la que
+      //    mando; si no vino, generamos una temporal (solo en creacion/reset).
+      let usedPwd = null;
       const agentBody = {
         action: 'upsert_agent',
-        username: target.username,
+        username: (username && String(username).trim()) || target.username,
         firstname, lastname,
         email: target.email,
         change_passwd: true,
       };
-      if (!target.osticket_staff_id) {
-        tempPwd = tempPassword();
-        agentBody.password = tempPwd;
+      if (gotPwd || reset_password) {
+        usedPwd = gotPwd ? String(password) : tempPassword();
+        agentBody.password = usedPwd;
       }
       const up = await gcAgent(env, base, agentBody);
       const staffId = up.staff_id;
@@ -168,8 +189,8 @@ export async function onRequestPost({ request, env }) {
         });
       }
 
-      // 2) Resolver alcance a user_ids (solo tiendas con user en osTicket).
-      const rows = await sb(env, `rpc/resolve_admin_scope`, {
+      // 2) Resolver alcance COMPLETO a user_ids (tiendas + empresas con user).
+      const rows = await sb(env, `rpc/resolve_admin_scope_full`, {
         method: 'POST',
         body: JSON.stringify({ p_admin_id: Number(targetId) }),
       });
@@ -199,8 +220,53 @@ export async function onRequestPost({ request, env }) {
         scope_count: sc.count,
         scope_total: list.length,
         scope_pending_user: list.length - withUser.length,
-        // La clave temporal SOLO se devuelve cuando se creo el agente ahora.
-        temp_password: tempPwd,
+        // La clave se devuelve cuando se creo o se reseteo el agente ahora.
+        temp_password: usedPwd,
+        agent_username: agentBody.username,
+      });
+    }
+
+    if (action === 'reset_agent') {
+      // Resetea (o crea) la clave del agente de un admin, sin tocar el alcance.
+      // Reusa la logica de upsert_agent. Body: username?, password? (si no
+      // viene password, genera temporal). Devuelve credenciales para entregar.
+      const base = await osticketBase(env);
+      if (!base || !env.osticket_api_key) {
+        return json({ ok: false, error: 'osTicket no esta configurado (URL o clave API).' }, 400);
+      }
+      const { username, password } = body;
+      const arr = await sb(env,
+        `admin_users?id=eq.${encodeURIComponent(targetId)}&select=id,username,name,email,role,osticket_staff_id`);
+      const target = arr && arr[0];
+      if (!target) return json({ ok: false, error: 'Admin objetivo no encontrado.' }, 404);
+      if (!target.email) return json({ ok: false, error: 'El admin no tiene correo; es obligatorio para el agente en osTicket.' }, 400);
+      if (password != null && String(password).length && String(password).length < 6) {
+        return json({ ok: false, error: 'La clave debe tener al menos 6 caracteres.' }, 400);
+      }
+      const fullName = (target.name || target.username || '').trim();
+      const parts = fullName.split(/\s+/);
+      const firstname = parts.shift() || target.username || 'Agente';
+      const lastname = parts.join(' ') || '.';
+      const usedPwd = (password != null && String(password).length) ? String(password) : tempPassword();
+      const up = await gcAgent(env, base, {
+        action: 'upsert_agent',
+        username: (username && String(username).trim()) || target.username,
+        firstname, lastname,
+        email: target.email,
+        change_passwd: true,
+        password: usedPwd,
+      });
+      const staffId = up.staff_id;
+      if (staffId && staffId !== target.osticket_staff_id) {
+        await sb(env, `admin_users?id=eq.${encodeURIComponent(targetId)}`, {
+          method: 'PATCH',
+          body: JSON.stringify({ osticket_staff_id: staffId }),
+        });
+      }
+      return json({
+        ok: true, staff_id: staffId, agent_created: up.created,
+        temp_password: usedPwd,
+        agent_username: (username && String(username).trim()) || target.username,
       });
     }
 

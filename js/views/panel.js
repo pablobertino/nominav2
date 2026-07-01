@@ -273,7 +273,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.09</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.10</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2319,7 +2319,7 @@ async function viewEquipo(user) {
         <button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas">${I.sliders} Tiendas</button>
         <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>
         ${roleBtn}
-        <button class="btn btn-mini" data-act="osticket-agent" data-id="${a.id}" data-u="${a.username}" title="Agente osTicket (se sincroniza al guardar el alcance de tiendas)">osTicket</button>
+        <button class="btn btn-mini" data-act="osticket-agent" data-id="${a.id}" data-u="${a.username}" data-staff="${a.osticket_staff_id || ''}" title="Agente osTicket (crear/resetear; se sincroniza al guardar el alcance)">osTicket</button>
         ${resetBtn}
         ${toggleBtn}
       </div></td>
@@ -2468,8 +2468,8 @@ function auCreateModal(user) {
   });
 }
 function auAction(ds, user) {
-  if (ds.act === 'scope-store') { openScopeEditor(user, ds.id, ds.u, 'store'); return; }
-  if (ds.act === 'scope-ent') { openScopeEditor(user, ds.id, ds.u, 'enterprise'); return; }
+  if (ds.act === 'scope-store') { openScopeEditor(user, ds.id, ds.u, 'store', 'equipo'); return; }
+  if (ds.act === 'scope-ent') { openScopeEditor(user, ds.id, ds.u, 'enterprise', 'equipo'); return; }
   if (ds.act === 'role') { auRoleModal(ds, user); return; }
   if (ds.act === 'osticket') { auSyncClientOne(ds, user); return; }
   if (ds.act === 'osticket-agent') { auAgentInfo(ds, user); return; }
@@ -2501,23 +2501,115 @@ async function auApi(payload) {
   return res.json();
 }
 
-/* El agente osTicket de un ADMIN no se crea con un boton directo: se genera y
-   sincroniza (agente + bandeja de tiendas) al guardar su ALCANCE DE TIENDAS
-   (push_to_osticket). Este modal lo explica y ofrece ir directo a ese editor. */
+/* Modal reutilizable para crear/resetear el AGENTE osTicket de un admin.
+   Pide usuario (prellenado) + bloque de clave (temporal autogenerada o una
+   que defina el superadmin). onDone(creds) recibe {username, password} donde
+   password puede ser '' si eligio temporal (el backend genera la temporal).
+   `meta` = { id, username, name, mode:'create'|'reset' }.
+   Este modal NO llama al backend por si mismo cuando es 'create' desde el
+   flujo de alcance (deja que saveScope re-empuje); para 'reset' directo desde
+   Equipo, si llama a reset_agent. Se distingue por meta.direct. */
+function agentModal(user, meta, onDone) {
+  const isReset = meta.mode === 'reset';
+  const titulo = isReset ? 'Resetear clave del agente' : 'Crear agente osTicket';
+  const who = meta.name && meta.name !== meta.username ? `${meta.username} \u00b7 ${meta.name}` : meta.username;
+  openModal(`
+    <div class="modal-head"><span>${titulo}</span><button class="modal-x" id="mX">\u2715</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 14px">${who} \u00b7 agente (staff) de osTicket. Con esto ve su bandeja de tickets.</p>
+    <label class="flabel">Usuario (osTicket)</label>
+    <input type="text" id="agUser" value="${meta.username || ''}" style="margin-bottom:14px">
+    ${pwdBlockHtml()}
+    <p id="agErr" style="color:var(--danger);font-size:12.5px;margin:10px 0 0;display:none"></p>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">${isReset ? 'Resetear clave' : 'Crear agente'}</button>
+    </div>`);
+  wirePwdBlock();
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const uname = $('#agUser').value.trim();
+    const err = $('#agErr');
+    if (!uname) { err.textContent = 'Indica el usuario.'; err.style.display = 'block'; return; }
+    const pw = readPwd();   // { useTemp:true } | { useTemp:false, password }
+    // Si define clave manual, validar minimo 6.
+    if (!pw.useTemp && (!pw.password || pw.password.length < 6)) {
+      err.textContent = 'La clave debe tener al menos 6 caracteres.'; err.style.display = 'block'; return;
+    }
+    // password que se envia al backend: '' cuando es temporal (el backend la
+    // genera). onDone recibe estas credenciales.
+    const creds = { username: uname, password: pw.useTemp ? '' : pw.password };
+    if (meta.direct) {
+      // Reset directo desde Equipo: llamamos reset_agent aqui mismo.
+      const btn = $('#mOk'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Guardando\u2026';
+      let r;
+      try {
+        r = await fetch('/api/admin-scope', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'reset_agent', adminId: user.id, targetId: meta.id,
+            username: uname, password: creds.password }),
+        }).then(x => x.json());
+      } catch (e) { r = { ok: false, error: 'Error de conexion: ' + (e && e.message || e) }; }
+      if (!r || !r.ok) { err.textContent = (r && r.error) || 'No se pudo guardar.'; err.style.display = 'block'; btn.disabled = false; btn.textContent = orig; return; }
+      closeModal();
+      // Mostrar credenciales (reusa el modal de resultado, sin conteo de bandeja).
+      agentCredsModal(user, r, meta.username, () => viewEquipo(user));
+    } else {
+      // Flujo de creacion desde guardar alcance: delega en onDone.
+      if (onDone) onDone(creds);
+    }
+  });
+}
+
+/* Modal simple de credenciales del agente (usado por el reset directo). */
+function agentCredsModal(user, r, targetUser, done) {
+  const credUser = r.agent_username || targetUser;
+  openModal(`
+    <div class="modal-head"><span>Agente osTicket listo</span><button class="modal-x" id="mX">\u2715</button></div>
+    <p style="margin:0 0 4px">\u2705 Agente ${r.agent_created ? 'creado' : 'actualizado'}${r.staff_id ? ` <span class="muted">(#${r.staff_id})</span>` : ''}.</p>
+    <div style="margin-top:12px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--bg-soft,#f7f7f9)">
+      ${copyFieldHtml('Usuario', credUser, 'acrUser')}
+      ${copyFieldHtml('Clave', r.temp_password || '', 'acrPass')}
+      <button class="btn" data-copy-all type="button" style="width:100%;margin-top:2px">Copiar usuario y clave</button>
+      <p class="muted" style="font-size:11.5px;margin:10px 0 0;line-height:1.5">Entr\u00e9gaselas al agente. Debera cambiar la clave al entrar. No se vuelve a mostrar.</p>
+    </div>
+    <div class="modal-actions"><button class="btn btn-primary" id="mClose">Listo</button></div>`);
+  const finish = () => { closeModal(); if (done) done(); };
+  $('#mX').addEventListener('click', finish);
+  $('#mClose').addEventListener('click', finish);
+  document.querySelectorAll('[data-copy]').forEach(b =>
+    b.addEventListener('click', () => { const el = document.getElementById(b.dataset.copy); if (el) { el.select(); copyToClipboard(el.value, b); } }));
+  const all = document.querySelector('[data-copy-all]');
+  if (all) all.addEventListener('click', () => {
+    const u = document.getElementById('acrUser'), pw = document.getElementById('acrPass');
+    copyToClipboard(`Usuario: ${u ? u.value : ''}\nClave: ${pw ? pw.value : ''}`, all);
+  });
+}
+
+/* Boton osTicket de la grilla ADMINS. Abre un menu breve:
+   - si el admin YA tiene agente: ofrece resetear la clave o ir al alcance.
+   - si NO tiene agente: explica que se crea al guardar el alcance y ofrece ir.
+   ds trae: id, u, staff (osticket_staff_id o vacio). */
 function auAgentInfo(ds, user) {
+  const hasAgent = ds.staff && ds.staff !== 'null' && ds.staff !== '';
   openModal(`
     <div class="modal-head"><span>Agente osTicket</span><button class="modal-x" id="mX">\u2715</button></div>
-    <p class="muted" style="font-size:12.5px;margin:0 0 12px">${ds.u}</p>
-    <p style="margin:0 0 12px;line-height:1.6">El agente de osTicket de un administrador se crea y sincroniza automaticamente al guardar su <b>alcance de tiendas</b>: su bandeja queda con las tiendas de su alcance que ya tengan usuario en osTicket.</p>
-    <p class="muted" style="font-size:12px;margin:0">Abre el alcance de tiendas, ajustalo (o dejalo igual) y pulsa \u201cGuardar alcance\u201d; alli se crea el agente y se muestran sus credenciales si es nuevo.</p>
+    <p class="muted" style="font-size:12.5px;margin:0 0 12px">${ds.u}${hasAgent ? ` \u00b7 agente #${ds.staff}` : ''}</p>
+    ${hasAgent
+      ? `<p style="margin:0 0 12px;line-height:1.6">Este admin ya tiene agente en osTicket. Puedes <b>resetear su clave</b> (para entregarsela de nuevo) o ir a su <b>alcance de tiendas</b> para reajustar su bandeja.</p>`
+      : `<p style="margin:0 0 12px;line-height:1.6">Este admin <b>aun no tiene agente</b> en osTicket. El agente se crea al guardar su <b>alcance de tiendas</b> (o de empresas): alli se pide el usuario y la clave, y se sincroniza su bandeja.</p>`}
     <div class="modal-actions">
       <button class="btn" id="mCancel">Cerrar</button>
+      ${hasAgent ? `<button class="btn" id="mReset">${I.key} Resetear clave</button>` : ''}
       <button class="btn btn-primary" id="mGo">${I.sliders} Ir al alcance de tiendas</button>
     </div>`);
   $('#mX').addEventListener('click', closeModal);
   $('#mCancel').addEventListener('click', closeModal);
-  $('#mGo').addEventListener('click', () => { closeModal(); openScopeEditor(user, ds.id, ds.u, 'store'); });
+  $('#mGo').addEventListener('click', () => { closeModal(); openScopeEditor(user, ds.id, ds.u, 'store', 'equipo'); });
+  const rb = $('#mReset');
+  if (rb) rb.addEventListener('click', () => { closeModal(); agentModal(user, { id: ds.id, username: ds.u, mode: 'reset', direct: true }); });
 }
+
 
 /* Modal para cambiar el rol de un miembro del Equipo. Solo superadmin (lo
    exige el backend). El <select> ofrece admin / gestor de empresa / editor de
@@ -2688,8 +2780,8 @@ async function viewPermisos(user) {
     b.addEventListener('click', () => openScopeEditor(user, b.dataset.id, b.dataset.u, b.dataset.kind || 'store')));
 }
 
-async function openScopeEditor(user, targetId, targetUser, kind = 'store') {
-  $('#pnlMain').innerHTML = `<div class="pnl-loading">Cargando alcance…</div>`;
+async function openScopeEditor(user, targetId, targetUser, kind = 'store', origin = 'permisos') {
+  $('#pnlMain').innerHTML = `<div class="pnl-loading">Cargando alcance\u2026</div>`;
   const d = await fetch('/api/admin-scope', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'get', adminId: user.id, targetId }),
@@ -2697,7 +2789,7 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store') {
   if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
 
   SCOPE = {
-    target: targetId, targetUser,
+    target: targetId, targetUser, origin,
     kind, isEnt: kind === 'enterprise',
     include: d.include.map(x => ({ ...x })),
     exclude: d.exclude.map(x => ({ ...x })),
@@ -2705,10 +2797,26 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store') {
     departments: d.departments || [],
   };
 
+  // A donde vuelve al Cancelar / Volver / terminar de guardar.
+  const backTo = () => (origin === 'equipo' ? viewEquipo(user) : viewPermisos(user));
+  SCOPE.backTo = backTo;
+
+  // Aviso de que vera el agente en osTicket segun este alcance. El agente ve
+  // en su bandeja los remitentes (usuarios de osTicket) de TODO su alcance
+  // (tiendas + empresas). Las que aun no tengan remitente se suman cuando se
+  // creen en Usuarios -> osTicket.
+  const ostInfo = `<div class="sc-ostinfo">`
+    + `<span class="sc-ostinfo-ic">\u{1F3AB}</span>`
+    + `<div>En <b>osTicket</b>, este agente vera en su bandeja los tickets de los remitentes `
+    + `de <b>todo su alcance</b> (tiendas y empresas de esta lista) que ya tengan usuario de osTicket. `
+    + `Al guardar se crea/actualiza el agente y se sincroniza su bandeja. `
+    + `${SCOPE.isEnt ? 'Aunque estas sean empresas (no tiendas), tambien aportan su remitente a la bandeja.' : ''}</div></div>`;
+
   $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Alcance de ${SCOPE.isEnt ? 'Empresas' : 'Tiendas'} · ${targetUser}</h1>
-      <p>${SCOPE.isEnt ? 'Define qué empresas (no tiendas) o departamentos puede gestionar. Alcance final = incluidos − excluidos.' : 'Define qué tiendas puede gestionar. Alcance final = incluidos − excluidos.'}</p></div>
-      <button class="btn" id="scBack">← Volver</button></div>
+    <div class="pnl-head"><div><h1>Alcance de ${SCOPE.isEnt ? 'Empresas' : 'Tiendas'} \u00b7 ${targetUser}</h1>
+      <p>${SCOPE.isEnt ? 'Define qu\u00e9 empresas (no tiendas) o departamentos puede gestionar. Alcance final = incluidos \u2212 excluidos.' : 'Define qu\u00e9 tiendas puede gestionar. Alcance final = incluidos \u2212 excluidos.'}</p></div>
+      <button class="btn" id="scBack">\u2190 Volver</button></div>
+    ${ostInfo}
     <div class="card">
       <div class="sc-add">
         <select id="scLevel">
@@ -2716,7 +2824,7 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store') {
             ? '<option value="company">Empresa (todo)</option><option value="department">Departamento</option>'
             : '<option value="zone">Zona</option><option value="subzone">Subzona</option><option value="company">Tienda</option>'}
         </select>
-        <div class="search" style="flex:1">${I.search}<input id="scSearch" placeholder="Buscar…" autocomplete="off"></div>
+        <div class="search" style="flex:1">${I.search}<input id="scSearch" placeholder="Buscar\u2026" autocomplete="off"></div>
         ${SCOPE.isEnt ? `<button class="btn" id="scNewDept" title="Crear un departamento" style="white-space:nowrap;display:none">${I.plus} Nuevo departamento</button>` : ''}
       </div>
       <div id="scResults" class="sc-results"></div>
@@ -2737,8 +2845,8 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store') {
       <button class="btn btn-primary" id="scSave">Guardar alcance</button>
     </div>`;
 
-  $('#scBack').addEventListener('click', () => viewPermisos(user));
-  $('#scCancel').addEventListener('click', () => viewPermisos(user));
+  $('#scBack').addEventListener('click', backTo);
+  $('#scCancel').addEventListener('click', backTo);
   $('#scSave').addEventListener('click', () => saveScope(user));
 
   const lvl = $('#scLevel'), search = $('#scSearch');
@@ -2985,41 +3093,43 @@ function copyFieldHtml(label, value, id) {
 
 /* Modal de resultado de la sincronización con osTicket. Muestra el conteo y,
    si se creó el agente, el usuario y la clave temporal en campos copiables. */
-function scopeResultModal(user, p, targetUser) {
+function scopeResultModal(user, p, targetUser, backTo) {
+  const done = backTo || (() => viewPermisos(user));
   const staffTag = p.staff_id ? ` <span class="muted">(#${p.staff_id})</span>` : '';
   const pend = p.scope_pending_user > 0
     ? `<p class="muted" style="font-size:12px;margin:6px 0 0;line-height:1.5">`
-      + `${p.scope_pending_user} tienda(s) de su alcance aún no tienen usuario en osTicket; `
-      + `se sumarán a medida que las sincronices en Usuarios → osTicket.</p>`
+      + `${p.scope_pending_user} de su alcance a\u00fan no tienen usuario en osTicket; `
+      + `se sumar\u00e1n a medida que las sincronices en Usuarios \u2192 osTicket.</p>`
     : '';
 
-  // Bloque de credenciales: solo cuando se creó el agente en esta corrida.
-  const creds = (p.agent_created && p.temp_password) ? `
+  // Bloque de credenciales: cuando se creo o se reseteo la clave en esta corrida.
+  const credUser = p.agent_username || targetUser;
+  const creds = (p.temp_password) ? `
     <div style="margin-top:16px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--bg-soft,#f7f7f9)">
-      <p class="flabel" style="margin:0 0 10px;display:flex;align-items:center;gap:6px">🔑 Credenciales del nuevo agente</p>
-      ${copyFieldHtml('Usuario', targetUser, 'scrUser')}
-      ${copyFieldHtml('Clave temporal', p.temp_password, 'scrPass')}
+      <p class="flabel" style="margin:0 0 10px;display:flex;align-items:center;gap:6px">\u{1F511} Credenciales del agente</p>
+      ${copyFieldHtml('Usuario', credUser, 'scrUser')}
+      ${copyFieldHtml('Clave', p.temp_password, 'scrPass')}
       <button class="btn" data-copy-both type="button" style="width:100%;margin-top:2px">Copiar usuario y clave juntos</button>
       <p class="muted" style="font-size:11.5px;margin:10px 0 0;line-height:1.5">`
-      + `Entrégaselas a <b>${targetUser}</b>. La clave la deberá cambiar al entrar por primera vez. `
-      + `<b>No se vuelve a mostrar</b>, cópiala ahora.</p>
+      + `Entr\u00e9gaselas a <b>${targetUser}</b>. La clave la deber\u00e1 cambiar al entrar por primera vez. `
+      + `<b>No se vuelve a mostrar</b>, c\u00f3piala ahora.</p>
     </div>` : '';
 
   openModal(`
-    <div class="modal-head"><span>Alcance sincronizado con osTicket</span><button class="modal-x" id="mX">✕</button></div>
-    <p style="margin:0 0 4px">✅ Alcance guardado y reflejado en osTicket.</p>
+    <div class="modal-head"><span>Alcance sincronizado con osTicket</span><button class="modal-x" id="mX">\u2715</button></div>
+    <p style="margin:0 0 4px">\u2705 Alcance guardado y reflejado en osTicket.</p>
     <p style="margin:0">Agente: <b>${targetUser}</b>${staffTag}<br>
-      Tiendas en su bandeja: <b>${p.scope_count}</b> de ${p.scope_total} con usuario en osTicket.</p>
+      En su bandeja: <b>${p.scope_count}</b> de ${p.scope_total} con usuario en osTicket.</p>
     ${pend}
     ${creds}
     <div class="modal-actions">
       <button class="btn btn-primary" id="mClose">Listo</button>
     </div>`);
 
-  const finish = () => { closeModal(); viewPermisos(user); };
+  const finish = () => { closeModal(); done(); };
   $('#mX').addEventListener('click', finish);
   $('#mClose').addEventListener('click', finish);
-  // Cerrar al hacer clic fuera también vuelve a la lista
+  // Cerrar al hacer clic fuera tambien vuelve a la lista
   const ov = document.getElementById('modalOv');
   if (ov) ov.addEventListener('click', e => { if (e.target === ov) finish(); });
 
@@ -3034,13 +3144,14 @@ function scopeResultModal(user, p, targetUser) {
   if (both) both.addEventListener('click', () => {
     const u = document.getElementById('scrUser');
     const pw = document.getElementById('scrPass');
-    if (u && pw) copyToClipboard(`Usuario: ${u.value}\nClave temporal: ${pw.value}`, both);
+    if (u && pw) copyToClipboard(`Usuario: ${u.value}\nClave: ${pw.value}`, both);
   });
 }
 
 async function saveScope(user) {
-  const btn = $('#scSave'); btn.disabled = true; btn.textContent = 'Guardando…';
+  const btn = $('#scSave'); btn.disabled = true; btn.textContent = 'Guardando\u2026';
   const targetUser = SCOPE.targetUser || 'el agente';
+  const backTo = SCOPE.backTo || (() => viewPermisos(user));
   // 1) Guardar el alcance en el portal (la verdad). Esto no debe fallar por osTicket.
   const d = await fetch('/api/admin-scope', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -3049,33 +3160,53 @@ async function saveScope(user) {
   }).then(r => r.json());
   if (!d.ok) { alert(d.error); btn.disabled = false; btn.textContent = 'Guardar alcance'; return; }
 
-  // Las EMPRESAS (no-tienda) no tienen bandeja de tienda en osTicket: el
-  // alcance se guarda en el portal y no se sincroniza con osTicket.
-  if (SCOPE.isEnt) { viewPermisos(user); return; }
+  // 2) Empujar el alcance a osTicket (agente + bandeja). Aplica IGUAL para
+  //    Tiendas y Empresas: el agente ve los remitentes de TODO su alcance.
+  btn.textContent = 'Sincronizando con osTicket\u2026';
+  const targetId = SCOPE.target;
+  const pushScope = async (extra = {}) => {
+    try {
+      return await fetch('/api/admin-scope', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'push_to_osticket', adminId: user.id, targetId, ...extra }),
+      }).then(r => r.json());
+    } catch (e) {
+      return { ok: false, error: 'No se pudo contactar el servidor: ' + e.message };
+    }
+  };
 
-  // 2) Empujar el alcance a osTicket (agente + bandeja). Reflejo del portal.
-  btn.textContent = 'Sincronizando con osTicket…';
-  let p;
-  try {
-    p = await fetch('/api/admin-scope', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ action: 'push_to_osticket', adminId: user.id, targetId: SCOPE.target }),
-    }).then(r => r.json());
-  } catch (e) {
-    p = { ok: false, error: 'No se pudo contactar el servidor: ' + e.message };
+  let p = await pushScope();
+
+  // 2a) El agente aun no existe: el backend pide crearlo. Lanzamos el modal de
+  //     creacion (usuario + clave temporal/definida) y, al confirmar, se
+  //     re-empuja el alcance con esas credenciales.
+  if (p && p.ok && p.needs_agent) {
+    agentModal(user, { id: targetId, username: p.username, name: p.name, mode: 'create' }, async (creds) => {
+      const btn2 = $('#mOk'); if (btn2) { btn2.disabled = true; btn2.textContent = 'Creando agente\u2026'; }
+      const p2 = await pushScope({ username: creds.username, password: creds.password });
+      if (!p2 || !p2.ok) {
+        const err = $('#agErr');
+        if (err) { err.textContent = (p2 && p2.error) || 'No se pudo crear el agente.'; err.style.display = 'block'; }
+        if (btn2) { btn2.disabled = false; btn2.textContent = 'Crear agente'; }
+        return;
+      }
+      closeModal();
+      scopeResultModal(user, p2, targetUser, backTo);
+    });
+    return;
   }
 
   if (!p || !p.ok) {
-    // El alcance SÍ se guardó; solo falló el reflejo en osTicket.
-    alert('⚠️ El alcance se guardó, pero no se pudo sincronizar con osTicket:\n'
+    // El alcance SI se guardo; solo fallo el reflejo en osTicket.
+    alert('\u26a0\ufe0f El alcance se guardo, pero no se pudo sincronizar con osTicket:\n'
       + ((p && p.error) || 'error desconocido')
       + '\n\nPuedes reintentar volviendo a guardar el alcance.');
-    viewPermisos(user);
+    backTo();
     return;
   }
 
   // 3) Resultado OK. Mostrar el modal con conteo y credenciales copiables.
-  scopeResultModal(user, p, targetUser);
+  scopeResultModal(user, p, targetUser, backTo);
 }
 
 /* ---------- VISTA: placeholders ---------- */
