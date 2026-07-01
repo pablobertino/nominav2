@@ -273,7 +273,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.06</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.07</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1756,7 +1756,7 @@ function usersRender(user, sum) {
       </select>
     </div>
     <p id="uCount" class="muted" style="font-size:12.5px;margin:0 2px 10px"></p>
-    <div class="tablebox scroll-x"><table><thead>
+    <div class="tablebox scroll-x u-compact"><table><thead>
       <tr>
         <th rowspan="2">Codigo</th><th rowspan="2">Tienda</th><th rowspan="2">Correo / Telefono</th>
         <th class="grp grp-portal" colspan="2">Acceso al portal</th>

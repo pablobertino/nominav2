@@ -1468,3 +1468,23 @@ input.needfill:focus, select.needfill:focus {
 /* Boton violeta: "Dar acceso" (crear clave osTicket) */
 .btn-violet { background:#7c3aed; color:#fff; border-color:#7c3aed; }
 .btn-violet:hover { background:#6d28d9; border-color:#6d28d9; }
+
+/* ----- Vista Usuarios COMPACTA (alinea la grilla real al mockup) -----
+   Scope exclusivo .u-compact: no afecta otras tablas (Quincenas, Empresas,
+   Historial) que usan las medidas globales, mas aireadas. Replica las
+   medidas del mockup_usuarios_unificado_v2: celdas 11x14, pills planas sin
+   viñeta, botones mini bajos. */
+.u-compact.tablebox { box-shadow:none; }
+.u-compact table { font-size:13px; }
+.u-compact th { padding:11px 14px; font-size:11.5px; }
+.u-compact.scroll-x th, .u-compact.scroll-x td { padding-left:14px; padding-right:14px; }
+.u-compact td { padding:11px 14px; }
+/* pills planas dentro de la grilla de Usuarios (sin punto, mas bajas) */
+.u-compact .pill { padding:2px 9px; font-size:11px; gap:0; }
+.u-compact .pill::before { display:none; }
+/* botones mini mas bajos (altura automatica, como el mockup) */
+.u-compact .btn-mini { height:auto; padding:4px 9px; font-size:12px; margin-left:0; }
+.u-compact .btn-mini svg { width:12px; height:12px; }
+/* filas de accion mas juntas */
+.u-compact .cell-actions { gap:5px; }
+.u-compact .ost-state { gap:2px; }
