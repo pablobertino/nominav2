@@ -273,7 +273,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.08</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.09</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2179,49 +2179,270 @@ async function cuApi(payload) {
   return res.json();
 }
 
-/* ---------- VISTA: EQUIPO (admins) ---------- */
+/* ---------- VISTA: EQUIPO (por rol: 3 grillas) ----------
+   Superadmin en una fila destacada arriba (ve todo, sin alcance ni osTicket).
+   Debajo, tres grillas independientes: Admins, Gestores de empresa y Editores
+   de personal. Cada una con sus StatsCards y columnas segun sus
+   particularidades:
+     - admins:  alcance Tiendas + Empresas · osTicket como AGENTE (#staff)
+     - gestor:  alcance SOLO Empresas/deptos · osTicket como CLIENTE (#user)
+     - editor:  alcance Tiendas + Empresas · SIN osTicket
+   Las acciones (data-act) las maneja auAction, sin cambios. */
+
+/* Resumen de alcance -> texto corto. `sc` = {inc:{type:n}, exc:{type:n}}.
+   kind: 'store' cuenta zone/subzone/company(tienda); 'ent' cuenta
+   company(empresa)/department. Como el backend no distingue tienda vs empresa
+   por code aqui, mostramos el conteo de reglas por tipo (zona/empresa/depto),
+   que es lo que el editor de alcance administra. */
+function scopeSummaryHtml(sc, kind) {
+  const inc = (sc && sc.inc) || {};
+  const exc = (sc && sc.exc) || {};
+  const parts = [];
+  if (kind === 'store') {
+    const z = inc.zone || 0, s = inc.subzone || 0, c = inc.company || 0;
+    if (z) parts.push(`${z} zona${z === 1 ? '' : 's'}`);
+    if (s) parts.push(`${s} subzona${s === 1 ? '' : 's'}`);
+    if (c) parts.push(`${c} por c\u00f3digo`);
+  } else {
+    const c = inc.company || 0, d = inc.department || 0;
+    if (c) parts.push(`${c} empresa${c === 1 ? '' : 's'}`);
+    if (d) parts.push(`${d} depto${d === 1 ? '' : 's'}`);
+  }
+  const exN = kind === 'store'
+    ? (exc.zone || 0) + (exc.subzone || 0) + (exc.company || 0)
+    : (exc.company || 0) + (exc.department || 0);
+  if (!parts.length && !exN) return '<span class="sc-none">\u2014</span>';
+  let html = parts.join(' \u00b7 ') || '<span class="sc-none">\u2014</span>';
+  if (exN) html += ` <span class="sc-minus">\u2212${exN}</span>`;
+  return html;
+}
+
+/* Celda de alcance para admin/editor: dos lineas (Tiendas / Empresas). */
+function scopeCellBoth(a) {
+  return `<div class="scope-cell">`
+    + `<span class="sc-chip"><span class="k">Tiendas</span> ${scopeSummaryHtml(a.scope, 'store')}</span>`
+    + `<span class="sc-chip"><span class="k">Empresas</span> ${scopeSummaryHtml(a.scope, 'ent')}</span>`
+    + `</div>`;
+}
+/* Celda de alcance para gestor: SOLO empresas/deptos. */
+function scopeCellEnt(a) {
+  return `<div class="scope-cell">`
+    + `<span class="sc-chip"><span class="k">Empresas</span> ${scopeSummaryHtml(a.scope, 'ent')}</span>`
+    + `</div>`;
+}
+
+/* Celda osTicket AGENTE (admins). */
+function ostAgentCell(a) {
+  return a.osticket_staff_id
+    ? `<span class="ost-remit"><span class="pill pill-open">Agente</span><span class="id-tag">#${a.osticket_staff_id}</span></span>`
+    : '<span class="pill pill-gray">Sin agente</span>';
+}
+/* Celda osTicket CLIENTE (gestores). */
+function ostClientCell(a) {
+  return a.osticket_user_id
+    ? `<span class="ost-remit"><span class="pill pill-acc">Cliente</span><span class="id-tag">#${a.osticket_user_id}</span></span>`
+    : '<span class="pill pill-gray">Sin cliente</span>';
+}
+
+/* Botones de accion comunes (rol/resetear/activar) para un miembro. `self`
+   es true si la fila es el propio usuario logueado (no puede cambiarse rol
+   ni desactivarse). */
+function auRowCommonActs(a, self) {
+  const roleBtn = self ? ''
+    : `<button class="btn btn-mini" data-act="role" data-id="${a.id}" data-u="${a.username}" data-role="${a.role}" title="Cambiar rol">Rol</button>`;
+  const resetBtn = `<button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>`;
+  const toggleBtn = self ? ''
+    : `<button class="btn btn-mini" data-act="toggle" data-id="${a.id}" data-active="${a.is_active}">${a.is_active ? 'Desactivar' : 'Activar'}</button>`;
+  return { roleBtn, resetBtn, toggleBtn };
+}
+
+/* StatsCard reutilizable. */
+function statCard(cls, n, label) {
+  return `<div class="sum-card ${cls}"><div class="n">${n}</div><div class="l">${label}</div></div>`;
+}
+
+/* Estado (pill activo/inactivo). */
+function estadoPill(a) {
+  return a.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>';
+}
+
 async function viewEquipo(user) {
-  $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Equipo</h1><p>Administradores del portal</p></div></div><div class="pnl-loading">Cargando…</div>`;
+  $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Equipo</h1><p>Miembros del portal por rol</p></div></div><div class="pnl-loading">Cargando\u2026</div>`;
   const d = await auApi({ action: 'list', adminId: user.id });
   if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
-  const rows = d.rows;
+  const rows = d.rows || [];
+
+  const supers = rows.filter(a => a.role === 'superadmin');
+  const admins = rows.filter(a => a.role === 'admin');
+  const gestores = rows.filter(a => a.role === 'gestor_empresa');
+  const editores = rows.filter(a => a.role === 'editor_personal');
+
+  const emailCell = (a) => a.email
+    ? `<td class="cell-mail">${a.email}</td>`
+    : '<td class="cell-mail"><span class="muted">\u2014</span></td>';
+
+  // ---- Fila superadmin (destacada, fuera de las grillas) ----
+  const suHtml = supers.map(a => {
+    const initials = (a.name || a.username || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
+    return `<div class="su-card">
+      <div class="su-av">${initials}</div>
+      <div class="su-info">
+        <div class="su-name">${a.name || a.username}</div>
+        <div class="su-sub"><span class="su-user">${a.username}</span>
+          <span class="pill pill-role">superadmin</span>
+          <span>\u00b7 Ve todo \u00b7 sin alcance ni osTicket</span></div>
+      </div>
+      <div class="su-acts">
+        <button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  // ---- Grilla ADMINS ----
+  const adminStats = {
+    total: admins.length,
+    withAgent: admins.filter(a => a.osticket_staff_id).length,
+    noAgent: admins.filter(a => !a.osticket_staff_id).length,
+    off: admins.filter(a => !a.is_active).length,
+  };
+  const adminRows = admins.map(a => {
+    const self = String(a.id) === String(user.id);
+    const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self);
+    return `<tr>
+      <td class="code">${a.username}</td>
+      <td class="cell-name">${a.name || '\u2014'}</td>
+      ${emailCell(a)}
+      <td>${scopeCellBoth(a)}</td>
+      <td>${ostAgentCell(a)}</td>
+      <td>${estadoPill(a)}</td>
+      <td style="text-align:right"><div class="cell-actions">
+        <button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas">${I.sliders} Tiendas</button>
+        <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>
+        ${roleBtn}
+        <button class="btn btn-mini" data-act="osticket-agent" data-id="${a.id}" data-u="${a.username}" title="Agente osTicket (se sincroniza al guardar el alcance de tiendas)">osTicket</button>
+        ${resetBtn}
+        ${toggleBtn}
+      </div></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="empty">Sin administradores.</td></tr>';
+
+  // ---- Grilla GESTORES ----
+  const gestorStats = {
+    total: gestores.length,
+    withClient: gestores.filter(a => a.osticket_user_id).length,
+    noClient: gestores.filter(a => !a.osticket_user_id).length,
+    off: gestores.filter(a => !a.is_active).length,
+  };
+  const gestorRows = gestores.map(a => {
+    const self = String(a.id) === String(user.id);
+    const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self);
+    return `<tr>
+      <td class="code">${a.username}</td>
+      <td class="cell-name">${a.name || '\u2014'}</td>
+      ${emailCell(a)}
+      <td>${scopeCellEnt(a)}</td>
+      <td>${ostClientCell(a)}</td>
+      <td>${estadoPill(a)}</td>
+      <td style="text-align:right"><div class="cell-actions">
+        <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>
+        ${roleBtn}
+        <button class="btn btn-mini" data-act="osticket" data-id="${a.id}" data-u="${a.username}" title="Crear/actualizar como cliente de osTicket">osTicket</button>
+        ${resetBtn}
+        ${toggleBtn}
+      </div></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="empty">Sin gestores de empresa.</td></tr>';
+
+  // ---- Grilla EDITORES ----
+  const editorStats = {
+    total: editores.length,
+    on: editores.filter(a => a.is_active).length,
+    off: editores.filter(a => !a.is_active).length,
+  };
+  const editorRows = editores.map(a => {
+    const self = String(a.id) === String(user.id);
+    const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self);
+    return `<tr>
+      <td class="code">${a.username}</td>
+      <td class="cell-name">${a.name || '\u2014'}</td>
+      ${emailCell(a)}
+      <td>${scopeCellBoth(a)}</td>
+      <td>${estadoPill(a)}</td>
+      <td style="text-align:right"><div class="cell-actions">
+        <button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas">${I.sliders} Tiendas</button>
+        <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>
+        ${roleBtn}
+        ${resetBtn}
+        ${toggleBtn}
+      </div></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="6" class="empty">Sin editores de personal.</td></tr>';
+
   $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Equipo</h1><p>${rows.length} miembros</p></div>
-      <div class="head-actions" style="display:flex;gap:8px">
+    <div class="pnl-head"><div><h1>Equipo</h1><p>${rows.length} miembros \u00b7 cada rol con sus columnas y acciones</p></div>
+      <div class="head-actions">
         <button class="btn" id="auSyncClients" title="Crear/actualizar los gestores de empresa como clientes de osTicket">${I.sync} Gestores osTicket</button>
         <button class="btn btn-primary" id="auNew">${I.plus} Nuevo miembro</button>
       </div></div>
-    <div class="tablebox"><table><thead><tr>
-      <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Rol</th><th>Estado</th><th style="text-align:right">Acciones</th>
-    </tr></thead><tbody>
-      ${rows.map(a => {
-        const isGestor = a.role === 'gestor_empresa';
-        const ostChip = isGestor
-          ? (a.osticket_user_id
-              ? '<span class="pill pill-open" style="margin-left:6px" title="Cliente osTicket sincronizado">osTicket \u2713</span>'
-              : '<span class="pill pill-closed" style="margin-left:6px" title="Sin cliente osTicket">osTicket \u2715</span>')
-          : '';
-        const ostBtn = isGestor
-          ? `<button class="btn btn-mini" data-act="osticket" data-id="${a.id}" data-u="${a.username}" title="Crear/actualizar como cliente de osTicket" style="margin-right:4px">osTicket</button>`
-          : '';
-        return `<tr>
-        <td class="code">${a.username}</td><td>${a.name || '—'}</td><td style="font-size:12px" class="muted">${a.email || '—'}</td>
-        <td><span class="pill ${a.role === 'superadmin' ? 'pill-proj' : 'pill-gray'}">${ROLE_LABELS[a.role] || a.role}</span>${ostChip}</td>
-        <td>${a.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>'}</td>
-        <td style="text-align:right;white-space:nowrap">
-          ${a.role === 'superadmin' ? '' : `<button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas" style="margin-right:4px">${I.sliders} Tiendas</button><button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas" style="margin-right:4px">${I.sliders} Empresas</button>`}
-          ${ostBtn}
-          ${String(a.id) === String(user.id) ? '' : `<button class="btn btn-mini" data-act="role" data-id="${a.id}" data-u="${a.username}" data-role="${a.role}" title="Cambiar rol" style="margin-right:4px">Rol</button>`}
-          <button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>
-          ${a.role === 'superadmin' ? '' : `<button class="btn btn-mini" data-act="toggle" data-id="${a.id}" data-active="${a.is_active}">${a.is_active ? 'Desactivar' : 'Activar'}</button>`}
-        </td></tr>`;
-      }).join('')}
-    </tbody></table></div>`;
+
+    ${suHtml}
+
+    <div class="role-block">
+      <div class="role-head">
+        <span class="role-title">Administradores</span>
+        <span class="role-badge rb-admin">admin</span>
+        <span class="role-desc">Alcance de Tiendas y Empresas \u00b7 osTicket como agente</span>
+      </div>
+      <div class="sum-cards c4">
+        ${statCard('total', adminStats.total, 'Administradores')}
+        ${statCard('ok', adminStats.withAgent, 'Con agente osTicket')}
+        ${statCard('none', adminStats.noAgent, 'Sin agente')}
+        ${statCard('off', adminStats.off, 'Inactivos')}
+      </div>
+      <div class="tablebox scroll-x u-compact"><table><thead><tr>
+        <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Alcance</th><th>osTicket (agente)</th><th>Estado</th><th style="text-align:right">Acciones</th>
+      </tr></thead><tbody>${adminRows}</tbody></table></div>
+    </div>
+
+    <div class="role-block">
+      <div class="role-head">
+        <span class="role-title">Gestores de empresa</span>
+        <span class="role-badge rb-gestor">gestor</span>
+        <span class="role-desc">Alcance solo de Empresas / departamentos \u00b7 osTicket como cliente</span>
+      </div>
+      <div class="sum-cards c4">
+        ${statCard('total', gestorStats.total, 'Gestores')}
+        ${statCard('acc', gestorStats.withClient, 'Con cliente osTicket')}
+        ${statCard('none', gestorStats.noClient, 'Sin cliente')}
+        ${statCard('off', gestorStats.off, 'Inactivos')}
+      </div>
+      <div class="tablebox scroll-x u-compact"><table><thead><tr>
+        <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Alcance (empresas)</th><th>osTicket (cliente)</th><th>Estado</th><th style="text-align:right">Acciones</th>
+      </tr></thead><tbody>${gestorRows}</tbody></table></div>
+    </div>
+
+    <div class="role-block">
+      <div class="role-head">
+        <span class="role-title">Editores de personal</span>
+        <span class="role-badge rb-editor">editor</span>
+        <span class="role-desc">Alcance de Tiendas y Empresas \u00b7 sin osTicket</span>
+      </div>
+      <div class="sum-cards c3">
+        ${statCard('total', editorStats.total, 'Editores')}
+        ${statCard('ok', editorStats.on, 'Activos')}
+        ${statCard('off', editorStats.off, 'Inactivos')}
+      </div>
+      <div class="tablebox scroll-x u-compact"><table><thead><tr>
+        <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Alcance</th><th>Estado</th><th style="text-align:right">Acciones</th>
+      </tr></thead><tbody>${editorRows}</tbody></table></div>
+    </div>`;
+
   $('#auNew').addEventListener('click', () => auCreateModal(user));
   $('#auSyncClients').addEventListener('click', () => auSyncClientsAll(user));
   $('#pnlMain').querySelectorAll('button[data-act]').forEach(b =>
     b.addEventListener('click', () => auAction(b.dataset, user)));
 }
+
 function auCreateModal(user) {
   openModal(`
     <div class="modal-head"><span>Nuevo miembro</span><button class="modal-x" id="mX">✕</button></div>
@@ -2251,6 +2472,7 @@ function auAction(ds, user) {
   if (ds.act === 'scope-ent') { openScopeEditor(user, ds.id, ds.u, 'enterprise'); return; }
   if (ds.act === 'role') { auRoleModal(ds, user); return; }
   if (ds.act === 'osticket') { auSyncClientOne(ds, user); return; }
+  if (ds.act === 'osticket-agent') { auAgentInfo(ds, user); return; }
   if (ds.act === 'toggle') {
     auApi({ action: 'toggle', adminId: user.id, id: ds.id, isActive: !(ds.active === 'true') }).then(() => viewEquipo(user));
     return;
@@ -2277,6 +2499,24 @@ async function auApi(payload) {
     method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
   });
   return res.json();
+}
+
+/* El agente osTicket de un ADMIN no se crea con un boton directo: se genera y
+   sincroniza (agente + bandeja de tiendas) al guardar su ALCANCE DE TIENDAS
+   (push_to_osticket). Este modal lo explica y ofrece ir directo a ese editor. */
+function auAgentInfo(ds, user) {
+  openModal(`
+    <div class="modal-head"><span>Agente osTicket</span><button class="modal-x" id="mX">\u2715</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 12px">${ds.u}</p>
+    <p style="margin:0 0 12px;line-height:1.6">El agente de osTicket de un administrador se crea y sincroniza automaticamente al guardar su <b>alcance de tiendas</b>: su bandeja queda con las tiendas de su alcance que ya tengan usuario en osTicket.</p>
+    <p class="muted" style="font-size:12px;margin:0">Abre el alcance de tiendas, ajustalo (o dejalo igual) y pulsa \u201cGuardar alcance\u201d; alli se crea el agente y se muestran sus credenciales si es nuevo.</p>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cerrar</button>
+      <button class="btn btn-primary" id="mGo">${I.sliders} Ir al alcance de tiendas</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mGo').addEventListener('click', () => { closeModal(); openScopeEditor(user, ds.id, ds.u, 'store'); });
 }
 
 /* Modal para cambiar el rol de un miembro del Equipo. Solo superadmin (lo

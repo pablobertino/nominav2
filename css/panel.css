@@ -1491,3 +1491,52 @@ input.needfill:focus, select.needfill:focus {
 /* filas de accion mas juntas */
 .u-compact .cell-actions { gap:5px; }
 .u-compact .ost-state { gap:2px; }
+
+/* ===================== EQUIPO — tres grillas por rol =====================
+   Fila superadmin destacada + bloques de rol (titulo + StatsCards + grilla).
+   Reusa .sum-card, .tablebox.u-compact, .pill-* del resto. */
+/* Fila superadmin (fuera de las grillas) */
+.su-card { display:flex; align-items:center; gap:16px; background:linear-gradient(180deg,#fbfcff,var(--surface));
+  border:1px solid #dbe4f5; border-left:3px solid var(--brand); border-radius:var(--radius-lg);
+  padding:16px 18px; margin-bottom:22px; }
+.su-av { width:46px; height:46px; border-radius:50%; background:var(--brand-bg); color:var(--brand);
+  display:flex; align-items:center; justify-content:center; font-size:16px; font-weight:700; flex-shrink:0; }
+.su-info { flex:1; min-width:0; }
+.su-name { font-size:15px; font-weight:650; }
+.su-sub { font-size:12.5px; color:var(--muted); margin-top:2px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+.su-user { font-family:ui-monospace,Menlo,monospace; }
+.su-acts { display:flex; gap:8px; flex-shrink:0; }
+
+/* Bloque de rol: encabezado + stats + grilla */
+.role-block { margin-bottom:30px; }
+.role-head { display:flex; align-items:center; gap:10px; margin:0 2px 12px; flex-wrap:wrap; }
+.role-title { font-size:16px; font-weight:650; letter-spacing:-.01em; }
+.role-badge { font-size:11px; font-weight:700; color:#fff; border-radius:20px; padding:2px 9px; }
+.rb-admin { background:var(--brand); } .rb-gestor { background:#7c3aed; } .rb-editor { background:#0d9488; }
+.role-desc { font-size:12.5px; color:var(--muted); }
+
+/* StatsCards con numero de columnas fijo (sobreescribe el auto-fit global) */
+.sum-cards.c4 { grid-template-columns:repeat(4,1fr); }
+.sum-cards.c3 { grid-template-columns:repeat(3,1fr); }
+/* colores extra de StatsCards para Equipo */
+.sum-card.total .n { color:var(--brand); }
+.sum-card.acc .n { color:#7c3aed; }
+.sum-card.off .n { color:var(--danger); }
+
+/* Celda de alcance: chips Tiendas / Empresas apilados */
+.scope-cell { display:flex; flex-direction:column; gap:3px; line-height:1.35; }
+.sc-chip { display:inline-flex; align-items:center; gap:5px; font-size:11.5px; color:var(--ink-soft); flex-wrap:wrap; }
+.sc-chip .k { color:var(--faint); min-width:58px; }
+.sc-chip b { font-weight:650; color:var(--ink); }
+.sc-none { font-size:11px; color:var(--faint); }
+.sc-plus { color:var(--success); font-weight:600; }
+.sc-minus { color:var(--danger); font-weight:600; }
+
+/* pills de rol/cliente en Equipo */
+.pill-role { background:var(--brand-bg); color:#1d4ed8; }
+.pill-acc { background:#ede9fe; color:#5b21b6; }
+.pill-role::before, .pill-acc::before { display:none; }
+
+/* nombre/correo en las grillas de Equipo */
+.cell-name { font-weight:500; }
+.cell-mail { font-size:12.5px; color:var(--muted); }

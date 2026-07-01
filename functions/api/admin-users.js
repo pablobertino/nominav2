@@ -104,7 +104,21 @@ export async function onRequestPost({ request, env }) {
     if (!(await isSuperadmin(env, adminId))) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
 
     if (action === 'list') {
-      const rows = await sb(env, 'admin_users?select=id,username,name,email,role,is_active,osticket_user_id,osticket_user_synced_at&order=role.desc,username');
+      const rows = await sb(env, 'admin_users?select=id,username,name,email,role,is_active,osticket_staff_id,osticket_user_id,osticket_user_synced_at&order=role.desc,username');
+      // Resumen de alcance por admin: conteo de reglas include/exclude por
+      // tipo (zone/subzone/company/department). Barato (2 lecturas), suficiente
+      // para el resumen de la grilla; el detalle se edita en el editor de scope.
+      const inc = await sb(env, 'admin_scope_include?select=admin_id,scope_type') || [];
+      const exc = await sb(env, 'admin_scope_exclude?select=admin_id,scope_type') || [];
+      const scopeMap = {};   // admin_id -> { inc:{type:n}, exc:{type:n} }
+      const bump = (bucket, r) => {
+        const k = r.admin_id;
+        if (!scopeMap[k]) scopeMap[k] = { inc: {}, exc: {} };
+        scopeMap[k][bucket][r.scope_type] = (scopeMap[k][bucket][r.scope_type] || 0) + 1;
+      };
+      inc.forEach(r => bump('inc', r));
+      exc.forEach(r => bump('exc', r));
+      (rows || []).forEach(a => { a.scope = scopeMap[a.id] || { inc: {}, exc: {} }; });
       return json({ ok: true, rows });
     }
 
