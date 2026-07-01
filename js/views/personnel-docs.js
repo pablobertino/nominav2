@@ -170,16 +170,19 @@ let STATE = null;   // { user, onExit, canManage, isSuper, docs, cats, q, catFil
 
 /* ===================== ENTRADA ===================== */
 export async function renderPersonnelDocs(user, onExit) {
-  const canManage = user.kind === 'admin'; // admin o superadmin
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
-  STATE = { user, onExit: onExit || null, canManage, isSuper, docs: [], cats: [], q: '', catFilter: '', scope: 'active', collapsed: new Set() };
+  // Puede CREAR documentos: admin o superadmin (no gestor_empresa ni editor_personal).
+  const canCreate = user.kind === 'admin' && (user.role === 'admin' || user.role === 'superadmin');
+  // La gestion por-documento (editar/archivar/etc.) depende de la PROPIEDAD;
+  // se decide por tarjeta con canManageDoc(). canCreate solo gobierna "Subir".
+  STATE = { user, onExit: onExit || null, canCreate, isSuper, myName: user.username || null, docs: [], cats: [], q: '', catFilter: '', scope: 'active', collapsed: new Set() };
 
   const back = onExit ? `<button class="btn" id="pdBack" style="margin-bottom:14px">← Volver</button>` : '';
   const headBtns = [];
   if (isSuper) headBtns.push(`<button class="btn" id="pdCats"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Categorías</button>`);
-  if (canManage) headBtns.push(`<button class="btn btn-primary" id="pdNew"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Subir documento</button>`);
+  if (canCreate) headBtns.push(`<button class="btn btn-primary" id="pdNew"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Subir documento</button>`);
 
-  const roBanner = canManage ? '' : `
+  const roBanner = canCreate ? '' : `
     <div class="pd-ro">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
       Estos son los modelos oficiales. Descarga el que necesites; usa siempre la versión vigente. Solo Capital Humano puede modificarlos.
@@ -195,17 +198,17 @@ export async function renderPersonnelDocs(user, onExit) {
     <div class="pnl-filters">
       <div class="search"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input id="pdSearch" placeholder="Buscar por título o descripción…"></div>
       <select id="pdCat" class="filt"><option value="">Todas las categorías</option></select>
-      ${canManage ? `<select id="pdScope" class="filt"><option value="active">Solo activos</option><option value="all">Incluir archivados</option><option value="archived">Solo archivados</option></select>` : ''}
+      ${canCreate ? `<select id="pdScope" class="filt"><option value="active">Solo activos</option><option value="all">Incluir archivados</option><option value="archived">Solo archivados</option></select>` : ''}
     </div>
     <div id="pdList" class="pd-groups"><div class="pnl-loading">Cargando…</div></div>
     <div id="pdModalHost"></div>`;
 
   if (onExit) $('#pdBack').addEventListener('click', onExit);
   if (isSuper) $('#pdCats').addEventListener('click', openCategoriesModal);
-  if (canManage) $('#pdNew').addEventListener('click', () => openUploadModal(null));
+  if (canCreate) $('#pdNew').addEventListener('click', () => openUploadModal(null));
   $('#pdSearch').addEventListener('input', e => { STATE.q = e.target.value; paintList(); });
   $('#pdCat').addEventListener('change', e => { STATE.catFilter = e.target.value; paintList(); });
-  if (canManage) $('#pdScope').addEventListener('change', e => { STATE.scope = e.target.value; load(); });
+  if (canCreate) $('#pdScope').addEventListener('change', e => { STATE.scope = e.target.value; load(); });
 
   await load();
 }
@@ -255,6 +258,15 @@ function buildGroups(rows) {
   return groups;
 }
 
+/* ¿El usuario actual puede gestionar ESTE documento? Dueno (created_by ==
+   mi username) o superadmin. Espejo del canManageDoc del backend; aqui solo
+   gobierna que botones se muestran (la seguridad real la impone el backend). */
+function canManageDoc(d) {
+  if (!(STATE.user && STATE.user.kind === 'admin')) return false;
+  if (STATE.isSuper) return true;
+  return String(d.created_by || '') === String(STATE.myName || '');
+}
+
 function paintList() {
   const list = $('#pdList');
   if (!list) return;
@@ -266,7 +278,7 @@ function paintList() {
 
   const activos = STATE.docs.filter(d => !d.is_archived).length;
   const arch = STATE.docs.length - activos;
-  $('#pdInfo').textContent = STATE.canManage
+  $('#pdInfo').textContent = STATE.canCreate
     ? `${activos} activo${activos === 1 ? '' : 's'}${arch ? ` · ${arch} archivado${arch === 1 ? '' : 's'}` : ''}`
     : `${rows.length} documento${rows.length === 1 ? '' : 's'} disponible${rows.length === 1 ? '' : 's'}`;
 
@@ -312,6 +324,7 @@ function paintList() {
   list.querySelectorAll('[data-upv]').forEach(b => b.addEventListener('click', () => openUploadModal(+b.dataset.upv)));
   list.querySelectorAll('[data-arch]').forEach(b => b.addEventListener('click', () => openArchiveModal(+b.dataset.arch)));
   list.querySelectorAll('[data-rest]').forEach(b => b.addEventListener('click', () => restoreDoc(+b.dataset.rest)));
+  list.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', () => openDeleteForeverModal(+b.dataset.del)));
 }
 
 function catPill(d) {
@@ -323,15 +336,18 @@ function catPill(d) {
 function cardHtml(d) {
   const k = extKind(d.file_ext);
   const archCls = d.is_archived ? ' arch' : '';
-  const pills = STATE.canManage
+  const mine = canManageDoc(d);       // dueno o superadmin -> gestiona ESTE doc
+  const showMeta = STATE.canCreate || mine;  // ve metadatos de gestion (estado, autoria)
+
+  const pills = showMeta
     ? `${d.is_archived ? '<span class="pill pd-arch">archivado</span>' : '<span class="pill pd-active">activo</span>'} `
       + catPill(d)
       + `<span class="pill pd-ver">v${d.current_version}</span>`
     : catPill(d) + `<span class="pill pd-ver">v${d.current_version}</span>`;
 
-  const meta = STATE.canManage
+  const meta = showMeta
     ? `<span class="m">Creado por <b>${esc(d.created_by)}</b></span>`
-      + `<span class="m">Últ. cambio <b>${esc(d.updated_by)}</b> · ${fmtWhen(d.updated_at)}</span>`
+      + `<span class="m">Último cambio <b>${esc(d.updated_by)}</b> · ${fmtWhen(d.updated_at)}</span>`
       + (d.is_archived ? `<span class="m" style="color:var(--warn)">Archivado por <b>${esc(d.archived_by || '')}</b>${d.archive_reason ? ' — ' + esc(d.archive_reason) : ''}</span>` : '')
     : `<span class="m">Actualizado ${fmtWhen(d.file_uploaded_at || d.updated_at)}</span>`;
 
@@ -344,7 +360,12 @@ function cardHtml(d) {
   const descHtml = d.description ? `<div class="pd-desc">${cleanDescHtml(d.description)}</div>` : '';
 
   let acts;
-  if (STATE.canManage) {
+  if (mine) {
+    // Dueno o superadmin: gestion completa de este documento.
+    // "Borrar definitivo" solo para superadmin.
+    const delBtn = STATE.isSuper
+      ? `<button class="btn btn-mini pd-danger" data-del="${d.id}">🗑 Borrar definitivo</button>`
+      : '';
     acts = `
       <div class="pd-arow">
         <button class="btn btn-mini" data-ver="${d.id}">⤓ Versiones (${d.current_version})</button>
@@ -357,8 +378,11 @@ function cardHtml(d) {
         ${d.is_archived
           ? `<button class="btn btn-mini" data-rest="${d.id}">♻ Restaurar</button>`
           : `<button class="btn btn-mini pd-danger" data-arch="${d.id}">⊘ Archivar</button>`}
+        ${delBtn}
       </div>`;
   } else {
+    // Todos los demas (editor, gestor, tienda, y admin que no es dueno):
+    // solo ver y descargar.
     acts = `<button class="btn btn-primary btn-mini" data-dl="${d.id}">${DL_ICON} Descargar</button>`;
   }
 
@@ -673,6 +697,52 @@ async function restoreDoc(id) {
   const r = await api({ action: 'restore', user: sessionUser(STATE.user), document_id: id });
   if (!r.ok) { alert(r.error || 'No se pudo restaurar.'); return; }
   await load();
+}
+
+/* ---- Borrar definitivo (solo superadmin) ----
+   Accion irreversible: exige escribir BORRAR para habilitar el boton.
+   Usa modal propio (no confirm() nativo). */
+function openDeleteForeverModal(id) {
+  const d = STATE.docs.find(x => x.id === id);
+  if (!d) return;
+  modalHost().innerHTML = `
+    <div class="modal-ov">
+      <div class="modal">
+        <button class="modal-x" id="pdfX">✕</button>
+        <h3 style="color:var(--danger)">Borrar definitivamente</h3>
+        <p class="pd-sub">${esc(d.title)}</p>
+        <div class="pd-warnbox" style="border-color:var(--danger);background:#fdecec">
+          Esto <b>elimina para siempre</b> el documento, <b>todas sus versiones</b> (${d.current_version}) y su historial, y borra los archivos del almacenamiento. <b>No se puede deshacer</b> ni restaurar.
+          ${d.is_archived ? '' : '<br><br>Sugerencia: si solo quieres ocultarlo, usa <b>Archivar</b> en su lugar (se puede restaurar).'}
+        </div>
+        <label class="flabel">Para confirmar, escribe <b>BORRAR</b></label>
+        <input id="pdfType" placeholder="BORRAR" autocomplete="off">
+        <div class="modal-actions">
+          <button class="btn" id="pdfCancel">Cancelar</button>
+          <button class="btn pd-danger" id="pdfOk" disabled>Borrar definitivamente</button>
+        </div>
+      </div>
+    </div>`;
+  const q = s => modalHost().querySelector(s);
+  q('#pdfX').addEventListener('click', closeModal);
+  q('#pdfCancel').addEventListener('click', closeModal);
+  q('#pdfType').addEventListener('input', e => {
+    q('#pdfOk').disabled = (e.target.value.trim().toUpperCase() !== 'BORRAR');
+  });
+  q('#pdfOk').addEventListener('click', async () => {
+    const ok = q('#pdfOk'); ok.disabled = true; const lbl = ok.textContent; ok.textContent = 'Borrando…';
+    let r;
+    try {
+      r = await api({ action: 'delete_forever', user: sessionUser(STATE.user), document_id: id });
+    } catch (err) {
+      ok.disabled = false; ok.textContent = lbl;
+      alert('Hubo un problema de red al borrar. Inténtalo de nuevo.');
+      return;
+    }
+    if (!r.ok) { ok.disabled = false; ok.textContent = lbl; alert(r.error || 'No se pudo borrar.'); return; }
+    closeModal();
+    await load();
+  });
 }
 
 /* ===================== GESTION DE CATEGORIAS (solo superadmin) ===================== */

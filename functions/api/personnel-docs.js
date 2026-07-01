@@ -123,6 +123,17 @@ async function storageUpload(env, path, bytes, mime) {
   if (!res.ok) throw new Error(`Storage upload ${res.status}: ${await res.text()}`);
   return true;
 }
+async function storageDelete(env, path) {
+  if (!path) return false;
+  const res = await fetch(`${env.supabase_url}/storage/v1/object/${BUCKET}/${path}`, {
+    method: 'DELETE',
+    headers: {
+      apikey: env.supabase_service_role,
+      Authorization: `Bearer ${env.supabase_service_role}`,
+    },
+  });
+  return res.ok;
+}
 async function storageSignedUrl(env, path, downloadName) {
   if (!path) return null;
   try {
@@ -187,6 +198,19 @@ async function resolveUser(env, user) {
   return null;
 }
 function isManager(u) { return u && u.kind === 'admin' && (u.role === 'admin' || u.role === 'superadmin'); }
+/* Puede CREAR documentos nuevos: cualquier admin o superadmin (no gestor/editor). */
+function canCreate(u) { return isManager(u); }
+/* Puede GESTIONAR un documento concreto (editar, nueva version, archivar,
+   restaurar): solo el superadmin o el DUEnO (created_by === username actual).
+   La propiedad se compara por username, que es lo que se guarda en created_by
+   (== u.actor). No confia en el cliente: doc viene de la BD. */
+function canManageDoc(u, doc) {
+  if (!u || u.kind !== 'admin' || !doc) return false;
+  if (u.role === 'superadmin') return true;
+  return String(doc.created_by || '') === String(u.actor || '');
+}
+/* Borrado DEFINITIVO: solo superadmin. */
+function canDeleteForever(u) { return u && u.kind === 'admin' && u.role === 'superadmin'; }
 
 /* Registra una entrada de auditoria (no critica: si falla, no aborta). */
 async function audit(env, documentId, action, detail, actorObj, versionNo) {
@@ -211,21 +235,34 @@ export async function onRequestPost({ request, env }) {
     const u = await resolveUser(env, body.user);
     if (!u) return json({ ok: false, error: 'Sesion no valida.' }, 403);
 
-    // Lectura: cualquiera autenticado (admin/superadmin/company).
+    // Lectura de la lista y descarga: cualquiera autenticado (admin/super/editor/gestor/company).
     if (action === 'list') return await listDocs(env, body, u);
-    if (action === 'versions') return await listVersions(env, body, u);
-    if (action === 'audit') return await listAudit(env, body, u);
     if (action === 'download') return await downloadDoc(env, body, u);
     if (action === 'cat_list') return await catList(env);
 
-    // Gestion: solo admin/superadmin.
-    if (!isManager(u)) return json({ ok: false, error: 'No tienes permiso para esta accion.' }, 403);
+    // Versiones e Historial: solo el dueno del documento o superadmin.
+    // (Se resuelve el doc y se valida propiedad dentro de cada funcion.)
+    if (action === 'versions') return await listVersions(env, body, u);
+    if (action === 'audit') return await listAudit(env, body, u);
 
-    if (action === 'create') return await createDoc(env, body, u);
+    // Crear documento nuevo: cualquier admin/superadmin (no gestor/editor).
+    if (action === 'create') {
+      if (!canCreate(u)) return json({ ok: false, error: 'No tienes permiso para crear documentos.' }, 403);
+      return await createDoc(env, body, u);
+    }
+
+    // Acciones sobre un documento existente: la propiedad se valida adentro
+    // (dueno o superadmin). editar / nueva version / archivar / restaurar.
     if (action === 'upload_version') return await uploadVersion(env, body, u);
     if (action === 'update') return await updateDoc(env, body, u);
     if (action === 'archive') return await archiveDoc(env, body, u);
     if (action === 'restore') return await restoreDoc(env, body, u);
+
+    // Borrado DEFINITIVO: solo superadmin.
+    if (action === 'delete_forever') {
+      if (!canDeleteForever(u)) return json({ ok: false, error: 'Solo el superadmin puede borrar definitivamente.' }, 403);
+      return await deleteForever(env, body, u);
+    }
 
     // ABM de categorias: solo superadmin.
     if (['cat_save', 'cat_toggle'].includes(action)) {
@@ -353,10 +390,12 @@ async function listDocs(env, body, u) {
 async function listVersions(env, body, u) {
   const id = parseInt(body.document_id, 10);
   if (!id) return json({ ok: false, error: 'Falta el documento.' }, 400);
-  const doc = await sb(env, `personnel_documents?id=eq.${id}&select=id,title,current_version,is_archived`);
+  const doc = await sb(env, `personnel_documents?id=eq.${id}&select=id,title,current_version,is_archived,created_by`);
   if (!doc || !doc.length) return json({ ok: false, error: 'Documento no encontrado.' }, 404);
   // La tienda no ve versiones de archivados.
   if (u.kind === 'company' && doc[0].is_archived) return json({ ok: false, error: 'No disponible.' }, 404);
+  // Versiones: solo el dueno o superadmin (la tienda no accede aqui).
+  if (u.kind === 'company' || !canManageDoc(u, doc[0])) return json({ ok: false, error: 'No tienes permiso.' }, 403);
 
   const vers = await sb(env,
     `personnel_document_versions?document_id=eq.${id}`
@@ -382,10 +421,12 @@ async function listVersions(env, body, u) {
 
 /* ---------- AUDIT ---------- */
 async function listAudit(env, body, u) {
-  // El rastro es informacion de gestion: solo admin/superadmin.
-  if (!isManager(u)) return json({ ok: false, error: 'No tienes permiso.' }, 403);
   const id = parseInt(body.document_id, 10);
   if (!id) return json({ ok: false, error: 'Falta el documento.' }, 400);
+  // El rastro es informacion de gestion: solo el dueno del documento o superadmin.
+  const doc = await sb(env, `personnel_documents?id=eq.${id}&select=id,created_by`);
+  if (!doc || !doc.length) return json({ ok: false, error: 'Documento no encontrado.' }, 404);
+  if (!canManageDoc(u, doc[0])) return json({ ok: false, error: 'No tienes permiso.' }, 403);
   const rows = await sb(env,
     `personnel_document_audit?document_id=eq.${id}`
     + `&select=action,detail,version_no,actor,actor_kind,created_at&order=created_at.desc`);
@@ -469,8 +510,9 @@ async function createDoc(env, body, u) {
 async function uploadVersion(env, body, u) {
   const id = parseInt(body.document_id, 10);
   if (!id) return json({ ok: false, error: 'Falta el documento.' }, 400);
-  const doc = await sb(env, `personnel_documents?id=eq.${id}&select=id,title,current_version`);
+  const doc = await sb(env, `personnel_documents?id=eq.${id}&select=id,title,current_version,created_by`);
   if (!doc || !doc.length) return json({ ok: false, error: 'Documento no encontrado.' }, 404);
+  if (!canManageDoc(u, doc[0])) return json({ ok: false, error: 'Solo el dueno del documento o el superadmin pueden subir versiones.' }, 403);
 
   const fileB64 = String(body.file_b64 || '');
   if (!fileB64) return json({ ok: false, error: 'Falta el archivo.' }, 400);
@@ -508,6 +550,9 @@ async function uploadVersion(env, body, u) {
 async function updateDoc(env, body, u) {
   const id = parseInt(body.document_id, 10);
   if (!id) return json({ ok: false, error: 'Falta el documento.' }, 400);
+  const own = await sb(env, `personnel_documents?id=eq.${id}&select=id,created_by`);
+  if (!own || !own.length) return json({ ok: false, error: 'Documento no encontrado.' }, 404);
+  if (!canManageDoc(u, own[0])) return json({ ok: false, error: 'Solo el dueno del documento o el superadmin pueden editarlo.' }, 403);
   const title = String(body.title || '').trim();
   if (!title) return json({ ok: false, error: 'Falta el titulo.' }, 400);
   const patch = {
@@ -525,6 +570,9 @@ async function updateDoc(env, body, u) {
 async function archiveDoc(env, body, u) {
   const id = parseInt(body.document_id, 10);
   if (!id) return json({ ok: false, error: 'Falta el documento.' }, 400);
+  const own = await sb(env, `personnel_documents?id=eq.${id}&select=id,created_by`);
+  if (!own || !own.length) return json({ ok: false, error: 'Documento no encontrado.' }, 404);
+  if (!canManageDoc(u, own[0])) return json({ ok: false, error: 'Solo el dueno del documento o el superadmin pueden archivarlo.' }, 403);
   const reason = (body.reason || '').trim() || null;
   await sb(env, `personnel_documents?id=eq.${id}`, {
     method: 'PATCH',
@@ -540,6 +588,9 @@ async function archiveDoc(env, body, u) {
 async function restoreDoc(env, body, u) {
   const id = parseInt(body.document_id, 10);
   if (!id) return json({ ok: false, error: 'Falta el documento.' }, 400);
+  const own = await sb(env, `personnel_documents?id=eq.${id}&select=id,created_by`);
+  if (!own || !own.length) return json({ ok: false, error: 'Documento no encontrado.' }, 404);
+  if (!canManageDoc(u, own[0])) return json({ ok: false, error: 'Solo el dueno del documento o el superadmin pueden restaurarlo.' }, 403);
   await sb(env, `personnel_documents?id=eq.${id}`, {
     method: 'PATCH',
     body: JSON.stringify({
@@ -549,4 +600,25 @@ async function restoreDoc(env, body, u) {
   });
   await audit(env, id, 'restore', `Restauro el documento`, u);
   return json({ ok: true, id, archived: false });
+}
+
+/* ---------- DELETE FOREVER (solo superadmin) ----------
+   Borra IRREVERSIBLEMENTE: primero los archivos de Storage de todas las
+   versiones, luego la fila del documento. Las tablas versions y audit tienen
+   FK ON DELETE CASCADE, asi que se van solas al borrar el documento. */
+async function deleteForever(env, body, u) {
+  const id = parseInt(body.document_id, 10);
+  if (!id) return json({ ok: false, error: 'Falta el documento.' }, 400);
+  const doc = await sb(env, `personnel_documents?id=eq.${id}&select=id,title`);
+  if (!doc || !doc.length) return json({ ok: false, error: 'Documento no encontrado.' }, 404);
+
+  // 1) rutas de Storage de todas las versiones
+  const vers = await sb(env, `personnel_document_versions?document_id=eq.${id}&select=storage_path`);
+  const paths = (vers || []).map(v => v.storage_path).filter(Boolean);
+  // 2) borrar los objetos del bucket (no critico si alguno ya no existe)
+  for (const p of paths) { try { await storageDelete(env, p); } catch { /* continua */ } }
+  // 3) borrar la fila del documento -> cascade en versions y audit
+  await sb(env, `personnel_documents?id=eq.${id}`, { method: 'DELETE' });
+
+  return json({ ok: true, id, deleted: true, files: paths.length });
 }
