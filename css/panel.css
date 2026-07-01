@@ -1441,3 +1441,30 @@ input.needfill:focus, select.needfill:focus {
   background:linear-gradient(90deg,#ec4899,#f59e0b); box-shadow:0 1px 4px rgba(0,0,0,.2); }
 .wp-confetti { position:absolute; inset:0; z-index:2; pointer-events:none; }
 .wp-confetti i { position:absolute; width:6px; height:6px; border-radius:1px; opacity:.9; transform:rotate(20deg); }
+
+/* ===================== USUARIOS — GRILLA UNIFICADA (portal + osTicket) ==
+   Una sola grilla, solo tiendas. Dos familias de columnas coloreadas:
+   portal (azul) y osTicket (verde). Cada celda de estado puede llevar dos
+   acciones (mini-botones) alineadas a la derecha. Reusa .sum-cards/.sum-card,
+   .pill-*, .tablebox.scroll-x, .btn-mini del resto del panel. */
+/* 5a tarjeta-resumen: con clave de acceso osTicket (violeta) */
+.sum-card.portal .n { color:var(--brand); }
+.sum-card.acc .n { color:#7c3aed; }
+/* Grupos de columnas: cabecera y celdas con tinte suave */
+.tablebox th.grp-portal, .tablebox td.grp-portal { background:rgba(37,99,235,.04); }
+.tablebox th.grp-ost, .tablebox td.grp-ost { background:rgba(22,163,74,.045); }
+.tablebox thead th.grp-portal { color:#1d4ed8; }
+.tablebox thead th.grp-ost { color:#15803d; }
+.tablebox tbody tr:hover td.grp-portal { background:rgba(37,99,235,.07); }
+.tablebox tbody tr:hover td.grp-ost { background:rgba(22,163,74,.08); }
+/* Estado osTicket: remitente en una linea + estado de clave debajo */
+.ost-state { display:flex; flex-direction:column; gap:3px; align-items:flex-start; line-height:1.4; }
+.acc-line { font-size:11px; color:#7c3aed; display:inline-flex; align-items:center; gap:4px; font-weight:600; }
+.acc-line svg { width:12px; height:12px; }
+.acc-none { font-size:11px; color:var(--faint); }
+/* Contenedor de acciones por celda: dos mini-botones, alineados a la derecha */
+.cell-actions { display:flex; gap:5px; flex-wrap:wrap; justify-content:flex-end; }
+.cell-actions .btn-mini { margin-left:0; }
+/* Boton violeta: "Dar acceso" (crear clave osTicket) */
+.btn-violet { background:#7c3aed; color:#fff; border-color:#7c3aed; }
+.btn-violet:hover { background:#6d28d9; border-color:#6d28d9; }

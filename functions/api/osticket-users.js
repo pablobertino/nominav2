@@ -91,6 +91,7 @@ export async function onRequestPost({ request, env }) {
 
     if (action === 'list') return await listTiendas(env);
     if (action === 'sync') return await syncTiendas(env, body);
+    if (action === 'grant_access') return await grantAccess(env, body);
     return json({ ok: false, error: 'Accion no reconocida.' }, 400);
   } catch (e) {
     return json({ ok: false, error: String(e.message || e) }, 500);
@@ -100,7 +101,7 @@ export async function onRequestPost({ request, env }) {
 /* Lista las tiendas (company_type Tienda) con su estado osTicket. */
 async function listTiendas(env) {
   const rows = await sb(env,
-    `companies?company_type=eq.Tienda&select=company_code,business_name,email,phone,osticket_user_id,osticket_synced_at&order=company_code`);
+    `companies?company_type=eq.Tienda&select=company_code,business_name,email,phone,osticket_user_id,osticket_synced_at,osticket_access_granted_at&order=company_code`);
   const tiendas = (rows || []).map(c => ({
     code: c.company_code,
     name: c.business_name || '',
@@ -108,6 +109,8 @@ async function listTiendas(env) {
     phone: c.phone || '',
     osticket_user_id: c.osticket_user_id || null,
     synced_at: c.osticket_synced_at || null,
+    access_granted_at: c.osticket_access_granted_at || null,
+    has_access: !!c.osticket_access_granted_at,
     // estado derivado: synced (tiene user_id) | pending (tiene correo, sin user_id) | no_email
     state: c.osticket_user_id ? 'synced' : (c.email ? 'pending' : 'no_email'),
   }));
@@ -116,6 +119,7 @@ async function listTiendas(env) {
     synced: tiendas.filter(t => t.state === 'synced').length,
     pending: tiendas.filter(t => t.state === 'pending').length,
     no_email: tiendas.filter(t => t.state === 'no_email').length,
+    with_access: tiendas.filter(t => t.has_access).length,
   };
   return json({ ok: true, tiendas, summary });
 }
@@ -205,5 +209,59 @@ async function syncTiendas(env, body) {
     results,
     remaining,
     done,
+  });
+}
+
+/* Otorga ACCESO CON CLAVE a UNA tienda: crea/actualiza su ClientAccount en
+   osTicket (login local) con username (por defecto el codigo) y una clave
+   FIJA (no se fuerza el cambio). Reusa gc-user.json con username+password.
+   Ademas asegura el remitente (mismo endpoint) y guarda osticket_user_id +
+   osticket_access_granted_at. Requiere: la tienda debe tener correo. */
+async function grantAccess(env, body) {
+  const base = await osticketBase(env);
+  if (!base || !env.osticket_api_key) {
+    return json({ ok: false, error: 'osTicket no esta configurado (URL o clave API).' }, 400);
+  }
+  const code = body.code ? String(body.code).trim() : '';
+  const password = body.password != null ? String(body.password) : '';
+  if (!code) return json({ ok: false, error: 'Falta la tienda (code).' }, 400);
+  if (!password || password.length < 6) {
+    return json({ ok: false, error: 'La clave debe tener al menos 6 caracteres.' }, 400);
+  }
+
+  const rows = await sb(env,
+    `companies?company_type=eq.Tienda&company_code=eq.${encodeURIComponent(code)}&select=company_code,business_name,email,phone`);
+  if (!rows || !rows.length) return json({ ok: false, error: 'Tienda no encontrada.' }, 404);
+  const t = rows[0];
+  const email = (t.email || '').trim();
+  if (!email) return json({ ok: false, error: 'La tienda no tiene correo; cargalo en Empresas para poder crear el acceso.' }, 400);
+
+  const username = (body.username && String(body.username).trim()) || code;
+  const name = `${code} - ${t.business_name || code}`;
+
+  let r;
+  try {
+    r = await gcUser(env, base, { email, name, phone: (t.phone || '').trim(), username, password });
+  } catch (e) {
+    return json({ ok: false, error: String(e.message || e) }, 500);
+  }
+
+  const nowIso = new Date().toISOString();
+  await sb(env, `companies?company_code=eq.${encodeURIComponent(code)}`, {
+    method: 'PATCH',
+    body: JSON.stringify({
+      osticket_user_id: r.user_id,
+      osticket_synced_at: nowIso,
+      osticket_access_granted_at: nowIso,
+    }),
+  });
+
+  return json({
+    ok: true,
+    code,
+    user_id: r.user_id,
+    username,
+    account_created: r.account_created,
+    account_updated: r.account_updated,
   });
 }

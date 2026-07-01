@@ -273,7 +273,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.03</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.04</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1625,123 +1625,299 @@ function wirePwdBlock() {
     }));
 }
 
-/* ---------- VISTA: USUARIOS (con pestanas: portal + osTicket) ---------- */
-let USERS_TAB = 'portal';   // 'portal' | 'osticket'
-let CU_ROWS = null;
+/* ---------- VISTA: USUARIOS (grilla unificada: portal + osTicket) ----------
+   Una sola grilla, SOLO tiendas. Cada fila cruza dos mundos por company_code:
+     - Acceso al PORTAL de Nomina (company_users): estado + crear/resetear/toggle/correo.
+     - osTicket: REMITENTE (el From de los tickets) y, aparte, ACCESO CON CLAVE
+       (ClientAccount / login del cliente).
+   Endpoints: /api/company-users (portal) y /api/osticket-users (osTicket).
+   No se tocan los endpoints: se cruzan en el cliente.
+   Reutiliza: cuAction/cuApi (acciones portal), ouSyncOne/ouSyncAll/ouApi
+   (remitente osTicket), exportUsuariosPortal (exportacion). */
+let CU_ROWS = null;       // filas crudas de company-users (para acciones/exportar)
+let USERS_ROWS = [];      // filas combinadas (tienda + portal + osticket)
+let USERS_USER = null;    // user de sesion
+let USERS_F = { q: '', portal: 'all', ost: 'all', key: 'all' };
 
 async function viewUsuarios(user) {
+  USERS_USER = user;
   $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Usuarios</h1><p>Accesos al portal y usuarios en osTicket</p></div></div>
-    <div class="cfg-tabs">
-      <button class="cfg-tab" data-utab="portal">👤 Acceso al portal</button>
-      <button class="cfg-tab" data-utab="osticket">🎫 Usuarios osTicket</button>
-    </div>
-    <div id="usersBody"></div>`;
-  $('#pnlMain').querySelectorAll('.cfg-tab').forEach(b =>
-    b.addEventListener('click', () => { USERS_TAB = b.dataset.utab; usersRenderTab(user); }));
-  usersRenderTab(user);
-}
-
-function usersRenderTab(user) {
-  $('#pnlMain').querySelectorAll('.cfg-tab').forEach(b =>
-    b.classList.toggle('on', b.dataset.utab === USERS_TAB));
-  const body = $('#usersBody');
-  if (USERS_TAB === 'portal') usuariosPortalTab(user, body);
-  else usuariosOsticketTab(user, body);
-}
-
-/* ===== Pestana ACCESO AL PORTAL (lo que era la vista Usuarios) ===== */
-async function usuariosPortalTab(user, body) {
-  body.innerHTML = `<div class="pnl-loading">Cargando…</div>`;
-  const res = await fetch('/api/company-users', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'list', adminId: user.id }),
-  });
-  const d = await res.json();
-  if (!d.ok) { body.innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
-  CU_ROWS = d.rows;
-  const types = [...new Set(CU_ROWS.map(r => r.type).filter(Boolean))].sort();
-
-  body.innerHTML = `
-    <div class="pnl-head" style="padding-top:0">
-      <p id="cuCount" class="muted" style="font-size:13px;margin:0"></p>
-      <div class="export-wrap">
-        <button class="btn" id="cuExportBtn">Exportar ▾</button>
-        <div class="export-menu" id="cuExportMenu" hidden>
-          <button data-fmt="xlsx">Excel (.xlsx)</button>
-          <button data-fmt="csv">CSV (.csv)</button>
-          <button data-fmt="txt">Texto (.txt)</button>
+    <div class="pnl-head"><div><h1>Usuarios</h1><p>Acceso al portal y osTicket por tienda, en una sola vista</p></div>
+      <div class="head-actions" style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn" id="uSyncAll">${I.sync} Sincronizar remitentes</button>
+        <div class="export-wrap">
+          <button class="btn" id="uExportBtn">Exportar \u25be</button>
+          <div class="export-menu" id="uExportMenu" hidden>
+            <button data-fmt="xlsx">Excel (.xlsx)</button>
+            <button data-fmt="csv">CSV (.csv)</button>
+            <button data-fmt="txt">Texto (.txt)</button>
+          </div>
         </div>
-      </div>
+      </div></div>
+    <div id="usersBody"><div class="pnl-loading">Cargando\u2026</div></div>`;
+  usersLoad(user);
+}
+
+/* Carga en paralelo portal + osTicket y arma las filas combinadas. */
+async function usersLoad(user) {
+  const body = $('#usersBody');
+  const [pu, ou] = await Promise.all([
+    fetch('/api/company-users', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'list', adminId: user.id }) }).then(r => r.json()).catch(() => ({ ok: false })),
+    ouApi({ action: 'list', adminId: user.id }).catch(() => ({ ok: false })),
+  ]);
+  if (!pu.ok) { body.innerHTML = `<div class="pnl-loading">Error cargando accesos del portal.</div>`; return; }
+  if (!ou.ok) { body.innerHTML = `<div class="pnl-loading">Error cargando osTicket: ${ou.error || ''}</div>`; return; }
+
+  CU_ROWS = pu.rows || [];
+  // Solo tiendas del lado portal, indexadas por codigo.
+  const portalByCode = {};
+  CU_ROWS.filter(r => r.type === 'Tienda').forEach(r => { portalByCode[r.code] = r; });
+  const ostByCode = {};
+  (ou.tiendas || []).forEach(t => { ostByCode[t.code] = t; });
+
+  // Universo de tiendas = union de ambos lados (por si alguno falta).
+  const codes = new Set([...Object.keys(portalByCode), ...Object.keys(ostByCode)]);
+  USERS_ROWS = [...codes].sort().map(code => {
+    const p = portalByCode[code] || null;
+    const o = ostByCode[code] || null;
+    const name = (p && p.name) || (o && o.name) || '';
+    const email = (p && ((p.user && p.user.email) || p.companyEmail)) || (o && o.email) || null;
+    const phone1 = p ? phoneDisplay(p.companyPhone) : '';
+    const phone2 = p ? phoneDisplay(p.companyPhone2) : '';
+    return {
+      code, name, email,
+      phoneLine: [phone1, phone2].filter(Boolean).join(' / '),
+      portal: p,
+      portalState: p && p.user ? (p.user.is_active ? 'Activo' : 'Inactivo') : 'Sin acceso',
+      ost: o,
+    };
+  });
+
+  const sumPortal = USERS_ROWS.filter(r => r.portalState === 'Activo').length;
+  const S = ou.summary || {};
+  usersRender(user, {
+    portalActivo: sumPortal,
+    synced: S.synced || 0,
+    pending: S.pending || 0,
+    no_email: S.no_email || 0,
+    with_access: S.with_access || 0,
+  });
+
+  // Exportacion (reusa exportUsuariosPortal con las tiendas del portal).
+  const eb = $('#uExportBtn'), em = $('#uExportMenu');
+  if (eb && em) {
+    eb.addEventListener('click', (e) => { e.stopPropagation(); em.hidden = !em.hidden; });
+    document.addEventListener('click', () => { em.hidden = true; });
+    em.querySelectorAll('button').forEach(b =>
+      b.addEventListener('click', () => { em.hidden = true; exportUsuariosPortal(b.dataset.fmt, CU_ROWS.filter(r => r.type === 'Tienda')); }));
+  }
+  const sa = $('#uSyncAll');
+  if (sa) sa.addEventListener('click', () => ouSyncAll(user));
+}
+
+/* Fecha ISO -> 'DD/MM' hora Caracas (para el chip de clave). */
+function usersDayMonth(iso) {
+  if (!iso) return '';
+  const dt = new Date(iso); if (isNaN(dt)) return '';
+  const car = new Date(dt.getTime() - 4 * 3600 * 1000);
+  const p = (n) => String(n).padStart(2, '0');
+  return `${p(car.getUTCDate())}/${p(car.getUTCMonth() + 1)}`;
+}
+
+function usersRender(user, sum) {
+  const body = $('#usersBody');
+  body.innerHTML = `
+    <div class="sum-cards">
+      <div class="sum-card portal"><div class="n">${sum.portalActivo}</div><div class="l">Con acceso activo al portal</div></div>
+      <div class="sum-card ok"><div class="n">${sum.synced}</div><div class="l">Remitente en osTicket</div></div>
+      <div class="sum-card pend"><div class="n">${sum.pending}</div><div class="l">osTicket pendientes</div></div>
+      <div class="sum-card none"><div class="n">${sum.no_email}</div><div class="l">Sin correo</div></div>
+      <div class="sum-card acc"><div class="n">${sum.with_access}</div><div class="l">Con clave de acceso osTicket</div></div>
     </div>
     <div class="pnl-filters">
-      <div class="search">${I.search}<input id="cuName" placeholder="Buscar compañía o código…"></div>
-      <select id="cuType"><option value="Tienda">Tipo: Tienda</option>${types.filter(t=>t!=='Tienda').map(t=>`<option>${t}</option>`).join('')}<option value="ALL">Todos los tipos</option></select>
-      <select id="cuAccess"><option value="ALL">Todas</option><option value="yes">Con acceso</option><option value="no">Sin acceso</option></select>
+      <div class="search">${I.search}<input id="uSearch" placeholder="Buscar tienda o codigo\u2026"></div>
+      <select id="uPortal">
+        <option value="all">Estado portal: Todos</option>
+        <option value="Activo">Activo</option>
+        <option value="Inactivo">Inactivo</option>
+        <option value="Sin acceso">Sin acceso</option>
+      </select>
+      <select id="uOst">
+        <option value="all">osTicket: Todos</option>
+        <option value="synced">Remitente creado</option>
+        <option value="pending">Pendientes</option>
+        <option value="no_email">Sin correo</option>
+      </select>
+      <select id="uKey">
+        <option value="all">Clave osTicket: Todos</option>
+        <option value="yes">Con clave</option>
+        <option value="no">Sin clave</option>
+      </select>
     </div>
-    <div class="tablebox"><table><thead><tr>
-      <th>Código</th><th>Compañía</th><th>Tipo</th><th>Usuario</th><th>Correo</th><th>Teléfono</th><th>Estado</th><th style="text-align:right">Acciones</th>
-    </tr></thead><tbody id="cuBody"></tbody></table></div>`;
+    <p id="uCount" class="muted" style="font-size:12.5px;margin:0 2px 10px"></p>
+    <div class="tablebox scroll-x"><table><thead>
+      <tr>
+        <th rowspan="2">Codigo</th><th rowspan="2">Tienda</th><th rowspan="2">Correo / Telefono</th>
+        <th class="grp grp-portal" colspan="2">Acceso al portal</th>
+        <th class="grp grp-ost" colspan="2">osTicket</th>
+      </tr>
+      <tr>
+        <th class="grp-portal">Estado</th><th class="grp-portal" style="text-align:right">Acciones</th>
+        <th class="grp-ost">Estado</th><th class="grp-ost" style="text-align:right">Acciones</th>
+      </tr>
+    </thead><tbody id="uBody"></tbody></table></div>`;
 
-  let cuVisible = [];   // filas actualmente filtradas (para exportar)
-
-  const fName = $('#cuName'), fType = $('#cuType'), fAccess = $('#cuAccess');
-  function render() {
-    const n = fName.value.toLowerCase();
-    const rows = CU_ROWS.filter(r =>
-      (`${r.code} ${r.name || ''}`.toLowerCase().includes(n))
-      && (fType.value === 'ALL' || r.type === fType.value)
-      && (fAccess.value === 'ALL' || (fAccess.value === 'yes' ? !!r.user : !r.user)));
-    cuVisible = rows;
-    $('#cuCount').textContent = `${rows.length} de ${CU_ROWS.length} compañías`;
-    $('#cuBody').innerHTML = rows.map(r => {
-      const u = r.user;
-      // Correo: el del usuario si existe; si no, el de la compañía.
-      const correo = (u && u.email) || r.companyEmail || null;
-      const correoCell = correo
-        ? correo
-        : '<span class="muted" style="font-size:12px">—</span>';
-      // Teléfono: de la compañía (no vive en el usuario). Muestra ambos si hay.
-      const tel = phoneDisplay(r.companyPhone);
-      const tel2 = phoneDisplay(r.companyPhone2);
-      const telLine = [tel, tel2].filter(Boolean).join(' / ');
-      const telCell = telLine || '<span class="muted" style="font-size:12px">—</span>';
-      const userCell = u
-        ? `<span class="code">${r.code}</span>`
-        : '<span class="muted" style="font-size:12px">— sin usuario —</span>';
-      const stateCell = u
-        ? (u.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>')
-        : '<span class="pill pill-gray">Sin acceso</span>';
-      const actions = u
-        ? `<button class="btn btn-mini" data-act="email" data-code="${r.code}" data-name="${(r.name||'').replace(/"/g,'')}" data-email="${(u.email||'').replace(/"/g,'')}">${I.pencil} Correo</button>
-           <button class="btn btn-mini" data-act="reset" data-code="${r.code}">${I.key} Resetear</button>
-           <button class="btn btn-mini" data-act="toggle" data-code="${r.code}" data-active="${u.is_active}">${u.is_active ? 'Desactivar' : 'Activar'}</button>`
-        : `<button class="btn btn-mini btn-primary" data-act="create" data-code="${r.code}" data-name="${(r.name||'').replace(/"/g,'')}" data-type="${r.type||''}" data-email="${r.companyEmail||''}">${I.plus} Crear acceso</button>`;
-      return `<tr><td class="code">${r.code}</td><td>${r.name || '—'}</td>
-        <td><span class="pill pill-gray">${r.type || '—'}</span></td>
-        <td style="font-size:13px">${userCell}</td>
-        <td style="font-size:13px">${correoCell}</td>
-        <td style="font-size:13px">${telCell}</td>
-        <td>${stateCell}</td>
-        <td style="text-align:right;white-space:nowrap">${actions}</td></tr>`;
-    }).join('') || '<tr><td colspan="8" class="empty">Sin resultados.</td></tr>';
-
-    $('#cuBody').querySelectorAll('button[data-act]').forEach(b =>
-      b.addEventListener('click', () => cuAction(b.dataset, user)));
-  }
-  [fName].forEach(e => e.addEventListener('input', render));
-  [fType, fAccess].forEach(e => e.addEventListener('change', render));
-  render();
-
-  // Exportación (menú desplegable) de la grilla de accesos.
-  const cuExpBtn = $('#cuExportBtn'), cuExpMenu = $('#cuExportMenu');
-  cuExpBtn.addEventListener('click', (e) => { e.stopPropagation(); cuExpMenu.hidden = !cuExpMenu.hidden; });
-  document.addEventListener('click', () => { cuExpMenu.hidden = true; });
-  cuExpMenu.querySelectorAll('button').forEach(b =>
-    b.addEventListener('click', () => { cuExpMenu.hidden = true; exportUsuariosPortal(b.dataset.fmt, cuVisible); }));
+  const fq = $('#uSearch'), fp = $('#uPortal'), fo = $('#uOst'), fk = $('#uKey');
+  fq.value = USERS_F.q; fp.value = USERS_F.portal; fo.value = USERS_F.ost; fk.value = USERS_F.key;
+  fq.addEventListener('input', () => { USERS_F.q = fq.value; usersRenderRows(user); });
+  [fp, fo, fk].forEach(el => el.addEventListener('change', () => {
+    USERS_F.portal = fp.value; USERS_F.ost = fo.value; USERS_F.key = fk.value; usersRenderRows(user);
+  }));
+  usersRenderRows(user);
 }
 
-/* Exportación de la grilla de Accesos al portal (xlsx / csv / txt) */
+function usersRenderRows(user) {
+  const q = USERS_F.q.toLowerCase();
+  const rows = USERS_ROWS.filter(r => {
+    if (q && !(`${r.code} ${r.name || ''}`.toLowerCase().includes(q))) return false;
+    if (USERS_F.portal !== 'all' && r.portalState !== USERS_F.portal) return false;
+    if (USERS_F.ost !== 'all' && (!r.ost || r.ost.state !== USERS_F.ost)) return false;
+    if (USERS_F.key === 'yes' && !(r.ost && r.ost.has_access)) return false;
+    if (USERS_F.key === 'no' && (r.ost && r.ost.has_access)) return false;
+    return true;
+  });
+  $('#uCount').textContent = `${rows.length} de ${USERS_ROWS.length} tiendas`;
+
+  const portalCell = (r) => {
+    const u = r.portal && r.portal.user;
+    const st = !r.portal ? '<span class="pill pill-gray">Sin datos</span>'
+      : u ? (u.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>')
+          : '<span class="pill pill-gray">Sin acceso</span>';
+    let acts = '';
+    if (r.portal) {
+      acts = u
+        ? `<button class="btn btn-mini" data-p="email" data-code="${r.code}" data-name="${(r.name||'').replace(/"/g,'')}" data-email="${(u.email||'').replace(/"/g,'')}">${I.pencil} Correo</button>
+           <button class="btn btn-mini" data-p="reset" data-code="${r.code}">${I.key} Resetear</button>
+           <button class="btn btn-mini" data-p="toggle" data-code="${r.code}" data-active="${u.is_active}">${u.is_active ? 'Desactivar' : 'Activar'}</button>`
+        : `<button class="btn btn-mini btn-primary" data-p="create" data-code="${r.code}" data-name="${(r.name||'').replace(/"/g,'')}" data-type="Tienda" data-email="${r.portal.companyEmail||''}">${I.plus} Crear acceso</button>`;
+    }
+    return { st, acts };
+  };
+
+  const ostCell = (r) => {
+    const o = r.ost;
+    if (!o) return { st: '<span class="pill pill-gray">\u2014</span>', acts: '' };
+    const idTag = o.osticket_user_id ? ` <span class="muted" style="font-size:11px">#${o.osticket_user_id}</span>` : '';
+    const statePill = o.state === 'synced' ? `<span class="pill pill-open">Remitente</span>${idTag}`
+      : o.state === 'pending' ? '<span class="pill pill-temp">Pendiente</span>'
+      : '<span class="pill pill-gray">Sin correo</span>';
+    const keyLine = o.has_access
+      ? `<span class="acc-line">${I.key} Con clave${o.access_granted_at ? ' \u00b7 ' + usersDayMonth(o.access_granted_at) : ''}</span>`
+      : (o.state === 'no_email' ? '' : '<span class="acc-none">sin clave</span>');
+    const st = `<div class="ost-state">${statePill}${keyLine ? '<br>' + keyLine : ''}</div>`;
+
+    let acts = '';
+    if (o.state === 'no_email') {
+      acts = `<button class="btn btn-mini" disabled style="opacity:.5" title="Carga un correo en Empresas">Falta correo</button>`;
+    } else {
+      const remit = o.state === 'synced'
+        ? `<button class="btn btn-mini" data-o="sync" data-code="${r.code}">Re-sincronizar</button>`
+        : `<button class="btn btn-mini btn-primary" data-o="sync" data-code="${r.code}">Crear remitente</button>`;
+      const key = o.has_access
+        ? `<button class="btn btn-mini" data-o="grant" data-code="${r.code}">${I.key} Resetear</button>`
+        : `<button class="btn btn-mini btn-violet" data-o="grant" data-code="${r.code}">${I.key} Dar acceso</button>`;
+      acts = remit + ' ' + key;
+    }
+    return { st, acts };
+  };
+
+  $('#uBody').innerHTML = rows.map(r => {
+    const p = portalCell(r), o = ostCell(r);
+    const correo = r.email || '<span class="muted" style="font-size:12px">\u2014</span>';
+    const tel = r.phoneLine ? `<br><span class="muted">${r.phoneLine}</span>` : '';
+    return `<tr>
+      <td class="code">${r.code}</td>
+      <td>${r.name || '\u2014'}</td>
+      <td style="font-size:12.5px">${correo}${tel}</td>
+      <td class="grp-portal">${p.st}</td>
+      <td class="grp-portal" style="text-align:right"><div class="cell-actions">${p.acts}</div></td>
+      <td class="grp-ost">${o.st}</td>
+      <td class="grp-ost" style="text-align:right"><div class="cell-actions">${o.acts}</div></td>
+    </tr>`;
+  }).join('') || '<tr><td colspan="7" class="empty">Sin resultados.</td></tr>';
+
+  // Acciones PORTAL (reusa cuAction con el shape {act,code,name,email,type,active}).
+  $('#uBody').querySelectorAll('button[data-p]').forEach(b =>
+    b.addEventListener('click', () => cuAction({
+      act: b.dataset.p, code: b.dataset.code, name: b.dataset.name,
+      email: b.dataset.email, type: b.dataset.type, active: b.dataset.active,
+    }, user)));
+  // Acciones osTICKET.
+  $('#uBody').querySelectorAll('button[data-o="sync"]').forEach(b =>
+    b.addEventListener('click', () => ouSyncOne(user, b.dataset.code, b)));
+  $('#uBody').querySelectorAll('button[data-o="grant"]').forEach(b =>
+    b.addEventListener('click', () => ouGrantAccess(user, b.dataset.code, b)));
+}
+
+/* Modal: otorgar/resetear ACCESO CON CLAVE de una tienda en osTicket.
+   Usuario prellenado = codigo de tienda; clave fija (no fuerza cambio).
+   Llama /api/osticket-users action grant_access y muestra credenciales. */
+function ouGrantAccess(user, code, btn) {
+  const row = USERS_ROWS.find(r => r.code === code);
+  const has = !!(row && row.ost && row.ost.has_access);
+  openModal(`
+    <div class="modal-head"><span>${has ? 'Resetear' : 'Dar'} acceso osTicket</span><button class="modal-x" id="mX">\u2715</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 16px">${code}${row && row.name ? ' \u00b7 ' + row.name : ''} \u00b7 acceso de cliente a osTicket (usuario + clave).</p>
+    <label class="flabel">Usuario (osTicket)</label>
+    <input type="text" id="ogUser" value="${code}" style="margin-bottom:12px">
+    <label class="flabel">Clave</label>
+    <input type="text" id="ogPass" placeholder="minimo 6 caracteres" autocomplete="off" style="margin-bottom:6px">
+    <p class="muted" style="font-size:11.5px;margin:0">La clave es fija (no se fuerza el cambio al entrar). Se mostrara aqui para que la entregues; anotala.</p>
+    <p id="ogErr" style="color:var(--danger);font-size:12.5px;margin:10px 0 0;display:none"></p>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">${has ? 'Resetear' : 'Crear'} acceso</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const uname = $('#ogUser').value.trim();
+    const pass = $('#ogPass').value;
+    const err = $('#ogErr');
+    if (!uname) { err.textContent = 'Indica el usuario.'; err.style.display = 'block'; return; }
+    if (!pass || pass.length < 6) { err.textContent = 'La clave debe tener al menos 6 caracteres.'; err.style.display = 'block'; return; }
+    const b = $('#mOk'); b.disabled = true; const orig = b.textContent; b.textContent = 'Guardando\u2026';
+    let d;
+    try { d = await ouApi({ action: 'grant_access', adminId: user.id, code, username: uname, password: pass }); }
+    catch (e) { d = { ok: false, error: 'Error de conexion: ' + (e && e.message || e) }; }
+    if (!d.ok) { err.textContent = d.error || 'No se pudo crear el acceso.'; err.style.display = 'block'; b.disabled = false; b.textContent = orig; return; }
+    openModal(`
+      <div class="modal-head"><span>Acceso osTicket listo</span><button class="modal-x" id="mX">\u2715</button></div>
+      <p style="margin:0 0 4px">\u2705 Acceso ${d.account_created ? 'creado' : 'actualizado'} para la tienda <b>${code}</b>.</p>
+      <div style="margin-top:12px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--bg-soft,#f7f7f9)">
+        ${copyFieldHtml('Usuario', uname, 'ogrUser')}
+        ${copyFieldHtml('Clave', pass, 'ogrPass')}
+        <button class="btn" data-copy-all type="button" style="width:100%;margin-top:2px">Copiar usuario y clave</button>
+        <p class="muted" style="font-size:11.5px;margin:10px 0 0;line-height:1.5">Entra al portal de clientes de osTicket con ese usuario y clave.</p>
+      </div>
+      <div class="modal-actions"><button class="btn btn-primary" id="mClose">Listo</button></div>`);
+    const finish = () => { closeModal(); viewUsuarios(user); };
+    $('#mX').addEventListener('click', finish);
+    $('#mClose').addEventListener('click', finish);
+    document.querySelectorAll('[data-copy]').forEach(x =>
+      x.addEventListener('click', () => { const el = document.getElementById(x.dataset.copy); if (el) { el.select(); copyToClipboard(el.value, x); } }));
+    const all = document.querySelector('[data-copy-all]');
+    if (all) all.addEventListener('click', () => {
+      const us = document.getElementById('ogrUser'), pw = document.getElementById('ogrPass');
+      copyToClipboard(`Usuario: ${us ? us.value : ''}\nClave: ${pw ? pw.value : ''}`, all);
+    });
+  });
+}
+
+/* ===== Exportacion de la grilla unificada (xlsx / csv / txt) =====
+   Recibe filas crudas de company-users (tiendas). Reutilizada por la vista
+   unificada. ===== */
 async function exportUsuariosPortal(fmt, rows) {
   const data = (rows || []).map(r => {
     const u = r.user;
@@ -1800,110 +1976,23 @@ async function exportUsuariosPortal(fmt, rows) {
   }
 }
 
-/* ===== Pestana USUARIOS OSTICKET (sincronizacion) =====
-   Lista las tiendas con su estado en osTicket (sincronizada / pendiente /
-   sin correo) y permite crear/re-sincronizar el usuario-tienda (el "From"
-   de los tickets), individual o masivamente. Reusa /api/osticket-users. */
-let OU_ROWS = null;
-let OU_SUMMARY = null;
-let OU_FILTER = 'all';   // all | synced | pending | no_email
-let OU_USER = null;      // user de la sesion (para que ouRender/ouSyncOne no dependan del parametro)
-
-async function usuariosOsticketTab(user, body) {
-  OU_USER = user;   // fijar el user de sesion para ouRender/ouSyncOne
-  body.innerHTML = `<div class="pnl-loading">Cargando estado de osTicket…</div>`;
-  const d = await ouApi({ action: 'list', adminId: user.id });
-  if (!d.ok) { body.innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
-  OU_ROWS = d.tiendas || [];
-  OU_SUMMARY = d.summary || { total: 0, synced: 0, pending: 0, no_email: 0 };
-
-  body.innerHTML = `
-    <div class="sum-cards">
-      <div class="sum-card ok"><div class="n">${OU_SUMMARY.synced}</div><div class="l">Sincronizadas en osTicket</div></div>
-      <div class="sum-card pend"><div class="n">${OU_SUMMARY.pending}</div><div class="l">Pendientes (con correo)</div></div>
-      <div class="sum-card none"><div class="n">${OU_SUMMARY.no_email}</div><div class="l">Sin correo</div></div>
-      <div class="sum-card"><div class="n">${OU_SUMMARY.total}</div><div class="l">Total tiendas</div></div>
-    </div>
-    <div class="pnl-filters">
-      <div class="search">${I.search}<input id="ouSearch" placeholder="Buscar tienda o código…"></div>
-      <select id="ouFilter">
-        <option value="all">Todas</option>
-        <option value="synced">Sincronizadas</option>
-        <option value="pending">Pendientes</option>
-        <option value="no_email">Sin correo</option>
-      </select>
-      <button class="btn btn-primary" id="ouSyncAll">${I.sync} Sincronizar todas${OU_SUMMARY.pending ? ` (${OU_SUMMARY.pending} pendientes)` : ''}</button>
-    </div>
-    <div class="tablebox"><table><thead><tr>
-      <th>Código</th><th>Razón social</th><th>Correo (From)</th><th>Estado osTicket</th><th>Última sinc.</th><th style="text-align:right">Acción</th>
-    </tr></thead><tbody id="ouBody"></tbody></table></div>
-    <p class="muted" style="font-size:12px;margin:14px 2px 0;line-height:1.6">El usuario-tienda es el <b>remitente (From)</b> de los tickets en osTicket. “Sincronizada” ya existe; “pendiente” tiene correo pero falta crearla; “sin correo” no se puede crear hasta cargarle un correo (en la pestaña Empresas). Cada envío de reporte de ausencia también sincroniza la tienda automáticamente. El número <b>#N</b> es el id del usuario en osTicket.</p>`;
-
-  $('#ouSearch').addEventListener('input', ouRender);
-  $('#ouFilter').addEventListener('change', (e) => { OU_FILTER = e.target.value; ouRender(); });
-  $('#ouSyncAll').addEventListener('click', () => ouSyncAll(OU_USER));
-  ouRender();
-}
-
-function ouStatePill(state) {
-  if (state === 'synced') return '<span class="pill pill-open">Sincronizada</span>';
-  if (state === 'pending') return '<span class="pill pill-temp">Pendiente</span>';
-  return '<span class="pill pill-gray">Sin correo</span>';
-}
-
-/* Fecha ISO -> 'DD/MM HH:MM' hora Caracas (reusa el patron del resto). */
-function ouWhen(iso) {
-  if (!iso) return '—';
-  const dt = new Date(iso);
-  if (isNaN(dt)) return '—';
-  const car = new Date(dt.getTime() - 4 * 3600 * 1000);
-  const p = (n) => String(n).padStart(2, '0');
-  return `${p(car.getUTCDate())}/${p(car.getUTCMonth() + 1)} ${p(car.getUTCHours())}:${p(car.getUTCMinutes())}`;
-}
-
-function ouRender() {
-  const q = ($('#ouSearch') && $('#ouSearch').value || '').toLowerCase();
-  const rows = (OU_ROWS || []).filter(t =>
-    (`${t.code} ${t.name || ''}`.toLowerCase().includes(q))
-    && (OU_FILTER === 'all' || t.state === OU_FILTER));
-  $('#ouBody').innerHTML = rows.map(t => {
-    const idTag = t.osticket_user_id ? ` <span class="muted" style="font-size:11px">#${t.osticket_user_id}</span>` : '';
-    const correo = t.email
-      ? t.email
-      : '<span class="muted">sin correo</span>';
-    let actionBtn;
-    if (t.state === 'no_email') {
-      actionBtn = `<button class="btn btn-mini" disabled style="opacity:.5" title="Carga un correo en Empresas">Falta correo</button>`;
-    } else if (t.state === 'synced') {
-      actionBtn = `<button class="btn btn-mini" data-ousync="${t.code}">Re-sincronizar</button>`;
-    } else {
-      actionBtn = `<button class="btn btn-mini btn-primary" data-ousync="${t.code}">Crear en osTicket</button>`;
-    }
-    return `<tr>
-      <td class="code">${t.code}</td>
-      <td>${t.name || '—'}</td>
-      <td style="font-size:13px">${correo}</td>
-      <td>${ouStatePill(t.state)}${idTag}</td>
-      <td class="muted" style="font-size:12px">${ouWhen(t.synced_at)}</td>
-      <td style="text-align:right">${actionBtn}</td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="6" class="empty">Sin resultados.</td></tr>';
-
-  $('#ouBody').querySelectorAll('[data-ousync]').forEach(b =>
-    b.addEventListener('click', () => ouSyncOne(OU_USER, b.dataset.ousync, b)));
-}
+/* ===== Sincronizacion de REMITENTES osTicket (reutilizada por la vista
+   unificada) =====
+   ouSyncOne: crea/re-sincroniza el usuario-tienda (el From de los tickets).
+   ouSyncAll: crea/actualiza en tandas todas las pendientes con correo.
+   ouApi: wrapper del endpoint /api/osticket-users. ===== */
 
 /* Sincroniza UNA tienda (boton de fila). */
 async function ouSyncOne(user, code, btn) {
-  user = user || OU_USER;   // respaldo: nunca depender de un user nulo
+  user = user || USERS_USER;   // respaldo: nunca depender de un user nulo
   const orig = btn.textContent;
   btn.disabled = true; btn.textContent = 'Sincronizando…';
   const d = await ouApi({ action: 'sync', adminId: user.id, codes: [code] });
   if (!d.ok) { alert(d.error || 'No se pudo sincronizar.'); btn.disabled = false; btn.textContent = orig; return; }
   const r = (d.results && d.results[0]) || null;
   if (r && !r.ok) { alert(`${code}: ${r.error || 'error'}`); btn.disabled = false; btn.textContent = orig; return; }
-  // refrescar la pestana para reflejar el nuevo estado + tarjetas
-  usuariosOsticketTab(user, $('#usersBody'));
+  // refrescar la grilla unificada para reflejar el nuevo estado + tarjetas
+  viewUsuarios(user);
 }
 
 /* Sincroniza TODAS las pendientes con correo (boton masivo).
@@ -1913,8 +2002,8 @@ async function ouSyncOne(user, code, btn) {
    que volver a pulsar el boton. Mismo patron que "Sincronizar todo" de
    Empresas (sin alert/confirm nativos: modal propio). */
 async function ouSyncAll(user) {
-  user = user || OU_USER;   // respaldo: nunca depender de un user nulo
-  const pend = OU_SUMMARY ? OU_SUMMARY.pending : 0;
+  user = user || USERS_USER;   // respaldo: nunca depender de un user nulo
+  const pend = (USERS_ROWS || []).filter(r => r.ost && r.ost.state === 'pending').length;
   if (!pend) {
     openModal(`
       <div class="modal-head"><span>Sincronizar en osTicket</span><button class="modal-x" id="mX">\u2715</button></div>
@@ -1952,7 +2041,7 @@ async function ouSyncAll(user) {
     row.innerHTML = `<span class="c">${code}</span><span class="r">${ok ? '\u2713' : '\u2715'} ${info}</span>`;
     logEl.appendChild(row); logEl.scrollTop = logEl.scrollHeight;
   };
-  const closeAndRefresh = () => { closeModal(); usuariosOsticketTab(user, $('#usersBody')); };
+  const closeAndRefresh = () => { closeModal(); viewUsuarios(user); };
 
   $('#mX').addEventListener('click', () => { if (phase !== 'running') closeAndRefresh(); });
   $('#ouCancel').addEventListener('click', () => {
@@ -4427,7 +4516,7 @@ export function renderPanel() {
   if (!user) { go('/login'); return; }
   // Limpiar estado en memoria de cualquier sesión previa (evita que datos
   // de un usuario anterior "se filtren" si se cambia de sesión sin recargar).
-  CATALOG = null; CU_ROWS = null; SCOPE = null; OU_USER = null; TIENDAS_FILTERS = null; currentView = 'dashboard';
+  CATALOG = null; CU_ROWS = null; SCOPE = null; USERS_USER = null; TIENDAS_FILTERS = null; currentView = 'dashboard';
   mount(shell(user));
   loadAvatar((user.email || '').trim().toLowerCase());
   $('#logoutBtn').addEventListener('click', () => { clearSession(); go('/login'); });
