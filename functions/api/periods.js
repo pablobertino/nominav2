@@ -114,7 +114,21 @@ export async function onRequestPost({ request, env }) {
         rows = await sb(env,
           `payroll_periods?range_start=gte.${today}&order=range_start&limit=1&select=name,year,period_no,range_start,range_end,milestone_date,cutoff_date,pay_date`);
       }
-      return json({ ok: true, today, period: (rows && rows[0]) || null });
+      const period = (rows && rows[0]) || null;
+
+      // Quincena ANTERIOR a la vigente. Su dia de pago cae el mismo dia que
+      // arranca la actual (range_start), porque cada quincena se paga al dia
+      // siguiente de su corte. La barra la muestra como un hito de pago al
+      // inicio (etiqueta "Pago hoy" el dia exacto, "Pago anterior" despues).
+      let prev = null;
+      if (period) {
+        const prevRows = await sb(env,
+          `payroll_periods?range_end=lt.${period.range_start}&order=range_end.desc&limit=1&select=name,pay_date`);
+        if (prevRows && prevRows.length) {
+          prev = { name: prevRows[0].name, pay_date: prevRows[0].pay_date };
+        }
+      }
+      return json({ ok: true, today, period, prev });
     }
 
     // ---- Escritura: solo superadmin ----

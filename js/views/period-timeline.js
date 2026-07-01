@@ -40,6 +40,10 @@ function tlEnsureStyles() {
   .tl-countdown b{color:var(--brand);font-weight:700}
   .tl-countdown.pay-today{background:#ecfdf5;border-color:#a7f3d0}
   .tl-countdown.pay-today b{color:#166534}
+  .tl-right{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .tl-prevpay{font-size:12.5px;color:#166534;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:999px;padding:4px 13px;white-space:nowrap;display:inline-flex;align-items:center;gap:6px}
+  .tl-prevpay svg{width:14px;height:14px}
+  .tl-prevpay b{font-weight:700}
   .tl-track-wrap{position:relative;padding:0 8px}
   .tl-track{position:relative;height:8px;border-radius:6px;background:var(--border-soft,#eef0f3);margin:52px 0 46px}
   .tl-fill{position:absolute;top:0;left:0;height:100%;border-radius:6px;background:linear-gradient(90deg,#93c5fd,#2563eb)}
@@ -49,6 +53,11 @@ function tlEnsureStyles() {
   .tl-mk.done.calc .tl-ic{border-color:#f59e0b;background:#fef3c7;color:#b45309}
   .tl-mk.done.cut  .tl-ic{border-color:#3b82f6;background:#dbeafe;color:#1e40af}
   .tl-mk.done.pay  .tl-ic{border-color:#22c55e;background:#dcfce7;color:#166534}
+  .tl-mk.prevpay .tl-ic{border-color:#16a34a;background:#dcfce7;color:#15803d}
+  .tl-mk.prevpay.today .tl-ic{border-color:#166534;background:#22c55e;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 7px #a7f3d0}
+  .tl-mk.prevpay .tl-lbl .d{color:#15803d}
+  .tl-mk.prevpay .tl-lbl .n{color:#16a34a;font-weight:700}
+  .tl-mk.prevpay.today .tl-lbl{top:44px}
   .tl-mk.act .tl-ic{transform:scale(1.12)}
   .tl-mk.act.calc .tl-ic{border-color:#b45309;background:#f59e0b;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 7px #fde68a}
   .tl-mk.act.cut  .tl-ic{border-color:#1e40af;background:#3b82f6;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 7px #bfdbfe}
@@ -80,7 +89,7 @@ function tlCountdown(todayISO, payISO) {
   return { txt: `Pago realizado · período en cierre`, cls: '' };
 }
 
-function tlHtml(period, todayISO) {
+function tlHtml(period, todayISO, prev) {
   const startISO = period.range_start;
   const endISO = period.pay_date;       // el eje termina en el dia de pago
   const hitos = [
@@ -90,7 +99,27 @@ function tlHtml(period, todayISO) {
   ];
   const todayPos = tlPos(todayISO, startISO, endISO) * 100;
   const cd = tlCountdown(todayISO, period.pay_date);
-  const onHito = hitos.some(h => h.iso === todayISO);
+
+  // Hito de pago de la quincena ANTERIOR: su pago cae el mismo dia que arranca
+  // la actual (inicio de la barra, pos 0). Se muestra durante toda la quincena.
+  // Etiqueta dinamica: "Pago hoy" si hoy es ese dia, "Pago anterior" despues.
+  // El chip de la derecha solo aparece el dia exacto del pago.
+  let prevMk = '';
+  let prevChip = '';
+  const prevIsValid = prev && prev.pay_date && prev.pay_date === startISO;
+  if (prevIsValid) {
+    const payToday = (todayISO === prev.pay_date);
+    const prevLbl = payToday ? 'Pago hoy' : 'Pago anterior';
+    prevMk = `<div class="tl-mk prevpay${payToday ? ' today' : ''}" style="left:0%">
+      <div class="tl-ic">${TL_ICON.pay}</div>
+      <div class="tl-lbl"><span class="d">${tlDiaDM(prev.pay_date)}</span><span class="n">${prevLbl}</span></div>
+    </div>`;
+    if (payToday) {
+      prevChip = `<div class="tl-prevpay">${TL_ICON.pay} Hoy se paga la quincena anterior <b>${prev.name}</b></div>`;
+    }
+  }
+
+  const onHito = hitos.some(h => h.iso === todayISO) || (prevIsValid && prev.pay_date === todayISO);
   const mks = hitos.map(h => {
     const p = tlPos(h.iso, startISO, endISO) * 100;
     const done = tlBetween(h.iso, todayISO) > 0;
@@ -103,12 +132,12 @@ function tlHtml(period, todayISO) {
   return `<div class="tl">
     <div class="tl-top">
       <div class="tl-title">Quincena en curso <small>${period.name} · ${tlDM(period.range_start)} al ${tlDM(period.range_end)}</small></div>
-      <div class="tl-countdown ${cd.cls}">${cd.txt}</div>
+      <div class="tl-right">${prevChip}<div class="tl-countdown ${cd.cls}">${cd.txt}</div></div>
     </div>
     <div class="tl-track-wrap">
       <div class="tl-track">
         <div class="tl-fill" style="width:${todayPos}%"></div>
-        ${mks}
+        ${prevMk}${mks}
         <div class="tl-today ${onHito ? 'on-hito' : ''}" style="left:${todayPos}%">
           <div class="bub">HOY · ${tlDiaDM(todayISO)}</div>
           <div class="stem"></div>
@@ -142,7 +171,7 @@ export async function injectPeriodTimeline(host) {
   tlEnsureStyles();
   const el = document.createElement('div');
   el.id = 'periodTimeline';
-  el.innerHTML = tlHtml(p, data.today);
+  el.innerHTML = tlHtml(p, data.today, data.prev || null);
   // Evitar duplicados si se re-renderiza.
   const prev = host.querySelector('#periodTimeline');
   if (prev) prev.remove();
