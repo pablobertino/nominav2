@@ -1459,6 +1459,9 @@ input.needfill:focus, select.needfill:focus {
 .tablebox tbody tr:hover td.grp-ost { background:rgba(22,163,74,.08); }
 /* Estado osTicket: remitente en una linea + estado de clave debajo */
 .ost-state { display:flex; flex-direction:column; gap:3px; align-items:flex-start; line-height:1.4; }
+/* Primera linea: pill "Remitente" + su #id, alineados y juntos (como el mockup) */
+.ost-remit { display:inline-flex; align-items:center; gap:6px; }
+.id-tag { font-size:11px; color:var(--faint); }
 .acc-line { font-size:11px; color:#7c3aed; display:inline-flex; align-items:center; gap:4px; font-weight:600; }
 .acc-line svg { width:12px; height:12px; }
 .acc-none { font-size:11px; color:var(--faint); }

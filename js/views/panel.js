@@ -273,7 +273,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.07</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.08</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1808,14 +1808,18 @@ function usersRenderRows(user) {
   const ostCell = (r) => {
     const o = r.ost;
     if (!o) return { st: '<span class="pill pill-gray">\u2014</span>', acts: '' };
-    const idTag = o.osticket_user_id ? ` <span class="muted" style="font-size:11px">#${o.osticket_user_id}</span>` : '';
-    const statePill = o.state === 'synced' ? `<span class="pill pill-open">Remitente</span>${idTag}`
+    const idTag = o.osticket_user_id ? `<span class="id-tag">#${o.osticket_user_id}</span>` : '';
+    // Estructura identica al mockup: el pill + su #id van juntos en UN span
+    // (misma linea); la segunda linea (clave) la separa el gap del flex
+    // column de .ost-state. Sin <br> (evita el salto doble).
+    const statePill = o.state === 'synced'
+        ? `<span class="ost-remit"><span class="pill pill-open">Remitente</span>${idTag}</span>`
       : o.state === 'pending' ? '<span class="pill pill-temp">Pendiente</span>'
       : '<span class="pill pill-gray">Sin correo</span>';
     const keyLine = o.has_access
       ? `<span class="acc-line">${I.key} Con clave${o.access_granted_at ? ' \u00b7 ' + usersDayMonth(o.access_granted_at) : ''}</span>`
       : (o.state === 'no_email' ? '' : '<span class="acc-none">sin clave</span>');
-    const st = `<div class="ost-state">${statePill}${keyLine ? '<br>' + keyLine : ''}</div>`;
+    const st = `<div class="ost-state">${statePill}${keyLine}</div>`;
 
     let acts = '';
     if (o.state === 'no_email') {
