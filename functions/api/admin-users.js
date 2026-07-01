@@ -45,6 +45,50 @@ async function isSuperadmin(env, adminId) {
   return r && r.length > 0;
 }
 
+/* ---- osTicket (lado CLIENTE/user) ----
+   El gestor_empresa se crea como usuario CLIENTE de osTicket (abre/consulta
+   tickets), identificado por email via la API gc-user.json (la misma que usan
+   las tiendas en osticket-users.js). NO es agente: no toca osticket_staff_id.
+   Secret: osticket_api_key. Setting: osticket_url. */
+async function getSetting(env, key, fallback) {
+  const r = await sb(env, `app_settings?key=eq.${encodeURIComponent(key)}&select=value`);
+  return (r && r[0] && r[0].value != null) ? r[0].value : fallback;
+}
+async function osticketBase(env) {
+  const url = await getSetting(env, 'osticket_url', '');
+  return String(url || '').replace(/\/+$/, '');
+}
+// Crea/actualiza un usuario cliente en osTicket por email. Idempotente.
+// Devuelve { ok, user_id, created } o lanza error.
+async function gcUser(env, base, data) {
+  const res = await fetch(`${base}/api/gc-user.json`, {
+    method: 'POST',
+    headers: { 'X-API-Key': env.osticket_api_key, 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const text = await res.text();
+  let js = null;
+  try { js = text ? JSON.parse(text) : null; } catch { /* no-json */ }
+  if (!res.ok || !js || !js.user_id) {
+    throw new Error(`gc-user ${res.status}: ${text || 'sin detalle'}`);
+  }
+  return js;
+}
+
+// Sincroniza UN admin (debe ser gestor_empresa con correo) como cliente
+// osTicket. Guarda osticket_user_id + fecha. Devuelve el resultado por fila.
+async function syncClientOne(env, base, u) {
+  const email = (u.email || '').trim();
+  if (!email) return { id: u.id, username: u.username, ok: false, error: 'Sin correo.' };
+  const name = (u.name || u.username || email).trim();
+  const r = await gcUser(env, base, { email, name });
+  await sb(env, `admin_users?id=eq.${encodeURIComponent(u.id)}`, {
+    method: 'PATCH', headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify({ osticket_user_id: r.user_id, osticket_user_synced_at: new Date().toISOString() }),
+  });
+  return { id: u.id, username: u.username, ok: true, user_id: r.user_id, created: r.created };
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'Solicitud inválida.' }, 400); }
@@ -54,7 +98,7 @@ export async function onRequestPost({ request, env }) {
     if (!(await isSuperadmin(env, adminId))) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
 
     if (action === 'list') {
-      const rows = await sb(env, 'admin_users?select=id,username,name,email,role,is_active&order=role.desc,username');
+      const rows = await sb(env, 'admin_users?select=id,username,name,email,role,is_active,osticket_user_id,osticket_user_synced_at&order=role.desc,username');
       return json({ ok: true, rows });
     }
 
@@ -128,6 +172,45 @@ export async function onRequestPost({ request, env }) {
         body: JSON.stringify({ role }),
       });
       return json({ ok: true });
+    }
+
+    // Crea/actualiza UN gestor_empresa como cliente de osTicket.
+    if (action === 'sync_client') {
+      const { id } = body;
+      if (!id) return json({ ok: false, error: 'Falta el usuario.' }, 400);
+      const base = await osticketBase(env);
+      if (!base || !env.osticket_api_key) return json({ ok: false, error: 'osTicket no esta configurado (URL o clave API).' }, 400);
+      const rows = await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}&select=id,username,name,email,role`);
+      if (!rows || !rows.length) return json({ ok: false, error: 'Usuario no encontrado.' }, 404);
+      const u = rows[0];
+      if (u.role !== 'gestor_empresa') return json({ ok: false, error: 'Solo el gestor de empresa se crea como cliente de osTicket.' }, 400);
+      try {
+        const r = await syncClientOne(env, base, u);
+        if (!r.ok) return json({ ok: false, error: r.error }, 400);
+        return json({ ok: true, user_id: r.user_id, created: r.created });
+      } catch (e) {
+        return json({ ok: false, error: String(e.message || e) }, 500);
+      }
+    }
+
+    // Crea/actualiza TODOS los gestor_empresa activos con correo como clientes.
+    if (action === 'sync_clients_all') {
+      const base = await osticketBase(env);
+      if (!base || !env.osticket_api_key) return json({ ok: false, error: 'osTicket no esta configurado (URL o clave API).' }, 400);
+      const gestores = await sb(env, 'admin_users?role=eq.gestor_empresa&is_active=eq.true&select=id,username,name,email&order=username');
+      const results = [];
+      let okCount = 0, failCount = 0;
+      for (const u of (gestores || [])) {
+        try {
+          const r = await syncClientOne(env, base, u);
+          results.push(r);
+          if (r.ok) okCount++; else failCount++;
+        } catch (e) {
+          results.push({ id: u.id, username: u.username, ok: false, error: String(e.message || e) });
+          failCount++;
+        }
+      }
+      return json({ ok: true, processed: (gestores || []).length, ok_count: okCount, fail_count: failCount, results });
     }
 
     return json({ ok: false, error: 'Acción desconocida.' }, 400);

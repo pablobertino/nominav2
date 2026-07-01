@@ -273,7 +273,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.01</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.02</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2094,22 +2094,38 @@ async function viewEquipo(user) {
   const rows = d.rows;
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Equipo</h1><p>${rows.length} miembros</p></div>
-      <button class="btn btn-primary" id="auNew">${I.plus} Nuevo miembro</button></div>
+      <div class="head-actions" style="display:flex;gap:8px">
+        <button class="btn" id="auSyncClients" title="Crear/actualizar los gestores de empresa como clientes de osTicket">${I.sync} Gestores osTicket</button>
+        <button class="btn btn-primary" id="auNew">${I.plus} Nuevo miembro</button>
+      </div></div>
     <div class="tablebox"><table><thead><tr>
       <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Rol</th><th>Estado</th><th style="text-align:right">Acciones</th>
     </tr></thead><tbody>
-      ${rows.map(a => `<tr>
+      ${rows.map(a => {
+        const isGestor = a.role === 'gestor_empresa';
+        const ostChip = isGestor
+          ? (a.osticket_user_id
+              ? '<span class="pill pill-open" style="margin-left:6px" title="Cliente osTicket sincronizado">osTicket \u2713</span>'
+              : '<span class="pill pill-closed" style="margin-left:6px" title="Sin cliente osTicket">osTicket \u2715</span>')
+          : '';
+        const ostBtn = isGestor
+          ? `<button class="btn btn-mini" data-act="osticket" data-id="${a.id}" data-u="${a.username}" title="Crear/actualizar como cliente de osTicket" style="margin-right:4px">osTicket</button>`
+          : '';
+        return `<tr>
         <td class="code">${a.username}</td><td>${a.name || '—'}</td><td style="font-size:12px" class="muted">${a.email || '—'}</td>
-        <td><span class="pill ${a.role === 'superadmin' ? 'pill-proj' : 'pill-gray'}">${ROLE_LABELS[a.role] || a.role}</span></td>
+        <td><span class="pill ${a.role === 'superadmin' ? 'pill-proj' : 'pill-gray'}">${ROLE_LABELS[a.role] || a.role}</span>${ostChip}</td>
         <td>${a.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>'}</td>
         <td style="text-align:right;white-space:nowrap">
           ${a.role === 'superadmin' ? '' : `<button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas" style="margin-right:4px">${I.sliders} Tiendas</button><button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas" style="margin-right:4px">${I.sliders} Empresas</button>`}
+          ${ostBtn}
           ${String(a.id) === String(user.id) ? '' : `<button class="btn btn-mini" data-act="role" data-id="${a.id}" data-u="${a.username}" data-role="${a.role}" title="Cambiar rol" style="margin-right:4px">Rol</button>`}
           <button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>
           ${a.role === 'superadmin' ? '' : `<button class="btn btn-mini" data-act="toggle" data-id="${a.id}" data-active="${a.is_active}">${a.is_active ? 'Desactivar' : 'Activar'}</button>`}
-        </td></tr>`).join('')}
+        </td></tr>`;
+      }).join('')}
     </tbody></table></div>`;
   $('#auNew').addEventListener('click', () => auCreateModal(user));
+  $('#auSyncClients').addEventListener('click', () => auSyncClientsAll(user));
   $('#pnlMain').querySelectorAll('button[data-act]').forEach(b =>
     b.addEventListener('click', () => auAction(b.dataset, user)));
 }
@@ -2141,6 +2157,7 @@ function auAction(ds, user) {
   if (ds.act === 'scope-store') { openScopeEditor(user, ds.id, ds.u, 'store'); return; }
   if (ds.act === 'scope-ent') { openScopeEditor(user, ds.id, ds.u, 'enterprise'); return; }
   if (ds.act === 'role') { auRoleModal(ds, user); return; }
+  if (ds.act === 'osticket') { auSyncClientOne(ds, user); return; }
   if (ds.act === 'toggle') {
     auApi({ action: 'toggle', adminId: user.id, id: ds.id, isActive: !(ds.active === 'true') }).then(() => viewEquipo(user));
     return;
@@ -2213,6 +2230,61 @@ function auRoleModal(ds, user) {
     closeModal();
     viewEquipo(user);
   });
+}
+
+/* Crea/actualiza UN gestor_empresa como cliente de osTicket (boton por fila).
+   El backend valida rol y correo. Muestra el resultado en un modal propio
+   (sin alert nativo) y recarga Equipo para refrescar el chip de estado. */
+async function auSyncClientOne(ds, user) {
+  const btn = document.querySelector(`button[data-act="osticket"][data-id="${ds.id}"]`);
+  if (btn) { btn.disabled = true; btn.textContent = 'osTicket\u2026'; }
+  let d;
+  try { d = await auApi({ action: 'sync_client', adminId: user.id, id: ds.id }); }
+  catch (e) { d = { ok: false, error: 'Error de conexion: ' + (e && e.message || e) }; }
+  const okMsg = d.ok
+    ? `Cliente osTicket ${d.created ? 'creado' : 'actualizado'} para <b>${ds.u}</b>${d.user_id ? ` <span class="muted">(#${d.user_id})</span>` : ''}.`
+    : '';
+  openModal(`
+    <div class="modal-head"><span>${d.ok ? 'osTicket' : 'No se pudo sincronizar'}</span><button class="modal-x" id="mX">\u2715</button></div>
+    <p style="margin:0 0 4px">${d.ok ? '\u2705 ' + okMsg : '\u26a0\ufe0f ' + (d.error || 'Error desconocido.')}</p>
+    ${d.ok ? '' : '<p class="muted" style="font-size:12px;margin:8px 0 0">Revisa que el gestor tenga correo cargado y que osTicket este configurado.</p>'}
+    <div class="modal-actions"><button class="btn btn-primary" id="mClose">Listo</button></div>`);
+  const finish = () => { closeModal(); viewEquipo(user); };
+  $('#mX').addEventListener('click', finish);
+  $('#mClose').addEventListener('click', finish);
+}
+
+/* Crea/actualiza TODOS los gestor_empresa activos con correo como clientes de
+   osTicket (boton de cabecera). Muestra un resumen con el detalle por gestor. */
+async function auSyncClientsAll(user) {
+  const btn = document.getElementById('auSyncClients');
+  if (btn) { btn.disabled = true; btn.innerHTML = 'Sincronizando\u2026'; }
+  let d;
+  try { d = await auApi({ action: 'sync_clients_all', adminId: user.id }); }
+  catch (e) { d = { ok: false, error: 'Error de conexion: ' + (e && e.message || e) }; }
+  if (!d.ok) {
+    openModal(`
+      <div class="modal-head"><span>No se pudo sincronizar</span><button class="modal-x" id="mX">\u2715</button></div>
+      <p style="margin:0">\u26a0\ufe0f ${d.error || 'Error desconocido.'}</p>
+      <div class="modal-actions"><button class="btn btn-primary" id="mClose">Listo</button></div>`);
+    const fin = () => { closeModal(); viewEquipo(user); };
+    $('#mX').addEventListener('click', fin);
+    $('#mClose').addEventListener('click', fin);
+    return;
+  }
+  const detalle = (d.results || []).map(r =>
+    r.ok
+      ? `<div>\u2705 <b>${r.username}</b> \u2014 ${r.created ? 'creado' : 'actualizado'}${r.user_id ? ` <span class="muted">(#${r.user_id})</span>` : ''}</div>`
+      : `<div style="color:var(--danger)">\u2715 <b>${r.username}</b> \u2014 ${r.error || 'error'}</div>`
+  ).join('') || '<p class="muted" style="margin:0">No hay gestores de empresa activos con correo.</p>';
+  openModal(`
+    <div class="modal-head"><span>Gestores en osTicket</span><button class="modal-x" id="mX">\u2715</button></div>
+    <p style="margin:0 0 10px">Procesados: <b>${d.processed}</b> \u00b7 correctos: <b>${d.ok_count}</b>${d.fail_count ? ` \u00b7 con error: <b>${d.fail_count}</b>` : ''}.</p>
+    <div style="max-height:50vh;overflow:auto;font-size:13px;line-height:1.8">${detalle}</div>
+    <div class="modal-actions"><button class="btn btn-primary" id="mClose">Listo</button></div>`);
+  const finish = () => { closeModal(); viewEquipo(user); };
+  $('#mX').addEventListener('click', finish);
+  $('#mClose').addEventListener('click', finish);
 }
 
 /* ---------- VISTA: PERMISOS (editor de alcance) ---------- */
