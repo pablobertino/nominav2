@@ -21,6 +21,7 @@ import { renderCompanyReports, renderMyStats } from './company-reports.js';
 import { renderAvisos, gotoAviso as avisosGoto } from './avisos.js';
 import { renderEgressRatify } from './egress-ratify.js';
 import { renderPersonnelSearch } from './personnel-search.js';
+import { renderPersonnelIncomplete } from './personnel-incomplete.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { injectPeriodTimeline } from './period-timeline.js';
@@ -96,6 +97,7 @@ const NAV_GROUPS = [
   ] },
   { title: 'Personal', items: [
     ['buscar', I.search, 'Buscar'],
+    ['datosincompletos', I.bizreport, 'Datos incompletos'],
     ['egmotivos', I.check, 'Ratificar egresos'],
     ['rostersync', I.sync, 'Carga de personal'],
   ] },
@@ -162,6 +164,7 @@ const NAV_EDITOR_GROUPS = [
   ] },
   { title: 'Personal', items: [
     ['buscar', I.search, 'Buscar'],
+    ['datosincompletos', I.bizreport, 'Datos incompletos'],
     ['rostersync', I.sync, 'Carga de personal'],
   ] },
   { title: 'Comunicación', items: [
@@ -193,6 +196,7 @@ const NAV_GESTOR_GROUPS = [
   ] },
   { title: 'Personal', items: [
     ['buscar', I.search, 'Buscar'],
+    ['datosincompletos', I.bizreport, 'Datos incompletos'],
   ] },
   { title: 'Reportes', items: [
     ['historial', I.history, 'Historial'],
@@ -273,7 +277,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.12</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.13</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -652,7 +656,7 @@ function viewTiendas(user) {
     </div>
     ${empStatsHtml(CATALOG.companies)}
     <div class="pnl-filters">
-      <div class="search">${I.search}<input id="fName" type="text" placeholder="Buscar nombre o código…"></div>
+      <div class="search">${I.search}<input id="fName" type="text" placeholder="Buscar nombre, c\u00f3digo o DataArea\u2026"></div>
       <select id="fType"><option value="ALL" selected>Todos los tipos</option>${types.map(t => `<option>${t}</option>`).join('')}</select>
       <div class="ms-wrap" id="fStatusWrap">
         <button type="button" class="ms-toggle" id="fStatusBtn">
@@ -770,7 +774,7 @@ function viewTiendas(user) {
       const passStatus = selStatus.size === 0 ? false
         : !hasStatus ? true
         : selStatus.has(c.status);
-      return (`${c.code} ${c.name || ''}`.toLowerCase().includes(n))
+      return (`${c.code} ${c.name || ''} ${c.dataArea || ''}`.toLowerCase().includes(n))
         && (fType.value === 'ALL' || c.type === fType.value)
         && passStatus
         && (fZone.value === 'ALL' || c.zoneId === fZone.value)
@@ -4761,6 +4765,7 @@ async function navigate(view, user) {
   else if (view === 'avisosconfig') renderAvisos(user, { mode: 'config' });
   else if (view === 'egmotivos') renderEgressRatify(user);
   else if (view === 'buscar') renderPersonnelSearch(user);
+  else if (view === 'datosincompletos') renderPersonnelIncomplete(user);
   else if (view === 'documentos') renderPersonnelDocs(user, null);
   else if (view === 'miempresa') viewMiEmpresa(user);
   else if (view === 'fotos') {

@@ -1,0 +1,354 @@
+/* =====================================================================
+   js/views/personnel-incomplete.js  →  vista "Datos incompletos"
+   Reporte de personal ACTIVO con datos faltantes, dentro del alcance del
+   admin. Un combo de campos (checkbox) define que se evalua: Sexo, Fecha
+   nac., Cuenta banco, Telefono, Correo, Direccion (por defecto los 5
+   primeros, Direccion sin tildar). La lista muestra por trabajador que
+   campos le faltan (de entre los tildados). Filtros de alcance: zona,
+   subzona, concepto, estado de empresa. Exporta (xlsx/csv/txt) respetando
+   lo filtrado, con el mismo patron que Empresas.
+
+   Datos por /api/personnel-search (action 'incomplete' y 'facets').
+   Export: renderPersonnelIncomplete(user)
+   ===================================================================== */
+
+import { $ } from '../core/dom.js';
+
+// Campos evaluables. key = valor que entiende el backend; label = UI;
+// col = titulo de columna en export.
+const FIELDS = [
+  { key: 'gender',     label: 'Sexo',        col: 'Sexo' },
+  { key: 'birth_date', label: 'Fecha nac.',  col: 'Fecha nacimiento' },
+  { key: 'account',    label: 'Cuenta banco', col: 'Cuenta banco' },
+  { key: 'phone',      label: 'Teléfono',    col: 'Teléfono' },
+  { key: 'email',      label: 'Correo',      col: 'Correo' },
+  { key: 'address',    label: 'Dirección',   col: 'Dirección' },
+];
+const FIELD_LABEL = Object.fromEntries(FIELDS.map(f => [f.key, f.label]));
+// Por defecto tildados los 5 primeros (Direccion NO).
+const DEFAULT_FIELDS = ['gender', 'birth_date', 'account', 'phone', 'email'];
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function initialsOf(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!parts.length) return '?';
+  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
+  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+}
+const AVATAR_BG = ['#dbeafe', '#fae8ff', '#dcfce7', '#fef9c3', '#fee2e2', '#e0e7ff', '#ccfbf1', '#ffedd5'];
+const AVATAR_FG = ['#1e40af', '#86198f', '#166534', '#854d0e', '#991b1b', '#3730a3', '#0f766e', '#9a3412'];
+function avatarColor(seed) {
+  const s = String(seed || ''); let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % AVATAR_BG.length;
+}
+
+let USER = null;
+let FACETS = null;
+// Estado: campos evaluados + filtros de alcance + resultados.
+let C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '' };
+let ROWS = null;   // null = aun no consultado
+
+function ensureStyles() {
+  if (document.getElementById('piStyles')) return;
+  const st = document.createElement('style');
+  st.id = 'piStyles';
+  st.textContent = `
+  .pi-head h1{margin:0;font-size:21px;font-weight:700;color:var(--ink)}
+  .pi-head p{margin:3px 0 0;color:var(--muted);font-size:13px}
+  .pi-bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:16px 0 6px}
+  .pi-fields-wrap{position:relative}
+  .pi-fields-btn{display:inline-flex;align-items:center;gap:8px;font:inherit;font-size:13px;padding:9px 13px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--ink);cursor:pointer}
+  .pi-fields-btn:hover{background:var(--bg-soft,#f1f5f9)}
+  .pi-fields-menu{position:absolute;z-index:30;top:calc(100% + 6px);left:0;min-width:220px;background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;box-shadow:0 8px 28px rgba(15,23,42,.14);padding:8px}
+  .pi-fields-menu[hidden]{display:none}
+  .pi-fopt{display:flex;align-items:center;gap:9px;padding:8px 10px;border-radius:8px;font-size:13.5px;color:var(--ink);cursor:pointer}
+  .pi-fopt:hover{background:var(--bg-soft,#f1f5f9)}
+  .pi-fopt input{width:16px;height:16px;accent-color:var(--brand,#2563eb)}
+  .pi-filters{display:flex;gap:8px 10px;align-items:center;flex-wrap:wrap}
+  .pi-filters .fg{display:flex;align-items:center;gap:6px;font-size:12.5px;color:var(--muted)}
+  .pi-filters select{font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--ink)}
+  .pi-go{font:inherit;font-size:14px;font-weight:600;padding:9px 20px;border:1px solid var(--brand,#2563eb);border-radius:10px;background:var(--brand,#2563eb);color:#fff;cursor:pointer;white-space:nowrap}
+  .pi-go:hover{filter:brightness(.96)}
+  .pi-clear{font:inherit;font-size:12.5px;padding:8px 11px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--ink);cursor:pointer}
+  .pi-clear:hover{background:var(--bg-soft,#f1f5f9)}
+  .pi-export-wrap{position:relative;margin-left:auto}
+  .pi-export-btn{font:inherit;font-size:13px;padding:9px 14px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--ink);cursor:pointer}
+  .pi-export-btn:hover{background:var(--bg-soft,#f1f5f9)}
+  .pi-export-menu{position:absolute;z-index:30;top:calc(100% + 6px);right:0;min-width:150px;background:var(--card,#fff);border:1px solid var(--border);border-radius:11px;box-shadow:0 8px 28px rgba(15,23,42,.14);padding:6px;display:flex;flex-direction:column;gap:2px}
+  .pi-export-menu[hidden]{display:none}
+  .pi-export-menu button{font:inherit;font-size:13px;text-align:left;padding:9px 11px;border:0;border-radius:8px;background:transparent;color:var(--ink);cursor:pointer}
+  .pi-export-menu button:hover{background:var(--bg-soft,#f1f5f9)}
+  .pi-count{color:var(--muted);font-size:12px;margin:8px 2px 10px}
+  .pi-list{display:flex;flex-direction:column;gap:8px}
+  .pi-row{display:flex;align-items:center;gap:13px;padding:11px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card,#fff)}
+  .pi-ava{width:42px;height:42px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+  .pi-main{flex:1;min-width:0}
+  .pi-name{font-weight:600;color:var(--ink);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pi-sub{color:var(--muted);font-size:12px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pi-right{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex:none;text-align:right;max-width:52%}
+  .pi-emp{font-size:12px;color:var(--brand,#2563eb);font-weight:700;font-family:ui-monospace,Menlo,monospace}
+  .pi-empn{font-size:11.5px;color:var(--ink);max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .pi-miss{display:flex;gap:5px;margin-top:2px;flex-wrap:wrap;justify-content:flex-end}
+  .pi-tag{display:inline-block;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;background:#fef3c7;color:#92400e;white-space:nowrap}
+  .pi-empty,.pi-hint{padding:34px 14px;text-align:center;color:var(--muted)}
+  `;
+  document.head.appendChild(st);
+}
+
+async function api(payload) {
+  return fetch('/api/personnel-search', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  }).then(x => x.json()).catch(() => null);
+}
+
+function subzonesFor(zoneId) {
+  const all = (FACETS && FACETS.subzones) || [];
+  if (!zoneId) return all;
+  return all.filter(s => String(s.id).startsWith(zoneId + '_'));
+}
+function fillSelect(sel, items, current, placeholder) {
+  if (!sel) return;
+  sel.innerHTML = `<option value="">${placeholder}</option>`
+    + items.map(it => `<option value="${esc(it.id)}">${esc(it.name)}</option>`).join('');
+  sel.value = items.some(it => String(it.id) === String(current)) ? current : '';
+}
+
+export async function renderPersonnelIncomplete(user) {
+  USER = user;
+  ensureStyles();
+  $('#pnlMain').innerHTML = `
+    <div class="pi-head"><div><h1>Datos incompletos</h1>
+      <p>Personal <b>activo</b> con datos faltantes. Elige qué campos evaluar, refina por alcance y pulsa <b>Generar</b>.</p></div></div>
+    <div class="pi-bar">
+      <div class="pi-fields-wrap">
+        <button class="pi-fields-btn" id="piFieldsBtn" type="button">
+          <span id="piFieldsLabel">Campos</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+        </button>
+        <div class="pi-fields-menu" id="piFieldsMenu" hidden>
+          ${FIELDS.map(f => `<label class="pi-fopt"><input type="checkbox" value="${f.key}" ${C.fields.includes(f.key) ? 'checked' : ''}><span>${f.label}</span></label>`).join('')}
+        </div>
+      </div>
+      <div class="pi-filters">
+        <span class="fg">Zona <select id="piZone"><option value="">Todas</option></select></span>
+        <span class="fg">Subzona <select id="piSubzone"><option value="">Todas</option></select></span>
+        <span class="fg">Concepto <select id="piConcept"><option value="">Todos</option></select></span>
+        <span class="fg">Estado <select id="piStatus"><option value="">Todos</option></select></span>
+      </div>
+      <button class="pi-go" id="piGo">Generar</button>
+      <button class="pi-clear" id="piClear">Limpiar</button>
+      <div class="pi-export-wrap">
+        <button class="pi-export-btn" id="piExportBtn" type="button">Exportar ▾</button>
+        <div class="pi-export-menu" id="piExportMenu" hidden>
+          <button data-fmt="xlsx">Excel (.xlsx)</button>
+          <button data-fmt="csv">CSV (.csv)</button>
+          <button data-fmt="txt">Texto (.txt)</button>
+        </div>
+      </div>
+    </div>
+    <div class="pi-count" id="piCount"></div>
+    <div class="pi-list" id="piList"></div>`;
+
+  // Facetas (cache) y combos.
+  if (!FACETS) {
+    const r = await api({ action: 'facets', adminId: USER.id });
+    FACETS = (r && r.ok && r.facets) ? r.facets : { zones: [], subzones: [], concepts: [], statuses: [] };
+  }
+  fillSelect($('#piZone'), FACETS.zones || [], C.zone, 'Todas');
+  fillSelect($('#piSubzone'), subzonesFor(C.zone), C.subzone, 'Todas');
+  fillSelect($('#piConcept'), FACETS.concepts || [], C.concept, 'Todos');
+  const stSel = $('#piStatus');
+  if (stSel) {
+    stSel.innerHTML = '<option value="">Todos</option>'
+      + (FACETS.statuses || []).map(s => `<option value="${esc(s)}">${esc(s)}</option>`).join('');
+    stSel.value = (FACETS.statuses || []).includes(C.status) ? C.status : '';
+  }
+
+  updateFieldsLabel();
+
+  // Combo de campos (abrir/cerrar + checkboxes).
+  const fBtn = $('#piFieldsBtn'), fMenu = $('#piFieldsMenu');
+  fBtn.addEventListener('click', (e) => { e.stopPropagation(); fMenu.hidden = !fMenu.hidden; });
+  fMenu.addEventListener('click', (e) => e.stopPropagation());
+  fMenu.querySelectorAll('input[type=checkbox]').forEach(cb =>
+    cb.addEventListener('change', () => {
+      C.fields = [...fMenu.querySelectorAll('input:checked')].map(x => x.value);
+      updateFieldsLabel();
+    }));
+
+  // Filtros.
+  $('#piZone').addEventListener('change', () => {
+    C.zone = $('#piZone').value; C.subzone = '';
+    fillSelect($('#piSubzone'), subzonesFor(C.zone), '', 'Todas');
+  });
+  $('#piSubzone').addEventListener('change', () => { C.subzone = $('#piSubzone').value; });
+  $('#piConcept').addEventListener('change', () => { C.concept = $('#piConcept').value; });
+  $('#piStatus').addEventListener('change', () => { C.status = $('#piStatus').value; });
+
+  $('#piGo').addEventListener('click', run);
+  $('#piClear').addEventListener('click', () => {
+    C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '' };
+    ROWS = null;
+    renderPersonnelIncomplete(USER);
+  });
+
+  // Export.
+  const exBtn = $('#piExportBtn'), exMenu = $('#piExportMenu');
+  exBtn.addEventListener('click', (e) => { e.stopPropagation(); exMenu.hidden = !exMenu.hidden; });
+  exMenu.addEventListener('click', (e) => e.stopPropagation());
+  exMenu.querySelectorAll('button').forEach(b =>
+    b.addEventListener('click', () => { exMenu.hidden = true; doExport(b.dataset.fmt); }));
+
+  // Cerrar menus al hacer clic fuera.
+  document.addEventListener('click', closeMenus);
+
+  paint();
+}
+
+function closeMenus() {
+  const fm = $('#piFieldsMenu'), em = $('#piExportMenu');
+  if (fm) fm.hidden = true;
+  if (em) em.hidden = true;
+}
+
+function updateFieldsLabel() {
+  const el = $('#piFieldsLabel');
+  if (!el) return;
+  const n = C.fields.length;
+  el.textContent = n === 0 ? 'Campos (ninguno)'
+    : n === FIELDS.length ? 'Campos: todos'
+    : `Campos: ${n}`;
+}
+
+async function run() {
+  if (!C.fields.length) {
+    const countEl = $('#piCount');
+    if (countEl) countEl.textContent = 'Elige al menos un campo a evaluar.';
+    ROWS = null; paint(); return;
+  }
+  const countEl = $('#piCount');
+  if (countEl) countEl.textContent = 'Generando…';
+  const r = await api({
+    action: 'incomplete', adminId: USER.id,
+    fields: C.fields,
+    zone: C.zone || null, subzone: C.subzone || null,
+    concept: C.concept || null, status: C.status || null,
+  });
+  ROWS = (r && r.ok) ? (r.rows || []) : [];
+  paint();
+}
+
+function paint() {
+  const list = $('#piList');
+  const countEl = $('#piCount');
+  if (!list) return;
+
+  if (ROWS === null) {
+    if (countEl) countEl.textContent = '';
+    list.innerHTML = `<div class="pi-hint">Elige los campos a evaluar y pulsa <b>Generar</b>.</div>`;
+    return;
+  }
+  if (!ROWS.length) {
+    if (countEl) countEl.textContent = '';
+    list.innerHTML = `<div class="pi-empty">Ningún trabajador activo tiene esos campos incompletos. 🎉</div>`;
+    return;
+  }
+  if (countEl) countEl.textContent = `${ROWS.length} trabajador${ROWS.length === 1 ? '' : 'es'} con datos incompletos`;
+
+  list.innerHTML = ROWS.map(w => {
+    const ci = avatarColor(w.id_number);
+    const sub = [`C.I. ${esc(w.id_number)}`];
+    if (w.role) sub.push(esc(w.role));
+    const empn = [w.company_name, w.zona, w.concepto].filter(Boolean).map(esc).join(' · ');
+    const tags = (w.missing || []).map(m => `<span class="pi-tag">falta ${esc(FIELD_LABEL[m] || m)}</span>`).join('');
+    return `<div class="pi-row">
+      <div class="pi-ava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>
+      <div class="pi-main">
+        <div class="pi-name">${esc(w.full_name)}</div>
+        <div class="pi-sub">${sub.join(' · ')}</div>
+      </div>
+      <div class="pi-right">
+        <span class="pi-emp">${esc(w.company_code)}</span>
+        ${empn ? `<span class="pi-empn">${empn}</span>` : ''}
+        <div class="pi-miss">${tags}</div>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+/* -------- Exportacion (xlsx / csv / txt), mismo patron que Empresas -------- */
+function exportRows() {
+  return (ROWS || []).map(w => ({
+    'Cédula': w.id_number || '',
+    'Nombre': w.full_name || '',
+    'Cargo': w.role || '',
+    'Empresa (código)': w.company_code || '',
+    'Empresa': w.company_name || '',
+    'Tipo': w.company_type || '',
+    'Zona': w.zona || '',
+    'Subzona': w.subzona || '',
+    'Concepto': w.concepto || '',
+    'Datos faltantes': (w.missing || []).map(m => FIELD_LABEL[m] || m).join(', '),
+  }));
+}
+function downloadBlob(content, filename, mime) {
+  const blob = (content instanceof Blob) ? content : new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function tstamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+}
+async function doExport(fmt) {
+  const data = exportRows();
+  if (!data.length) { alert('No hay filas para exportar. Genera el reporte primero.'); return; }
+  const headers = Object.keys(data[0]);
+  const fname = `datos_incompletos_${tstamp()}`;
+
+  if (fmt === 'csv') {
+    const escv = (v) => {
+      const s = String(v ?? '');
+      return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lines = [headers.join(';')].concat(data.map(r => headers.map(h => escv(r[h])).join(';')));
+    downloadBlob('\uFEFF' + lines.join('\r\n'), `${fname}.csv`, 'text/csv;charset=utf-8');
+    return;
+  }
+  if (fmt === 'txt') {
+    const widths = headers.map(h => Math.max(h.length, ...data.map(r => String(r[h] ?? '').length)));
+    const fmtRow = (cells) => cells.map((c, i) => String(c ?? '').padEnd(widths[i])).join('  ');
+    const lines = [fmtRow(headers), widths.map(w => '-'.repeat(w)).join('  ')]
+      .concat(data.map(r => fmtRow(headers.map(h => r[h]))));
+    downloadBlob(lines.join('\r\n'), `${fname}.txt`, 'text/plain;charset=utf-8');
+    return;
+  }
+  if (fmt === 'xlsx') {
+    try {
+      if (!window.XLSX) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          s.onload = resolve; s.onerror = () => reject(new Error('No se pudo cargar la librería Excel.'));
+          document.head.appendChild(s);
+        });
+      }
+      const ws = window.XLSX.utils.json_to_sheet(data, { header: headers });
+      const wb = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(wb, ws, 'Datos incompletos');
+      window.XLSX.writeFile(wb, `${fname}.xlsx`);
+    } catch (e) {
+      alert(e.message + ' Revisa tu conexión e inténtalo de nuevo.');
+    }
+    return;
+  }
+}

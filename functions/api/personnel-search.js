@@ -95,6 +95,31 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, rows: rows || [] });
     }
 
+    if (action === 'incomplete') {
+      // Reporte de datos incompletos de personal ACTIVO en el alcance.
+      // body.fields = lista de campos a evaluar (gender, birth_date, account,
+      // phone, email, address). Si no viene, se usan los 5 por defecto.
+      const ALLOWED = ['gender', 'birth_date', 'account', 'phone', 'email', 'address'];
+      let fields = Array.isArray(body.fields) ? body.fields.filter(f => ALLOWED.includes(f)) : [];
+      if (!fields.length) fields = ['gender', 'birth_date', 'account', 'phone', 'email'];
+      const zone = body.zone ? String(body.zone) : null;
+      const subzone = body.subzone ? String(body.subzone) : null;
+      const concept = body.concept ? String(body.concept) : null;
+      const cstatus = body.status ? String(body.status) : null;
+      if (admin.codes !== null && !admin.codes.length) return json({ ok: true, rows: [] });
+      const rows = await sb(env, 'rpc/personnel_incomplete', {
+        method: 'POST',
+        body: JSON.stringify({
+          p_codes: admin.codes,
+          p_fields: fields,
+          p_zone: zone, p_subzone: subzone, p_concept: concept, p_status: cstatus,
+          p_limit: 5000,
+          p_admin_id: admin.role === 'superadmin' ? null : admin.id,
+        }),
+      });
+      return json({ ok: true, rows: rows || [], fields });
+    }
+
     return json({ ok: false, error: 'Accion desconocida.' }, 400);
   } catch (err) {
     return json({ ok: false, error: err.message }, 500);
