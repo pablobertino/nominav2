@@ -99,7 +99,7 @@ export async function onRequestPost({ request, env }) {
       // Reporte de datos incompletos de personal ACTIVO en el alcance.
       // body.fields = lista de campos a evaluar (gender, birth_date, account,
       // phone, email, address). Si no viene, se usan los 5 por defecto.
-      const ALLOWED = ['gender', 'birth_date', 'account', 'phone', 'email', 'address'];
+      const ALLOWED = ['gender', 'birth_date', 'account', 'phone', 'email', 'address', 'marital', 'role', 'department'];
       let fields = Array.isArray(body.fields) ? body.fields.filter(f => ALLOWED.includes(f)) : [];
       if (!fields.length) fields = ['gender', 'birth_date', 'account', 'phone', 'email'];
       const zone = body.zone ? String(body.zone) : null;

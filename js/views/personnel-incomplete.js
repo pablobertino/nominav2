@@ -13,16 +13,22 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { renderWorkerPhotos } from './worker-photos.js';
+
+const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
 
 // Campos evaluables. key = valor que entiende el backend; label = UI;
 // col = titulo de columna en export.
 const FIELDS = [
-  { key: 'gender',     label: 'Sexo',        col: 'Sexo' },
-  { key: 'birth_date', label: 'Fecha nac.',  col: 'Fecha nacimiento' },
+  { key: 'gender',     label: 'Sexo',         col: 'Sexo' },
+  { key: 'birth_date', label: 'Fecha nac.',   col: 'Fecha nacimiento' },
   { key: 'account',    label: 'Cuenta banco', col: 'Cuenta banco' },
-  { key: 'phone',      label: 'Teléfono',    col: 'Teléfono' },
-  { key: 'email',      label: 'Correo',      col: 'Correo' },
-  { key: 'address',    label: 'Dirección',   col: 'Dirección' },
+  { key: 'phone',      label: 'Teléfono',     col: 'Teléfono' },
+  { key: 'email',      label: 'Correo',       col: 'Correo' },
+  { key: 'address',    label: 'Dirección',    col: 'Dirección' },
+  { key: 'marital',    label: 'Estado civil', col: 'Estado civil' },
+  { key: 'role',       label: 'Cargo',        col: 'Cargo' },
+  { key: 'department', label: 'Departamento', col: 'Departamento' },
 ];
 const FIELD_LABEL = Object.fromEntries(FIELDS.map(f => [f.key, f.label]));
 // Por defecto tildados los 5 primeros (Direccion NO).
@@ -84,7 +90,8 @@ function ensureStyles() {
   .pi-export-menu button:hover{background:var(--bg-soft,#f1f5f9)}
   .pi-count{color:var(--muted);font-size:12px;margin:8px 2px 10px}
   .pi-list{display:flex;flex-direction:column;gap:8px}
-  .pi-row{display:flex;align-items:center;gap:13px;padding:11px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card,#fff)}
+  .pi-row{display:flex;align-items:center;gap:13px;padding:11px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);cursor:pointer;transition:border-color .12s,box-shadow .12s}
+  .pi-row:hover{border-color:var(--brand,#2563eb);box-shadow:0 2px 10px rgba(15,23,42,.06)}
   .pi-ava{width:42px;height:42px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
   .pi-main{flex:1;min-width:0}
   .pi-name{font-weight:600;color:var(--ink);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -260,13 +267,14 @@ function paint() {
   }
   if (countEl) countEl.textContent = `${ROWS.length} trabajador${ROWS.length === 1 ? '' : 'es'} con datos incompletos`;
 
-  list.innerHTML = ROWS.map(w => {
+  list.innerHTML = ROWS.map((w, i) => {
     const ci = avatarColor(w.id_number);
     const sub = [`C.I. ${esc(w.id_number)}`];
     if (w.role) sub.push(esc(w.role));
+    if (w.department_name) sub.push(esc(w.department_name));
     const empn = [w.company_name, w.zona, w.concepto].filter(Boolean).map(esc).join(' · ');
     const tags = (w.missing || []).map(m => `<span class="pi-tag">falta ${esc(FIELD_LABEL[m] || m)}</span>`).join('');
-    return `<div class="pi-row">
+    return `<div class="pi-row" data-i="${i}" title="Abrir ficha">
       <div class="pi-ava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>
       <div class="pi-main">
         <div class="pi-name">${esc(w.full_name)}</div>
@@ -279,6 +287,17 @@ function paint() {
       </div>
     </div>`;
   }).join('');
+
+  list.querySelectorAll('.pi-row').forEach(el =>
+    el.addEventListener('click', () => openWorker(ROWS[+el.dataset.i])));
+}
+
+// Abre la ficha del trabajador (reusa Personal). Al pulsar Volver en la ficha,
+// regresa a ESTA vista con el reporte intacto (ROWS/estado se conservan).
+function openWorker(w) {
+  if (!w) return;
+  const mode = NON_STORE_TYPES.has(w.company_type) ? 'enterprise' : 'store';
+  renderWorkerPhotos(USER, w.company_code, () => renderPersonnelIncomplete(USER), { mode, openCed: w.id_number });
 }
 
 /* -------- Exportacion (xlsx / csv / txt), mismo patron que Empresas -------- */
@@ -287,6 +306,8 @@ function exportRows() {
     'Cédula': w.id_number || '',
     'Nombre': w.full_name || '',
     'Cargo': w.role || '',
+    'Estado civil': w.marital_status || '',
+    'Departamento': w.department_name || '',
     'Empresa (código)': w.company_code || '',
     'Empresa': w.company_name || '',
     'Tipo': w.company_type || '',
