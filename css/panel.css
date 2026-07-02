@@ -1226,6 +1226,15 @@
 .pm-help { background:var(--bg); border:1px solid var(--border-soft); border-radius:var(--radius-md);
   padding:11px 13px; font-size:11.5px; color:var(--ink-soft); line-height:1.5; margin-bottom:14px; }
 .pm-help b { color:var(--ink); }
+/* Acceso destacado a la guia de la foto (v3.16): boton de ancho completo
+   dentro del bloque de ayuda del modal de foto, para que no quede perdido. */
+.pm-guia { display:flex; align-items:center; gap:8px; width:100%; box-sizing:border-box;
+  margin-top:10px; padding:9px 12px; border:1px solid #bcd8fb; border-radius:var(--radius-sm);
+  background:var(--brand-bg); color:var(--brand); font-size:12.5px; font-weight:600;
+  text-decoration:none; transition:background .12s, border-color .12s; }
+.pm-guia:hover { background:#e0ecff; border-color:var(--brand); }
+.pm-guia svg { width:16px; height:16px; flex-shrink:0; }
+.pm-guia .pm-guia-arrow { margin-left:auto; font-weight:700; }
 .pm-arrow { display:flex; align-items:center; color:var(--faint); font-size:22px; align-self:center; flex-shrink:0; }
 
 @media (max-width:600px) {

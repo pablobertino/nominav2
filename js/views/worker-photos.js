@@ -1242,7 +1242,9 @@ function openPhotoModal(ced) {
           <div class="pm-col"><div class="pm-col-lbl">Nueva foto</div><div class="pm-prev" id="pmNew"><div class="empty">Elegí una foto para previsualizar</div></div></div>
         </div>
 
-        <div class="pm-help"><b>Foto tipo carnet:</b> de frente, hombros visibles, fondo claro y liso, buena luz sin sombras. Arrastrá la imagen y usá el zoom para centrar la cara en el círculo. Sin lentes, gorras ni gestos. <a href="/guias/foto-carnet.html" target="_blank" rel="noopener" style="color:var(--brand);font-weight:600;white-space:nowrap">¿Cómo tomar la foto? →</a></div>
+        <div class="pm-help"><b>Foto tipo carnet:</b> de frente, hombros visibles, fondo claro y liso, buena luz sin sombras. Sin lentes, gorras ni gestos. Al elegir la foto podés <b>arrastrarla</b> y usar el <b>zoom</b> para centrar la cara en el círculo.
+          <a class="pm-guia" href="/guias/foto-carnet.html" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg> Ver la guía: cómo tomar la foto <span class="pm-guia-arrow">→</span></a>
+        </div>
 
         <input type="file" id="pmFile" accept="image/*" hidden>
         <div class="wp-foot">
