@@ -10,6 +10,8 @@
    Secrets: canaima_apikey, supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 const AX_API = 'https://api.grupocanaima.com/empresas/status/v1';
 
 function json(body, status = 200) {
@@ -132,6 +134,7 @@ export async function onRequestPost({ request, env }) {
     `admin_users?id=eq.${encodeURIComponent(adminId)}&role=eq.superadmin&is_active=eq.true&select=id`)
     .catch(() => []);
   if (!admins.length) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+  await shadowCan(env, adminId, 'sync-companies', source, 'sync.companies', admins.length > 0);
 
   // Cooldown anti-abuso del boton manual (no aplica al cron). Se valida en el
   // servidor para que no se pueda saltar desde el cliente.

@@ -13,6 +13,8 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -51,7 +53,9 @@ export async function onRequestPost({ request, env }) {
   const { action, adminId } = body;
 
   try {
-    if (!(await isSuperadmin(env, adminId))) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+    const legacyOk = await isSuperadmin(env, adminId);
+    await shadowCan(env, adminId, 'pay-sync-config', action || '?', 'config.sincronizacion', legacyOk);
+    if (!legacyOk) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
 
     if (action === 'get') {
       const cfgRows = await sb(env, 'pay_sync_config?id=eq.1&select=*');

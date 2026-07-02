@@ -184,3 +184,41 @@ export function assertCan(actor, code) {
 export function isSuperadmin(actor) {
   return !!actor && actor.role === 'superadmin';
 }
+
+/* ===================== SHADOW MODE (Fase 2/3) =====================
+   Helper compartido para migrar endpoints sin cambiar comportamiento.
+   Compara el gate de ROL vigente (legacyAllowed, ya calculado por el codigo
+   viejo) contra la decision del sistema tabla-driven can(actor, code), y solo
+   REGISTRA en el log si difieren. Nunca lanza ni cambia el flujo: el endpoint
+   sigue respetando su gate legacy.
+
+   Uso en cualquier endpoint:
+     import { shadowCan } from './_auth.js';
+     const allowed = <gate legacy, p.ej. admins.length > 0>;
+     await shadowCan(env, sessionUser, 'sync-companies', 'sync', 'sync.companies', allowed);
+     if (!allowed) return json({...}, 403);
+
+   sessionUser es lo que el endpoint recibe del cliente para identificarse.
+   Formatos aceptados (se normaliza a lo que resolveActor espera):
+     - { kind:'admin', id } | { kind:'company', companyCode }  (formato nuevo)
+     - un adminId suelto (number|string)  -> se trata como { kind:'admin', id }
+   Si no hay forma de resolver al actor, se logea 'actor=null' y no falla. */
+export async function shadowCan(env, sessionUser, endpoint, action, code, legacyAllowed) {
+  try {
+    // Normalizar: muchos endpoints 'solo-super' solo pasan un adminId suelto.
+    let u = sessionUser;
+    if (u != null && (typeof u === 'number' || typeof u === 'string')) {
+      u = { kind: 'admin', id: u };
+    }
+    const actor = await resolveActor(env, u);
+    const newAllowed = can(actor, code);
+    if (!!newAllowed !== !!legacyAllowed) {
+      console.warn(
+        `[PERMS-SHADOW] ${endpoint} action=${action} code=${code} `
+        + `role=${actor ? actor.role : 'null'} legacy=${!!legacyAllowed} nuevo=${!!newAllowed} `
+        + `-> DISCREPANCIA (se respeta el gate legacy)`);
+    }
+  } catch (e) {
+    console.warn(`[PERMS-SHADOW] ${endpoint} action=${action} code=${code} error=${String(e.message || e)}`);
+  }
+}

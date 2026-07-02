@@ -16,6 +16,8 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -133,7 +135,9 @@ export async function onRequestPost({ request, env }) {
 
     // ---- Escritura: solo superadmin ----
     const { adminId } = body;
-    if (!(await isSuperadmin(env, adminId))) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+    const legacyOk = await isSuperadmin(env, adminId);
+    await shadowCan(env, adminId, 'periods', action || '?', 'config.calendario', legacyOk);
+    if (!legacyOk) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
 
     if (action === 'generate') {
       const year = parseInt(body.year, 10);
