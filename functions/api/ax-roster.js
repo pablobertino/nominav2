@@ -340,9 +340,13 @@ export async function onRequestPost({ request, env }) {
     if (isStore) {
       // --- TIENDA: store_workers ---
       // Estado previo (para detectar cambios) y manuales a conservar.
+      // Incluye department_id: la API no trae departamento, asi que se
+      // CONSERVA el que cada persona ya tenia asignado.
       const existingAll = await sb(env,
-        `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,full_name,end_date,source`) || [];
+        `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,full_name,end_date,source,department_id`) || [];
       changes = computeRosterChanges(existingAll, valid);
+      const deptByCed = {};
+      existingAll.forEach(e => { if (e.department_id != null) deptByCed[e.id_number] = e.department_id; });
       const manualKeep = existingAll.filter(m => m.source === 'manual' && !cedsReporte.has(m.id_number)).map(m => m.id_number);
       if (manualKeep.length) {
         const inList = manualKeep.map(c => `"${c}"`).join(',');
@@ -369,6 +373,8 @@ export async function onRequestPost({ request, env }) {
         data_id: r.data_id,
         is_active: !r.end_date,
         has_biometric: true,
+        // La API NO trae departamento -> conservar el previo por cedula:
+        department_id: deptByCed[r.id_number] || null,
         source: 'ax_api',
       }));
       await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify(payload) });

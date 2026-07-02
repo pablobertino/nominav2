@@ -371,6 +371,13 @@ export async function onRequestPost({ request, env }) {
       // salvo que el propio Reporte 10 ya traiga esa cedula (entonces el
       // reporte manda y la manual se reemplaza para no duplicar).
       const cedsReporte = new Set(valid.map(r => r.id_number));
+      // 0) Departamento asignado previo por cedula. El Reporte 10 NO trae
+      //    departamento, asi que se CONSERVA lo que ya tenia cada persona
+      //    (igual criterio que enterprise-roster con role/telefono).
+      const prevDept = await sb(env,
+        `store_workers?company_code=eq.${encodeURIComponent(cc)}&department_id=not.is.null&select=id_number,department_id`);
+      const deptByCed = {};
+      (prevDept || []).forEach(p => { deptByCed[p.id_number] = p.department_id; });
       // 1) Manuales actuales de la tienda.
       const manualNow = await sb(env,
         `store_workers?company_code=eq.${encodeURIComponent(cc)}&source=eq.manual&select=id_number`);
@@ -411,6 +418,7 @@ export async function onRequestPost({ request, env }) {
         marital_status: r.marital_status,
         birth_date: r.birth_date,
         address: r.address,
+        department_id: deptByCed[r.id_number] || null,
         source: 'report10',
       }));
       await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify(payload) });
@@ -632,9 +640,10 @@ export async function onRequestPost({ request, env }) {
 
       // El AX NO trae cargo: leemos el cargo previo por cedula para conservarlo.
       const prev = await sb(env,
-        `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,role`);
+        `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,role,department_id`);
       const roleByCed = {};
-      (prev || []).forEach(p => { roleByCed[p.id_number] = p.role || null; });
+      const deptByCed = {};
+      (prev || []).forEach(p => { roleByCed[p.id_number] = p.role || null; deptByCed[p.id_number] = p.department_id || null; });
 
       // --- Reemplazo del roster (igual politica que replace) ---
       // Se conservan los manuales cuya cedula NO venga en el AX; el resto se
@@ -672,6 +681,8 @@ export async function onRequestPost({ request, env }) {
         has_biometric: true,
         // El AX NO trae cargo -> se conserva el previo por cedula:
         role: roleByCed[r.id_number] || null,
+        // El AX NO trae departamento -> se conserva el previo por cedula:
+        department_id: deptByCed[r.id_number] || null,
         // El AX no trae telefono/correo/direccion: no son columnas del
         // reporte, asi que quedan null en la fila nueva (no hay con que
         // pisarlos y la fila se reemplaza). Si se requiere conservarlos,
