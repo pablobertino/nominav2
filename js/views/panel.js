@@ -273,7 +273,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.11</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.12</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2653,7 +2653,24 @@ function auRoleModal(ds, user) {
       return;
     }
     closeModal();
-    viewEquipo(user);
+    // Si hubo acciones/avisos de osTicket por la transicion de rol, mostrarlos
+    // antes de refrescar la grilla.
+    const ost = d.osticket;
+    const hasInfo = ost && ((ost.steps && ost.steps.length) || (ost.warnings && ost.warnings.length));
+    if (hasInfo) {
+      const stepsHtml = (ost.steps || []).map(s => `<li>\u2705 ${s}</li>`).join('');
+      const warnHtml = (ost.warnings || []).map(w => `<li style="color:var(--danger)">\u26a0\ufe0f ${w}</li>`).join('');
+      openModal(`
+        <div class="modal-head"><span>Rol actualizado</span><button class="modal-x" id="mX2">\u2715</button></div>
+        <p style="margin:0 0 10px">${ds.u}: <b>${ROLE_LABELS[d.prev_role] || d.prev_role}</b> \u2192 <b>${ROLE_LABELS[d.role] || d.role}</b></p>
+        <ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.7">${stepsHtml}${warnHtml}</ul>
+        <div class="modal-actions"><button class="btn btn-primary" id="mClose2">Listo</button></div>`);
+      const fin = () => { closeModal(); viewEquipo(user); };
+      $('#mX2').addEventListener('click', fin);
+      $('#mClose2').addEventListener('click', fin);
+    } else {
+      viewEquipo(user);
+    }
   });
 }
 

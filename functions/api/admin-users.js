@@ -75,6 +75,23 @@ async function gcUser(env, base, data) {
   return js;
 }
 
+// Llama gc-agent.json (agentes). Devuelve el JSON o lanza con detalle.
+async function gcAgent(env, base, data) {
+  const res = await fetch(`${base}/api/gc-agent.json`, {
+    method: 'POST',
+    headers: { 'X-API-Key': env.osticket_api_key, 'Content-Type': 'application/json' },
+    body: JSON.stringify(data),
+  });
+  const text = await res.text();
+  let js = null;
+  try { js = text ? JSON.parse(text) : null; } catch { /* no-json */ }
+  if (!res.ok || !js || !js.ok) {
+    const detail = (js && (js.error || (js.details && js.details.join('; ')))) || text || 'sin detalle';
+    throw new Error(`gc-agent ${res.status}: ${detail}`);
+  }
+  return js;
+}
+
 // Sincroniza UN admin (debe ser gestor_empresa con correo) como cliente
 // osTicket. Guarda osticket_user_id + fecha. Devuelve el resultado por fila.
 // Si se pasa username/password, crea/actualiza tambien la cuenta de acceso
@@ -181,17 +198,73 @@ export async function onRequestPost({ request, env }) {
       const ALLOWED_ROLES = ['admin', 'superadmin', 'editor_personal', 'gestor_empresa'];
       if (!ALLOWED_ROLES.includes(role)) return json({ ok: false, error: 'Rol no valido.' }, 400);
       if (String(id) === String(adminId)) return json({ ok: false, error: 'No puedes cambiar tu propio rol.' }, 400);
-      const target = await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}&select=role,is_active`);
+      const target = await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}&select=id,username,name,email,role,is_active,osticket_staff_id,osticket_user_id`);
       if (!target || !target.length) return json({ ok: false, error: 'Usuario no encontrado.' }, 404);
-      if (target[0].role === 'superadmin' && role !== 'superadmin') {
+      const u = target[0];
+      const prevRole = u.role;
+      if (prevRole === 'superadmin' && role !== 'superadmin') {
         const supers = await sb(env, 'admin_users?role=eq.superadmin&is_active=eq.true&select=id');
         if (supers && supers.length <= 1) return json({ ok: false, error: 'No puedes quitar el ultimo superadmin del sistema.' }, 400);
       }
+      if (role === prevRole) return json({ ok: true, note: 'Sin cambios de rol.' });
+
+      // 1) Cambiar el rol en el portal (la verdad).
       await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({ role }),
       });
-      return json({ ok: true });
+
+      // 2) Reflejar en osTicket segun la transicion. No debe romper el cambio
+      //    de rol (ya hecho): si osTicket falla, se informa como aviso.
+      const wasAgent = (prevRole === 'admin' || prevRole === 'superadmin');
+      const isAgent = (role === 'admin' || role === 'superadmin');
+      const osticket = { steps: [], warnings: [] };
+      const base = await osticketBase(env);
+      const canOst = base && env.osticket_api_key;
+
+      try {
+        // 2a) Deja de ser agente (admin -> gestor/editor): desactivar agente.
+        if (wasAgent && !isAgent && u.osticket_staff_id) {
+          if (canOst) {
+            try {
+              const r = await gcAgent(env, base, { action: 'set_agent_active', staff_id: u.osticket_staff_id, active: 0 });
+              osticket.steps.push(`Agente #${u.osticket_staff_id} desactivado en osTicket${r.scope_cleared ? ` (bandeja limpiada: ${r.scope_cleared})` : ''}.`);
+            } catch (e) { osticket.warnings.push('No se pudo desactivar el agente en osTicket: ' + (e.message || e)); }
+          } else {
+            osticket.warnings.push('osTicket no esta configurado: desactiva el agente manualmente.');
+          }
+          // El puente de agente deja de aplicar (ya no es agente). Lo
+          // conservamos NO: lo limpiamos para reflejar que no es agente.
+          await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}`, {
+            method: 'PATCH', headers: { Prefer: 'return=minimal' },
+            body: JSON.stringify({ osticket_staff_id: null }),
+          });
+        }
+
+        // 2b) Pasa a gestor: crear/activar su cliente osTicket (si tiene correo).
+        if (role === 'gestor_empresa') {
+          if (canOst && u.email) {
+            try {
+              const r = await syncClientOne(env, base, u);
+              if (r.ok) osticket.steps.push(`Cliente osTicket ${r.created ? 'creado' : 'actualizado'} (#${r.user_id}).`);
+              else osticket.warnings.push('No se pudo crear el cliente osTicket: ' + r.error);
+            } catch (e) { osticket.warnings.push('No se pudo crear el cliente osTicket: ' + (e.message || e)); }
+          } else if (!u.email) {
+            osticket.warnings.push('El gestor no tiene correo: no se creo su cliente osTicket. Agrega el correo y sincroniza desde su fila.');
+          }
+        }
+
+        // 2c) Vuelve a ser agente (gestor/editor -> admin): no se crea agente
+        //     aqui (requiere clave). Se avisa: crear al guardar su alcance o
+        //     desde el boton osTicket de su fila.
+        if (!wasAgent && isAgent) {
+          osticket.steps.push('Ahora es administrador: crea su agente osTicket al guardar su alcance de tiendas, o con el boton osTicket de su fila.');
+        }
+      } catch (e) {
+        osticket.warnings.push('osTicket: ' + (e.message || e));
+      }
+
+      return json({ ok: true, prev_role: prevRole, role, osticket });
     }
 
     // Crea/actualiza UN gestor_empresa como cliente de osTicket.
