@@ -26,6 +26,8 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { resolveActor, can as canPerm } from './_auth.js';
+
 const BUCKET = 'personnel-docs';
 const SIGNED_TTL = 60 * 60;            // 1h
 const MAX_BYTES = 10 * 1024 * 1024;    // 10 MB tope server-side
@@ -225,6 +227,28 @@ async function audit(env, documentId, action, detail, actorObj, versionNo) {
   } catch { /* el rastro es deseable pero no debe romper la operacion */ }
 }
 
+/* ===================== SHADOW MODE (Fase 2) =====================
+   Compara el gate de ROL actual (bool ya calculado por el codigo viejo) con
+   la decision del sistema de permisos tabla-driven (can(actor, code)).
+   NO cambia el comportamiento: solo registra en el log si difieren, para
+   validar que el sistema nuevo replica al viejo antes de reemplazarlo.
+   Solo aplica a gates de ROL; los gates de PROPIEDAD (dueno del doc) son
+   logica de negocio y no los cubre el sistema de permisos. */
+async function shadowCheck(env, sessionUser, action, code, legacyAllowed) {
+  try {
+    const actor = await resolveActor(env, sessionUser);
+    const newAllowed = canPerm(actor, code);
+    if (newAllowed !== legacyAllowed) {
+      console.warn(
+        `[PERMS-SHADOW] personnel-docs action=${action} code=${code} `
+        + `role=${actor ? actor.role : 'null'} legacy=${legacyAllowed} nuevo=${newAllowed} `
+        + `-> DISCREPANCIA (se respeta el gate legacy)`);
+    }
+  } catch (e) {
+    console.warn(`[PERMS-SHADOW] error comparando action=${action} code=${code}: ${String(e.message || e)}`);
+  }
+}
+
 /* ===================== Handler ===================== */
 export async function onRequestPost({ request, env }) {
   let body;
@@ -247,7 +271,9 @@ export async function onRequestPost({ request, env }) {
 
     // Crear documento nuevo: cualquier admin/superadmin (no gestor/editor).
     if (action === 'create') {
-      if (!canCreate(u)) return json({ ok: false, error: 'No tienes permiso para crear documentos.' }, 403);
+      const allowed = canCreate(u);
+      await shadowCheck(env, body.user, 'create', 'docs.create', allowed);
+      if (!allowed) return json({ ok: false, error: 'No tienes permiso para crear documentos.' }, 403);
       return await createDoc(env, body, u);
     }
 
@@ -260,13 +286,17 @@ export async function onRequestPost({ request, env }) {
 
     // Borrado DEFINITIVO: solo superadmin.
     if (action === 'delete_forever') {
-      if (!canDeleteForever(u)) return json({ ok: false, error: 'Solo el superadmin puede borrar definitivamente.' }, 403);
+      const allowed = canDeleteForever(u);
+      await shadowCheck(env, body.user, 'delete_forever', 'docs.delete', allowed);
+      if (!allowed) return json({ ok: false, error: 'Solo el superadmin puede borrar definitivamente.' }, 403);
       return await deleteForever(env, body, u);
     }
 
     // ABM de categorias: solo superadmin.
     if (['cat_save', 'cat_toggle'].includes(action)) {
-      if (u.role !== 'superadmin') return json({ ok: false, error: 'Solo el superadmin gestiona categorias.' }, 403);
+      const allowed = (u.role === 'superadmin');
+      await shadowCheck(env, body.user, action, 'docs.categories', allowed);
+      if (!allowed) return json({ ok: false, error: 'Solo el superadmin gestiona categorias.' }, 403);
       if (action === 'cat_save') return await catSave(env, body);
       if (action === 'cat_toggle') return await catToggle(env, body);
     }
