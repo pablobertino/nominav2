@@ -40,16 +40,15 @@ const PAY_GROUPS = [
   { key: 'tes', label: 'Gestiona Tesoreria', icon: '\u{1F3E6}', states: ['cargado', 'pagado'] },
 ];
 
-/* Nota de responsabilidad (Capital Humano vs Tesoreria). Distingue el tipo
-   de consulta, no solo el estado: Tesoreria responde por la EJECUCION del
-   pago (carga y procesamiento) desde Pago enviado; Capital Humano responde
-   por el CALCULO, incluso despues del pago (hay 5 dias habiles para reclamar
-   un calculo errado). */
+/* Nota de responsabilidad (Capital Humano vs Tesoreria). La tienda NO ve un
+   preview del calculo: no hay nada que reclamar hasta que el pago se realiza.
+   Por eso no se menciona un "antes del pago". Tesoreria atiende la carga y
+   ejecucion del pago; Capital Humano responde por el calculo, con 5 dias
+   habiles despues del Dia de Pago para reclamar un monto mal calculado. */
 const PAY_NOTE =
-  'La responsabilidad depende del <b>tipo</b> de consulta. Desde <b>Pago enviado</b>, '
-  + 'la <b>ejecucion del pago</b> (carga y procesamiento) la atiende <b>Tesoreria</b>. '
-  + 'El <b>calculo</b> siempre corresponde a <b>Capital Humano</b>: si crees que un '
-  + 'monto quedo mal calculado, tienes <b>5 dias habiles</b> desde el pago para reclamarlo.';
+  'La <b>carga y ejecucion del pago</b> las gestiona <b>Tesoreria</b> (desde Pago enviado). '
+  + 'Si detectas un <b>calculo errado</b>, lo revisa <b>Capital Humano</b>: tienes '
+  + '<b>5 dias habiles despues del Dia de Pago</b> para reclamarlo.';
 
 /* Estilos propios del modal de pago (una vez). Reusa .modal-ov / .modal-box
    del panel; solo agrega la lista y la nota. Exportada porque la tarjeta de
