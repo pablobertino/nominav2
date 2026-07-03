@@ -268,7 +268,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
       <div id="wpRosterBar" class="wp-rosterbar" style="display:none"></div>
       <div id="wpDemo"></div>
       <div class="pnl-filters">
-        <div class="search"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input id="wpSearch" placeholder="Buscar por nombre, cédula o cargo…"></div>
+        <div class="search"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input id="wpSearch" placeholder="Buscar por nombre, cédula o cargo (separa con coma)…"></div>
         <select id="wpfPhoto">
           <option value="all">Foto: todas</option>
           <option value="without">Sin foto</option>
@@ -510,10 +510,37 @@ function paintDemo() {
 function cmpName(a, b) {
   return String(a.full_name || '').localeCompare(String(b.full_name || ''), 'es', { sensitivity: 'base' });
 }
+/* Normaliza texto para buscar: minusculas, sin acentos y con la enie mapeada
+   a n (mismo criterio que la busqueda global en SQL con unaccent), para que
+   "nunez" encuentre "NUNEZ". */
+function normSearch(s) {
+  return String(s == null ? '' : s)
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\u00f1/g, 'n');   // enie -> n (unaccent en SQL hace lo mismo)
+}
+/* Interpreta el texto del buscador como grupos separados por COMA (OR entre
+   grupos) y, dentro de cada grupo, palabras separadas por espacio (AND). Un
+   trabajador coincide si ALGUN grupo tiene TODOS sus tokens en su blob
+   (cedula + nombre + cargo). Devuelve [] si no hay texto (sin filtro). */
+function parseSearchGroups(q) {
+  return normSearch(q)
+    .split(',')
+    .map(g => g.split(/\s+/).filter(Boolean))   // tokens del grupo
+    .filter(g => g.length);                      // descarta grupos vacios
+}
+function matchesSearch(w, groups) {
+  if (!groups.length) return true;
+  const blob = normSearch(
+    `${w.id_number || ''} ${w.full_name || ''} ${w.role || ''}`
+  );
+  // OR entre grupos: basta que UN grupo tenga TODOS sus tokens en el blob.
+  return groups.some(tokens => tokens.every(t => blob.includes(t)));
+}
 /* Lista filtrada por busqueda + filtros activos (sin ordenar). La usan el grid
    y "Marcar todos" para que ambos vean exactamente lo mismo. */
 function currentFiltered() {
-  const q = (STATE.q || '').toLowerCase().trim();
+  const groups = parseSearchGroups(STATE.q || '');
   // Resolver el nombre del depto elegido una sola vez (los trabajadores traen
   // department_name, no el id, asi que filtramos por nombre).
   let fDepName = null;
@@ -522,9 +549,9 @@ function currentFiltered() {
     fDepName = dep ? dep.name : null;
   }
   return STATE.workers.filter(w => {
-    if (q && !((w.full_name || '').toLowerCase().includes(q)
-      || String(w.id_number || '').includes(q)
-      || (w.role || '').toLowerCase().includes(q))) return false;
+    // Busqueda: grupos separados por coma (OR), palabras por espacio (AND),
+    // sin acentos. Ver matchesSearch/parseSearchGroups.
+    if (!matchesSearch(w, groups)) return false;
     if (STATE.fPhoto === 'with' && !w.has_photo) return false;
     if (STATE.fPhoto === 'without' && w.has_photo) return false;
     if (STATE.fGender !== 'all' && w.gender !== STATE.fGender) return false;
