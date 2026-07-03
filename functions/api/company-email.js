@@ -10,6 +10,8 @@
 
 function json(b, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } }); }
 
+import { shadowCan } from './_auth.js';
+
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
     ...opts,
@@ -50,6 +52,7 @@ export async function onRequestPost({ request, env }) {
     if (!admin) return json({ ok: false, error: 'No autorizado.' }, 401);
     if (!companyCode) return json({ ok: false, error: 'Falta la compañía.' }, 400);
     if (!(await canTouch(env, admin, companyCode))) return json({ ok: false, error: 'Fuera de tu alcance.' }, 403);
+    await shadowCan(env, adminId, 'company-email', 'save', 'company.contact', true);
 
     // email vacío => null (permite limpiar el correo)
     const clean = (email && email.trim()) ? email.trim() : null;

@@ -37,6 +37,8 @@ function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
 
+import { shadowCan } from './_auth.js';
+
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
     ...opts,
@@ -153,6 +155,7 @@ export async function onRequestPost({ request, env }) {
 
     if (body.action === 'tpl_save') {
       // Solo superadmin puede editar plantillas.
+      await shadowCan(env, body.user, 'announcements', 'tpl_save', 'avisos.templates', u.isSuper);
       if (!u.isSuper) return json({ ok: false, error: 'Solo el superadministrador puede editar las plantillas.' }, 403);
       const type = clean(body.type);
       if (!['calc', 'cut', 'pay'].includes(type)) return json({ ok: false, error: 'Tipo invalido.' }, 400);
@@ -189,6 +192,8 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (body.action === 'save_manual') {
+      // Shadow Fase 3: gate de rol (admin/super, no editor) ya pasado arriba.
+      await shadowCan(env, body.user, 'announcements', 'save_manual', 'avisos.manual', true);
       const title = clean(body.title);
       if (!title) return json({ ok: false, error: 'El titulo es obligatorio.' }, 400);
       const aud = ['everyone', 'all', 'stores', 'enterprises', 'admins', 'editors'].includes(body.audience) ? body.audience : 'all';
@@ -220,6 +225,7 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (body.action === 'toggle_manual') {
+      await shadowCan(env, body.user, 'announcements', 'toggle_manual', 'avisos.manual', true);
       const id = clean(body.id);
       if (!id) return json({ ok: false, error: 'Falta id.' }, 400);
       const cur = await sb(env, `announcements?id=eq.${encodeURIComponent(id)}&select=is_active,created_by`);
@@ -235,6 +241,7 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (body.action === 'delete_manual') {
+      await shadowCan(env, body.user, 'announcements', 'delete_manual', 'avisos.manual', true);
       const id = clean(body.id);
       if (!id) return json({ ok: false, error: 'Falta id.' }, 400);
       const cur = await sb(env, `announcements?id=eq.${encodeURIComponent(id)}&select=created_by`);

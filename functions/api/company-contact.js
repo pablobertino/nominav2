@@ -13,6 +13,8 @@
 
 function json(b, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } }); }
 
+import { shadowCan } from './_auth.js';
+
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
     ...opts,
@@ -73,6 +75,9 @@ export async function onRequestPost({ request, env }) {
     if (!admin) return json({ ok: false, error: 'No autorizado.' }, 401);
     if (!companyCode) return json({ ok: false, error: 'Falta la compañía.' }, 400);
     if (!(await canTouch(env, admin, companyCode))) return json({ ok: false, error: 'Fuera de tu alcance.' }, 403);
+    // Shadow Fase 3: el gate de rol es "admin valido"; el alcance (canTouch)
+    // es ortogonal. Se registra si el sistema tabla-driven difiere.
+    await shadowCan(env, adminId, 'company-contact', 'save', 'company.contact', true);
 
     const patch = {};
 
