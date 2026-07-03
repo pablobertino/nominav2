@@ -52,10 +52,32 @@ function avatarColor(seed) {
   return h % AVATAR_BG.length;
 }
 
+/* -------- Busqueda en cliente (mismo criterio que la vista Personal) --------
+   Normaliza sin acentos ni enie; separa por COMA en grupos (OR) y por espacio
+   en palabras (AND). Un trabajador coincide si ALGUN grupo tiene TODOS sus
+   tokens en su blob (cedula + nombre + cargo). Sin texto -> no filtra. */
+function normSearch(s) {
+  return String(s == null ? '' : s)
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\u00f1/g, 'n');
+}
+function parseSearchGroups(q) {
+  return normSearch(q)
+    .split(',')
+    .map(g => g.split(/\s+/).filter(Boolean))
+    .filter(g => g.length);
+}
+function matchesSearch(w, groups) {
+  if (!groups.length) return true;
+  const blob = normSearch(`${w.id_number || ''} ${w.full_name || ''} ${w.role || ''}`);
+  return groups.some(tokens => tokens.every(t => blob.includes(t)));
+}
+
 let USER = null;
 let FACETS = null;
 // Estado: campos evaluados + filtros de alcance + resultados.
-let C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '' };
+let C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '' };
 let ROWS = null;   // null = aun no consultado
 
 function ensureStyles() {
@@ -89,6 +111,11 @@ function ensureStyles() {
   .pi-export-menu button{font:inherit;font-size:13px;text-align:left;padding:9px 11px;border:0;border-radius:8px;background:transparent;color:var(--ink);cursor:pointer}
   .pi-export-menu button:hover{background:var(--bg-soft,#f1f5f9)}
   .pi-count{color:var(--muted);font-size:12px;margin:8px 2px 10px}
+  .pi-searchbar{margin:4px 0 0}
+  .pi-search{display:flex;align-items:center;gap:8px;max-width:420px;padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+  .pi-search svg{flex:none;color:var(--muted)}
+  .pi-search input{flex:1;font:inherit;font-size:13.5px;border:0;background:transparent;color:var(--ink);outline:none}
+  .pi-searchbar[hidden]{display:none}
   .pi-list{display:flex;flex-direction:column;gap:8px}
   .pi-row{display:flex;align-items:center;gap:13px;padding:11px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);cursor:pointer;transition:border-color .12s,box-shadow .12s}
   .pi-row:hover{border-color:var(--brand,#2563eb);box-shadow:0 2px 10px rgba(15,23,42,.06)}
@@ -158,6 +185,12 @@ export async function renderPersonnelIncomplete(user) {
         </div>
       </div>
     </div>
+    <div class="pi-searchbar" id="piSearchBar" hidden>
+      <div class="pi-search">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="piSearch" type="text" placeholder="Filtrar por nombre, cédula o cargo (separa con coma)…" autocomplete="off">
+      </div>
+    </div>
     <div class="pi-count" id="piCount"></div>
     <div class="pi-list" id="piList"></div>`;
 
@@ -198,8 +231,13 @@ export async function renderPersonnelIncomplete(user) {
   $('#piStatus').addEventListener('change', () => { C.status = $('#piStatus').value; });
 
   $('#piGo').addEventListener('click', run);
+  const searchEl = $('#piSearch');
+  if (searchEl) {
+    searchEl.value = C.q || '';
+    searchEl.addEventListener('input', () => { C.q = searchEl.value; paint(); });
+  }
   $('#piClear').addEventListener('click', () => {
-    C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '' };
+    C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '' };
     ROWS = null;
     renderPersonnelIncomplete(USER);
   });
@@ -253,21 +291,41 @@ async function run() {
 function paint() {
   const list = $('#piList');
   const countEl = $('#piCount');
+  const searchBar = $('#piSearchBar');
   if (!list) return;
 
   if (ROWS === null) {
     if (countEl) countEl.textContent = '';
+    if (searchBar) searchBar.hidden = true;   // sin reporte aun: sin buscador
     list.innerHTML = `<div class="pi-hint">Elige los campos a evaluar y pulsa <b>Generar</b>.</div>`;
     return;
   }
   if (!ROWS.length) {
     if (countEl) countEl.textContent = '';
+    if (searchBar) searchBar.hidden = true;   // nada que buscar
     list.innerHTML = `<div class="pi-empty">Ningún trabajador activo tiene esos campos incompletos. 🎉</div>`;
     return;
   }
-  if (countEl) countEl.textContent = `${ROWS.length} trabajador${ROWS.length === 1 ? '' : 'es'} con datos incompletos`;
 
-  list.innerHTML = ROWS.map((w, i) => {
+  // Hay resultados: mostrar el buscador y aplicar el filtro de texto en cliente.
+  if (searchBar) searchBar.hidden = false;
+  const groups = parseSearchGroups(C.q || '');
+  const shown = groups.length ? ROWS.filter(w => matchesSearch(w, groups)) : ROWS;
+
+  if (countEl) {
+    if (groups.length) {
+      countEl.textContent = `${shown.length} de ${ROWS.length} trabajador${ROWS.length === 1 ? '' : 'es'} con datos incompletos`;
+    } else {
+      countEl.textContent = `${ROWS.length} trabajador${ROWS.length === 1 ? '' : 'es'} con datos incompletos`;
+    }
+  }
+
+  if (!shown.length) {
+    list.innerHTML = `<div class="pi-empty">Ninguno coincide con la búsqueda.</div>`;
+    return;
+  }
+
+  list.innerHTML = shown.map((w, i) => {
     const ci = avatarColor(w.id_number);
     const sub = [`C.I. ${esc(w.id_number)}`];
     if (w.role) sub.push(esc(w.role));
@@ -289,7 +347,7 @@ function paint() {
   }).join('');
 
   list.querySelectorAll('.pi-row').forEach(el =>
-    el.addEventListener('click', () => openWorker(ROWS[+el.dataset.i])));
+    el.addEventListener('click', () => openWorker(shown[+el.dataset.i])));
 }
 
 // Abre la ficha del trabajador (reusa Personal). Al pulsar Volver en la ficha,
@@ -300,9 +358,13 @@ function openWorker(w) {
   renderWorkerPhotos(USER, w.company_code, () => renderPersonnelIncomplete(USER), { mode, openCed: w.id_number });
 }
 
-/* -------- Exportacion (xlsx / csv / txt), mismo patron que Empresas -------- */
+/* -------- Exportacion (xlsx / csv / txt), mismo patron que Empresas --------
+   Exporta lo que se ve: si hay busqueda activa, respeta el filtro de texto
+   (mismos grupos coma/espacio que la lista). Sin busqueda, exporta todo. */
 function exportRows() {
-  return (ROWS || []).map(w => ({
+  const groups = parseSearchGroups(C.q || '');
+  const src = groups.length ? (ROWS || []).filter(w => matchesSearch(w, groups)) : (ROWS || []);
+  return src.map(w => ({
     'Cédula': w.id_number || '',
     'Nombre': w.full_name || '',
     'Cargo': w.role || '',
