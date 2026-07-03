@@ -509,6 +509,10 @@ export function renderHistory(user) {
   $('#hQ').addEventListener('input', () => { clearTimeout(qTimer); qTimer = setTimeout(applyFilters, 350); });
   $('#hPer').addEventListener('change', () => { ST.perPage = parseInt($('#hPer').value, 10) || 20; ST.page = 1; load(); });
 
+  // Ayuda "?" de la columna Atencion: disponible para TODOS los roles (el ?
+  // se muestra siempre en la cabecera, no solo a quienes pueden gestionar).
+  if ($('#hAttHelp')) $('#hAttHelp').addEventListener('click', showAttHelpModal);
+
   // ---- gestion de estado (solo admin/superadmin) ----
   if (canManage) {
     // Filtro de atencion.
@@ -541,8 +545,6 @@ export function renderHistory(user) {
       if (!ids.length) return;
       await applySync({ reportIds: ids }, $('#hSelSync'));
     });
-    // Ayuda "?" con la explicacion de cada estado (modal legible).
-    if ($('#hAttHelp')) $('#hAttHelp').addEventListener('click', showAttHelpModal);
     // Boton global: sincronizar con osTicket todos los pendientes/fallidos
     // del alcance (reenvia su estado actual).
     if ($('#hSyncPending')) $('#hSyncPending').addEventListener('click', async () => {
