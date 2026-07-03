@@ -23,11 +23,11 @@ export const PAY_STATES = {
   },
   cargado: {
     cls: 'pst-cargado', label: 'Pago cargado',
-    desc: 'Tesoreria cargo el pago en el portal bancario correspondiente.',
+    desc: 'Tesoreria cargo el pago en el portal bancario. A partir de aqui, la quincena ya deberia empezar a depositarse en las cuentas de los colaboradores.',
   },
   pagado: {
     cls: 'pst-pagado', label: 'Pagado',
-    desc: 'Se verifico que los pagos cargados en el banco fueron procesados. Este proceso puede tardar hasta 48 horas habiles.',
+    desc: 'Verificacion posterior de Tesoreria de que los pagos procesaron correctamente. No condiciona el deposito: este ya se realizo en Pago cargado. La verificacion puede tardar hasta 48 horas habiles.',
   },
 };
 export const PAY_ORDER = ['calculado', 'enviado', 'cargado', 'pagado'];
@@ -42,13 +42,15 @@ const PAY_GROUPS = [
 
 /* Nota de responsabilidad (Capital Humano vs Tesoreria). La tienda NO ve un
    preview del calculo: no hay nada que reclamar hasta que el pago se realiza.
-   Por eso no se menciona un "antes del pago". Tesoreria atiende la carga y
-   ejecucion del pago; Capital Humano responde por el calculo, con 5 dias
-   habiles despues del Dia de Pago para reclamar un monto mal calculado. */
+   Por eso no se menciona un "antes del pago". En Pago cargado el deposito ya
+   deberia estar ocurriendo; Pagado es solo la verificacion posterior de
+   Tesoreria (no condiciona el deposito). Capital Humano responde por el
+   calculo, con 5 dias habiles despues del Dia de Pago para reclamar. */
 const PAY_NOTE =
-  'La <b>carga y ejecucion del pago</b> las gestiona <b>Tesoreria</b> (desde Pago enviado). '
-  + 'Si detectas un <b>calculo errado</b>, lo revisa <b>Capital Humano</b>: tienes '
-  + '<b>5 dias habiles despues del Dia de Pago</b> para reclamarlo.';
+  'Cuando el estado es <b>Pago cargado</b>, tu quincena ya deberia estar depositandose. '
+  + 'La <b>carga y ejecucion del pago</b> las gestiona <b>Tesoreria</b>; <b>Pagado</b> es solo su '
+  + 'verificacion posterior. Si detectas un <b>calculo errado</b>, lo revisa <b>Capital Humano</b>: '
+  + 'tienes <b>5 dias habiles despues del Dia de Pago</b> para reclamarlo.';
 
 /* Estilos propios del modal de pago (una vez). Reusa .modal-ov / .modal-box
    del panel; solo agrega la lista y la nota. Exportada porque la tarjeta de
