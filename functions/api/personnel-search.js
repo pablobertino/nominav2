@@ -53,13 +53,14 @@ export async function onRequestPost({ request, env }) {
     if (!admin) return json({ ok: false, error: 'Requiere un administrador valido.' }, 403);
 
     if (action === 'facets') {
+      const EMPTY = { zones: [], subzones: [], concepts: [], statuses: [], types: [], companies: [] };
       if (admin.codes !== null && !admin.codes.length) {
-        return json({ ok: true, facets: { zones: [], subzones: [], concepts: [], statuses: [] } });
+        return json({ ok: true, facets: EMPTY });
       }
       const f = await sb(env, 'rpc/personnel_search_facets', {
         method: 'POST', body: JSON.stringify({ p_codes: admin.codes }),
       });
-      return json({ ok: true, facets: f || { zones: [], subzones: [], concepts: [], statuses: [] } });
+      return json({ ok: true, facets: f || EMPTY });
     }
 
     if (action === 'search') {
@@ -106,6 +107,12 @@ export async function onRequestPost({ request, env }) {
       const subzone = body.subzone ? String(body.subzone) : null;
       const concept = body.concept ? String(body.concept) : null;
       const cstatus = body.status ? String(body.status) : null;
+      // Filtros nuevos: tipo de empresa y empresa puntual. El tipo se valida
+      // contra la lista conocida; la empresa es un company_code libre (la RPC
+      // igual respeta el alcance via p_codes/p_admin_id).
+      const KNOWN_TYPES = ['Tienda', 'Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea'];
+      const ctype = (body.type && KNOWN_TYPES.includes(String(body.type))) ? String(body.type) : null;
+      const ccompany = body.company ? String(body.company) : null;
       if (admin.codes !== null && !admin.codes.length) return json({ ok: true, rows: [] });
       const rows = await sb(env, 'rpc/personnel_incomplete', {
         method: 'POST',
@@ -115,6 +122,7 @@ export async function onRequestPost({ request, env }) {
           p_zone: zone, p_subzone: subzone, p_concept: concept, p_status: cstatus,
           p_limit: 5000,
           p_admin_id: admin.role === 'superadmin' ? null : admin.id,
+          p_type: ctype, p_company: ccompany,
         }),
       });
       return json({ ok: true, rows: rows || [], fields });

@@ -77,7 +77,7 @@ function matchesSearch(w, groups) {
 let USER = null;
 let FACETS = null;
 // Estado: campos evaluados + filtros de alcance + resultados.
-let C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '' };
+let C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '', type: '', company: '' };
 let ROWS = null;   // null = aun no consultado
 
 function ensureStyles() {
@@ -145,6 +145,21 @@ function subzonesFor(zoneId) {
   if (!zoneId) return all;
   return all.filter(s => String(s.id).startsWith(zoneId + '_'));
 }
+/* Empresas del combo, filtradas por el tipo elegido (si hay). Cada item trae
+   { code, name, type }. Sin tipo -> todas las del alcance. */
+function companiesFor(type) {
+  const all = (FACETS && FACETS.companies) || [];
+  if (!type) return all;
+  return all.filter(c => c.type === type);
+}
+/* Llena el combo de empresas (value=code). Conserva la seleccion si sigue
+   siendo valida tras cambiar el tipo. */
+function fillCompanySelect(sel, items, current) {
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Todas</option>'
+    + items.map(c => `<option value="${esc(c.code)}">${esc(c.code)} · ${esc(c.name)}</option>`).join('');
+  sel.value = items.some(c => String(c.code) === String(current)) ? current : '';
+}
 function fillSelect(sel, items, current, placeholder) {
   if (!sel) return;
   sel.innerHTML = `<option value="">${placeholder}</option>`
@@ -169,6 +184,8 @@ export async function renderPersonnelIncomplete(user) {
         </div>
       </div>
       <div class="pi-filters">
+        <span class="fg">Tipo <select id="piType"><option value="">Todos</option></select></span>
+        <span class="fg">Empresa <select id="piCompany"><option value="">Todas</option></select></span>
         <span class="fg">Zona <select id="piZone"><option value="">Todas</option></select></span>
         <span class="fg">Subzona <select id="piSubzone"><option value="">Todas</option></select></span>
         <span class="fg">Concepto <select id="piConcept"><option value="">Todos</option></select></span>
@@ -197,8 +214,17 @@ export async function renderPersonnelIncomplete(user) {
   // Facetas (cache) y combos.
   if (!FACETS) {
     const r = await api({ action: 'facets', adminId: USER.id });
-    FACETS = (r && r.ok && r.facets) ? r.facets : { zones: [], subzones: [], concepts: [], statuses: [] };
+    FACETS = (r && r.ok && r.facets) ? r.facets : { zones: [], subzones: [], concepts: [], statuses: [], types: [], companies: [] };
   }
+  // Tipo de empresa (combo).
+  const tSel = $('#piType');
+  if (tSel) {
+    tSel.innerHTML = '<option value="">Todos</option>'
+      + (FACETS.types || []).map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
+    tSel.value = (FACETS.types || []).includes(C.type) ? C.type : '';
+  }
+  // Empresa (combo), filtrada por el tipo elegido.
+  fillCompanySelect($('#piCompany'), companiesFor(C.type), C.company);
   fillSelect($('#piZone'), FACETS.zones || [], C.zone, 'Todas');
   fillSelect($('#piSubzone'), subzonesFor(C.zone), C.subzone, 'Todas');
   fillSelect($('#piConcept'), FACETS.concepts || [], C.concept, 'Todos');
@@ -222,6 +248,11 @@ export async function renderPersonnelIncomplete(user) {
     }));
 
   // Filtros.
+  $('#piType').addEventListener('change', () => {
+    C.type = $('#piType').value; C.company = '';
+    fillCompanySelect($('#piCompany'), companiesFor(C.type), '');
+  });
+  $('#piCompany').addEventListener('change', () => { C.company = $('#piCompany').value; });
   $('#piZone').addEventListener('change', () => {
     C.zone = $('#piZone').value; C.subzone = '';
     fillSelect($('#piSubzone'), subzonesFor(C.zone), '', 'Todas');
@@ -237,7 +268,7 @@ export async function renderPersonnelIncomplete(user) {
     searchEl.addEventListener('input', () => { C.q = searchEl.value; paint(); });
   }
   $('#piClear').addEventListener('click', () => {
-    C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '' };
+    C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '', type: '', company: '' };
     ROWS = null;
     renderPersonnelIncomplete(USER);
   });
@@ -283,6 +314,7 @@ async function run() {
     fields: C.fields,
     zone: C.zone || null, subzone: C.subzone || null,
     concept: C.concept || null, status: C.status || null,
+    type: C.type || null, company: C.company || null,
   });
   ROWS = (r && r.ok) ? (r.rows || []) : [];
   paint();
