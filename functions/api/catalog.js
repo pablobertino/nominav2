@@ -181,7 +181,7 @@ export async function onRequestPost({ request, env }) {
     const allowed = await allowedSet(env, user); // null=todas | Set
 
     const [companies, zones, subzones, concepts, users,
-           storeMeta, entMeta, staffCounts] = await Promise.all([
+           storeMeta, entMeta, staffCounts, depts] = await Promise.all([
       sb(env, 'companies?select=company_code,business_name,tax_id,data_area,zone_id,subzone_id,concept_id,company_type,status,is_active,email,phone,phone2&order=company_code'),
       sb(env, 'zones?select=id,name,letter&order=name'),
       sb(env, 'subzones?select=id,name,letter,zone_id&order=name'),
@@ -195,6 +195,9 @@ export async function onRequestPost({ request, env }) {
       // corta en 1000 filas y hay >1000, asi que muchas empresas quedaban
       // sub-contadas o en cero. La vista devuelve una fila por empresa.
       sb(env, 'v_company_staff_count?select=company_code,n'),
+      // Departamentos por empresa (para el conteo que se muestra en el boton
+      // "Departamentos" de la grilla de Empresas). Solo cuenta los ACTIVOS.
+      sb(env, 'departments?is_active=eq.true&select=company_code'),
     ]);
 
     const withAccess = new Set(users.map(u => u.company_code));
@@ -206,6 +209,11 @@ export async function onRequestPost({ request, env }) {
     // Total de personal: una fila por empresa desde la vista agregada.
     const countByCompany = {};
     (staffCounts || []).forEach(r => { countByCompany[r.company_code] = (countByCompany[r.company_code] || 0) + (r.n || 0); });
+
+    // Conteo de departamentos (activos) por empresa, para el boton
+    // "Departamentos" de la grilla. Se muestra en empresas no-tienda.
+    const deptCountByCompany = {};
+    (depts || []).forEach(d => { deptCountByCompany[d.company_code] = (deptCountByCompany[d.company_code] || 0) + 1; });
 
     // Meta (fecha, quien, metodo) por empresa. Cada empresa esta en UNA de las
     // dos tablas segun su tipo, asi que no hay colision.
@@ -244,6 +252,8 @@ export async function onRequestPost({ request, env }) {
         hasAccess: withAccess.has(c.company_code),
         // Personal: cantidad (cuenta real de filas) + meta de la ultima carga.
         staffCount: countByCompany[c.company_code] || 0,
+        // Cantidad de departamentos activos (para el boton "Departamentos").
+        deptCount: deptCountByCompany[c.company_code] || 0,
         rosterAt: meta ? meta.uploaded_at : null,
         rosterBy: meta ? meta.uploaded_by : null,
         rosterSource: meta ? meta.source : null,

@@ -41,6 +41,15 @@ async function api(payload) {
   });
   return res.json();
 }
+/* Departamentos (ABM) van a su propio endpoint /api/departments. Se usa para
+   crear un departamento desde la barra de acciones de Personal (modo empresa). */
+async function deptApi(payload) {
+  const res = await fetch('/api/departments', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  return res.json();
+}
 function sessionUserPayload(user) {
   return { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null };
 }
@@ -252,6 +261,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
           ${isAdmin ? `<button class="btn btn-primary" id="wpAxApi"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.8 1 6.4 2.6"/><polyline points="21 3 21 9 15 9"/></svg> Sincronizar</button>` : ''}
           ${mode === 'enterprise' ? '' : `<button class="btn" id="wpAddManual"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>`}
           <button class="btn" id="wpAssignDept"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg> Asignar depto.</button>
+          ${(isAdmin && mode === 'enterprise') ? `<button class="btn" id="wpNewDept"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Nuevo departamento</button>` : ''}
           <button class="btn wp-btn-danger" id="wpClear"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Limpiar lista</button>
         </div>
       </div>
@@ -328,6 +338,8 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   $('#wpClear').addEventListener('click', openClearModal);
   const assignBtn = $('#wpAssignDept');
   if (assignBtn) assignBtn.addEventListener('click', toggleSelMode);
+  const newDeptBtn = $('#wpNewDept');
+  if (newDeptBtn) newDeptBtn.addEventListener('click', openNewDeptModal);
 
   await load();
 
@@ -926,6 +938,71 @@ function openAssignDeptModal(ced) {
     close();
     paintGrid();
     if (CUR && String(CUR.id_number) === String(ced)) openFicha(String(ced));
+  });
+}
+
+/* ---- Crear un departamento nuevo para esta empresa (desde la barra de
+   acciones de Personal, modo empresa) ----
+   Abre un modal propio (sin nativos; la CSP bloquea alert/confirm/prompt) con
+   un input de nombre. Crea via /api/departments accion 'create' con el adminId
+   y el company_code de la empresa actual. Al terminar recarga load() para que
+   el nuevo departamento aparezca en el filtro y en "Asignar depto.". Solo se
+   monta el boton en modo empresa + admin, asi que aqui asumimos ese contexto. */
+function openNewDeptModal() {
+  const host = wpModalHost();
+  host.innerHTML = `
+    <div class="wp-modal-vp">
+      <div class="wp-modal">
+        <button class="wp-x" id="ndX" title="Cerrar">✕</button>
+        <h3>Nuevo departamento</h3>
+        <p class="wp-who"><span class="wp-ced">${esc(STATE.cc)}</span> · ${esc((STATE.company && STATE.company.business_name) || '')}</p>
+        <label class="flabel">Nombre del departamento</label>
+        <input id="ndName" type="text" placeholder="ej. Almacén" autocomplete="off" maxlength="60">
+        <div id="ndMsg" class="wp-prev" style="display:none"></div>
+        <p class="wp-help">El departamento pertenece a esta empresa. Luego podés asignarle personal desde <b>Asignar depto.</b> o desde la tarjeta de cada colaborador.</p>
+        <div class="wp-foot">
+          <span style="flex:1"></span>
+          <button class="btn" id="ndCancel">Cancelar</button>
+          <button class="btn btn-primary" id="ndSave" disabled>Crear departamento</button>
+        </div>
+      </div>
+    </div>`;
+
+  const q = s => host.querySelector(s);
+  const close = () => { document.removeEventListener('keydown', onKey); host.innerHTML = ''; };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  q('#ndX').addEventListener('click', close);
+  q('#ndCancel').addEventListener('click', close);
+
+  const nameEl = q('#ndName');
+  const saveB = q('#ndSave');
+  const refresh = () => { saveB.disabled = !nameEl.value.trim(); };
+  nameEl.addEventListener('input', refresh);
+  setTimeout(() => nameEl.focus(), 30);
+  // Enter en el input crea (si hay nombre).
+  nameEl.addEventListener('keydown', ev => { if (ev.key === 'Enter' && !saveB.disabled) saveB.click(); });
+
+  saveB.addEventListener('click', async () => {
+    const name = nameEl.value.trim();
+    if (!name) return;
+    saveB.disabled = true; saveB.textContent = 'Creando…';
+    let r;
+    try {
+      r = await deptApi({ action: 'create', adminId: STATE.adminId, company_code: STATE.cc, name });
+    } catch (err) {
+      r = { ok: false, error: String((err && err.message) || err) };
+    }
+    const msg = q('#ndMsg');
+    if (!r.ok) {
+      saveB.disabled = false; saveB.textContent = 'Crear departamento';
+      msg.style.display = 'block'; msg.className = 'wp-prev warn';
+      msg.textContent = r.error || 'No se pudo crear el departamento.';
+      return;
+    }
+    // Exito: recargar el directorio (trae departments actualizado) y cerrar.
+    close();
+    await load();
   });
 }
 
