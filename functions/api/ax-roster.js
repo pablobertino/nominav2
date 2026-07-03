@@ -173,6 +173,25 @@ async function upsertWorkersMaster(env, cc, rows) {
   return payload.length;
 }
 
+// Devuelve el id del departamento "Retail" de una TIENDA (todo el personal de
+// tienda pertenece a Retail por regla del negocio). Lo crea si no existe.
+// Devuelve null solo si la creacion fallara (no bloquea la carga).
+async function retailDeptId(env, cc) {
+  const existing = await sb(env,
+    `departments?company_code=eq.${encodeURIComponent(cc)}&name=eq.Retail&select=id&limit=1`);
+  if (existing && existing.length) return existing[0].id;
+  try {
+    const created = await sb(env, 'departments', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({ company_code: cc, name: 'Retail' }),
+    });
+    return created && created[0] ? created[0].id : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 /* Cambios a nivel trabajador entre el roster previo y el nuevo. En la primera
    sincronizacion (sin filas previas) NO genera eventos (seria ruido: todos
    "nuevos"). Detecta: nuevo, removido (ya no viene y no es manual) y cambio
@@ -347,6 +366,9 @@ export async function onRequestPost({ request, env }) {
       changes = computeRosterChanges(existingAll, valid);
       const deptByCed = {};
       existingAll.forEach(e => { if (e.department_id != null) deptByCed[e.id_number] = e.department_id; });
+      // Regla del negocio: todo el personal de tienda pertenece a Retail;
+      // quien no tenga departamento (nuevo) entra a Retail.
+      const retailId = await retailDeptId(env, cc);
       const manualKeep = existingAll.filter(m => m.source === 'manual' && !cedsReporte.has(m.id_number)).map(m => m.id_number);
       if (manualKeep.length) {
         const inList = manualKeep.map(c => `"${c}"`).join(',');
@@ -373,8 +395,9 @@ export async function onRequestPost({ request, env }) {
         data_id: r.data_id,
         is_active: !r.end_date,
         has_biometric: true,
-        // La API NO trae departamento -> conservar el previo por cedula:
-        department_id: deptByCed[r.id_number] || null,
+        // La API NO trae departamento -> conservar el previo; si no tenia,
+        // entra a Retail (regla del negocio para tiendas):
+        department_id: deptByCed[r.id_number] || retailId || null,
         source: 'ax_api',
       }));
       await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify(payload) });

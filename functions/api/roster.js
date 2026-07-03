@@ -285,6 +285,29 @@ async function upsertWorkersMaster(env, cc, validRows) {
   return payload.length;
 }
 
+// Devuelve el id del departamento "Retail" de una TIENDA. Todo el personal de
+// tienda pertenece a Retail por regla del negocio. Si por alguna razon la
+// tienda no tuviera ese departamento (tienda nueva), lo crea. Devuelve null
+// solo si la creacion fallara (no bloquea la carga; el trabajador quedaria
+// sin depto y se corrige en la proxima carga). Se cachea por request via el
+// parametro que pasa el llamador (una sola resolucion por carga).
+async function retailDeptId(env, cc) {
+  const existing = await sb(env,
+    `departments?company_code=eq.${encodeURIComponent(cc)}&name=eq.Retail&select=id&limit=1`);
+  if (existing && existing.length) return existing[0].id;
+  // No existe: crear el departamento Retail para esta tienda.
+  try {
+    const created = await sb(env, 'departments', {
+      method: 'POST',
+      headers: { Prefer: 'return=representation' },
+      body: JSON.stringify({ company_code: cc, name: 'Retail' }),
+    });
+    return created && created[0] ? created[0].id : null;
+  } catch (e) {
+    return null;
+  }
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'JSON invalido' }, 400); }
@@ -372,12 +395,14 @@ export async function onRequestPost({ request, env }) {
       // reporte manda y la manual se reemplaza para no duplicar).
       const cedsReporte = new Set(valid.map(r => r.id_number));
       // 0) Departamento asignado previo por cedula. El Reporte 10 NO trae
-      //    departamento, asi que se CONSERVA lo que ya tenia cada persona
-      //    (igual criterio que enterprise-roster con role/telefono).
+      //    departamento, asi que se CONSERVA lo que ya tenia cada persona.
+      //    Regla del negocio: TODO el personal de tienda pertenece a Retail,
+      //    asi que quien no tenga departamento (personal nuevo) entra a Retail.
       const prevDept = await sb(env,
         `store_workers?company_code=eq.${encodeURIComponent(cc)}&department_id=not.is.null&select=id_number,department_id`);
       const deptByCed = {};
       (prevDept || []).forEach(p => { deptByCed[p.id_number] = p.department_id; });
+      const retailId = await retailDeptId(env, cc);
       // 1) Manuales actuales de la tienda.
       const manualNow = await sb(env,
         `store_workers?company_code=eq.${encodeURIComponent(cc)}&source=eq.manual&select=id_number`);
@@ -418,7 +443,7 @@ export async function onRequestPost({ request, env }) {
         marital_status: r.marital_status,
         birth_date: r.birth_date,
         address: r.address,
-        department_id: deptByCed[r.id_number] || null,
+        department_id: deptByCed[r.id_number] || retailId || null,
         source: 'report10',
       }));
       await sb(env, 'store_workers', { method: 'POST', body: JSON.stringify(payload) });
@@ -555,6 +580,8 @@ export async function onRequestPost({ request, env }) {
       const role = String(body.role || '').trim().toUpperCase() || null;
       const isEgresado = !!body.egresado;
       const today = new Date().toISOString().slice(0, 10);
+      // Regla del negocio: el personal de tienda pertenece a Retail.
+      const retailId = await retailDeptId(env, cc);
 
       // Insertar en store_workers. source='manual' marca que se cargo a mano
       // (lo usa la futura logica de conservar manuales al actualizar).
@@ -570,6 +597,7 @@ export async function onRequestPost({ request, env }) {
         start_date: today,
         end_date: isEgresado ? today : null,
         is_active: !isEgresado,
+        department_id: retailId || null,
         source: 'manual',
       };
       try {
@@ -644,6 +672,9 @@ export async function onRequestPost({ request, env }) {
       const roleByCed = {};
       const deptByCed = {};
       (prev || []).forEach(p => { roleByCed[p.id_number] = p.role || null; deptByCed[p.id_number] = p.department_id || null; });
+      // Regla del negocio: todo el personal de tienda pertenece a Retail;
+      // quien no tenga departamento (nuevo) entra a Retail.
+      const retailId = await retailDeptId(env, cc);
 
       // --- Reemplazo del roster (igual politica que replace) ---
       // Se conservan los manuales cuya cedula NO venga en el AX; el resto se
@@ -681,8 +712,9 @@ export async function onRequestPost({ request, env }) {
         has_biometric: true,
         // El AX NO trae cargo -> se conserva el previo por cedula:
         role: roleByCed[r.id_number] || null,
-        // El AX NO trae departamento -> se conserva el previo por cedula:
-        department_id: deptByCed[r.id_number] || null,
+        // El AX NO trae departamento -> se conserva el previo; si no tenia,
+        // entra a Retail (regla del negocio para tiendas):
+        department_id: deptByCed[r.id_number] || retailId || null,
         // El AX no trae telefono/correo/direccion: no son columnas del
         // reporte, asi que quedan null en la fila nueva (no hay con que
         // pisarlos y la fila se reemplaza). Si se requiere conservarlos,
