@@ -20,6 +20,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { showPayHelpModal } from './pay-help.js';
 
 const IC_WALLET = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>';
 const IC_REFRESH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>';
@@ -125,7 +126,7 @@ function paintCard(card, reg, usedFallback) {
       ${esAnterior ? `<span class="pc-aclara">Corresponde al periodo anterior \u2014 el actual aun no tiene pago calculado</span>` : ''}
     </div>
     <div class="pc-state">
-      <span class="pst ${st.cls}">${esc(st.txt)}</span>
+      <span style="display:inline-flex;align-items:center"><span class="pst ${st.cls}">${esc(st.txt)}</span><span class="pay-help-q" id="pcPayHelp" title="Ver que significa cada estado de pago" role="button" tabindex="0">?</span></span>
       <span class="pc-fresh">${hace ? `Actualizado ${esc(hace)}` : ''}<button class="pc-refresh" type="button" title="Actualizar" aria-label="Actualizar">${IC_REFRESH}</button></span>
     </div>`;
 }
@@ -186,6 +187,9 @@ export async function injectPayCard(host, companyCode) {
   function wireRefresh() {
     const btn = card.querySelector('.pc-refresh');
     if (btn) btn.addEventListener('click', () => refresh(btn));
+    // Ayuda "?" de estados de pago (se repinta con la tarjeta, re-enganchar).
+    const help = card.querySelector('#pcPayHelp');
+    if (help) help.addEventListener('click', showPayHelpModal);
   }
 
   const d = await load();

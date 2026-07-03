@@ -13,6 +13,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { showPayHelpModal } from './pay-help.js';
 
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 
@@ -100,12 +101,14 @@ export async function renderPayGrid(user) {
     </div>
     <div class="tablebox">
       <table><thead><tr>
-        <th>Empresa</th><th>Tipo / Estatus</th><th>Periodo n\u00f3mina</th><th>Periodo de pago</th><th>Estado de pago</th>
+        <th>Empresa</th><th>Tipo / Estatus</th><th>Periodo n\u00f3mina</th><th>Periodo de pago</th><th>Estado de pago <span class="pay-help-q" id="pgPayHelp" title="Ver que significa cada estado de pago" role="button" tabindex="0">?</span></th>
       </tr></thead><tbody id="pgBody"><tr><td colspan="5" class="pnl-loading">Cargando estado de pago\u2026</td></tr></tbody></table>
     </div>`;
 
   $('#pgSearch').addEventListener('input', renderRows);
   $('#pgFilter').addEventListener('change', renderRows);
+  // Ayuda "?" de la columna Estado de pago (mismo patron que Atencion).
+  if ($('#pgPayHelp')) $('#pgPayHelp').addEventListener('click', showPayHelpModal);
 
   let d;
   try {
