@@ -20,7 +20,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
-import { showPayHelpModal } from './pay-help.js';
+import { showPayHelpModal, ensurePayHelpStyles } from './pay-help.js';
 
 const IC_WALLET = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>';
 const IC_REFRESH = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>';
@@ -99,6 +99,9 @@ function ensureStyles() {
   .pay-card .pc-refresh svg { width:15px; height:15px; }
   .pay-card .pc-refresh.spin svg { animation:pcSpin .8s linear infinite; }
   .pay-card .pc-refresh:disabled { opacity:.6; cursor:default; }
+  /* El "?" junto al chip de estado necesita mas separacion aqui (el chip de
+     la tarjeta es mas grande que el de la grilla). */
+  .pay-card .pay-help-q { margin-left:9px; }
   @keyframes pcSpin { to { transform:rotate(360deg); } }
   `;
   document.head.appendChild(st);
@@ -137,6 +140,10 @@ function paintCard(card, reg, usedFallback) {
 export async function injectPayCard(host, companyCode) {
   if (!host || !companyCode) return;
   ensureStyles();
+  // Estilos del "?" (.pay-help-q): los define pay-help.js. Se inyectan aqui
+  // para que el signo salga con su tamano correcto desde el primer render,
+  // sin depender de que el usuario abra el modal antes.
+  ensurePayHelpStyles();
 
   const card = document.createElement('div');
   card.className = 'pay-card';

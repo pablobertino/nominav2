@@ -40,16 +40,22 @@ const PAY_GROUPS = [
   { key: 'tes', label: 'Gestiona Tesoreria', icon: '\u{1F3E6}', states: ['cargado', 'pagado'] },
 ];
 
-/* Nota de responsabilidad (Capital Humano vs Tesoreria). Corta: la division
-   visual de arriba ya explica el traspaso. */
+/* Nota de responsabilidad (Capital Humano vs Tesoreria). Distingue el tipo
+   de consulta, no solo el estado: Tesoreria responde por la EJECUCION del
+   pago (carga y procesamiento) desde Pago enviado; Capital Humano responde
+   por el CALCULO, incluso despues del pago (hay 5 dias habiles para reclamar
+   un calculo errado). */
 const PAY_NOTE =
-  'Dirige tu consulta al departamento que gestiona el estado actual: '
-  + '<b>Capital Humano</b> hasta <b>Pago enviado</b>, '
-  + '<b>Tesoreria</b> desde <b>Pago cargado</b>.';
+  'La responsabilidad depende del <b>tipo</b> de consulta. Desde <b>Pago enviado</b>, '
+  + 'la <b>ejecucion del pago</b> (carga y procesamiento) la atiende <b>Tesoreria</b>. '
+  + 'El <b>calculo</b> siempre corresponde a <b>Capital Humano</b>: si crees que un '
+  + 'monto quedo mal calculado, tienes <b>5 dias habiles</b> desde el pago para reclamarlo.';
 
 /* Estilos propios del modal de pago (una vez). Reusa .modal-ov / .modal-box
-   del panel; solo agrega la lista y la nota. */
-function ensurePayHelpStyles() {
+   del panel; solo agrega la lista y la nota. Exportada porque la tarjeta de
+   la tienda (pay-card.js) tambien necesita .pay-help-q antes de que se abra
+   el modal, para que el "?" salga con su tamano correcto de una. */
+export function ensurePayHelpStyles() {
   if (document.getElementById('payHelpStyles')) return;
   const st = document.createElement('style');
   st.id = 'payHelpStyles';
