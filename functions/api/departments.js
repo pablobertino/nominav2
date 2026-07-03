@@ -20,6 +20,8 @@
 // Tipos de empresa que PUEDEN tener departamentos (todo lo que no sea tienda).
 const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
 
+import { shadowCan } from './_auth.js';
+
 function json(b, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } }); }
 
 async function sb(env, path, opts = {}) {
@@ -94,6 +96,7 @@ export async function onRequestPost({ request, env }) {
       if (!name) return json({ ok: false, error: 'Falta el nombre del departamento.' }, 400);
       const chk = await checkCompany(env, code, allowed);
       if (!chk.ok) return json(chk, chk.error === 'Fuera de tu alcance.' ? 403 : 400);
+      await shadowCan(env, adminId, 'departments', 'create', 'dept.create', true);
       try {
         const row = await sb(env, 'departments', {
           method: 'POST', headers: { Prefer: 'return=representation' },
@@ -116,6 +119,7 @@ export async function onRequestPost({ request, env }) {
       if (!dep || !dep.length) return json({ ok: false, error: 'Departamento no encontrado.' }, 404);
       const chk = await checkCompany(env, dep[0].company_code, allowed);
       if (!chk.ok) return json(chk, 403);
+      await shadowCan(env, adminId, 'departments', 'rename', 'dept.rename', true);
       try {
         await sb(env, `departments?id=eq.${id}`, {
           method: 'PATCH', headers: { Prefer: 'return=minimal' },
@@ -137,6 +141,7 @@ export async function onRequestPost({ request, env }) {
       if (!dep || !dep.length) return json({ ok: false, error: 'Departamento no encontrado.' }, 404);
       const chk = await checkCompany(env, dep[0].company_code, allowed);
       if (!chk.ok) return json(chk, 403);
+      await shadowCan(env, adminId, 'departments', 'toggle', 'dept.toggle', true);
       await sb(env, `departments?id=eq.${id}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({ is_active: !!body.is_active }),
@@ -151,6 +156,7 @@ export async function onRequestPost({ request, env }) {
       if (!dep || !dep.length) return json({ ok: false, error: 'Departamento no encontrado.' }, 404);
       const chk = await checkCompany(env, dep[0].company_code, allowed);
       if (!chk.ok) return json(chk, 403);
+      await shadowCan(env, adminId, 'departments', 'delete', 'dept.delete', true);
       // no borrar si tiene usuarios (alcance) asignados
       const used = await sb(env, `enterprise_user_scope?department_id=eq.${id}&select=id`);
       if (used && used.length) {

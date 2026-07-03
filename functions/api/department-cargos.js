@@ -15,6 +15,8 @@
 
 function json(b, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } }); }
 
+import { shadowCan } from './_auth.js';
+
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
     ...opts,
@@ -64,7 +66,9 @@ export async function onRequestPost({ request, env }) {
     }
 
     // Gestion: solo superadmin.
-    if (admin.role !== 'superadmin') return json({ ok: false, error: 'Solo el superadmin gestiona los cargos.' }, 403);
+    const legacyOk = admin.role === 'superadmin';
+    await shadowCan(env, adminId, 'department-cargos', action, 'config.cargos', legacyOk);
+    if (!legacyOk) return json({ ok: false, error: 'Solo el superadmin gestiona los cargos.' }, 403);
 
     if (action === 'create') {
       const label = String(body.label || '').trim();

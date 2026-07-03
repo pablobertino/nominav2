@@ -28,6 +28,8 @@ function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
 
+import { shadowCan } from './_auth.js';
+
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
     ...opts,
@@ -50,6 +52,22 @@ async function isSuperadmin(env, adminId) {
   return r && r.length > 0;
 }
 
+// Mapa accion -> permiso (para el shadow de Fase 3). Cada seccion de
+// Configuracion cae en uno de tres dominios de permiso:
+//   config.referencias -> bancos y operadoras
+//   config.cargos      -> cargos + patrones R10
+//   config.incidencias -> ausencias, causas, motivos de egreso, docs por
+//                         incidencia y campos de modificacion
+// Las acciones *_list son lectura; se les asigna igual el code de su seccion
+// (solo se usa para el shadow, no cambia el gate legacy superadmin).
+function permForAction(action) {
+  const a = String(action || '');
+  if (a.startsWith('banco_') || a.startsWith('operadora_')) return 'config.referencias';
+  if (a.startsWith('cargo_')) return 'config.cargos';
+  // absence_*, causa_*, egress_reason_*, incdoc_*, modfield_*
+  return 'config.incidencias';
+}
+
 const ENFORCEMENTS = ['block', 'warn', 'optional'];
 // Tipos de captura que el FRONT sabe pintar/validar para campos modificables.
 // Crear un campo nuevo solo se permite con uno de estos (no inventar kinds).
@@ -61,7 +79,9 @@ export async function onRequestPost({ request, env }) {
   const { action, adminId } = body;
 
   try {
-    if (!(await isSuperadmin(env, adminId))) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+    const legacyOk = await isSuperadmin(env, adminId);
+    await shadowCan(env, adminId, 'config-catalogs', action, permForAction(action), legacyOk);
+    if (!legacyOk) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
 
     /* ---------------- TIPOS DE AUSENCIA ---------------- */
     if (action === 'absence_list') {
