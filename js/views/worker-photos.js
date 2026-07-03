@@ -629,12 +629,14 @@ function paintGrid() {
           + `<div class="wp-initials" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>`
           + `<span class="wp-nophoto"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>Sin foto</span>`
           + `</div>`;
-    const badge = w.has_photo
-      ? '<span class="wp-badge has">✓ cargada</span>'
-      : '<span class="wp-badge no">pendiente</span>';
     const egr = w.end_date ? `<span class="pill pill-out" style="margin-top:4px;display:inline-block">egresó ${fmtDate(w.end_date)}</span>` : '';
     const manualTag = w.source === 'manual' ? '<span class="pill wp-pill-manual" style="margin-top:4px;display:inline-block">manual</span>' : '';
-    const dept = w.department_name ? `<div class="wp-dept" style="margin-top:4px;font-size:11px;color:var(--muted)">🏷 ${esc(w.department_name)}</div>` : '';
+    // Barra de departamento ARRIBA de la tarjeta. Con departamento: etiqueta
+    // gris discreta. Sin departamento: accion azul "Asignar departamento" que
+    // abre la asignacion puntual de esa persona (data-assign marca el click).
+    const deptBar = w.department_name
+      ? `<div class="wp-deptbar"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span>${esc(w.department_name)}</span></div>`
+      : `<div class="wp-deptbar assign" data-assign="${w.id_number}"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg><span>Asignar departamento</span></div>`;
     const checked = STATE.selected.has(String(w.id_number));
     const chk = sel
       ? `<span class="wp-selchk" style="position:absolute;top:8px;left:8px;width:22px;height:22px;border-radius:6px;border:2px solid #fff;box-shadow:0 0 0 1px rgba(15,23,42,.18);background:${checked ? 'var(--brand)' : 'rgba(255,255,255,.9)'};display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;z-index:3">${checked ? '✓' : ''}</span>`
@@ -643,19 +645,29 @@ function paintGrid() {
     const bflag = (bday && !sel) ? '<span class="wp-bflag">\uD83C\uDF82 \u00a1Cumple hoy!</span>' : '';
     const conf = bday ? confettiHtml() : '';
     return `<div class="wp-card" data-ced="${w.id_number}"${sel && checked ? ' style="outline:2px solid var(--brand);outline-offset:2px;border-radius:14px"' : ''}>
-      <div class="wp-photo${bday ? ' wp-bday' : ''}">${chk}${conf}${photo}${badge}${bflag}<div class="wp-ov"><span>${sel ? (checked ? 'Quitar' : 'Seleccionar') : 'Ver ficha'}</span></div></div>
+      ${deptBar}
+      <div class="wp-photo${bday ? ' wp-bday' : ''}">${chk}${conf}${photo}${bflag}<div class="wp-ov"><span>${sel ? (checked ? 'Quitar' : 'Seleccionar') : 'Ver ficha'}</span></div></div>
       <div class="wp-body">
         <p class="wp-name">${esc(w.full_name)}</p>
         <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}</span>
         ${w.role ? `<div class="wp-role">${esc(w.role)}</div>` : ''}
+        ${egr}${manualTag}
+        <div class="wp-spacer"></div>
         ${miniRowHtml(w)}
-        ${dept}${egr}${manualTag}
       </div>
     </div>`;
   }).join('') || '<div class="card"><p class="muted" style="margin:0">Sin coincidencias.</p></div>';
 
   grid.querySelectorAll('.wp-card').forEach(el =>
-    el.addEventListener('click', () => {
+    el.addEventListener('click', (ev) => {
+      // Click en la barra azul "Asignar departamento": abre la asignacion
+      // puntual de esa persona, sin abrir la ficha ni entrar en modo masivo.
+      const assign = ev.target.closest('.wp-deptbar.assign');
+      if (assign) {
+        ev.stopPropagation();
+        openAssignDeptModal(String(assign.dataset.assign));
+        return;
+      }
       const ced = String(el.dataset.ced);
       if (STATE.selMode) {
         if (STATE.selected.has(ced)) STATE.selected.delete(ced); else STATE.selected.add(ced);
@@ -854,6 +866,67 @@ async function applyBulkDept() {
   STATE.selMode = false; STATE.selected = new Set();
   const ab = $('#wpAssignDept'); if (ab) ab.classList.remove('btn-primary');
   paintSelBar(); paintGrid();
+}
+
+/* ---- Asignacion PUNTUAL de departamento (desde la barra azul de la tarjeta) ----
+   Abre un modal chico con el select de departamentos de la empresa para una
+   sola persona. Reusa la accion set_department con un unico id. Sin nativos
+   (modal propio, la CSP bloquea alert/confirm/prompt inline). Si la empresa no
+   tiene departamentos creados, lo avisa en vez de mostrar un select vacio. */
+function openAssignDeptModal(ced) {
+  const w = STATE.workers.find(x => String(x.id_number) === String(ced));
+  if (!w) return;
+  const host = wpModalHost();
+  const deps = STATE.departments || [];
+  const opts = deps.map(d => `<option value="${d.id}"${String(w.department_id) === String(d.id) ? ' selected' : ''}>${esc(d.name)}</option>`).join('');
+  const hasDeps = deps.length > 0;
+
+  host.innerHTML = `
+    <div class="wp-modal-vp">
+      <div class="wp-modal">
+        <button class="wp-x" id="adX" title="Cerrar">✕</button>
+        <h3>Asignar departamento</h3>
+        <p class="wp-who"><b>${esc(w.full_name)}</b> · <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}</span></p>
+        ${hasDeps ? `
+          <label class="flabel">Departamento</label>
+          <select id="adDept">
+            <option value="">— Sin departamento —</option>
+            ${opts}
+          </select>
+          <p class="wp-help">El departamento pertenece a esta empresa. Podés crear más desde <b>Asignar depto.</b> (selección múltiple) o dejarlo sin asignar.</p>
+        ` : `
+          <div class="wp-prev warn" style="display:block">Esta empresa aún no tiene departamentos creados. Creá al menos uno desde <b>Asignar depto.</b> para poder asignarlo.</div>
+        `}
+        <div class="wp-foot">
+          <span style="flex:1"></span>
+          <button class="btn" id="adCancel">Cancelar</button>
+          ${hasDeps ? '<button class="btn btn-primary" id="adSave">Guardar</button>' : ''}
+        </div>
+      </div>
+    </div>`;
+
+  const q = s => host.querySelector(s);
+  const close = () => { document.removeEventListener('keydown', onKey); host.innerHTML = ''; };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  q('#adX').addEventListener('click', close);
+  q('#adCancel').addEventListener('click', close);
+  const saveB = q('#adSave');
+  if (saveB) saveB.addEventListener('click', async () => {
+    const raw = q('#adDept').value;
+    const department_id = raw === '' ? null : parseInt(raw, 10);
+    saveB.disabled = true; saveB.textContent = 'Guardando…';
+    const r = await api({
+      action: 'set_department', company_code: STATE.cc, user: sessionUserPayload(STATE.user),
+      id_numbers: [String(ced)], department_id,
+    });
+    if (!r.ok) { saveB.disabled = false; saveB.textContent = 'Guardar'; alert(r.error || 'No se pudo asignar.'); return; }
+    const depName = department_id == null ? null : ((deps.find(d => d.id === department_id) || {}).name || null);
+    w.department_id = department_id; w.department_name = depName;
+    close();
+    paintGrid();
+    if (CUR && String(CUR.id_number) === String(ced)) openFicha(String(ced));
+  });
 }
 
 /* ===================== FICHA (página) ===================== */

@@ -1077,10 +1077,24 @@
 .wp-ov { position:absolute; inset:0; display:flex; align-items:center; justify-content:center; opacity:0; transition:opacity .12s; }
 .wp-photo:hover .wp-ov { opacity:1; background:rgba(15,23,42,.42); }
 .wp-ov span { color:#fff; font-size:12px; font-weight:600; background:var(--brand); padding:7px 12px; border-radius:var(--radius-sm); }
-.wp-body { padding:11px 13px 13px; }
+.wp-body { padding:11px 13px 13px; display:flex; flex-direction:column; flex:1; }
 .wp-name { font-size:13.5px; font-weight:600; line-height:1.25; margin:0 0 3px; color:var(--ink); }
 .wp-ced { font-size:12px; color:var(--muted); font-family:ui-monospace,Menlo,monospace; }
 .wp-role { font-size:11.5px; color:var(--faint); margin-top:4px; }
+/* espaciador flexible: empuja la fila SEXO/EDAD/ANT al fondo de la tarjeta,
+   para que quede a la MISMA altura en todas aunque el cargo ocupe 1 o 2
+   lineas o falten datos. */
+.wp-spacer { flex:1 1 auto; min-height:6px; }
+/* barra de departamento ARRIBA de la tarjeta (encima de la foto). Con
+   departamento: etiqueta gris discreta. Sin departamento: accion azul
+   clickeable "Asignar departamento". */
+.wp-deptbar { display:flex; align-items:center; gap:6px; padding:7px 12px;
+  font-size:11px; color:var(--muted); border-bottom:1px solid var(--border-soft);
+  line-height:1.2; }
+.wp-deptbar svg { flex-shrink:0; opacity:.85; }
+.wp-deptbar span { overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.wp-deptbar.assign { color:var(--brand); cursor:pointer; font-weight:600; transition:background .12s; }
+.wp-deptbar.assign:hover { background:var(--brand-bg); }
 
 /* Modal (overlay fijo, igual que los demas modales del panel). */
 .wp-modal-vp { position:fixed; inset:0; background:rgba(15,23,42,.45); display:flex;
