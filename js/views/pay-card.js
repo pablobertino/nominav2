@@ -12,7 +12,7 @@
    si no, el anterior (idx -1) y se aclara que corresponde al periodo
    anterior (usedFallback).
 
-   Estados de pago: "Pago calculado" -> "Pago cargado" -> "Pago enviado"
+   Estados de pago: "Pago calculado" -> "Pago enviado" -> "Pago cargado"
    -> "Pagado".
 
    Exporta injectPayCard(host, companyCode). Silencioso si falla (no

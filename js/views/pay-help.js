@@ -32,13 +32,20 @@ export const PAY_STATES = {
 };
 export const PAY_ORDER = ['calculado', 'enviado', 'cargado', 'pagado'];
 
-/* Nota de responsabilidad (Capital Humano vs Tesoreria). */
+/* Agrupacion de estados por departamento responsable. Los estados de cada
+   grupo se pintan dentro de un bloque enmarcado con su encabezado, para que
+   la division Capital Humano / Tesoreria se entienda de un vistazo. */
+const PAY_GROUPS = [
+  { key: 'ch', label: 'Gestiona Capital Humano', icon: '\u{1F464}', states: ['calculado', 'enviado'] },
+  { key: 'tes', label: 'Gestiona Tesoreria', icon: '\u{1F3E6}', states: ['cargado', 'pagado'] },
+];
+
+/* Nota de responsabilidad (Capital Humano vs Tesoreria). Corta: la division
+   visual de arriba ya explica el traspaso. */
 const PAY_NOTE =
-  'Hasta el estado <b>Pago calculado</b>, las consultas o reclamos corresponden a '
-  + '<b>Capital Humano</b>. A partir del estado <b>Pago enviado</b>, la responsabilidad '
-  + 'pasa a <b>Tesoreria</b>; por lo tanto, cualquier consulta relacionada con la carga, '
-  + 'procesamiento o ejecucion del pago debera dirigirse al departamento correspondiente, '
-  + 'segun el estado en que se encuentre.';
+  'Dirige tu consulta al departamento que gestiona el estado actual: '
+  + '<b>Capital Humano</b> hasta <b>Pago enviado</b>, '
+  + '<b>Tesoreria</b> desde <b>Pago cargado</b>.';
 
 /* Estilos propios del modal de pago (una vez). Reusa .modal-ov / .modal-box
    del panel; solo agrega la lista y la nota. */
@@ -48,7 +55,18 @@ function ensurePayHelpStyles() {
   st.id = 'payHelpStyles';
   st.textContent = `
   .pay-help-intro { font-size:13px; color:var(--muted,#64748b); margin:0 0 14px; line-height:1.5; }
-  .pay-help-list { list-style:none; margin:0 0 14px; padding:0; display:flex; flex-direction:column; gap:12px; }
+  /* Bloques por departamento responsable (CH morado, Tesoreria ambar). */
+  .pay-help-groups { display:flex; flex-direction:column; gap:8px; margin:0 0 14px; }
+  .pay-help-arrow { display:flex; justify-content:center; color:var(--faint,#94a3b8); line-height:1; margin:-2px 0; }
+  .pay-help-arrow svg { width:18px; height:18px; }
+  .pay-help-grp { border-radius:12px; overflow:hidden; border:1px solid; }
+  .pay-help-grp.grp-ch { border-color:#ddd6fe; }
+  .pay-help-grp.grp-tes { border-color:#fed7aa; }
+  .pay-help-ghead { display:flex; align-items:center; gap:8px; padding:8px 14px; border-bottom:1px solid;
+    font-size:12px; font-weight:700; text-transform:uppercase; letter-spacing:.03em; }
+  .pay-help-grp.grp-ch .pay-help-ghead { background:#f3e8ff; color:#6b21a8; border-bottom-color:#ddd6fe; }
+  .pay-help-grp.grp-tes .pay-help-ghead { background:#fef3c7; color:#92400e; border-bottom-color:#fed7aa; }
+  .pay-help-list { list-style:none; margin:0; padding:12px 14px; display:flex; flex-direction:column; gap:12px; }
   .pay-help-list li { display:grid; grid-template-columns:130px 1fr; gap:12px; align-items:start; }
   .pay-help-list .pst { display:inline-flex; align-items:center; gap:7px; padding:4px 11px;
     border-radius:999px; font-size:12px; font-weight:700; justify-self:start; white-space:nowrap; }
@@ -63,12 +81,13 @@ function ensurePayHelpStyles() {
   .pay-help-note b { color:var(--ink,#0f172a); }
   .pay-help-note .ph-tag { display:inline-flex; align-items:center; gap:6px; font-weight:700;
     color:#b45309; margin-bottom:5px; }
-  /* El "?" de ayuda, mismo look que .att-help pero reutilizable aqui. */
-  .pay-help-q { display:inline-flex; align-items:center; justify-content:center; width:16px; height:16px;
-    border-radius:50%; background:var(--border-soft,#eef2f7); color:var(--muted,#64748b);
-    font-size:11px; font-weight:700; cursor:pointer; margin-left:6px; vertical-align:middle;
+  /* El "?" de ayuda. Mas grande y con fondo azul-tenue para que se note de
+     entrada, tanto en la grilla como en la tarjeta de la tienda. */
+  .pay-help-q { display:inline-flex; align-items:center; justify-content:center; width:22px; height:22px;
+    border-radius:50%; background:var(--brand-bg,#eff4ff); color:var(--brand,#2563eb);
+    font-size:14px; font-weight:700; cursor:pointer; margin-left:6px; vertical-align:middle;
     user-select:none; line-height:1; }
-  .pay-help-q:hover { background:var(--brand-bg,#eff4ff); color:var(--brand,#2563eb); }
+  .pay-help-q:hover { background:#dbe6fe; color:var(--brand,#1d4ed8); }
   `;
   document.head.appendChild(st);
 }
@@ -88,14 +107,21 @@ export function showPayHelpModal() {
         <span>\u00bfQu\u00e9 significa cada estado de pago?</span>
         <button class="modal-x" id="payHelpX" aria-label="Cerrar">\u2715</button>
       </div>
-      <p class="pay-help-intro">El estado refleja en qu\u00e9 punto del proceso de pago est\u00e1 la quincena.</p>
-      <ul class="pay-help-list">
-        ${PAY_ORDER.map(k => `
-          <li>
-            <span class="pst ${PAY_STATES[k].cls}">${PAY_STATES[k].label}</span>
-            <span class="pay-help-desc">${PAY_STATES[k].desc}</span>
-          </li>`).join('')}
-      </ul>
+      <p class="pay-help-intro">El estado refleja en qu\u00e9 punto del proceso de pago est\u00e1 la quincena. Cada etapa la gestiona un departamento distinto.</p>
+      <div class="pay-help-groups">
+        ${PAY_GROUPS.map((g, gi) => `
+          <div class="pay-help-grp grp-${g.key}">
+            <div class="pay-help-ghead"><span>${g.icon}</span><span>${g.label}</span></div>
+            <ul class="pay-help-list">
+              ${g.states.map(k => `
+                <li>
+                  <span class="pst ${PAY_STATES[k].cls}">${PAY_STATES[k].label}</span>
+                  <span class="pay-help-desc">${PAY_STATES[k].desc}</span>
+                </li>`).join('')}
+            </ul>
+          </div>
+          ${gi < PAY_GROUPS.length - 1 ? '<div class="pay-help-arrow"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M19 12l-7 7-7-7"/></svg></div>' : ''}`).join('')}
+      </div>
       <div class="pay-help-note">
         <div class="ph-tag">\u26A0 Importante</div>
         ${PAY_NOTE}
