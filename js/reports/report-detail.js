@@ -47,10 +47,15 @@ function fmtSent(iso) {
   return `${p(car.getUTCDate())}/${p(car.getUTCMonth() + 1)}/${car.getUTCFullYear()} ${h}:${p(car.getUTCMinutes())} ${ap}`;
 }
 
-function otPill(r, osticketUrl) {
+function otPill(r, osticketUrl, isAgent) {
   if (!r.osticket_id) return '<span class="pill pill-out">No enviado</span>';
   if (osticketUrl) {
-    const href = `${osticketUrl}/scp/tickets.php?number=${encodeURIComponent(r.osticket_id)}`;
+    const num = encodeURIComponent(r.osticket_id);
+    // agente -> panel de staff (/scp/); usuario -> puente propio gc_ticket.php
+    // que traduce el numero al id interno y redirige a tickets.php?id=.
+    const href = isAgent
+      ? `${osticketUrl}/scp/tickets.php?number=${num}`
+      : `${osticketUrl}/gc_ticket.php?number=${num}`;
     return `<a class="pill pill-set ot-link" href="${href}" target="_blank" rel="noopener" title="Abrir el ticket en osTicket">Enviado · #${r.osticket_id}</a>`;
   }
   return `<span class="pill pill-set">Enviado · #${r.osticket_id}</span>`;
@@ -130,6 +135,7 @@ export async function showReportDetail({ reportId, user, onBack }) {
 
   const r = res.report;
   const osticketUrl = res.osticket_url || '';
+  const viewerIsAgent = !!res.viewer_is_agent;
   const t = TYPES[r.type] || { label: r.type, icon: '📄' };
   const canResend = !r.osticket_id;
 
@@ -163,7 +169,7 @@ export async function showReportDetail({ reportId, user, onBack }) {
       <div class="sb-sep"></div>
       <div class="sb-block">
         <span class="sb-lbl">osTicket</span>
-        <div class="sb-row">${otPill(r, osticketUrl)}</div>
+        <div class="sb-row">${otPill(r, osticketUrl, viewerIsAgent)}</div>
       </div>
     </div>`;
 

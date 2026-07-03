@@ -49,13 +49,21 @@ function ymd(d) { return new Intl.DateTimeFormat('sv-SE', { timeZone: 'America/C
 function todayYMD() { return ymd(new Date()); }
 function daysAgoYMD(n) { const d = new Date(); d.setDate(d.getDate() - n); return ymd(d); }
 
-function otPill(r, osticketUrl) {
+function otPill(r, osticketUrl, isAgent) {
   if (!r.osticket_id) return '<span class="pill pill-out">No enviado</span>';
-  // Si conocemos la URL base de osTicket, el numero es un enlace directo al
-  // ticket en el SCP (acepta ?number=). target=_blank y stopPropagation en
-  // el listener para no disparar "Ver detalle".
+  // El enlace directo al ticket depende de si quien mira es agente o usuario
+  // de osTicket:
+  //   agente  -> /scp/tickets.php?number=XXXX  (panel de staff; por numero)
+  //   usuario -> /gc_ticket.php?number=XXXX     (puente propio: traduce el
+  //              numero al id interno y redirige a tickets.php?id=, dejando
+  //              que osTicket valide el acceso del cliente)
+  // target=_blank y stopPropagation en el listener para no disparar "Ver
+  // detalle".
   if (osticketUrl) {
-    const href = `${osticketUrl}/scp/tickets.php?number=${encodeURIComponent(r.osticket_id)}`;
+    const num = encodeURIComponent(r.osticket_id);
+    const href = isAgent
+      ? `${osticketUrl}/scp/tickets.php?number=${num}`
+      : `${osticketUrl}/gc_ticket.php?number=${num}`;
     return `<a class="pill pill-set ot-link" href="${href}" target="_blank" rel="noopener" data-otlink title="Abrir el ticket en osTicket">#${r.osticket_id}</a>`;
   }
   return `<span class="pill pill-set">#${r.osticket_id}</span>`;
@@ -90,6 +98,7 @@ export function renderHistory(user) {
     companies: [], zones: [], subzones: [], concepts: [], // catalogo para filtros
     selected: new Set(),   // ids marcados (seleccion multiple)
     osticketUrl: '',       // base URL de osTicket (para el enlace al ticket)
+    viewerIsAgent: false,  // el que mira es agente de osTicket (link /scp/) o usuario (link /)
   };
 
   $('#pnlMain').innerHTML = `
@@ -224,6 +233,7 @@ export function renderHistory(user) {
     }
     ST.rows = d.rows; ST.total = d.total; ST.page = d.page; ST.perPage = d.per_page;
     ST.osticketUrl = d.osticket_url || '';
+    ST.viewerIsAgent = !!d.viewer_is_agent;
     paintRows(); paintPager();
   }
 
@@ -270,7 +280,7 @@ export function renderHistory(user) {
         <td>${originPill(r)}</td>
         <td style="text-align:center"><b>${r.workers_count}</b></td>
         ${attTd}
-        <td>${otPill(r, ST.osticketUrl)}</td>
+        <td>${otPill(r, ST.osticketUrl, ST.viewerIsAgent)}</td>
         <td style="text-align:right;white-space:nowrap">
           <button class="btn btn-sm" data-open="${r.id}">Ver detalle</button>
           <button class="icon-btn" data-copytxt="${r.id}" title="Copiar el texto del ticket">\u29C9</button>

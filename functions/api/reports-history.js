@@ -100,6 +100,24 @@ async function osticketBase(env) {
   return String(url || '').replace(/\/+$/, '');
 }
 
+/* ¿El que mira es AGENTE de osTicket? Lo es si su registro tiene
+   osticket_staff_id (staff/agente). Los usuarios de osTicket (tiendas y
+   gestores) tienen osticket_user_id pero NO staff_id. Esto decide que tipo
+   de enlace al ticket se arma en el Historial:
+     agente  -> {base}/scp/tickets.php?number=XXXX   (panel de staff)
+     usuario -> {base}/tickets.php?number=XXXX        (portal del cliente)
+   Un admin puede tener AMBOS ids (es agente): prevalece el enlace de agente.
+   Las tiendas (kind='company') nunca son agentes. */
+async function viewerIsAgent(env, user) {
+  if (!user) return false;
+  if (user.kind === 'company') return false;
+  if (user.kind === 'admin' && user.id) {
+    const a = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&select=osticket_staff_id`);
+    return !!(a && a[0] && a[0].osticket_staff_id != null);
+  }
+  return false;
+}
+
 // POST JSON con la X-API-Key. Devuelve { status, ok, text, json }. No lanza.
 async function osticketPost(env, base, path, payload) {
   const res = await fetch(`${base}${path}`, {
@@ -379,8 +397,9 @@ async function listReports(env, body, scope) {
   // Se lee una sola vez por pagina (no por fila).
   let osticketUrl = '';
   try { osticketUrl = await osticketBase(env); } catch { osticketUrl = ''; }
+  const isAgent = await viewerIsAgent(env, body.user || null);
 
-  return json({ ok: true, rows: out, total, page, per_page: perPage, osticket_url: osticketUrl });
+  return json({ ok: true, rows: out, total, page, per_page: perPage, osticket_url: osticketUrl, viewer_is_agent: isAgent });
 }
 
 async function detailReport(env, body, scope) {
@@ -451,6 +470,7 @@ async function detailReport(env, body, scope) {
   return json({
     ok: true,
     osticket_url: await (async () => { try { return await osticketBase(env); } catch { return ''; } })(),
+    viewer_is_agent: await viewerIsAgent(env, body.user || null),
     report: {
       id: r.id, type: r.topic, company_code: r.company_code, company_name: companyName,
       zone_id: r.zone_id, subzone_id: r.subzone_id, sent_at: r.sent_at,
