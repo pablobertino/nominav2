@@ -14,6 +14,7 @@ const TL_ICON = {
   calc: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="2" width="16" height="20" rx="2"/><line x1="8" y1="6" x2="16" y2="6"/><line x1="8" y1="10" x2="8" y2="10"/><line x1="12" y1="10" x2="12" y2="10"/><line x1="16" y1="10" x2="16" y2="10"/><line x1="8" y1="14" x2="8" y2="14"/><line x1="12" y1="14" x2="12" y2="14"/><line x1="8" y1="18" x2="12" y2="18"/></svg>',
   cut:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M7 14l3-3 3 3 4-5"/></svg>',
   pay:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
+  claim: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="15" x2="12" y2="15"/></svg>',
 };
 const TL_MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const TL_DIA = ['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa'];
@@ -47,6 +48,12 @@ function tlEnsureStyles() {
   .tl-track-wrap{position:relative;padding:0 8px}
   .tl-track{position:relative;height:8px;border-radius:6px;background:var(--border-soft,#eef0f3);margin:52px 0 46px}
   .tl-fill{position:absolute;top:0;left:0;height:100%;border-radius:6px;background:linear-gradient(90deg,#93c5fd,#2563eb)}
+  /* Tramo de la VENTANA DE RECLAMO (pago anterior -> cierre de plazo). Color
+     distinto al azul del avance: ambar, porque es un rango vivo, no un punto. */
+  .tl-claim{position:absolute;top:0;height:100%;border-radius:6px;
+    background:repeating-linear-gradient(45deg,#fcd34d,#fcd34d 6px,#fde68a 6px,#fde68a 12px);
+    opacity:.9;z-index:1}
+  .tl-claim.closed{background:repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0 6px,#eef2f7 6px,#eef2f7 12px)}
   .tl-mk{position:absolute;top:50%;transform:translate(-50%,-50%);z-index:2}
   .tl-ic{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--surface);border:2.5px solid var(--faint,#94a3b8);color:var(--faint,#94a3b8);box-shadow:0 0 0 4px var(--surface);transition:transform .15s}
   .tl-ic svg{width:18px;height:18px}
@@ -58,6 +65,15 @@ function tlEnsureStyles() {
   .tl-mk.prevpay .tl-lbl .d{color:#15803d}
   .tl-mk.prevpay .tl-lbl .n{color:#16a34a;font-weight:700}
   .tl-mk.prevpay.today .tl-lbl{top:44px}
+  /* Nodo del cierre del plazo de reclamo (ambar). Si el plazo ya cerro
+     (hoy > cierre) se muestra en gris apagado. */
+  .tl-mk.claim .tl-ic{border-color:#d97706;background:#fef3c7;color:#b45309}
+  .tl-mk.claim.closed .tl-ic{border-color:#cbd5e1;background:#f1f5f9;color:#94a3b8}
+  .tl-mk.claim.act .tl-ic{border-color:#b45309;background:#f59e0b;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 7px #fde68a}
+  .tl-mk.claim .tl-lbl .d{color:#b45309}
+  .tl-mk.claim .tl-lbl .n{color:#d97706;font-weight:700}
+  .tl-mk.claim.closed .tl-lbl .d{color:var(--muted,#64748b)}
+  .tl-mk.claim.closed .tl-lbl .n{color:var(--faint,#94a3b8)}
   .tl-mk.act .tl-ic{transform:scale(1.12)}
   .tl-mk.act.calc .tl-ic{border-color:#b45309;background:#f59e0b;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 7px #fde68a}
   .tl-mk.act.cut  .tl-ic{border-color:#1e40af;background:#3b82f6;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 7px #bfdbfe}
@@ -106,6 +122,8 @@ function tlHtml(period, todayISO, prev) {
   // El chip de la derecha solo aparece el dia exacto del pago.
   let prevMk = '';
   let prevChip = '';
+  let claimSeg = '';
+  let claimMk = '';
   const prevIsValid = prev && prev.pay_date && prev.pay_date === startISO;
   if (prevIsValid) {
     const payToday = (todayISO === prev.pay_date);
@@ -116,6 +134,30 @@ function tlHtml(period, todayISO, prev) {
     </div>`;
     if (payToday) {
       prevChip = `<div class="tl-prevpay">${TL_ICON.pay} Hoy se paga la quincena anterior <b>${prev.name}</b></div>`;
+    }
+
+    // Ventana de RECLAMO de la quincena anterior: desde el pago anterior (pos 0)
+    // hasta su cierre de plazo (prev.claim_deadline). Es un RANGO, por eso se
+    // pinta como un tramo ambar (no un punto) con un nodo al final. Solo se
+    // dibuja si el cierre cae dentro del eje visible [startISO .. endISO];
+    // si el plazo se extiende mas alla del pago actual, se ancla al final del eje.
+    if (prev.claim_deadline) {
+      const claimISO = prev.claim_deadline;
+      const claimInAxis = tlBetween(claimISO, endISO) >= 0; // claim <= fin del eje
+      const claimPos = tlPos(claimISO, startISO, endISO) * 100;
+      const closed = tlBetween(claimISO, todayISO) > 0; // hoy ya paso el cierre
+      const act = claimISO === todayISO;
+      // El tramo va de 0% a la posicion del cierre (clamp a 100 si se sale).
+      const segEnd = Math.min(100, claimPos);
+      claimSeg = `<div class="tl-claim${closed ? ' closed' : ''}" style="left:0%;width:${segEnd}%"></div>`;
+      // El nodo del cierre solo se dibuja si cae dentro del eje; si no, se omite
+      // (la quincena en curso ya no lo alcanza a mostrar).
+      if (claimInAxis) {
+        claimMk = `<div class="tl-mk claim${closed ? ' closed' : ''}${act ? ' act' : ''}" style="left:${claimPos}%">
+          <div class="tl-ic">${TL_ICON.claim}</div>
+          <div class="tl-lbl"><span class="d">${tlDiaDM(claimISO)}</span><span class="n">Plazo Reclamo</span></div>
+        </div>`;
+      }
     }
   }
 
@@ -137,7 +179,8 @@ function tlHtml(period, todayISO, prev) {
     <div class="tl-track-wrap">
       <div class="tl-track">
         <div class="tl-fill" style="width:${todayPos}%"></div>
-        ${prevMk}${mks}
+        ${claimSeg}
+        ${prevMk}${claimMk}${mks}
         <div class="tl-today ${onHito ? 'on-hito' : ''}" style="left:${todayPos}%">
           <div class="bub">HOY · ${tlDiaDM(todayISO)}</div>
           <div class="stem"></div>

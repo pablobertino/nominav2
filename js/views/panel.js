@@ -277,7 +277,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.34</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.35</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3786,11 +3786,12 @@ async function viewPeriods(user) {
       <th>Quincena</th><th>Período</th>
       <th class="grp grp-first">Código Pago</th><th class="grp grp-last">Rango de Pago</th>
       <th>Último día de cálculo</th><th>Día de Cálculo</th><th>Día de Pago</th>
+      <th>Plazo Reclamo</th>
       <th>Tope de reporte</th><th>Estado</th>${isSuper ? '<th style="text-align:right">Acciones</th>' : ''}
     </tr></thead><tbody id="pBody"></tbody></table></div>
     <p class="muted" style="font-size:12px;margin:14px 2px 0;line-height:1.6">El “último día de cálculo” es la última fecha que entra en el cálculo de la quincena (un día antes del día de cálculo): última oportunidad para cargar novedades, ese día hasta la hora tope. Las dos columnas con fondo azul son el <strong>período de pago</strong>; su rango termina justo en el último día de cálculo. Sábados y domingos se resaltan en ámbar. El estado es temporal (Pasado / En curso / Futuro) y, si la quincena fue ajustada a mano, lleva además el distintivo <span class="pill pill-mod" style="font-size:10px">Modificada</span>. ${isSuper ? 'Como superadmin puedes ajustar una quincena puntual; el resto solo la consulta.' : 'Esta vista es de solo lectura.'}</p>`;
 
-  const NCOLS = isSuper ? 10 : 9;
+  const NCOLS = isSuper ? 11 : 10;
 
   async function load() {
     $('#pBody').innerHTML = `<tr><td colspan="${NCOLS}" class="pnl-loading">Cargando…</td></tr>`;
@@ -3834,6 +3835,7 @@ async function viewPeriods(user) {
         <td class="hito-cell">${dateCell(p.milestone_date)}</td>
         <td>${dateCell(p.cutoff_date, { countdown: isCurr ? countdown(p.cutoff_date, today) : '' })}</td>
         <td>${dateCell(p.pay_date, { countdown: isCurr ? countdown(p.pay_date, today) : '' })}</td>
+        <td class="claim-cell">${p.claim_deadline ? dateCell(p.claim_deadline) : '<span class="muted">—</span>'}</td>
         <td>${fmtDeadline(p.report_deadline)}</td>
         <td>${periodEstado(p, rel)}</td>
         ${acc}
@@ -3901,6 +3903,7 @@ async function exportPeriods(fmt) {
       'Ultimo dia de calculo': fmtDate(p.milestone_date, true),
       'Dia de Calculo': fmtDate(p.cutoff_date, true),
       'Dia de Pago': fmtDate(p.pay_date, true),
+      'Plazo Reclamo': fmtDate(p.claim_deadline, true),
       'Tope de reporte': fmtDeadline(p.report_deadline),
       'Estado': relLabel[rel] + (p.is_overridden ? ' (Modificada)' : ''),
       'Motivo del ajuste': p.override_note || '',
@@ -3962,10 +3965,11 @@ function periodEditModal(user, p, onSaved) {
       <div><label class="flabel">Día de Pago</label><input type="date" id="pe_pay" value="${p.pay_date}"></div>
       <div><label class="flabel">Margen (días)</label><input type="text" id="pe_mg" value="${p.report_margin_days}" placeholder="2"></div>
       <div><label class="flabel">Hora tope</label><input type="text" id="pe_ht" value="${(p.report_limit_time||'').slice(0,5)}" placeholder="14:00"></div>
+      <div><label class="flabel">Plazo reclamo <span class="muted">(días hábiles)</span></label><input type="text" id="pe_cd" value="${p.claim_days != null ? p.claim_days : ''}" placeholder="5"></div>
     </div>
     <label class="flabel" style="margin-top:12px">Motivo del ajuste <span class="muted">(opcional)</span></label>
     <input type="text" id="pe_note" value="${(p.override_note||'').replace(/"/g,'&quot;')}" placeholder="ej. corrida por feriado" style="margin-bottom:6px">
-    <p class="muted" style="font-size:11.5px;margin:0">El último día de cálculo y el tope de reporte se recalculan solos a partir del día de cálculo, el margen y la hora.</p>
+    <p class="muted" style="font-size:11.5px;margin:0">El último día de cálculo y el tope de reporte se recalculan solos a partir del día de cálculo, el margen y la hora. El <b>Plazo Reclamo</b> se recalcula desde el Día de Pago contando ese número de días hábiles (salta fines de semana y feriados nacionales).</p>
     <div class="modal-actions">
       <button class="btn" id="mCancel">Cancelar</button>
       <button class="btn btn-primary" id="mOk">Guardar ajuste</button>
@@ -3978,6 +3982,7 @@ function periodEditModal(user, p, onSaved) {
       range_start: $('#pe_rs').value, range_end: $('#pe_re').value,
       cutoff_date: $('#pe_co').value, pay_date: $('#pe_pay').value,
       report_margin_days: $('#pe_mg').value, report_limit_time: $('#pe_ht').value,
+      claim_days: $('#pe_cd').value,
       override_note: $('#pe_note').value,
     });
     if (!d.ok) { alert(d.error); return; }
