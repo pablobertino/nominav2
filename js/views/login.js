@@ -86,24 +86,39 @@ function template() {
 
         <div id="recoverMsg" class="login-msg"></div>
 
-        <p class="login-sub" style="text-align:left;margin:0 0 12px">Escribe tu usuario, código de tienda o correo. Si tienes un correo registrado, te enviaremos un enlace para crear una nueva contraseña.</p>
+        <!-- Formulario (se oculta tras un envío exitoso) -->
+        <div id="recoverForm">
+          <p class="login-sub" style="text-align:left;margin:0 0 12px">Escribe tu usuario, código de tienda o correo. Si tienes un correo registrado, te enviaremos un enlace para crear una nueva contraseña.</p>
 
-        <div class="field">
-          <label for="recoverId">Usuario, código o e-mail</label>
-          <div class="field-icon">
-            <span class="ico">${ICONS.user}</span>
-            <input id="recoverId" type="text" autocomplete="username"
-                   placeholder="Usuario, código o e-mail" />
+          <div class="field">
+            <label for="recoverId">Usuario, código o e-mail</label>
+            <div class="field-icon">
+              <span class="ico">${ICONS.user}</span>
+              <input id="recoverId" type="text" autocomplete="username"
+                     placeholder="Usuario, código o e-mail" />
+            </div>
+          </div>
+
+          <button id="recoverBtn" class="btn-primary">Enviar enlace</button>
+
+          <div class="notice notice-info" style="margin-top:16px">
+            <span class="ico">${ICONS.info}</span>
+            <div>¿Sin correo registrado? El restablecimiento lo realiza Capital Humano.
+              Escribe a <strong>${CONFIG.supportEmail}</strong> indicando tu
+              código de tienda o usuario.</div>
           </div>
         </div>
 
-        <button id="recoverBtn" class="btn-primary">Enviar enlace</button>
-
-        <div class="notice notice-info" style="margin-top:16px">
-          <span class="ico">${ICONS.info}</span>
-          <div>¿Sin correo registrado? El restablecimiento lo realiza Capital Humano.
-            Escribe a <strong>${CONFIG.supportEmail}</strong> indicando tu
-            código de tienda o usuario.</div>
+        <!-- Confirmación tras enviar (evita reenvíos múltiples) -->
+        <div id="recoverSent" style="display:none">
+          <div class="notice notice-info">
+            <span class="ico">${ICONS.info}</span>
+            <div>Si el dato corresponde a una cuenta con correo registrado, te
+              enviamos un enlace para restablecer la contraseña. <strong>Revisa tu
+              bandeja de entrada</strong> (y la carpeta de spam). El enlace vence
+              en 60 minutos.</div>
+          </div>
+          <button id="recoverAgainBtn" type="button" class="btn-primary" style="margin-top:8px">Volver al inicio</button>
         </div>
       </div>
 
@@ -169,16 +184,30 @@ function wire() {
     e.preventDefault();
     loginView.style.display = 'none';
     recover.style.display = 'block';
+    resetRecoverForm();
   });
   $('#backBtn').addEventListener('click', () => {
     recover.style.display = 'none';
     loginView.style.display = 'block';
+    resetRecoverForm();
   });
 
   // --- Paso 1: pedir enlace de recuperación ---
-  const recoverBtn = $('#recoverBtn');
-  const recoverId  = $('#recoverId');
-  const recoverMsg = $('#recoverMsg');
+  const recoverBtn  = $('#recoverBtn');
+  const recoverId   = $('#recoverId');
+  const recoverMsg  = $('#recoverMsg');
+  const recoverForm = $('#recoverForm');
+  const recoverSent = $('#recoverSent');
+
+  // Deja la vista de recuperación en su estado inicial (form visible, sin msg).
+  function resetRecoverForm() {
+    if (recoverForm) recoverForm.style.display = 'block';
+    if (recoverSent) recoverSent.style.display = 'none';
+    if (recoverMsg) { recoverMsg.textContent = ''; recoverMsg.className = 'login-msg'; }
+    if (recoverId) recoverId.value = '';
+    if (recoverBtn) { recoverBtn.disabled = false; recoverBtn.textContent = 'Enviar enlace'; }
+  }
+
   async function doRecover() {
     const id = recoverId.value.trim();
     if (!id) {
@@ -197,21 +226,38 @@ function wire() {
         body: JSON.stringify({ identifier: id }),
       });
       const data = await res.json();
-      // Mensaje neutro o aviso de "sin correo": ambos vienen en data.message.
-      recoverMsg.textContent = data.message || (data.ok
-        ? 'Si el dato corresponde a una cuenta con correo, te enviaremos un enlace.'
-        : (data.error || 'No se pudo procesar la solicitud.'));
-      recoverMsg.className = 'login-msg ' + (data.noEmail ? 'err show' : 'ok show');
+
+      if (data.noEmail) {
+        // Cuenta sin correo: NO se envió nada; dejar el form para reintentar.
+        recoverMsg.textContent = data.message || 'Esta cuenta no tiene un correo registrado.';
+        recoverMsg.className = 'login-msg err show';
+        recoverBtn.disabled = false;
+        recoverBtn.textContent = original;
+        return;
+      }
+
+      // Éxito (o respuesta neutra): ocultar el formulario para evitar reenvíos.
+      recoverMsg.textContent = '';
+      recoverMsg.className = 'login-msg';
+      recoverForm.style.display = 'none';
+      recoverSent.style.display = 'block';
     } catch (err) {
       recoverMsg.textContent = 'No se pudo conectar. Intenta de nuevo.';
       recoverMsg.className = 'login-msg err show';
-    } finally {
       recoverBtn.disabled = false;
       recoverBtn.textContent = original;
     }
   }
   recoverBtn.addEventListener('click', doRecover);
   recoverId.addEventListener('keydown', (e) => { if (e.key === 'Enter') doRecover(); });
+
+  // "Volver al inicio" desde la confirmación: regresa al login limpio.
+  const recoverAgainBtn = $('#recoverAgainBtn');
+  if (recoverAgainBtn) recoverAgainBtn.addEventListener('click', () => {
+    recover.style.display = 'none';
+    loginView.style.display = 'block';
+    resetRecoverForm();
+  });
 
   // --- Paso 2: nueva contraseña (cuando se llega con ?token=) ---
   const resetView = $('#resetView');
