@@ -240,7 +240,11 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   const mode = (opts && opts.mode) === 'enterprise' ? 'enterprise' : 'store';
   const adminId = user && user.kind === 'admin' ? (user.id || null) : null;
   const isAdmin = !!(user && user.kind === 'admin');
-  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, departments: [], selMode: false, selected: new Set(),
+  // isSuper: solo el superadmin real. El gestor_empresa entra con
+  // kind==='admin' (por eso isAdmin es true para el), pero NO debe poder
+  // crear departamentos: eso queda reservado al superadmin.
+  const isSuper = !!(user && user.kind === 'admin' && user.role === 'superadmin');
+  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, isSuper, departments: [], selMode: false, selected: new Set(),
     sortKey: 'name_az', fPhoto: 'all', fGender: 'all', fCargo: 'ALL', fDept: 'ALL', fStatus: 'all' };
 
   const back = onExit
@@ -259,7 +263,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
           <button class="btn" id="wpReporte"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> ${mode === 'enterprise' ? 'Reporte AX (Excel)' : 'Reporte 10'}</button>
           ${(mode === 'store' && isAdmin) ? `<button class="btn" id="wpReporteAX"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Reporte AX (Excel)</button>` : ''}
           ${isAdmin ? `<button class="btn btn-primary" id="wpAxApi"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.8 1 6.4 2.6"/><polyline points="21 3 21 9 15 9"/></svg> Sincronizar</button>` : ''}
-          ${(isAdmin && mode === 'enterprise') ? `<button class="btn" id="wpNewDept"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Nuevo departamento</button>` : ''}
+          ${(isSuper && mode === 'enterprise') ? `<button class="btn" id="wpNewDept"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Nuevo departamento</button>` : ''}
           <button class="btn wp-btn-danger" id="wpClear"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Limpiar lista</button>
         </div>
       </div>
