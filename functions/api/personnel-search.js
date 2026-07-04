@@ -117,7 +117,7 @@ export async function onRequestPost({ request, env }) {
       // Reporte de datos incompletos de personal ACTIVO en el alcance.
       // body.fields = lista de campos a evaluar (gender, birth_date, account,
       // phone, email, address). Si no viene, se usan los 5 por defecto.
-      const ALLOWED = ['gender', 'birth_date', 'account', 'phone', 'email', 'address', 'marital', 'role', 'department'];
+      const ALLOWED = ['gender', 'birth_date', 'account', 'phone', 'email', 'address', 'marital', 'role', 'department', 'photo'];
       let fields = Array.isArray(body.fields) ? body.fields.filter(f => ALLOWED.includes(f)) : [];
       if (!fields.length) fields = ['gender', 'birth_date', 'account', 'phone', 'email'];
       const zone = body.zone ? String(body.zone) : null;
@@ -130,6 +130,8 @@ export async function onRequestPost({ request, env }) {
       const KNOWN_TYPES = ['Tienda', 'Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea'];
       const ctype = (body.type && KNOWN_TYPES.includes(String(body.type))) ? String(body.type) : null;
       const ccompany = body.company ? String(body.company) : null;
+      // Filtro por presencia de foto: 'with' | 'without' | null (todos).
+      const cphoto = (body.photo === 'with' || body.photo === 'without') ? body.photo : null;
       if (admin.codes !== null && !admin.codes.length) return json({ ok: true, rows: [] });
       const rows = await sb(env, 'rpc/personnel_incomplete', {
         method: 'POST',
@@ -139,7 +141,7 @@ export async function onRequestPost({ request, env }) {
           p_zone: zone, p_subzone: subzone, p_concept: concept, p_status: cstatus,
           p_limit: 5000,
           p_admin_id: admin.role === 'superadmin' ? null : admin.id,
-          p_type: ctype, p_company: ccompany,
+          p_type: ctype, p_company: ccompany, p_photo: cphoto,
         }),
       });
       return json({ ok: true, rows: withThumbs(env, rows), fields });

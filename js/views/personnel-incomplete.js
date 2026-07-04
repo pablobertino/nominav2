@@ -29,6 +29,7 @@ const FIELDS = [
   { key: 'marital',    label: 'Estado civil', col: 'Estado civil' },
   { key: 'role',       label: 'Cargo',        col: 'Cargo' },
   { key: 'department', label: 'Departamento', col: 'Departamento' },
+  { key: 'photo',      label: 'Foto',         col: 'Foto' },
 ];
 const FIELD_LABEL = Object.fromEntries(FIELDS.map(f => [f.key, f.label]));
 // Por defecto tildados los 5 primeros (Direccion NO).
@@ -77,7 +78,7 @@ function matchesSearch(w, groups) {
 let USER = null;
 let FACETS = null;
 // Estado: campos evaluados + filtros de alcance + resultados.
-let C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '', type: '', company: '' };
+let C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '', type: '', company: '', photo: '' };
 let ROWS = null;   // null = aun no consultado
 // Paginacion en cliente (el export siempre incluye TODO, no la pagina).
 let PAGE = 1;
@@ -185,7 +186,7 @@ export async function renderPersonnelIncomplete(user) {
   ensureStyles();
   $('#pnlMain').innerHTML = `
     <div class="pi-head"><div><h1>Datos incompletos</h1>
-      <p>Personal <b>activo</b> con datos faltantes. Elige qué campos evaluar, refina por alcance y pulsa <b>Generar</b>.</p></div></div>
+      <p>Personal <b>activo</b> con datos faltantes. Elige qué campos evaluar, refina por alcance y pulsa <b>Generar</b>. Para listar por foto, tilda <b>Foto</b> en Campos o usa el filtro <b>Foto</b>.</p></div></div>
     <div class="pi-bar">
       <div class="pi-fields-wrap">
         <button class="pi-fields-btn" id="piFieldsBtn" type="button">
@@ -199,6 +200,7 @@ export async function renderPersonnelIncomplete(user) {
       <div class="pi-filters">
         <span class="fg">Tipo <select id="piType"><option value="">Todos</option></select></span>
         <span class="fg">Empresa <select id="piCompany"><option value="">Todas</option></select></span>
+        <span class="fg">Foto <select id="piPhoto"><option value="">Todas</option><option value="with">Con foto</option><option value="without">Sin foto</option></select></span>
         <span class="fg">Zona <select id="piZone"><option value="">Todas</option></select></span>
         <span class="fg">Subzona <select id="piSubzone"><option value="">Todas</option></select></span>
         <span class="fg">Concepto <select id="piConcept"><option value="">Todos</option></select></span>
@@ -239,6 +241,8 @@ export async function renderPersonnelIncomplete(user) {
   }
   // Empresa (combo), filtrada por el tipo elegido.
   fillCompanySelect($('#piCompany'), companiesFor(C.type), C.company);
+  const phSel = $('#piPhoto');
+  if (phSel) phSel.value = (C.photo === 'with' || C.photo === 'without') ? C.photo : '';
   fillSelect($('#piZone'), FACETS.zones || [], C.zone, 'Todas');
   fillSelect($('#piSubzone'), subzonesFor(C.zone), C.subzone, 'Todas');
   fillSelect($('#piConcept'), FACETS.concepts || [], C.concept, 'Todos');
@@ -267,6 +271,7 @@ export async function renderPersonnelIncomplete(user) {
     fillCompanySelect($('#piCompany'), companiesFor(C.type), '');
   });
   $('#piCompany').addEventListener('change', () => { C.company = $('#piCompany').value; });
+  $('#piPhoto').addEventListener('change', () => { C.photo = $('#piPhoto').value; });
   $('#piZone').addEventListener('change', () => {
     C.zone = $('#piZone').value; C.subzone = '';
     fillSelect($('#piSubzone'), subzonesFor(C.zone), '', 'Todas');
@@ -282,7 +287,7 @@ export async function renderPersonnelIncomplete(user) {
     searchEl.addEventListener('input', () => { C.q = searchEl.value; PAGE = 1; paint(); });
   }
   $('#piClear').addEventListener('click', () => {
-    C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '', type: '', company: '' };
+    C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '', type: '', company: '', photo: '' };
     ROWS = null;
     renderPersonnelIncomplete(USER);
   });
@@ -329,6 +334,7 @@ async function run() {
     zone: C.zone || null, subzone: C.subzone || null,
     concept: C.concept || null, status: C.status || null,
     type: C.type || null, company: C.company || null,
+    photo: C.photo || null,
   });
   ROWS = (r && r.ok) ? (r.rows || []) : [];
   PAGE = 1;
@@ -487,6 +493,7 @@ function exportRows() {
     'Cargo': w.role || '',
     'Estado civil': w.marital_status || '',
     'Departamento': w.department_name || '',
+    'Foto': w.photo_key ? 'Sí' : 'No',
     'Empresa (alias)': w.company_code || '',
     'DataArea': w.data_area || '',
     'Empresa': w.company_name || '',
