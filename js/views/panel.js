@@ -277,7 +277,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.37</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.38</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3764,9 +3764,9 @@ async function viewPeriods(user) {
 
   const genBtn = isSuper && !nextExists
     ? `<button class="btn btn-primary" id="pGen">${I.plus} Generar ${nextYear}</button>` : '';
-  // Boton de gestion de Feriados (solo superadmin). Abre la sub-vista.
-  const ferBtn = isSuper
-    ? `<button class="btn" id="pFeriados" title="Gestionar feriados nacionales y bancarios">${I.calendar || ''} Feriados</button>` : '';
+  // Boton de Feriados: visible para todos. Superadmin gestiona; el resto solo
+  // consulta (la sub-vista se abre en modo lectura).
+  const ferBtn = `<button class="btn" id="pFeriados" title="Ver feriados nacionales y bancarios">${I.calendar || ''} Feriados</button>`;
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head">
@@ -3888,11 +3888,9 @@ async function viewPeriods(user) {
   injectPeriodTimeline($('#pnlMain'));
   load();
 
-  // Boton Feriados -> sub-vista de gestion (solo superadmin).
-  if (isSuper) {
-    const fb = $('#pFeriados');
-    if (fb) fb.addEventListener('click', () => viewHolidays(user));
-  }
+  // Boton Feriados -> sub-vista (todos la ven; superadmin ademas gestiona).
+  const fb = $('#pFeriados');
+  if (fb) fb.addEventListener('click', () => viewHolidays(user));
 }
 
 /* ====================== SUB-VISTA: FERIADOS ======================
@@ -3976,7 +3974,6 @@ function holFmt(iso) { if (!iso) return ''; const [y, m, d] = iso.split('-').map
 
 async function viewHolidays(user) {
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
-  if (!isSuper) { viewPeriods(user); return; }
 
   const yd = await holidaysApi({ action: 'years' });
   const existing = (yd.ok && yd.years.length) ? yd.years.slice() : [];
@@ -3986,7 +3983,7 @@ async function viewHolidays(user) {
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head">
-      <div><h1>Feriados</h1><p>Nacionales y bancarios · gestión (solo superadmin)</p></div>
+      <div><h1>Feriados</h1><p>Nacionales y bancarios${isSuper ? ' · gestión (solo superadmin)' : ' · consulta'}</p></div>
       <div class="pnl-filters" style="margin:0">
         <button class="btn" id="hBack">${I.chevronLeft || ''} Volver al calendario</button>
         <select id="hYear">${years.map(y => `<option ${y === HOL_YEAR ? 'selected' : ''}>${y}</option>`).join('')}</select>
@@ -3995,13 +3992,13 @@ async function viewHolidays(user) {
           <button class="chip ${HOL_FILTER === 'nac' ? 'on' : ''}" data-f="nac">Nacionales</button>
           <button class="chip ${HOL_FILTER === 'ban' ? 'on' : ''}" data-f="ban">Bancarios</button>
         </div>
-        <button class="btn" id="hSuggest">${I.sparkles || ''} Sugerir feriados</button>
-        <button class="btn btn-primary" id="hAdd">${I.plus} Agregar feriado</button>
+        ${isSuper ? `<button class="btn" id="hSuggest">${I.sparkles || ''} Sugerir feriados</button>
+        <button class="btn btn-primary" id="hAdd">${I.plus} Agregar feriado</button>` : ''}
       </div>
     </div>
     <div class="tablebox scroll-x"><table><thead><tr>
       <th>Fecha</th><th>Nombre</th><th>Nacional</th><th>Bancario</th>
-      <th>Ejecución bancaria</th><th>Móvil</th><th style="text-align:right">Acciones</th>
+      <th>Ejecución bancaria</th><th>Móvil</th>${isSuper ? '<th style="text-align:right">Acciones</th>' : ''}
     </tr></thead><tbody id="hBody"></tbody></table></div>
     <p class="muted" style="font-size:12px;margin:14px 2px 0;line-height:1.6"><strong>Nacional</strong>: el comercio cierra (LOTTT) — cuenta para el Plazo Reclamo y demás cálculos de días hábiles. <strong>Bancario</strong>: solo cierra la banca; la nómina igual puede pagarse. <strong>Ejecución bancaria</strong>: cuando un feriado bancario se traslada al lunes siguiente (los “lunes bancarios” de Sudeban). Cambiar un feriado <strong>nacional</strong> recalcula automáticamente el Plazo Reclamo de las quincenas afectadas.</p>`;
 
@@ -4009,21 +4006,25 @@ async function viewHolidays(user) {
   $('#hYear').addEventListener('change', (e) => { HOL_YEAR = parseInt(e.target.value, 10); loadHol(); });
   $('#hFilter').querySelectorAll('.chip').forEach(b =>
     b.addEventListener('click', () => { HOL_FILTER = b.dataset.f; $('#hFilter').querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === b)); loadHol(); }));
-  $('#hAdd').addEventListener('click', () => holEditModal(user, null));
-  $('#hSuggest').addEventListener('click', () => holSuggest(user));
+  if (isSuper) {
+    $('#hAdd').addEventListener('click', () => holEditModal(user, null));
+    $('#hSuggest').addEventListener('click', () => holSuggest(user));
+  }
 
   loadHol();
 
   async function loadHol() {
-    $('#hBody').innerHTML = `<tr><td colspan="7" class="pnl-loading">Cargando…</td></tr>`;
+    const NC = isSuper ? 7 : 6;
+    $('#hBody').innerHTML = `<tr><td colspan="${NC}" class="pnl-loading">Cargando…</td></tr>`;
     const d = await holidaysApi({ action: 'list', year: HOL_YEAR, filter: HOL_FILTER });
-    if (!d.ok) { $('#hBody').innerHTML = `<tr><td colspan="7" class="empty">Error: ${d.error}</td></tr>`; return; }
+    if (!d.ok) { $('#hBody').innerHTML = `<tr><td colspan="${NC}" class="empty">Error: ${d.error}</td></tr>`; return; }
     const rows = d.holidays || [];
     if (!rows.length) {
       const msg = HOL_FILTER === 'nac' ? `Ningún feriado nacional en ${HOL_YEAR}.`
         : HOL_FILTER === 'ban' ? `Ningún feriado bancario en ${HOL_YEAR}.`
-        : `Este año aún no tiene feriados cargados. Usa “Sugerir feriados” para pre-cargarlos.`;
-      $('#hBody').innerHTML = `<tr><td colspan="7" class="empty">${msg}</td></tr>`;
+        : (isSuper ? `Este año aún no tiene feriados cargados. Usa “Sugerir feriados” para pre-cargarlos.`
+                   : `Este año aún no tiene feriados cargados.`);
+      $('#hBody').innerHTML = `<tr><td colspan="${NC}" class="empty">${msg}</td></tr>`;
       return;
     }
     $('#hBody').innerHTML = rows.map(f => `<tr>
@@ -4033,15 +4034,17 @@ async function viewHolidays(user) {
       <td>${f.es_bancario ? '<span class="pill" style="background:#f1f5f9;color:#475569">Bancario</span>' : '<span class="muted">—</span>'}</td>
       <td>${f.fecha_ejecucion ? `<span class="muted">${holFmt(f.fecha_ejecucion)}</span>` : '<span class="muted">—</span>'}</td>
       <td>${f.movil ? '<span class="pill" style="background:#f3e8ff;color:#7c3aed">Móvil</span>' : '<span class="muted">—</span>'}</td>
-      <td style="text-align:right;white-space:nowrap">
+      ${isSuper ? `<td style="text-align:right;white-space:nowrap">
         <button class="btn btn-mini" data-hedit="${f.id}">Editar</button>
         <button class="btn btn-mini" data-hdel="${f.id}" data-hnom="${(f.nombre || '').replace(/"/g, '&quot;')}" data-hnac="${f.es_nacional ? 1 : 0}" data-hfec="${f.fecha}">Eliminar</button>
-      </td>
+      </td>` : ''}
     </tr>`).join('');
-    $('#hBody').querySelectorAll('[data-hedit]').forEach(b =>
-      b.addEventListener('click', () => { const f = rows.find(x => String(x.id) === b.dataset.hedit); holEditModal(user, f); }));
-    $('#hBody').querySelectorAll('[data-hdel]').forEach(b =>
-      b.addEventListener('click', () => holDelete(user, b.dataset.hdel, b.dataset.hnom, b.dataset.hnac === '1', b.dataset.hfec)));
+    if (isSuper) {
+      $('#hBody').querySelectorAll('[data-hedit]').forEach(b =>
+        b.addEventListener('click', () => { const f = rows.find(x => String(x.id) === b.dataset.hedit); holEditModal(user, f); }));
+      $('#hBody').querySelectorAll('[data-hdel]').forEach(b =>
+        b.addEventListener('click', () => holDelete(user, b.dataset.hdel, b.dataset.hnom, b.dataset.hnac === '1', b.dataset.hfec)));
+    }
   }
 
   // Expone loadHol para que los modales refresquen tras guardar.
