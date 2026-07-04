@@ -1,15 +1,19 @@
 /* =====================================================================
    js/views/personnel-search.js  →  vista "Buscar personal"
    Busqueda global de personal por cedula, nombre o CARGO en todas las
-   empresas del alcance del admin, con filtros (criterios) de SEXO, RANGO
-   DE EDAD, ZONA, SUBZONA, CONCEPTO y ESTADO de empresa.
+   empresas del alcance del admin, con filtros (criterios) de TIPO de
+   empresa, EMPRESA, SEXO, RANGO DE EDAD, ZONA, SUBZONA, CONCEPTO y ESTADO
+   de empresa.
 
    La busqueda se ejecuta con el boton "Buscar" (o Enter): los campos son
    CRITERIOS, no filtros en vivo. Cada resultado muestra la empresa donde
-   esta contratado (ALIAS, Razon Social y Zona/Subzona/Concepto cuando
-   aplican). Al tocar un resultado se abre la FICHA del trabajador reusando
-   la vista Personal (renderWorkerPhotos con opts.openCed); al volver se
-   regresa a ESTA busqueda con criterios y resultados intactos.
+   esta contratado (ALIAS + DataArea, Razon Social y Zona/Subzona/Concepto),
+   con su MINIATURA si tiene foto. Resultados ordenados por alias de empresa.
+   Se pagina en cliente (25/50/100); el export incluye SIEMPRE todo.
+
+   Al tocar un resultado se abre la FICHA del trabajador reusando la vista
+   Personal (renderWorkerPhotos con opts.openCed); al volver se regresa a
+   ESTA busqueda con criterios y resultados intactos.
 
    Datos por /api/personnel-search (action 'search' y 'facets').
    Export: renderPersonnelSearch(user)
@@ -37,12 +41,24 @@ function avatarColor(seed) {
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h % AVATAR_BG.length;
 }
+function avatarCell(w) {
+  // Miniatura si hay foto (URL publica directa, esquema por photo_key). Si no,
+  // iniciales de color. onerror quita la img si la URL fallara.
+  if (w.thumb_url) {
+    return `<div class="ps-ava"><img src="${esc(w.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
+  }
+  const ci = avatarColor(w.id_number);
+  return `<div class="ps-ava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>`;
+}
 
 let USER = null;
-let FACETS = null;          // { zones, subzones, concepts, statuses } cache
+let FACETS = null;          // { zones, subzones, concepts, statuses, types, companies } cache
 // Criterios (se conservan al volver de una ficha).
-let C = { q: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
+let C = { q: '', type: '', company: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
 let SEARCH_ROWS = null;     // null = aun no se ha buscado
+// Paginacion en cliente (el export siempre incluye TODO).
+let PAGE = 1;
+let PER = 50;               // 25 | 50 | 100
 
 function ensureStyles() {
   if (document.getElementById('psStyles')) return;
@@ -64,16 +80,25 @@ function ensureStyles() {
   .ps-filters input.age{width:58px}
   .ps-clear{font:inherit;font-size:12.5px;padding:7px 11px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--ink);cursor:pointer}
   .ps-clear:hover{background:var(--bg-soft,#f1f5f9)}
+  .ps-export-wrap{position:relative}
+  .ps-export-btn{font:inherit;font-size:12.5px;padding:7px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--ink);cursor:pointer}
+  .ps-export-btn:hover{background:var(--bg-soft,#f1f5f9)}
+  .ps-export-menu{position:absolute;z-index:30;top:calc(100% + 6px);right:0;min-width:150px;background:var(--card,#fff);border:1px solid var(--border);border-radius:11px;box-shadow:0 8px 28px rgba(15,23,42,.14);padding:6px;display:flex;flex-direction:column;gap:2px}
+  .ps-export-menu[hidden]{display:none}
+  .ps-export-menu button{font:inherit;font-size:13px;text-align:left;padding:9px 11px;border:0;border-radius:8px;background:transparent;color:var(--ink);cursor:pointer}
+  .ps-export-menu button:hover{background:var(--bg-soft,#f1f5f9)}
   .ps-count{color:var(--muted);font-size:12px;margin:6px 2px 10px}
   .ps-list{display:flex;flex-direction:column;gap:8px}
   .ps-row{display:flex;align-items:center;gap:13px;padding:11px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);cursor:pointer;transition:border-color .12s,box-shadow .12s}
   .ps-row:hover{border-color:var(--brand,#2563eb);box-shadow:0 2px 10px rgba(15,23,42,.06)}
-  .ps-ava{width:42px;height:42px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+  .ps-ava{width:42px;height:42px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;overflow:hidden}
+  .ps-ava img{width:100%;height:100%;object-fit:cover;display:block}
   .ps-main{flex:1;min-width:0}
   .ps-name{font-weight:600;color:var(--ink);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ps-sub{color:var(--muted);font-size:12px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ps-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex:none;text-align:right;max-width:46%}
   .ps-emp{font-size:12px;color:var(--brand,#2563eb);font-weight:700;font-family:ui-monospace,Menlo,monospace}
+  .ps-emp .da{color:var(--muted);font-weight:600}
   .ps-empn{font-size:12px;color:var(--ink);font-weight:600;max-width:230px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ps-empmeta{font-size:11px;color:var(--muted);max-width:230px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ps-tags{display:flex;gap:5px;margin-top:3px;flex-wrap:wrap;justify-content:flex-end}
@@ -83,6 +108,16 @@ function ensureStyles() {
   .ps-type{background:#eef2ff;color:#3730a3}
   .ps-cst{background:#f1f5f9;color:#475569}
   .ps-empty,.ps-hint{padding:34px 14px;text-align:center;color:var(--muted)}
+  .ps-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:14px 2px 4px}
+  .ps-pager[hidden]{display:none}
+  .ps-pager .pg-per{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted)}
+  .ps-pager .pg-per select{font:inherit;font-size:12.5px;padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink)}
+  .ps-pager .pg-nav{display:flex;align-items:center;gap:5px}
+  .ps-pager .pg-nav button{min-width:32px;height:32px;padding:0 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);cursor:pointer;font:inherit;font-size:12.5px}
+  .ps-pager .pg-nav button:hover:not(:disabled){background:var(--bg-soft,#f1f5f9)}
+  .ps-pager .pg-nav button:disabled{opacity:.45;cursor:default}
+  .ps-pager .pg-nav button.on{background:var(--brand,#2563eb);color:#fff;border-color:var(--brand,#2563eb)}
+  .ps-pager .pg-info{font-size:12px;color:var(--muted)}
   @media (max-width:640px){ .ps-right{max-width:50%} .ps-empn,.ps-empmeta{max-width:150px} }
   `;
   document.head.appendChild(st);
@@ -96,7 +131,7 @@ async function api(payload) {
 }
 
 function hasCriteria() {
-  return C.q.trim().length >= 2 || C.gender || C.ageMin !== '' || C.ageMax !== ''
+  return C.q.trim().length >= 2 || C.type || C.company || C.gender || C.ageMin !== '' || C.ageMax !== ''
     || C.zone || C.subzone || C.concept || C.status;
 }
 
@@ -107,7 +142,18 @@ function subzonesFor(zoneId) {
   if (!zoneId) return all;
   return all.filter(s => String(s.id).startsWith(zoneId + '_'));
 }
-
+// Empresas del combo, filtradas por el tipo elegido (si hay).
+function companiesFor(type) {
+  const all = (FACETS && FACETS.companies) || [];
+  if (!type) return all;
+  return all.filter(c => c.type === type);
+}
+function fillCompanySelect(sel, items, current) {
+  if (!sel) return;
+  sel.innerHTML = '<option value="">Todas</option>'
+    + items.map(c => `<option value="${esc(c.code)}">${esc(c.code)} · ${esc(c.name)}</option>`).join('');
+  sel.value = items.some(c => String(c.code) === String(current)) ? current : '';
+}
 function fillSelect(sel, items, current, placeholder) {
   if (!sel) return;
   sel.innerHTML = `<option value="">${placeholder}</option>`
@@ -129,6 +175,8 @@ export async function renderPersonnelSearch(user) {
       <button class="ps-go" id="psGo">Buscar</button>
     </div>
     <div class="ps-filters">
+      <span class="fg">Tipo <select id="psType"><option value="">Todos</option></select></span>
+      <span class="fg">Empresa <select id="psCompany"><option value="">Todas</option></select></span>
       <span class="fg">Sexo
         <select id="psGender">
           <option value="">Todos</option>
@@ -146,9 +194,18 @@ export async function renderPersonnelSearch(user) {
       <span class="fg">Concepto <select id="psConcept"><option value="">Todos</option></select></span>
       <span class="fg">Estado <select id="psStatus"><option value="">Todos</option></select></span>
       <button class="ps-clear" id="psClear">Limpiar</button>
+      <div class="ps-export-wrap">
+        <button class="ps-export-btn" id="psExportBtn" type="button">Exportar ▾</button>
+        <div class="ps-export-menu" id="psExportMenu" hidden>
+          <button data-fmt="xlsx">Excel (.xlsx)</button>
+          <button data-fmt="csv">CSV (.csv)</button>
+          <button data-fmt="txt">Texto (.txt)</button>
+        </div>
+      </div>
     </div>
     <div class="ps-count" id="psCount"></div>
-    <div class="ps-list" id="psList"></div>`;
+    <div class="ps-list" id="psList"></div>
+    <div class="ps-pager" id="psPager" hidden></div>`;
 
   // Restaurar valores simples.
   $('#psGender').value = C.gender;
@@ -156,8 +213,17 @@ export async function renderPersonnelSearch(user) {
   // Cargar facetas (una sola vez) y poblar combos.
   if (!FACETS) {
     const r = await api({ action: 'facets', adminId: USER.id });
-    FACETS = (r && r.ok && r.facets) ? r.facets : { zones: [], subzones: [], concepts: [], statuses: [] };
+    FACETS = (r && r.ok && r.facets) ? r.facets : { zones: [], subzones: [], concepts: [], statuses: [], types: [], companies: [] };
   }
+  // Tipo de empresa.
+  const tSel = $('#psType');
+  if (tSel) {
+    tSel.innerHTML = '<option value="">Todos</option>'
+      + (FACETS.types || []).map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('');
+    tSel.value = (FACETS.types || []).includes(C.type) ? C.type : '';
+  }
+  // Empresa (filtrada por tipo).
+  fillCompanySelect($('#psCompany'), companiesFor(C.type), C.company);
   fillSelect($('#psZone'), FACETS.zones || [], C.zone, 'Todas');
   fillSelect($('#psSubzone'), subzonesFor(C.zone), C.subzone, 'Todas');
   fillSelect($('#psConcept'), FACETS.concepts || [], C.concept, 'Todos');
@@ -172,6 +238,12 @@ export async function renderPersonnelSearch(user) {
   const input = $('#psInput');
   input.addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
   $('#psGo').addEventListener('click', runSearch);
+  // Tipo repuebla empresa (solo UI, no busca).
+  $('#psType').addEventListener('change', () => {
+    C.type = $('#psType').value; C.company = '';
+    fillCompanySelect($('#psCompany'), companiesFor(C.type), '');
+  });
+  $('#psCompany').addEventListener('change', () => { C.company = $('#psCompany').value; });
   // Cambiar zona repuebla subzona (solo UI, no busca).
   $('#psZone').addEventListener('change', () => {
     C.zone = $('#psZone').value;
@@ -179,10 +251,18 @@ export async function renderPersonnelSearch(user) {
     fillSelect($('#psSubzone'), subzonesFor(C.zone), '', 'Todas');
   });
   $('#psClear').addEventListener('click', () => {
-    C = { q: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
+    C = { q: '', type: '', company: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
     SEARCH_ROWS = null;
     renderPersonnelSearch(USER);
   });
+
+  // Export.
+  const exBtn = $('#psExportBtn'), exMenu = $('#psExportMenu');
+  exBtn.addEventListener('click', (e) => { e.stopPropagation(); exMenu.hidden = !exMenu.hidden; });
+  exMenu.addEventListener('click', (e) => e.stopPropagation());
+  exMenu.querySelectorAll('button').forEach(b =>
+    b.addEventListener('click', () => { exMenu.hidden = true; doExport(b.dataset.fmt); }));
+  document.addEventListener('click', () => { const em = $('#psExportMenu'); if (em) em.hidden = true; });
 
   // Restaurar resultados previos (al volver de una ficha) o pintar estado inicial.
   paint();
@@ -193,6 +273,8 @@ export async function renderPersonnelSearch(user) {
 // Lee los criterios desde los inputs al estado C.
 function gather() {
   C.q = $('#psInput').value;
+  C.type = $('#psType').value;
+  C.company = $('#psCompany').value;
   C.gender = $('#psGender').value;
   C.ageMin = $('#psAgeMin').value.trim();
   C.ageMax = $('#psAgeMax').value.trim();
@@ -213,35 +295,47 @@ async function runSearch() {
   if (countEl) countEl.textContent = 'Buscando…';
   const r = await api({
     action: 'search', adminId: USER.id,
-    q: C.q, gender: C.gender || null,
+    q: C.q, type: C.type || null, company: C.company || null,
+    gender: C.gender || null,
     age_min: C.ageMin === '' ? null : C.ageMin,
     age_max: C.ageMax === '' ? null : C.ageMax,
     zone: C.zone || null, subzone: C.subzone || null,
     concept: C.concept || null, status: C.status || null,
   });
   SEARCH_ROWS = (r && r.ok) ? (r.rows || []) : [];
+  PAGE = 1;
   paint();
 }
 
 function paint() {
   const list = $('#psList');
   const countEl = $('#psCount');
+  const pager = $('#psPager');
   if (!list) return;
 
   if (SEARCH_ROWS === null) {
     if (countEl) countEl.textContent = '';
+    if (pager) pager.hidden = true;
     list.innerHTML = `<div class="ps-hint">Escribe al menos 2 caracteres o elige un filtro, y pulsa <b>Buscar</b>.</div>`;
     return;
   }
   if (!SEARCH_ROWS.length) {
     if (countEl) countEl.textContent = '';
+    if (pager) pager.hidden = true;
     list.innerHTML = `<div class="ps-empty">Sin coincidencias con esos criterios.</div>`;
     return;
   }
-  if (countEl) countEl.textContent = `${SEARCH_ROWS.length} resultado${SEARCH_ROWS.length === 1 ? '' : 's'}${SEARCH_ROWS.length === 80 ? ' (máx.)' : ''}`;
 
-  list.innerHTML = SEARCH_ROWS.map((w, i) => {
-    const ci = avatarColor(w.id_number);
+  const total = SEARCH_ROWS.length;
+  if (countEl) countEl.textContent = `${total} resultado${total === 1 ? '' : 's'}${total === 100 ? ' (máx.; refina para acotar)' : ''}`;
+
+  // Paginacion en cliente.
+  const pages = Math.max(1, Math.ceil(total / PER));
+  if (PAGE > pages) PAGE = pages;
+  const start = (PAGE - 1) * PER;
+  const pageRows = SEARCH_ROWS.slice(start, start + PER);
+
+  list.innerHTML = pageRows.map((w, i) => {
     const egr = w.end_date || w.is_active === false;
     const estado = egr
       ? '<span class="ps-pill ps-egr">egresado</span>'
@@ -255,14 +349,14 @@ function paint() {
     if (w.age != null) subParts.push(`${w.age} años`);
     // Empresa: zona · subzona · concepto (solo lo que exista).
     const empMeta = [w.zona, w.subzona, w.concepto].filter(Boolean).map(esc).join(' · ');
-    return `<div class="ps-row" data-i="${i}">
-      <div class="ps-ava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>
+    return `<div class="ps-row" data-i="${start + i}">
+      ${avatarCell(w)}
       <div class="ps-main">
         <div class="ps-name">${esc(w.full_name)}</div>
         <div class="ps-sub">${subParts.join(' · ')}</div>
       </div>
       <div class="ps-right">
-        <span class="ps-emp">${esc(w.company_code)}</span>
+        <span class="ps-emp">${esc(w.company_code)}${w.data_area ? ` · <span class="da">${esc(w.data_area)}</span>` : ''}</span>
         <span class="ps-empn">${esc(w.company_name || '')}</span>
         ${empMeta ? `<span class="ps-empmeta">${empMeta}</span>` : ''}
         <div class="ps-tags">${estado}<span class="ps-pill ps-type">${esc(tipo)}</span>${cst}</div>
@@ -272,10 +366,143 @@ function paint() {
 
   list.querySelectorAll('.ps-row').forEach(el =>
     el.addEventListener('click', () => openWorker(SEARCH_ROWS[+el.dataset.i])));
+
+  paintPager(pager, total, pages, start, pageRows.length);
+}
+
+// Paginador (selector 25/50/100 + navegacion).
+function paintPager(pager, total, pages, start, shownCount) {
+  if (!pager) return;
+  pager.hidden = false;
+  const from = total === 0 ? 0 : start + 1;
+  const to = start + shownCount;
+  const nums = [];
+  const push = (n) => { if (n >= 1 && n <= pages && !nums.includes(n)) nums.push(n); };
+  push(1); push(2);
+  for (let n = PAGE - 1; n <= PAGE + 1; n++) push(n);
+  push(pages - 1); push(pages);
+  nums.sort((a, b) => a - b);
+  let btns = '';
+  let prev = 0;
+  for (const n of nums) {
+    if (n - prev > 1) btns += `<span style="color:var(--faint);padding:0 2px">…</span>`;
+    btns += `<button data-pg="${n}" class="${n === PAGE ? 'on' : ''}">${n}</button>`;
+    prev = n;
+  }
+  pager.innerHTML = `
+    <div class="pg-per">Mostrar
+      <select id="psPer">
+        <option value="25" ${PER === 25 ? 'selected' : ''}>25</option>
+        <option value="50" ${PER === 50 ? 'selected' : ''}>50</option>
+        <option value="100" ${PER === 100 ? 'selected' : ''}>100</option>
+      </select> por página
+    </div>
+    <div class="pg-nav">
+      <button data-pg="prev" ${PAGE <= 1 ? 'disabled' : ''}>‹</button>
+      ${btns}
+      <button data-pg="next" ${PAGE >= pages ? 'disabled' : ''}>›</button>
+    </div>
+    <div class="pg-info">${from}–${to} de ${total}</div>`;
+
+  const perSel = pager.querySelector('#psPer');
+  if (perSel) perSel.addEventListener('change', () => { PER = parseInt(perSel.value, 10) || 50; PAGE = 1; paint(); });
+  pager.querySelectorAll('.pg-nav button[data-pg]').forEach(b =>
+    b.addEventListener('click', () => {
+      const v = b.dataset.pg;
+      if (v === 'prev') PAGE = Math.max(1, PAGE - 1);
+      else if (v === 'next') PAGE = Math.min(pages, PAGE + 1);
+      else PAGE = parseInt(v, 10) || 1;
+      paint();
+    }));
 }
 
 function openWorker(w) {
   if (!w) return;
   const mode = NON_STORE_TYPES.has(w.company_type) ? 'enterprise' : 'store';
   renderWorkerPhotos(USER, w.company_code, () => renderPersonnelSearch(USER), { mode, openCed: w.id_number });
+}
+
+/* -------- Exportacion (xlsx / csv / txt). Exporta TODOS los resultados de la
+   busqueda actual (no la pagina). -------- */
+const MARITAL_LABEL = { S: 'Soltero(a)', C: 'Casado(a)', D: 'Divorciado(a)', V: 'Viudo(a)' };
+function exportRows() {
+  const src = SEARCH_ROWS || [];
+  return src.map(w => ({
+    'Cédula': w.id_number || '',
+    'Nombre': w.full_name || '',
+    'Cargo': w.role || '',
+    'Sexo': w.gender || '',
+    'Edad': w.age != null ? w.age : '',
+    'Estado civil': MARITAL_LABEL[w.marital_status] || w.marital_status || '',
+    'Teléfono': w.phone || '',
+    'Correo': w.email || '',
+    'Cuenta banco': w.account_number || '',
+    'Dirección': w.address || '',
+    'Departamento': w.department_name || '',
+    'Estado': (w.end_date || w.is_active === false) ? 'Egresado' : 'Activo',
+    'Empresa (alias)': w.company_code || '',
+    'DataArea': w.data_area || '',
+    'Empresa': w.company_name || '',
+    'Tipo': w.company_type || '',
+    'Zona': w.zona || '',
+    'Subzona': w.subzona || '',
+    'Concepto': w.concepto || '',
+    'Estado empresa': w.company_status || '',
+  }));
+}
+function downloadBlob(content, filename, mime) {
+  const blob = (content instanceof Blob) ? content : new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function tstamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+}
+async function doExport(fmt) {
+  const data = exportRows();
+  if (!data.length) { alert('No hay resultados para exportar. Haz una búsqueda primero.'); return; }
+  const headers = Object.keys(data[0]);
+  const fname = `buscar_personal_${tstamp()}`;
+
+  if (fmt === 'csv') {
+    const escv = (v) => {
+      const s = String(v ?? '');
+      return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lines = [headers.join(';')].concat(data.map(r => headers.map(h => escv(r[h])).join(';')));
+    downloadBlob('\uFEFF' + lines.join('\r\n'), `${fname}.csv`, 'text/csv;charset=utf-8');
+    return;
+  }
+  if (fmt === 'txt') {
+    const widths = headers.map(h => Math.max(h.length, ...data.map(r => String(r[h] ?? '').length)));
+    const fmtRow = (cells) => cells.map((c, i) => String(c ?? '').padEnd(widths[i])).join('  ');
+    const lines = [fmtRow(headers), widths.map(w => '-'.repeat(w)).join('  ')]
+      .concat(data.map(r => fmtRow(headers.map(h => r[h]))));
+    downloadBlob(lines.join('\r\n'), `${fname}.txt`, 'text/plain;charset=utf-8');
+    return;
+  }
+  if (fmt === 'xlsx') {
+    try {
+      if (!window.XLSX) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          s.onload = resolve; s.onerror = () => reject(new Error('No se pudo cargar la librería Excel.'));
+          document.head.appendChild(s);
+        });
+      }
+      const ws = window.XLSX.utils.json_to_sheet(data, { header: headers });
+      const wb = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(wb, ws, 'Buscar personal');
+      window.XLSX.writeFile(wb, `${fname}.xlsx`);
+    } catch (e) {
+      alert(e.message + ' Revisa tu conexión e inténtalo de nuevo.');
+    }
+    return;
+  }
 }

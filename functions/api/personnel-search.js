@@ -31,6 +31,18 @@ async function sb(env, path, opts = {}) {
   return t ? JSON.parse(t) : null;
 }
 
+/* Bucket publico de miniaturas (esquema nuevo por photo_key). La URL es
+   directa y cacheable, sin firmar. Se agrega thumb_url a cada fila que tenga
+   photo_key; el front pinta la miniatura o cae a iniciales si es null. */
+const PUBLIC_THUMB_BUCKET = 'worker-thumbs';
+function thumbUrl(env, photoKey) {
+  if (!photoKey) return null;
+  return `${env.supabase_url}/storage/v1/object/public/${PUBLIC_THUMB_BUCKET}/${photoKey}.jpg`;
+}
+function withThumbs(env, rows) {
+  return (rows || []).map(r => ({ ...r, thumb_url: thumbUrl(env, r.photo_key) }));
+}
+
 /** admin -> { id, role, codes }  codes=null (todas) | array de company_code. */
 async function resolveAdmin(env, adminId) {
   if (!adminId) return null;
@@ -77,7 +89,11 @@ export async function onRequestPost({ request, env }) {
       const subzone = body.subzone ? String(body.subzone) : null;
       const concept = body.concept ? String(body.concept) : null;
       const cstatus = body.status ? String(body.status) : null;
-      const hasFilter = !!(gender || ageMin != null || ageMax != null || zone || subzone || concept || cstatus);
+      // Filtros nuevos: tipo de empresa y empresa puntual (igual que 'incomplete').
+      const KNOWN_TYPES = ['Tienda', 'Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea'];
+      const ctype = (body.type && KNOWN_TYPES.includes(String(body.type))) ? String(body.type) : null;
+      const ccompany = body.company ? String(body.company) : null;
+      const hasFilter = !!(gender || ageMin != null || ageMax != null || zone || subzone || concept || cstatus || ctype || ccompany);
       // Permite buscar por texto (>=2) o solo por filtros.
       if (q.length < 2 && !hasFilter) return json({ ok: true, rows: [], short: true });
       if (admin.codes !== null && !admin.codes.length) return json({ ok: true, rows: [] });
@@ -86,14 +102,15 @@ export async function onRequestPost({ request, env }) {
         body: JSON.stringify({
           p_codes: admin.codes, p_q: q,
           p_gender: gender, p_age_min: ageMin, p_age_max: ageMax,
-          p_zone: zone, p_subzone: subzone, p_concept: concept, p_status: cstatus, p_limit: 80,
+          p_zone: zone, p_subzone: subzone, p_concept: concept, p_status: cstatus, p_limit: 100,
           // Filtro por departamento: para admins con alcance por departamento
           // en una empresa, su personal se limita a esos departamentos.
           // superadmin pasa null (sin restriccion).
           p_admin_id: admin.role === 'superadmin' ? null : admin.id,
+          p_type: ctype, p_company: ccompany,
         }),
       });
-      return json({ ok: true, rows: rows || [] });
+      return json({ ok: true, rows: withThumbs(env, rows) });
     }
 
     if (action === 'incomplete') {
@@ -125,7 +142,7 @@ export async function onRequestPost({ request, env }) {
           p_type: ctype, p_company: ccompany,
         }),
       });
-      return json({ ok: true, rows: rows || [], fields });
+      return json({ ok: true, rows: withThumbs(env, rows), fields });
     }
 
     return json({ ok: false, error: 'Accion desconocida.' }, 400);

@@ -79,6 +79,9 @@ let FACETS = null;
 // Estado: campos evaluados + filtros de alcance + resultados.
 let C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '', type: '', company: '' };
 let ROWS = null;   // null = aun no consultado
+// Paginacion en cliente (el export siempre incluye TODO, no la pagina).
+let PAGE = 1;
+let PER = 50;      // 25 | 50 | 100
 
 function ensureStyles() {
   if (document.getElementById('piStyles')) return;
@@ -119,7 +122,8 @@ function ensureStyles() {
   .pi-list{display:flex;flex-direction:column;gap:8px}
   .pi-row{display:flex;align-items:center;gap:13px;padding:11px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);cursor:pointer;transition:border-color .12s,box-shadow .12s}
   .pi-row:hover{border-color:var(--brand,#2563eb);box-shadow:0 2px 10px rgba(15,23,42,.06)}
-  .pi-ava{width:42px;height:42px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px}
+  .pi-ava{width:42px;height:42px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;overflow:hidden}
+  .pi-ava img{width:100%;height:100%;object-fit:cover;display:block}
   .pi-main{flex:1;min-width:0}
   .pi-name{font-weight:600;color:var(--ink);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .pi-sub{color:var(--muted);font-size:12px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -129,6 +133,15 @@ function ensureStyles() {
   .pi-miss{display:flex;gap:5px;margin-top:2px;flex-wrap:wrap;justify-content:flex-end}
   .pi-tag{display:inline-block;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;background:#fef3c7;color:#92400e;white-space:nowrap}
   .pi-empty,.pi-hint{padding:34px 14px;text-align:center;color:var(--muted)}
+  .pi-pager{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;margin:14px 2px 4px}
+  .pi-pager .pg-per{display:flex;align-items:center;gap:7px;font-size:12.5px;color:var(--muted)}
+  .pi-pager .pg-per select{font:inherit;font-size:12.5px;padding:5px 8px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink)}
+  .pi-pager .pg-nav{display:flex;align-items:center;gap:5px}
+  .pi-pager .pg-nav button{min-width:32px;height:32px;padding:0 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);cursor:pointer;font:inherit;font-size:12.5px}
+  .pi-pager .pg-nav button:hover:not(:disabled){background:var(--bg-soft,#f1f5f9)}
+  .pi-pager .pg-nav button:disabled{opacity:.45;cursor:default}
+  .pi-pager .pg-nav button.on{background:var(--brand,#2563eb);color:#fff;border-color:var(--brand,#2563eb)}
+  .pi-pager .pg-info{font-size:12px;color:var(--muted)}
   `;
   document.head.appendChild(st);
 }
@@ -209,7 +222,8 @@ export async function renderPersonnelIncomplete(user) {
       </div>
     </div>
     <div class="pi-count" id="piCount"></div>
-    <div class="pi-list" id="piList"></div>`;
+    <div class="pi-list" id="piList"></div>
+    <div class="pi-pager" id="piPager" hidden></div>`;
 
   // Facetas (cache) y combos.
   if (!FACETS) {
@@ -265,7 +279,7 @@ export async function renderPersonnelIncomplete(user) {
   const searchEl = $('#piSearch');
   if (searchEl) {
     searchEl.value = C.q || '';
-    searchEl.addEventListener('input', () => { C.q = searchEl.value; paint(); });
+    searchEl.addEventListener('input', () => { C.q = searchEl.value; PAGE = 1; paint(); });
   }
   $('#piClear').addEventListener('click', () => {
     C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '', type: '', company: '' };
@@ -317,24 +331,37 @@ async function run() {
     type: C.type || null, company: C.company || null,
   });
   ROWS = (r && r.ok) ? (r.rows || []) : [];
+  PAGE = 1;
   paint();
+}
+
+function avatarCell(w) {
+  // Miniatura si hay foto (URL publica directa); si no, iniciales de color.
+  if (w.thumb_url) {
+    return `<div class="pi-ava"><img src="${esc(w.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
+  }
+  const ci = avatarColor(w.id_number);
+  return `<div class="pi-ava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>`;
 }
 
 function paint() {
   const list = $('#piList');
   const countEl = $('#piCount');
   const searchBar = $('#piSearchBar');
+  const pager = $('#piPager');
   if (!list) return;
 
   if (ROWS === null) {
     if (countEl) countEl.textContent = '';
     if (searchBar) searchBar.hidden = true;   // sin reporte aun: sin buscador
+    if (pager) pager.hidden = true;
     list.innerHTML = `<div class="pi-hint">Elige los campos a evaluar y pulsa <b>Generar</b>.</div>`;
     return;
   }
   if (!ROWS.length) {
     if (countEl) countEl.textContent = '';
     if (searchBar) searchBar.hidden = true;   // nada que buscar
+    if (pager) pager.hidden = true;
     list.innerHTML = `<div class="pi-empty">Ningún trabajador activo tiene esos campos incompletos. 🎉</div>`;
     return;
   }
@@ -353,33 +380,91 @@ function paint() {
   }
 
   if (!shown.length) {
+    if (pager) pager.hidden = true;
     list.innerHTML = `<div class="pi-empty">Ninguno coincide con la búsqueda.</div>`;
     return;
   }
 
-  list.innerHTML = shown.map((w, i) => {
-    const ci = avatarColor(w.id_number);
+  // Paginacion en cliente sobre 'shown'.
+  const total = shown.length;
+  const pages = Math.max(1, Math.ceil(total / PER));
+  if (PAGE > pages) PAGE = pages;
+  const start = (PAGE - 1) * PER;
+  const pageRows = shown.slice(start, start + PER);
+
+  list.innerHTML = pageRows.map((w, i) => {
     const sub = [`C.I. ${esc(w.id_number)}`];
     if (w.role) sub.push(esc(w.role));
     if (w.department_name) sub.push(esc(w.department_name));
     const empn = [w.company_name, w.zona, w.concepto].filter(Boolean).map(esc).join(' · ');
     const tags = (w.missing || []).map(m => `<span class="pi-tag">falta ${esc(FIELD_LABEL[m] || m)}</span>`).join('');
-    return `<div class="pi-row" data-i="${i}" title="Abrir ficha">
-      <div class="pi-ava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>
+    return `<div class="pi-row" data-i="${start + i}" title="Abrir ficha">
+      ${avatarCell(w)}
       <div class="pi-main">
         <div class="pi-name">${esc(w.full_name)}</div>
         <div class="pi-sub">${sub.join(' · ')}</div>
       </div>
       <div class="pi-right">
-        <span class="pi-emp">${esc(w.company_code)}</span>
+        <span class="pi-emp">${esc(w.company_code)}${w.data_area ? ` · <span style="color:var(--muted);font-weight:600">${esc(w.data_area)}</span>` : ''}</span>
         ${empn ? `<span class="pi-empn">${empn}</span>` : ''}
         <div class="pi-miss">${tags}</div>
       </div>
     </div>`;
   }).join('');
 
+  // Click abre la ficha (indice sobre 'shown').
   list.querySelectorAll('.pi-row').forEach(el =>
     el.addEventListener('click', () => openWorker(shown[+el.dataset.i])));
+
+  paintPager(pager, total, pages, start, pageRows.length);
+}
+
+// Dibuja el paginador (selector 25/50/100 + navegacion). Se oculta si todo
+// cabe en una pagina Y el usuario no cambio el tamano.
+function paintPager(pager, total, pages, start, shownCount) {
+  if (!pager) return;
+  pager.hidden = false;
+  const from = total === 0 ? 0 : start + 1;
+  const to = start + shownCount;
+  // Botones de pagina: primera, ultima y una ventana alrededor de la actual.
+  const nums = [];
+  const push = (n) => { if (n >= 1 && n <= pages && !nums.includes(n)) nums.push(n); };
+  push(1); push(2);
+  for (let n = PAGE - 1; n <= PAGE + 1; n++) push(n);
+  push(pages - 1); push(pages);
+  nums.sort((a, b) => a - b);
+  let btns = '';
+  let prev = 0;
+  for (const n of nums) {
+    if (n - prev > 1) btns += `<span style="color:var(--faint);padding:0 2px">…</span>`;
+    btns += `<button data-pg="${n}" class="${n === PAGE ? 'on' : ''}">${n}</button>`;
+    prev = n;
+  }
+  pager.innerHTML = `
+    <div class="pg-per">Mostrar
+      <select id="piPer">
+        <option value="25" ${PER === 25 ? 'selected' : ''}>25</option>
+        <option value="50" ${PER === 50 ? 'selected' : ''}>50</option>
+        <option value="100" ${PER === 100 ? 'selected' : ''}>100</option>
+      </select> por página
+    </div>
+    <div class="pg-nav">
+      <button data-pg="prev" ${PAGE <= 1 ? 'disabled' : ''}>‹</button>
+      ${btns}
+      <button data-pg="next" ${PAGE >= pages ? 'disabled' : ''}>›</button>
+    </div>
+    <div class="pg-info">${from}–${to} de ${total}</div>`;
+
+  const perSel = pager.querySelector('#piPer');
+  if (perSel) perSel.addEventListener('change', () => { PER = parseInt(perSel.value, 10) || 50; PAGE = 1; paint(); });
+  pager.querySelectorAll('.pg-nav button[data-pg]').forEach(b =>
+    b.addEventListener('click', () => {
+      const v = b.dataset.pg;
+      if (v === 'prev') PAGE = Math.max(1, PAGE - 1);
+      else if (v === 'next') PAGE = Math.min(pages, PAGE + 1);
+      else PAGE = parseInt(v, 10) || 1;
+      paint();
+    }));
 }
 
 // Abre la ficha del trabajador (reusa Personal). Al pulsar Volver en la ficha,
@@ -402,7 +487,8 @@ function exportRows() {
     'Cargo': w.role || '',
     'Estado civil': w.marital_status || '',
     'Departamento': w.department_name || '',
-    'Empresa (código)': w.company_code || '',
+    'Empresa (alias)': w.company_code || '',
+    'DataArea': w.data_area || '',
     'Empresa': w.company_name || '',
     'Tipo': w.company_type || '',
     'Zona': w.zona || '',
