@@ -9,7 +9,10 @@
    CRITERIOS, no filtros en vivo. Cada resultado muestra la empresa donde
    esta contratado (ALIAS + DataArea, Razon Social y Zona/Subzona/Concepto),
    con su MINIATURA si tiene foto. Resultados ordenados por alias de empresa.
-   Se pagina en cliente (25/50/100); el export incluye SIEMPRE todo.
+   Se pagina en cliente (25/50/100). Sobre los resultados ya traidos hay un
+   FILTRO por coma (coma=OR, espacio=AND; sobre nombre/cedula/cargo/depto) que
+   refina en vivo sin volver a buscar; el export respeta ese filtro si esta
+   activo, si no incluye todo.
 
    Al tocar un resultado se abre la FICHA del trabajador reusando la vista
    Personal (renderWorkerPhotos con opts.openCed); al volver se regresa a
@@ -56,9 +59,35 @@ let FACETS = null;          // { zones, subzones, concepts, statuses, types, com
 // Criterios (se conservan al volver de una ficha).
 let C = { q: '', type: '', company: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
 let SEARCH_ROWS = null;     // null = aun no se ha buscado
+// Filtro en cliente sobre los resultados ya traidos (separador por coma, igual
+// que la vista Personal). No dispara busqueda: refina lo que ya esta en pantalla.
+let FQ = '';
 // Paginacion en cliente (el export siempre incluye TODO).
 let PAGE = 1;
 let PER = 50;               // 25 | 50 | 100
+
+/* -------- Filtro en cliente por COMA (mismo criterio que la vista Personal) --
+   Normaliza sin acentos ni enie; separa por COMA en grupos (OR) y por espacio
+   en palabras (AND). Un trabajador coincide si ALGUN grupo tiene TODOS sus
+   tokens en su blob (cedula + nombre + cargo + departamento). Sin texto -> no
+   filtra. */
+function normSearch(s) {
+  return String(s == null ? '' : s)
+    .toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/\u00f1/g, 'n');
+}
+function parseSearchGroups(q) {
+  return normSearch(q)
+    .split(',')
+    .map(g => g.split(/\s+/).filter(Boolean))
+    .filter(g => g.length);
+}
+function matchesSearch(w, groups) {
+  if (!groups.length) return true;
+  const blob = normSearch(`${w.id_number || ''} ${w.full_name || ''} ${w.role || ''} ${w.department_name || ''}`);
+  return groups.some(tokens => tokens.every(t => blob.includes(t)));
+}
 
 function ensureStyles() {
   if (document.getElementById('psStyles')) return;
@@ -88,6 +117,11 @@ function ensureStyles() {
   .ps-export-menu button{font:inherit;font-size:13px;text-align:left;padding:9px 11px;border:0;border-radius:8px;background:transparent;color:var(--ink);cursor:pointer}
   .ps-export-menu button:hover{background:var(--bg-soft,#f1f5f9)}
   .ps-count{color:var(--muted);font-size:12px;margin:6px 2px 10px}
+  .ps-filterbar{margin:2px 0 10px}
+  .ps-filterbar[hidden]{display:none}
+  .ps-filterbar .fb{display:flex;align-items:center;gap:8px;max-width:460px;padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+  .ps-filterbar svg{flex:none;color:var(--muted)}
+  .ps-filterbar input{flex:1;font:inherit;font-size:13.5px;border:0;background:transparent;color:var(--ink);outline:none}
   .ps-list{display:flex;flex-direction:column;gap:8px}
   .ps-row{display:flex;align-items:center;gap:13px;padding:11px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);cursor:pointer;transition:border-color .12s,box-shadow .12s}
   .ps-row:hover{border-color:var(--brand,#2563eb);box-shadow:0 2px 10px rgba(15,23,42,.06)}
@@ -204,6 +238,12 @@ export async function renderPersonnelSearch(user) {
       </div>
     </div>
     <div class="ps-count" id="psCount"></div>
+    <div class="ps-filterbar" id="psFilterBar" hidden>
+      <div class="fb">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="psFilter" type="text" placeholder="Filtrar resultados por nombre, cédula, cargo o depto. (separa con coma)…" autocomplete="off">
+      </div>
+    </div>
     <div class="ps-list" id="psList"></div>
     <div class="ps-pager" id="psPager" hidden></div>`;
 
@@ -252,6 +292,7 @@ export async function renderPersonnelSearch(user) {
   });
   $('#psClear').addEventListener('click', () => {
     C = { q: '', type: '', company: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
+    FQ = '';
     SEARCH_ROWS = null;
     renderPersonnelSearch(USER);
   });
@@ -263,6 +304,13 @@ export async function renderPersonnelSearch(user) {
   exMenu.querySelectorAll('button').forEach(b =>
     b.addEventListener('click', () => { exMenu.hidden = true; doExport(b.dataset.fmt); }));
   document.addEventListener('click', () => { const em = $('#psExportMenu'); if (em) em.hidden = true; });
+
+  // Filtro en cliente por coma (refina los resultados ya traidos, no busca).
+  const filterEl = $('#psFilter');
+  if (filterEl) {
+    filterEl.value = FQ || '';
+    filterEl.addEventListener('input', () => { FQ = filterEl.value; PAGE = 1; paint(); });
+  }
 
   // Restaurar resultados previos (al volver de una ficha) o pintar estado inicial.
   paint();
@@ -303,6 +351,7 @@ async function runSearch() {
     concept: C.concept || null, status: C.status || null,
   });
   SEARCH_ROWS = (r && r.ok) ? (r.rows || []) : [];
+  FQ = '';
   PAGE = 1;
   paint();
 }
@@ -311,29 +360,49 @@ function paint() {
   const list = $('#psList');
   const countEl = $('#psCount');
   const pager = $('#psPager');
+  const filterBar = $('#psFilterBar');
   if (!list) return;
 
   if (SEARCH_ROWS === null) {
     if (countEl) countEl.textContent = '';
     if (pager) pager.hidden = true;
+    if (filterBar) filterBar.hidden = true;
     list.innerHTML = `<div class="ps-hint">Escribe al menos 2 caracteres o elige un filtro, y pulsa <b>Buscar</b>.</div>`;
     return;
   }
   if (!SEARCH_ROWS.length) {
     if (countEl) countEl.textContent = '';
     if (pager) pager.hidden = true;
+    if (filterBar) filterBar.hidden = true;
     list.innerHTML = `<div class="ps-empty">Sin coincidencias con esos criterios.</div>`;
     return;
   }
 
-  const total = SEARCH_ROWS.length;
-  if (countEl) countEl.textContent = `${total} resultado${total === 1 ? '' : 's'}${total === 5000 ? ' (máx.; refina para acotar)' : ''}`;
+  // Hay resultados: mostrar el filtro por coma y aplicarlo en cliente.
+  if (filterBar) filterBar.hidden = false;
+  const groups = parseSearchGroups(FQ || '');
+  const shown = groups.length ? SEARCH_ROWS.filter(w => matchesSearch(w, groups)) : SEARCH_ROWS;
 
-  // Paginacion en cliente.
+  const totalAll = SEARCH_ROWS.length;
+  const total = shown.length;
+  if (countEl) {
+    const capNote = totalAll === 5000 ? ' (máx.; refina para acotar)' : '';
+    countEl.textContent = groups.length
+      ? `${total} de ${totalAll} resultado${totalAll === 1 ? '' : 's'}${capNote}`
+      : `${totalAll} resultado${totalAll === 1 ? '' : 's'}${capNote}`;
+  }
+
+  if (!total) {
+    if (pager) pager.hidden = true;
+    list.innerHTML = `<div class="ps-empty">Ninguno coincide con el filtro.</div>`;
+    return;
+  }
+
+  // Paginacion en cliente sobre el conjunto filtrado.
   const pages = Math.max(1, Math.ceil(total / PER));
   if (PAGE > pages) PAGE = pages;
   const start = (PAGE - 1) * PER;
-  const pageRows = SEARCH_ROWS.slice(start, start + PER);
+  const pageRows = shown.slice(start, start + PER);
 
   list.innerHTML = pageRows.map((w, i) => {
     const egr = w.end_date || w.is_active === false;
@@ -364,8 +433,9 @@ function paint() {
     </div>`;
   }).join('');
 
+  // Click abre la ficha (indice sobre el conjunto filtrado 'shown').
   list.querySelectorAll('.ps-row').forEach(el =>
-    el.addEventListener('click', () => openWorker(SEARCH_ROWS[+el.dataset.i])));
+    el.addEventListener('click', () => openWorker(shown[+el.dataset.i])));
 
   paintPager(pager, total, pages, start, pageRows.length);
 }
@@ -422,11 +492,12 @@ function openWorker(w) {
   renderWorkerPhotos(USER, w.company_code, () => renderPersonnelSearch(USER), { mode, openCed: w.id_number });
 }
 
-/* -------- Exportacion (xlsx / csv / txt). Exporta TODOS los resultados de la
-   busqueda actual (no la pagina). -------- */
+/* -------- Exportacion (xlsx / csv / txt). Si hay filtro por coma activo,
+   exporta lo filtrado; si no, TODOS los resultados de la busqueda. -------- */
 const MARITAL_LABEL = { S: 'Soltero(a)', C: 'Casado(a)', D: 'Divorciado(a)', V: 'Viudo(a)' };
 function exportRows() {
-  const src = SEARCH_ROWS || [];
+  const groups = parseSearchGroups(FQ || '');
+  const src = groups.length ? (SEARCH_ROWS || []).filter(w => matchesSearch(w, groups)) : (SEARCH_ROWS || []);
   return src.map(w => ({
     'Cédula': w.id_number || '',
     'Nombre': w.full_name || '',
