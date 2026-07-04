@@ -154,7 +154,21 @@ export async function onRequestPost({ request, env }) {
           prev = { name: prevRows[0].name, pay_date: prevRows[0].pay_date, claim_deadline: prevRows[0].claim_deadline };
         }
       }
-      return json({ ok: true, today, period, prev });
+      // Feriados NACIONALES dentro del eje visible de la barra (desde el inicio
+      // de la quincena hasta el dia de pago). La timeline los marca como puntos
+      // pequenos. Solo nacionales: son los que afectan el calculo. Rango
+      // ampliado al pago anterior por si la barra arranca antes.
+      let holidays = [];
+      if (period) {
+        const axisStart = (prev && prev.pay_date) ? prev.pay_date : period.range_start;
+        const axisEnd = period.pay_date;
+        try {
+          const fer = await sb(env,
+            `feriado?es_nacional=eq.true&fecha=gte.${axisStart}&fecha=lte.${axisEnd}&order=fecha&select=fecha,nombre`);
+          holidays = (fer || []).map(f => ({ fecha: f.fecha, nombre: f.nombre }));
+        } catch { holidays = []; }
+      }
+      return json({ ok: true, today, period, prev, holidays });
     }
 
     // ---- Escritura: solo superadmin ----

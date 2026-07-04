@@ -76,6 +76,18 @@ function tlEnsureStyles() {
   .tl-mk.claim .tl-lbl .n{color:#7f77dd;font-weight:700}
   .tl-mk.claim.closed .tl-lbl .d{color:var(--muted,#64748b)}
   .tl-mk.claim.closed .tl-lbl .n{color:var(--faint,#94a3b8)}
+  /* Feriado NACIONAL dentro del eje: punto pequeno negro sobre la barra, sin
+     etiqueta (no compite con los hitos). Tooltip con dia + nombre al pasar. */
+  .tl-fer{position:absolute;top:50%;transform:translate(-50%,-50%);width:10px;height:10px;
+    border-radius:50%;background:#1e293b;border:2px solid var(--surface);box-shadow:0 0 0 1px #64748b;
+    z-index:5;cursor:help}
+  .tl-fer:hover{transform:translate(-50%,-50%) scale(1.35)}
+  .tl-fer .tl-fer-tip{position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);
+    background:#0f172a;color:#fff;font-size:11px;font-weight:500;padding:5px 10px;border-radius:7px;
+    white-space:nowrap;opacity:0;pointer-events:none;transition:opacity .12s;z-index:12}
+  .tl-fer .tl-fer-tip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);
+    border:5px solid transparent;border-top-color:#0f172a}
+  .tl-fer:hover .tl-fer-tip{opacity:1}
   .tl-mk.act .tl-ic{transform:scale(1.12)}
   .tl-mk.act.calc .tl-ic{border-color:#b45309;background:#f59e0b;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 7px #fde68a}
   .tl-mk.act.cut  .tl-ic{border-color:#1e40af;background:#3b82f6;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 7px #bfdbfe}
@@ -107,7 +119,7 @@ function tlCountdown(todayISO, payISO) {
   return { txt: `Pago realizado · período en cierre`, cls: '' };
 }
 
-function tlHtml(period, todayISO, prev) {
+function tlHtml(period, todayISO, prev, holidays) {
   const startISO = period.range_start;
   const endISO = period.pay_date;       // el eje termina en el dia de pago
   const hitos = [
@@ -173,6 +185,17 @@ function tlHtml(period, todayISO, prev) {
       <div class="tl-lbl"><span class="d">${tlDiaDM(h.iso)}</span><span class="n">${h.name}</span></div>
     </div>`;
   }).join('');
+
+  // Puntos de feriados NACIONALES dentro del eje. Solo los que caen en el
+  // rango visible [startISO..endISO]. Sin etiqueta; el nombre va en el tooltip.
+  const ferDots = (holidays || [])
+    .filter(f => f.fecha && tlBetween(startISO, f.fecha) >= 0 && tlBetween(f.fecha, endISO) >= 0)
+    .map(f => {
+      const p = tlPos(f.fecha, startISO, endISO) * 100;
+      return `<div class="tl-fer" style="left:${p}%">
+        <div class="tl-fer-tip">${tlDiaDM(f.fecha)} : ${f.nombre}</div>
+      </div>`;
+    }).join('');
   return `<div class="tl">
     <div class="tl-top">
       <div class="tl-title">Quincena en curso <small>${period.name} · ${tlDM(period.range_start)} al ${tlDM(period.range_end)}</small></div>
@@ -182,7 +205,7 @@ function tlHtml(period, todayISO, prev) {
       <div class="tl-track">
         <div class="tl-fill" style="width:${todayPos}%"></div>
         ${claimSeg}
-        ${prevMk}${claimMk}${mks}
+        ${prevMk}${claimMk}${ferDots}${mks}
         <div class="tl-today ${onHito ? 'on-hito' : ''}" style="left:${todayPos}%">
           <div class="bub">HOY · ${tlDiaDM(todayISO)}</div>
           <div class="stem"></div>
@@ -216,7 +239,7 @@ export async function injectPeriodTimeline(host) {
   tlEnsureStyles();
   const el = document.createElement('div');
   el.id = 'periodTimeline';
-  el.innerHTML = tlHtml(p, data.today, data.prev || null);
+  el.innerHTML = tlHtml(p, data.today, data.prev || null, data.holidays || []);
   // Evitar duplicados si se re-renderiza.
   const prev = host.querySelector('#periodTimeline');
   if (prev) prev.remove();

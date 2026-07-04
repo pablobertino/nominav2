@@ -277,7 +277,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.36</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.37</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3764,6 +3764,9 @@ async function viewPeriods(user) {
 
   const genBtn = isSuper && !nextExists
     ? `<button class="btn btn-primary" id="pGen">${I.plus} Generar ${nextYear}</button>` : '';
+  // Boton de gestion de Feriados (solo superadmin). Abre la sub-vista.
+  const ferBtn = isSuper
+    ? `<button class="btn" id="pFeriados" title="Gestionar feriados nacionales y bancarios">${I.calendar || ''} Feriados</button>` : '';
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head">
@@ -3779,6 +3782,7 @@ async function viewPeriods(user) {
             <button data-fmt="txt">Texto (.txt)</button>
           </div>
         </div>
+        ${ferBtn}
         ${genBtn}
       </div>
     </div>
@@ -3883,6 +3887,255 @@ async function viewPeriods(user) {
   // Linea de tiempo de la quincena vigente, arriba de la tabla de Quincenas.
   injectPeriodTimeline($('#pnlMain'));
   load();
+
+  // Boton Feriados -> sub-vista de gestion (solo superadmin).
+  if (isSuper) {
+    const fb = $('#pFeriados');
+    if (fb) fb.addEventListener('click', () => viewHolidays(user));
+  }
+}
+
+/* ====================== SUB-VISTA: FERIADOS ======================
+   Gestion de nomina_v2.feriado (solo superadmin). Se abre desde el boton
+   "Feriados" de la vista Quincenas y la reemplaza; el boton "Volver"
+   regresa a Quincenas. Lista con filtro Todos/Nacionales/Bancarios, alta y
+   edicion via modal, y un boton "Sugerir" que pre-carga el anio con las
+   fechas fijas + las moviles calculadas con el algoritmo de Pascua
+   (Computus), sin dependencias externas. Los cambios sobre feriados
+   nacionales recalculan el Plazo Reclamo en el backend. */
+
+let HOL_YEAR = null;
+let HOL_FILTER = 'all';
+
+async function holidaysApi(payload) {
+  try {
+    const r = await fetch('/api/holidays', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    return await r.json();
+  } catch (e) { return { ok: false, error: String(e.message || e) }; }
+}
+
+/* ---- Computus (Meeus/Jones/Butcher): Domingo de Pascua gregoriana ----
+   Sin dependencias. De la Pascua salen las moviles por desplazamiento. */
+function holEaster(anio) {
+  const a = anio % 19, b = Math.floor(anio / 100), c = anio % 100;
+  const d = Math.floor(b / 4), e = b % 4;
+  const f = Math.floor((b + 8) / 25), g = Math.floor((b - f + 1) / 3);
+  const h = (19 * a + b - d - g + 15) % 30, i = Math.floor(c / 4), k = c % 4;
+  const l = (32 + 2 * e + 2 * i - h - k) % 7, m = Math.floor((a + 11 * h + 22 * l) / 451);
+  const mes = Math.floor((h + l - 7 * m + 114) / 31), dia = ((h + l - 7 * m + 114) % 31) + 1;
+  return new Date(Date.UTC(anio, mes - 1, dia));
+}
+function holAddDays(f, n) { const x = new Date(f); x.setUTCDate(x.getUTCDate() + n); return x; }
+function holIso(f) { return f.toISOString().slice(0, 10); }
+
+// Feriados FIJOS de Venezuela con sus flags Sudeban. [mesDia, nombre, nac, ban]
+const HOL_FIJOS = [
+  ['01-01', 'Año Nuevo', true, true],
+  ['01-06', 'Día de Reyes', false, true],
+  ['01-14', 'Día de la Divina Pastora', false, true],
+  ['03-19', 'Día de San José', false, true],
+  ['05-01', 'Día del Trabajador', true, true],
+  ['06-24', 'Batalla de Carabobo', true, true],
+  ['06-29', 'San Pedro y San Pablo', false, true],
+  ['07-05', 'Día de la Independencia', true, true],
+  ['07-24', 'Natalicio del Libertador', true, true],
+  ['09-11', 'Virgen de Coromoto', false, true],
+  ['10-12', 'Día de la Resistencia Indígena', true, true],
+  ['10-26', 'San José Gregorio Hernández', false, true],
+  ['11-18', 'Virgen de Chiquinquirá', false, true],
+  ['12-08', 'Inmaculada Concepción', false, true],
+  ['12-24', 'Nochebuena', false, true],
+  ['12-25', 'Navidad', true, true],
+  ['12-31', 'Fin de Año', false, true],
+];
+
+// Genera todos los feriados de un anio: fijos + moviles (Computus).
+// Devuelve objetos {fecha, nombre, es_nacional, es_bancario, movil}.
+function holGenerar(anio) {
+  const out = HOL_FIJOS.map(([md, nombre, nac, ban]) =>
+    ({ fecha: anio + '-' + md, nombre, es_nacional: nac, es_bancario: ban, movil: false }));
+  const p = holEaster(anio);
+  [
+    [holAddDays(p, -48), 'Lunes de Carnaval', true, true],
+    [holAddDays(p, -47), 'Martes de Carnaval', true, true],
+    [holAddDays(p, -3), 'Jueves Santo', true, true],
+    [holAddDays(p, -2), 'Viernes Santo', true, true],
+    [holAddDays(p, 60), 'Corpus Christi', false, true],
+  ].forEach(([f, nombre, nac, ban]) =>
+    out.push({ fecha: holIso(f), nombre, es_nacional: nac, es_bancario: ban, movil: true }));
+  out.sort((a, b) => a.fecha < b.fecha ? -1 : 1);
+  return out;
+}
+
+const HOL_DOW = ['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa'];
+function holDow(iso) { const [y, m, d] = iso.split('-').map(Number); return HOL_DOW[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]; }
+function holFmt(iso) { if (!iso) return ''; const [y, m, d] = iso.split('-').map(Number); return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`; }
+
+async function viewHolidays(user) {
+  const isSuper = user.kind === 'admin' && user.role === 'superadmin';
+  if (!isSuper) { viewPeriods(user); return; }
+
+  const yd = await holidaysApi({ action: 'years' });
+  const existing = (yd.ok && yd.years.length) ? yd.years.slice() : [];
+  const thisYear = new Date().getFullYear();
+  const years = [...new Set([...existing, thisYear, thisYear + 1])].sort();
+  if (!HOL_YEAR || !years.includes(HOL_YEAR)) HOL_YEAR = existing.includes(thisYear) ? thisYear : (existing.length ? existing[existing.length - 1] : thisYear);
+
+  $('#pnlMain').innerHTML = `
+    <div class="pnl-head">
+      <div><h1>Feriados</h1><p>Nacionales y bancarios · gestión (solo superadmin)</p></div>
+      <div class="pnl-filters" style="margin:0">
+        <button class="btn" id="hBack">${I.chevronLeft || ''} Volver al calendario</button>
+        <select id="hYear">${years.map(y => `<option ${y === HOL_YEAR ? 'selected' : ''}>${y}</option>`).join('')}</select>
+        <div class="chip-row" id="hFilter" style="margin:0">
+          <button class="chip ${HOL_FILTER === 'all' ? 'on' : ''}" data-f="all">Todos</button>
+          <button class="chip ${HOL_FILTER === 'nac' ? 'on' : ''}" data-f="nac">Nacionales</button>
+          <button class="chip ${HOL_FILTER === 'ban' ? 'on' : ''}" data-f="ban">Bancarios</button>
+        </div>
+        <button class="btn" id="hSuggest">${I.sparkles || ''} Sugerir feriados</button>
+        <button class="btn btn-primary" id="hAdd">${I.plus} Agregar feriado</button>
+      </div>
+    </div>
+    <div class="tablebox scroll-x"><table><thead><tr>
+      <th>Fecha</th><th>Nombre</th><th>Nacional</th><th>Bancario</th>
+      <th>Ejecución bancaria</th><th>Móvil</th><th style="text-align:right">Acciones</th>
+    </tr></thead><tbody id="hBody"></tbody></table></div>
+    <p class="muted" style="font-size:12px;margin:14px 2px 0;line-height:1.6"><strong>Nacional</strong>: el comercio cierra (LOTTT) — cuenta para el Plazo Reclamo y demás cálculos de días hábiles. <strong>Bancario</strong>: solo cierra la banca; la nómina igual puede pagarse. <strong>Ejecución bancaria</strong>: cuando un feriado bancario se traslada al lunes siguiente (los “lunes bancarios” de Sudeban). Cambiar un feriado <strong>nacional</strong> recalcula automáticamente el Plazo Reclamo de las quincenas afectadas.</p>`;
+
+  $('#hBack').addEventListener('click', () => viewPeriods(user));
+  $('#hYear').addEventListener('change', (e) => { HOL_YEAR = parseInt(e.target.value, 10); loadHol(); });
+  $('#hFilter').querySelectorAll('.chip').forEach(b =>
+    b.addEventListener('click', () => { HOL_FILTER = b.dataset.f; $('#hFilter').querySelectorAll('.chip').forEach(x => x.classList.toggle('on', x === b)); loadHol(); }));
+  $('#hAdd').addEventListener('click', () => holEditModal(user, null));
+  $('#hSuggest').addEventListener('click', () => holSuggest(user));
+
+  loadHol();
+
+  async function loadHol() {
+    $('#hBody').innerHTML = `<tr><td colspan="7" class="pnl-loading">Cargando…</td></tr>`;
+    const d = await holidaysApi({ action: 'list', year: HOL_YEAR, filter: HOL_FILTER });
+    if (!d.ok) { $('#hBody').innerHTML = `<tr><td colspan="7" class="empty">Error: ${d.error}</td></tr>`; return; }
+    const rows = d.holidays || [];
+    if (!rows.length) {
+      const msg = HOL_FILTER === 'nac' ? `Ningún feriado nacional en ${HOL_YEAR}.`
+        : HOL_FILTER === 'ban' ? `Ningún feriado bancario en ${HOL_YEAR}.`
+        : `Este año aún no tiene feriados cargados. Usa “Sugerir feriados” para pre-cargarlos.`;
+      $('#hBody').innerHTML = `<tr><td colspan="7" class="empty">${msg}</td></tr>`;
+      return;
+    }
+    $('#hBody').innerHTML = rows.map(f => `<tr>
+      <td class="code">${holFmt(f.fecha)} <span class="muted" style="font-size:11px">${holDow(f.fecha)}</span></td>
+      <td>${f.nombre}</td>
+      <td>${f.es_nacional ? '<span class="pill" style="background:#dbeafe;color:#1e40af">Nacional</span>' : '<span class="muted">—</span>'}</td>
+      <td>${f.es_bancario ? '<span class="pill" style="background:#f1f5f9;color:#475569">Bancario</span>' : '<span class="muted">—</span>'}</td>
+      <td>${f.fecha_ejecucion ? `<span class="muted">${holFmt(f.fecha_ejecucion)}</span>` : '<span class="muted">—</span>'}</td>
+      <td>${f.movil ? '<span class="pill" style="background:#f3e8ff;color:#7c3aed">Móvil</span>' : '<span class="muted">—</span>'}</td>
+      <td style="text-align:right;white-space:nowrap">
+        <button class="btn btn-mini" data-hedit="${f.id}">Editar</button>
+        <button class="btn btn-mini" data-hdel="${f.id}" data-hnom="${(f.nombre || '').replace(/"/g, '&quot;')}" data-hnac="${f.es_nacional ? 1 : 0}" data-hfec="${f.fecha}">Eliminar</button>
+      </td>
+    </tr>`).join('');
+    $('#hBody').querySelectorAll('[data-hedit]').forEach(b =>
+      b.addEventListener('click', () => { const f = rows.find(x => String(x.id) === b.dataset.hedit); holEditModal(user, f); }));
+    $('#hBody').querySelectorAll('[data-hdel]').forEach(b =>
+      b.addEventListener('click', () => holDelete(user, b.dataset.hdel, b.dataset.hnom, b.dataset.hnac === '1', b.dataset.hfec)));
+  }
+
+  // Expone loadHol para que los modales refresquen tras guardar.
+  viewHolidays._reload = loadHol;
+}
+
+// Modal de alta/edicion de un feriado. f=null para alta.
+function holEditModal(user, f) {
+  const isEdit = !!f;
+  openModal(`
+    <div class="modal-head"><span>${isEdit ? 'Editar' : 'Agregar'} feriado</span><button class="modal-x" id="mX">✕</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 14px">Los campos nacional/bancario definen cómo afecta a los cálculos.</p>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+      <div><label class="flabel">Fecha</label><input type="date" id="hFecha" value="${isEdit ? f.fecha : ''}"></div>
+      <div><label class="flabel">Ejecución bancaria <span class="muted">(opcional)</span></label><input type="date" id="hEjec" value="${isEdit && f.fecha_ejecucion ? f.fecha_ejecucion : ''}"></div>
+    </div>
+    <label class="flabel" style="margin-top:12px">Nombre</label>
+    <input type="text" id="hNombre" value="${isEdit ? (f.nombre || '').replace(/"/g, '&quot;') : ''}" placeholder="ej. Día de la Independencia">
+    <div style="display:flex;gap:20px;margin-top:14px">
+      <label class="flabel" style="display:flex;align-items:center;gap:7px;margin:0"><input type="checkbox" id="hNac" ${isEdit && f.es_nacional ? 'checked' : ''}> Nacional</label>
+      <label class="flabel" style="display:flex;align-items:center;gap:7px;margin:0"><input type="checkbox" id="hBan" ${isEdit && f.es_bancario ? 'checked' : ''}> Bancario</label>
+      <label class="flabel" style="display:flex;align-items:center;gap:7px;margin:0"><input type="checkbox" id="hMov" ${isEdit && f.movil ? 'checked' : ''}> Móvil</label>
+    </div>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Guardar</button>
+    </div>`);
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const payload = {
+      action: isEdit ? 'update' : 'create', adminId: user.id,
+      fecha: $('#hFecha').value, fecha_ejecucion: $('#hEjec').value || null,
+      nombre: $('#hNombre').value, es_nacional: $('#hNac').checked,
+      es_bancario: $('#hBan').checked, movil: $('#hMov').checked,
+    };
+    if (isEdit) payload.id = f.id;
+    if (!payload.fecha || !payload.nombre.trim()) { alert('La fecha y el nombre son obligatorios.'); return; }
+    const d = await holidaysApi(payload);
+    if (!d.ok) { alert(d.error); return; }
+    closeModal();
+    if (viewHolidays._reload) viewHolidays._reload();
+  });
+}
+
+// Confirmacion de borrado (modal, cierra solo con boton).
+function holDelete(user, id, nombre, esNac, fecha) {
+  openModal(`
+    <div class="modal-head"><span>Eliminar feriado</span></div>
+    <p style="font-size:13.5px;color:var(--ink-soft,#334155);margin:10px 0 0;line-height:1.55">Vas a eliminar <b>“${nombre}”</b> (${holFmt(fecha)}).${esNac ? '<br><br>Es un feriado <b>nacional</b>: al eliminarlo se recalculará el Plazo Reclamo de las quincenas afectadas.' : ''}<br><br>¿Continuar?</p>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-ghost-danger" id="mOk">Eliminar</button>
+    </div>`);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const d = await holidaysApi({ action: 'delete', adminId: user.id, id });
+    if (!d.ok) { alert(d.error); return; }
+    closeModal();
+    if (viewHolidays._reload) viewHolidays._reload();
+  });
+}
+
+// "Sugerir feriados": pre-carga el anio con fijos + moviles (Computus). Solo
+// agrega los que faltan (por fecha+nombre); nunca pisa los existentes. Cada
+// alta va por el endpoint create. Los flags vienen prellenados segun Sudeban;
+// el superadmin los revisa y completa los lunes bancarios a mano.
+function holSuggest(user) {
+  const anio = HOL_YEAR;
+  openModal(`
+    <div class="modal-head"><span>Sugerir feriados de ${anio}</span></div>
+    <p style="font-size:13px;color:var(--ink-soft,#334155);margin:10px 0 0;line-height:1.55">Se completarán los feriados que <b>falten</b> en ${anio}: los <b>fijos</b> de Venezuela y los <b>móviles</b> (Carnaval, Semana Santa y Corpus) calculados con el algoritmo de Pascua gregoriana. No se toca ningún feriado ya cargado.<br><br>Los flags <b>nacional/bancario</b> vienen prellenados según Sudeban; revísalos y completa a mano los <b>lunes bancarios</b> (fecha de ejecución).</p>
+    <div class="modal-actions">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Completar faltantes</button>
+    </div>`);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const btn = $('#mOk'); btn.disabled = true; btn.textContent = 'Cargando…';
+    // Traer lo existente para no duplicar.
+    const cur = await holidaysApi({ action: 'list', year: anio, filter: 'all' });
+    const have = new Set(((cur.ok && cur.holidays) || []).map(h => h.fecha + '|' + h.nombre));
+    const props = holGenerar(anio).filter(h => !have.has(h.fecha + '|' + h.nombre));
+    let added = 0, failed = 0;
+    for (const h of props) {
+      const d = await holidaysApi({ action: 'create', adminId: user.id, ...h, fecha_ejecucion: null });
+      if (d.ok) added++; else failed++;
+    }
+    closeModal();
+    if (viewHolidays._reload) viewHolidays._reload();
+    alert(added
+      ? `Se agregaron ${added} feriados${failed ? ` (${failed} no se pudieron crear)` : ''}. Revisa los flags y completa los lunes bancarios.`
+      : 'No faltaba ninguno: el año ya tiene todos los feriados fijos y móviles.');
+  });
 }
 
 /* Exportación de la grilla de Quincenas (xlsx / csv / txt) */
