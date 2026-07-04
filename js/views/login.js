@@ -79,22 +79,61 @@ function template() {
         <p id="versionTag" class="version-tag">v${CONFIG.version}</p>
       </div>
 
-      <!-- Vista: recuperación de contraseña -->
+      <!-- Vista: recuperación de contraseña (paso 1: pedir enlace) -->
       <div id="recoverView" style="display:none">
         <button id="backBtn" type="button" class="recover-back">← Volver</button>
         <p class="recover-title">Recuperar acceso</p>
 
-        <div class="notice notice-info">
-          <span class="ico">${ICONS.info}</span>
-          <div>Por ahora el restablecimiento lo realiza Capital Humano.
-            Escribe a <strong>${CONFIG.supportEmail}</strong> indicando tu
-            código de tienda o usuario, y te asignarán una clave temporal.</div>
+        <div id="recoverMsg" class="login-msg"></div>
+
+        <p class="login-sub" style="text-align:left;margin:0 0 12px">Escribe tu usuario, código de tienda o correo. Si tienes un correo registrado, te enviaremos un enlace para crear una nueva contraseña.</p>
+
+        <div class="field">
+          <label for="recoverId">Usuario, código o e-mail</label>
+          <div class="field-icon">
+            <span class="ico">${ICONS.user}</span>
+            <input id="recoverId" type="text" autocomplete="username"
+                   placeholder="Usuario, código o e-mail" />
+          </div>
         </div>
 
-        <div class="notice notice-soon">
-          <span class="ico">${ICONS.clock}</span>
-          <div>Próximamente: autoservicio por correo electrónico.</div>
+        <button id="recoverBtn" class="btn-primary">Enviar enlace</button>
+
+        <div class="notice notice-info" style="margin-top:16px">
+          <span class="ico">${ICONS.info}</span>
+          <div>¿Sin correo registrado? El restablecimiento lo realiza Capital Humano.
+            Escribe a <strong>${CONFIG.supportEmail}</strong> indicando tu
+            código de tienda o usuario.</div>
         </div>
+      </div>
+
+      <!-- Vista: nueva contraseña (paso 2: llega desde el enlace del correo) -->
+      <div id="resetView" style="display:none">
+        <p class="recover-title">Nueva contraseña</p>
+
+        <div id="resetMsg" class="login-msg"></div>
+
+        <div class="field">
+          <label for="resetPwd">Nueva contraseña</label>
+          <div class="field-icon">
+            <span class="ico">${ICONS.lock}</span>
+            <input id="resetPwd" type="password" autocomplete="new-password"
+                   class="has-toggle" placeholder="Mínimo 6 caracteres" />
+            <button id="toggleResetPwd" type="button" class="toggle-pwd"
+                    aria-label="Mostrar u ocultar contraseña">${ICONS.eye}</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="resetPwd2">Repetir contraseña</label>
+          <div class="field-icon">
+            <span class="ico">${ICONS.lock}</span>
+            <input id="resetPwd2" type="password" autocomplete="new-password"
+                   placeholder="Repite la contraseña" />
+          </div>
+        </div>
+
+        <button id="resetBtn" class="btn-primary">Guardar contraseña</button>
       </div>
 
     </div>
@@ -135,6 +174,111 @@ function wire() {
     recover.style.display = 'none';
     loginView.style.display = 'block';
   });
+
+  // --- Paso 1: pedir enlace de recuperación ---
+  const recoverBtn = $('#recoverBtn');
+  const recoverId  = $('#recoverId');
+  const recoverMsg = $('#recoverMsg');
+  async function doRecover() {
+    const id = recoverId.value.trim();
+    if (!id) {
+      recoverMsg.textContent = 'Escribe tu usuario, código o correo.';
+      recoverMsg.className = 'login-msg err show';
+      return;
+    }
+    recoverBtn.disabled = true;
+    const original = recoverBtn.textContent;
+    recoverBtn.textContent = 'Enviando…';
+    recoverMsg.className = 'login-msg';
+    try {
+      const res = await fetch('/api/recover-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ identifier: id }),
+      });
+      const data = await res.json();
+      // Mensaje neutro o aviso de "sin correo": ambos vienen en data.message.
+      recoverMsg.textContent = data.message || (data.ok
+        ? 'Si el dato corresponde a una cuenta con correo, te enviaremos un enlace.'
+        : (data.error || 'No se pudo procesar la solicitud.'));
+      recoverMsg.className = 'login-msg ' + (data.noEmail ? 'err show' : 'ok show');
+    } catch (err) {
+      recoverMsg.textContent = 'No se pudo conectar. Intenta de nuevo.';
+      recoverMsg.className = 'login-msg err show';
+    } finally {
+      recoverBtn.disabled = false;
+      recoverBtn.textContent = original;
+    }
+  }
+  recoverBtn.addEventListener('click', doRecover);
+  recoverId.addEventListener('keydown', (e) => { if (e.key === 'Enter') doRecover(); });
+
+  // --- Paso 2: nueva contraseña (cuando se llega con ?token=) ---
+  const resetView = $('#resetView');
+  const resetPwd  = $('#resetPwd');
+  const resetPwd2 = $('#resetPwd2');
+  const resetBtn  = $('#resetBtn');
+  const resetMsg  = $('#resetMsg');
+  const toggleReset = $('#toggleResetPwd');
+
+  if (toggleReset) toggleReset.addEventListener('click', () => {
+    const show = resetPwd.type === 'password';
+    resetPwd.type = show ? 'text' : 'password';
+    toggleReset.innerHTML = show ? ICONS.eyeOff : ICONS.eye;
+  });
+
+  // ¿Hay token en el hash? (formato #/recuperar?token=XXXX)
+  const resetToken = getResetToken();
+  if (resetToken) {
+    loginView.style.display = 'none';
+    recover.style.display = 'none';
+    resetView.style.display = 'block';
+  }
+
+  async function doReset() {
+    const p1 = resetPwd.value, p2 = resetPwd2.value;
+    if (p1.length < 6) {
+      resetMsg.textContent = 'La contraseña debe tener al menos 6 caracteres.';
+      resetMsg.className = 'login-msg err show';
+      return;
+    }
+    if (p1 !== p2) {
+      resetMsg.textContent = 'Las contraseñas no coinciden.';
+      resetMsg.className = 'login-msg err show';
+      return;
+    }
+    resetBtn.disabled = true;
+    const original = resetBtn.textContent;
+    resetBtn.textContent = 'Guardando…';
+    resetMsg.className = 'login-msg';
+    try {
+      const res = await fetch('/api/recover-confirm', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: resetToken, newPassword: p1 }),
+      });
+      const data = await res.json();
+      if (!data.ok) {
+        resetMsg.textContent = data.error || 'No se pudo actualizar la contraseña.';
+        resetMsg.className = 'login-msg err show';
+        return;
+      }
+      // Éxito: limpiar el token del hash y volver al login con mensaje.
+      resetView.style.display = 'none';
+      loginView.style.display = 'block';
+      location.hash = '/login';
+      msg.textContent = data.message || 'Tu contraseña se actualizó. Ya puedes iniciar sesión.';
+      msg.className = 'login-msg ok show';
+    } catch (err) {
+      resetMsg.textContent = 'No se pudo conectar. Intenta de nuevo.';
+      resetMsg.className = 'login-msg err show';
+    } finally {
+      resetBtn.disabled = false;
+      resetBtn.textContent = original;
+    }
+  }
+  resetBtn.addEventListener('click', doReset);
+  resetPwd2.addEventListener('keydown', (e) => { if (e.key === 'Enter') doReset(); });
 
   // Botón Entrar — valida server-side contra /api/login
   const btn = $('#loginBtn');
@@ -206,6 +350,18 @@ async function checkVersion() {
   } catch {
     tag.textContent = `v${CONFIG.version}`;
   }
+}
+
+/** Extrae el token de recuperación del hash: #/recuperar?token=XXXX */
+function getResetToken() {
+  const h = location.hash || '';
+  const i = h.indexOf('?');
+  if (i < 0) return null;
+  const path = h.slice(0, i).replace(/^#/, '');
+  if (path !== '/recuperar') return null;
+  const params = new URLSearchParams(h.slice(i + 1));
+  const t = params.get('token');
+  return t && t.trim() ? t.trim() : null;
 }
 
 /** Punto de entrada de la vista */
