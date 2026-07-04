@@ -49,9 +49,11 @@ function tlEnsureStyles() {
   .tl-track{position:relative;height:8px;border-radius:6px;background:var(--border-soft,#eef0f3);margin:52px 0 46px}
   .tl-fill{position:absolute;top:0;left:0;height:100%;border-radius:6px;background:linear-gradient(90deg,#93c5fd,#2563eb)}
   /* Tramo de la VENTANA DE RECLAMO (pago anterior -> cierre de plazo). Color
-     distinto al azul del avance: ambar, porque es un rango vivo, no un punto. */
+     VIOLETA: distinto al azul del avance, al verde del pago y al ambar del
+     calculo, para que "reclamo" se lea como una categoria propia. Rayado
+     porque es un rango vivo, no un punto. Al cerrarse el plazo pasa a gris. */
   .tl-claim{position:absolute;top:0;height:100%;border-radius:6px;
-    background:repeating-linear-gradient(45deg,#fcd34d,#fcd34d 6px,#fde68a 6px,#fde68a 12px);
+    background:repeating-linear-gradient(45deg,#a5a1e8,#a5a1e8 6px,#c9c6f2 6px,#c9c6f2 12px);
     opacity:.9;z-index:1}
   .tl-claim.closed{background:repeating-linear-gradient(45deg,#e2e8f0,#e2e8f0 6px,#eef2f7 6px,#eef2f7 12px)}
   .tl-mk{position:absolute;top:50%;transform:translate(-50%,-50%);z-index:2}
@@ -65,13 +67,13 @@ function tlEnsureStyles() {
   .tl-mk.prevpay .tl-lbl .d{color:#15803d}
   .tl-mk.prevpay .tl-lbl .n{color:#16a34a;font-weight:700}
   .tl-mk.prevpay.today .tl-lbl{top:44px}
-  /* Nodo del cierre del plazo de reclamo (ambar). Si el plazo ya cerro
-     (hoy > cierre) se muestra en gris apagado. */
-  .tl-mk.claim .tl-ic{border-color:#d97706;background:#fef3c7;color:#b45309}
+  /* Nodo del cierre del plazo de reclamo (violeta, a juego con su franja). Si
+     el plazo ya cerro (hoy > cierre) se muestra en gris apagado. */
+  .tl-mk.claim .tl-ic{border-color:#7f77dd;background:#eeedfe;color:#534ab7}
   .tl-mk.claim.closed .tl-ic{border-color:#cbd5e1;background:#f1f5f9;color:#94a3b8}
-  .tl-mk.claim.act .tl-ic{border-color:#b45309;background:#f59e0b;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 7px #fde68a}
-  .tl-mk.claim .tl-lbl .d{color:#b45309}
-  .tl-mk.claim .tl-lbl .n{color:#d97706;font-weight:700}
+  .tl-mk.claim.act .tl-ic{border-color:#534ab7;background:#7f77dd;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 7px #cecbf6}
+  .tl-mk.claim .tl-lbl .d{color:#534ab7}
+  .tl-mk.claim .tl-lbl .n{color:#7f77dd;font-weight:700}
   .tl-mk.claim.closed .tl-lbl .d{color:var(--muted,#64748b)}
   .tl-mk.claim.closed .tl-lbl .n{color:var(--faint,#94a3b8)}
   .tl-mk.act .tl-ic{transform:scale(1.12)}

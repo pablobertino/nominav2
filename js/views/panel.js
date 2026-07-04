@@ -277,7 +277,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.35</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.36</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3789,7 +3789,7 @@ async function viewPeriods(user) {
       <th>Plazo Reclamo</th>
       <th>Tope de reporte</th><th>Estado</th>${isSuper ? '<th style="text-align:right">Acciones</th>' : ''}
     </tr></thead><tbody id="pBody"></tbody></table></div>
-    <p class="muted" style="font-size:12px;margin:14px 2px 0;line-height:1.6">El “último día de cálculo” es la última fecha que entra en el cálculo de la quincena (un día antes del día de cálculo): última oportunidad para cargar novedades, ese día hasta la hora tope. Las dos columnas con fondo azul son el <strong>período de pago</strong>; su rango termina justo en el último día de cálculo. Sábados y domingos se resaltan en ámbar. El estado es temporal (Pasado / En curso / Futuro) y, si la quincena fue ajustada a mano, lleva además el distintivo <span class="pill pill-mod" style="font-size:10px">Modificada</span>. ${isSuper ? 'Como superadmin puedes ajustar una quincena puntual; el resto solo la consulta.' : 'Esta vista es de solo lectura.'}</p>`;
+    <p class="muted" style="font-size:12px;margin:14px 2px 0;line-height:1.6">El “último día de cálculo” es la última fecha que entra en el cálculo de la quincena (un día antes del día de cálculo): última oportunidad para cargar novedades, ese día hasta la hora tope. Las dos columnas con fondo azul son el <strong>período de pago</strong>; su rango termina justo en el último día de cálculo. Sábados y domingos se resaltan en ámbar. La columna <strong>Plazo Reclamo</strong> es la ventana para reclamar un cálculo errado: va del Día de Pago a su cierre (ese número de días hábiles después, saltando fines de semana y feriados nacionales). El estado es temporal (Pasado / En curso / Futuro) y, si la quincena fue ajustada a mano, lleva además el distintivo <span class="pill pill-mod" style="font-size:10px">Modificada</span>. ${isSuper ? 'Como superadmin puedes ajustar una quincena puntual; el resto solo la consulta.' : 'Esta vista es de solo lectura.'}</p>`;
 
   const NCOLS = isSuper ? 11 : 10;
 
@@ -3835,7 +3835,7 @@ async function viewPeriods(user) {
         <td class="hito-cell">${dateCell(p.milestone_date)}</td>
         <td>${dateCell(p.cutoff_date, { countdown: isCurr ? countdown(p.cutoff_date, today) : '' })}</td>
         <td>${dateCell(p.pay_date, { countdown: isCurr ? countdown(p.pay_date, today) : '' })}</td>
-        <td class="claim-cell">${p.claim_deadline ? dateCell(p.claim_deadline) : '<span class="muted">—</span>'}</td>
+        <td class="claim-cell">${p.claim_deadline ? rangeCell(p.pay_date, p.claim_deadline) : '<span class="muted">—</span>'}</td>
         <td>${fmtDeadline(p.report_deadline)}</td>
         <td>${periodEstado(p, rel)}</td>
         ${acc}
@@ -3903,7 +3903,7 @@ async function exportPeriods(fmt) {
       'Ultimo dia de calculo': fmtDate(p.milestone_date, true),
       'Dia de Calculo': fmtDate(p.cutoff_date, true),
       'Dia de Pago': fmtDate(p.pay_date, true),
-      'Plazo Reclamo': fmtDate(p.claim_deadline, true),
+      'Plazo Reclamo': p.claim_deadline ? (fmtDate(p.pay_date, true) + ' - ' + fmtDate(p.claim_deadline, true)) : '',
       'Tope de reporte': fmtDeadline(p.report_deadline),
       'Estado': relLabel[rel] + (p.is_overridden ? ' (Modificada)' : ''),
       'Motivo del ajuste': p.override_note || '',
