@@ -259,8 +259,6 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
           <button class="btn" id="wpReporte"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> ${mode === 'enterprise' ? 'Reporte AX (Excel)' : 'Reporte 10'}</button>
           ${(mode === 'store' && isAdmin) ? `<button class="btn" id="wpReporteAX"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Reporte AX (Excel)</button>` : ''}
           ${isAdmin ? `<button class="btn btn-primary" id="wpAxApi"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.8 1 6.4 2.6"/><polyline points="21 3 21 9 15 9"/></svg> Sincronizar</button>` : ''}
-          ${mode === 'enterprise' ? '' : `<button class="btn" id="wpAddManual"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Agregar</button>`}
-          <button class="btn" id="wpAssignDept"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg> Asignar depto.</button>
           ${(isAdmin && mode === 'enterprise') ? `<button class="btn" id="wpNewDept"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Nuevo departamento</button>` : ''}
           <button class="btn wp-btn-danger" id="wpClear"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Limpiar lista</button>
         </div>
@@ -333,11 +331,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   if (axBtn) axBtn.addEventListener('click', openReporteAXModalStore);
   const axApiBtn = $('#wpAxApi');
   if (axApiBtn) axApiBtn.addEventListener('click', openAxApiModal);
-  const addBtn = $('#wpAddManual');
-  if (addBtn) addBtn.addEventListener('click', openAddManualModal);
   $('#wpClear').addEventListener('click', openClearModal);
-  const assignBtn = $('#wpAssignDept');
-  if (assignBtn) assignBtn.addEventListener('click', toggleSelMode);
   const newDeptBtn = $('#wpNewDept');
   if (newDeptBtn) newDeptBtn.addEventListener('click', openNewDeptModal);
 
@@ -670,12 +664,12 @@ function paintGrid() {
           + `</div>`;
     const egr = w.end_date ? `<span class="pill pill-out" style="margin-top:4px;display:inline-block">egresó ${fmtDate(w.end_date)}</span>` : '';
     const manualTag = w.source === 'manual' ? '<span class="pill wp-pill-manual" style="margin-top:4px;display:inline-block">manual</span>' : '';
-    // Barra de departamento ARRIBA de la tarjeta. Con departamento: etiqueta
-    // gris discreta. Sin departamento: accion azul "Asignar departamento" que
-    // abre la asignacion puntual de esa persona (data-assign marca el click).
+    // Barra de departamento ARRIBA de la tarjeta. Solo LECTURA: si tiene
+    // departamento, etiqueta gris discreta; si no tiene, no se muestra nada
+    // (la asignacion de departamento se hace desde otra vista, no aqui).
     const deptBar = w.department_name
       ? `<div class="wp-deptbar"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span>${esc(w.department_name)}</span></div>`
-      : `<div class="wp-deptbar assign" data-assign="${w.id_number}"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg><span>Asignar departamento</span></div>`;
+      : '';
     const checked = STATE.selected.has(String(w.id_number));
     const chk = sel
       ? `<span class="wp-selchk" style="position:absolute;top:8px;left:8px;width:22px;height:22px;border-radius:6px;border:2px solid #fff;box-shadow:0 0 0 1px rgba(15,23,42,.18);background:${checked ? 'var(--brand)' : 'rgba(255,255,255,.9)'};display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;z-index:3">${checked ? '✓' : ''}</span>`
@@ -699,14 +693,6 @@ function paintGrid() {
 
   grid.querySelectorAll('.wp-card').forEach(el =>
     el.addEventListener('click', (ev) => {
-      // Click en la barra azul "Asignar departamento": abre la asignacion
-      // puntual de esa persona, sin abrir la ficha ni entrar en modo masivo.
-      const assign = ev.target.closest('.wp-deptbar.assign');
-      if (assign) {
-        ev.stopPropagation();
-        openAssignDeptModal(String(assign.dataset.assign));
-        return;
-      }
       const ced = String(el.dataset.ced);
       if (STATE.selMode) {
         if (STATE.selected.has(ced)) STATE.selected.delete(ced); else STATE.selected.add(ced);
