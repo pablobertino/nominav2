@@ -57,7 +57,7 @@ function avatarCell(w) {
 let USER = null;
 let FACETS = null;          // { zones, subzones, concepts, statuses, types, companies } cache
 // Criterios (se conservan al volver de una ficha).
-let C = { q: '', type: '', company: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
+let C = { q: '', type: '', company: '', photo: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
 let SEARCH_ROWS = null;     // null = aun no se ha buscado
 // Filtro en cliente sobre los resultados ya traidos (separador por coma, igual
 // que la vista Personal). No dispara busqueda: refina lo que ya esta en pantalla.
@@ -165,7 +165,7 @@ async function api(payload) {
 }
 
 function hasCriteria() {
-  return C.q.trim().length >= 2 || C.type || C.company || C.gender || C.ageMin !== '' || C.ageMax !== ''
+  return C.q.trim().length >= 2 || C.type || C.company || C.photo || C.gender || C.ageMin !== '' || C.ageMax !== ''
     || C.zone || C.subzone || C.concept || C.status;
 }
 
@@ -211,6 +211,7 @@ export async function renderPersonnelSearch(user) {
     <div class="ps-filters">
       <span class="fg">Tipo <select id="psType"><option value="">Todos</option></select></span>
       <span class="fg">Empresa <select id="psCompany"><option value="">Todas</option></select></span>
+      <span class="fg">Foto <select id="psPhoto"><option value="">Todas</option><option value="with">Con foto</option><option value="without">Sin foto</option></select></span>
       <span class="fg">Sexo
         <select id="psGender">
           <option value="">Todos</option>
@@ -249,6 +250,7 @@ export async function renderPersonnelSearch(user) {
 
   // Restaurar valores simples.
   $('#psGender').value = C.gender;
+  { const ph = $('#psPhoto'); if (ph) ph.value = (C.photo === 'with' || C.photo === 'without') ? C.photo : ''; }
 
   // Cargar facetas (una sola vez) y poblar combos.
   if (!FACETS) {
@@ -284,6 +286,7 @@ export async function renderPersonnelSearch(user) {
     fillCompanySelect($('#psCompany'), companiesFor(C.type), '');
   });
   $('#psCompany').addEventListener('change', () => { C.company = $('#psCompany').value; });
+  { const ph = $('#psPhoto'); if (ph) ph.addEventListener('change', () => { C.photo = ph.value; }); }
   // Cambiar zona repuebla subzona (solo UI, no busca).
   $('#psZone').addEventListener('change', () => {
     C.zone = $('#psZone').value;
@@ -291,7 +294,7 @@ export async function renderPersonnelSearch(user) {
     fillSelect($('#psSubzone'), subzonesFor(C.zone), '', 'Todas');
   });
   $('#psClear').addEventListener('click', () => {
-    C = { q: '', type: '', company: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
+    C = { q: '', type: '', company: '', photo: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
     FQ = '';
     SEARCH_ROWS = null;
     renderPersonnelSearch(USER);
@@ -323,6 +326,7 @@ function gather() {
   C.q = $('#psInput').value;
   C.type = $('#psType').value;
   C.company = $('#psCompany').value;
+  { const ph = $('#psPhoto'); C.photo = ph ? ph.value : ''; }
   C.gender = $('#psGender').value;
   C.ageMin = $('#psAgeMin').value.trim();
   C.ageMax = $('#psAgeMax').value.trim();
@@ -349,6 +353,7 @@ async function runSearch() {
     age_max: C.ageMax === '' ? null : C.ageMax,
     zone: C.zone || null, subzone: C.subzone || null,
     concept: C.concept || null, status: C.status || null,
+    photo: C.photo || null,
   });
   SEARCH_ROWS = (r && r.ok) ? (r.rows || []) : [];
   FQ = '';

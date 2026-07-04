@@ -93,7 +93,10 @@ export async function onRequestPost({ request, env }) {
       const KNOWN_TYPES = ['Tienda', 'Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea'];
       const ctype = (body.type && KNOWN_TYPES.includes(String(body.type))) ? String(body.type) : null;
       const ccompany = body.company ? String(body.company) : null;
-      const hasFilter = !!(gender || ageMin != null || ageMax != null || zone || subzone || concept || cstatus || ctype || ccompany);
+      // Filtro por presencia de foto: 'with' | 'without' | null (todos).
+      const cphoto = (body.photo === 'with' || body.photo === 'without') ? body.photo : null;
+      // cphoto cuenta como filtro: permite listar por foto SIN escribir texto.
+      const hasFilter = !!(gender || ageMin != null || ageMax != null || zone || subzone || concept || cstatus || ctype || ccompany || cphoto);
       // Permite buscar por texto (>=2) o solo por filtros.
       if (q.length < 2 && !hasFilter) return json({ ok: true, rows: [], short: true });
       if (admin.codes !== null && !admin.codes.length) return json({ ok: true, rows: [] });
@@ -107,7 +110,7 @@ export async function onRequestPost({ request, env }) {
           // en una empresa, su personal se limita a esos departamentos.
           // superadmin pasa null (sin restriccion).
           p_admin_id: admin.role === 'superadmin' ? null : admin.id,
-          p_type: ctype, p_company: ccompany,
+          p_type: ctype, p_company: ccompany, p_photo: cphoto,
         }),
       });
       return json({ ok: true, rows: withThumbs(env, rows) });
