@@ -277,7 +277,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.38</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.39</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3999,8 +3999,7 @@ async function viewHolidays(user) {
     <div class="tablebox scroll-x"><table><thead><tr>
       <th>Fecha</th><th>Nombre</th><th>Nacional</th><th>Bancario</th>
       <th>Ejecución bancaria</th><th>Móvil</th>${isSuper ? '<th style="text-align:right">Acciones</th>' : ''}
-    </tr></thead><tbody id="hBody"></tbody></table></div>
-    <p class="muted" style="font-size:12px;margin:14px 2px 0;line-height:1.6"><strong>Nacional</strong>: el comercio cierra (LOTTT) — cuenta para el Plazo Reclamo y demás cálculos de días hábiles. <strong>Bancario</strong>: solo cierra la banca; la nómina igual puede pagarse. <strong>Ejecución bancaria</strong>: cuando un feriado bancario se traslada al lunes siguiente (los “lunes bancarios” de Sudeban). Cambiar un feriado <strong>nacional</strong> recalcula automáticamente el Plazo Reclamo de las quincenas afectadas.</p>`;
+    </tr></thead><tbody id="hBody"></tbody></table></div>`;
 
   $('#hBack').addEventListener('click', () => viewPeriods(user));
   $('#hYear').addEventListener('change', (e) => { HOL_YEAR = parseInt(e.target.value, 10); loadHol(); });
