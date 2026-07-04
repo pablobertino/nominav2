@@ -72,13 +72,16 @@ function buildRow(body) {
   if (!nombre) return { error: 'El nombre es obligatorio.' };
   if (nombre.length > 120) return { error: 'El nombre es demasiado largo.' };
   let ejec = body.fecha_ejecucion == null || body.fecha_ejecucion === '' ? null : String(body.fecha_ejecucion).trim();
-  if (ejec && !ISO_RE.test(ejec)) return { error: 'Fecha de ejecución inválida.' };
+  if (ejec && !ISO_RE.test(ejec)) return { error: 'Fecha de ejecucion invalida.' };
+  // 'anio' es una columna GENERATED ALWAYS (EXTRACT(year FROM fecha)); NO se
+  // envia en el insert/update (Postgres la calcula sola). Se devuelve aparte
+  // solo para saber que anio recalcular en el Plazo Reclamo.
   const anio = parseInt(fecha.slice(0, 4), 10);
   return {
+    anio,
     row: {
       fecha,
       fecha_ejecucion: ejec,
-      anio,
       nombre,
       es_nacional: !!body.es_nacional,
       es_bancario: !!body.es_bancario,
@@ -145,18 +148,20 @@ export async function onRequestPost({ request, env }) {
     if (!legacyOk) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
 
     if (action === 'create') {
-      const { row, error } = buildRow(body);
+      const { row, anio, error } = buildRow(body);
       if (error) return json({ ok: false, error }, 400);
-      // Evitar duplicado (fecha, nombre) — la tabla tiene unique en ese par.
+      // Evitar duplicado (fecha, nombre) - la tabla tiene unique en ese par.
+      // Se codifica el nombre y se envuelve en comillas para PostgREST (puede
+      // tener espacios/acentos).
       const dup = await sb(env,
-        `feriado?fecha=eq.${row.fecha}&nombre=eq.${encodeURIComponent(row.nombre)}&select=id`);
+        `feriado?fecha=eq.${row.fecha}&nombre=eq.${encodeURIComponent('"' + row.nombre + '"')}&select=id`);
       if (dup && dup.length) return json({ ok: false, error: 'Ya existe un feriado con esa fecha y nombre.' }, 409);
       await sb(env, 'feriado', {
         method: 'POST', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify(row),
       });
       let recalced = 0;
-      if (row.es_nacional) recalced = await recalcClaimDeadlines(env, row.anio);
+      if (row.es_nacional) recalced = await recalcClaimDeadlines(env, anio);
       return json({ ok: true, recalced });
     }
 
@@ -165,7 +170,7 @@ export async function onRequestPost({ request, env }) {
       if (!id) return json({ ok: false, error: 'Falta el feriado.' }, 400);
       const cur = await sb(env, `feriado?id=eq.${encodeURIComponent(id)}&select=*`);
       if (!cur || !cur.length) return json({ ok: false, error: 'Feriado no encontrado.' }, 404);
-      const { row, error } = buildRow(body);
+      const { row, anio, error } = buildRow(body);
       if (error) return json({ ok: false, error }, 400);
       await sb(env, `feriado?id=eq.${encodeURIComponent(id)}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
@@ -176,8 +181,8 @@ export async function onRequestPost({ request, env }) {
       let recalced = 0;
       const wasNac = cur[0].es_nacional;
       if (row.es_nacional || wasNac) {
-        recalced += await recalcClaimDeadlines(env, row.anio);
-        if (cur[0].anio && cur[0].anio !== row.anio) {
+        recalced += await recalcClaimDeadlines(env, anio);
+        if (cur[0].anio && cur[0].anio !== anio) {
           recalced += await recalcClaimDeadlines(env, cur[0].anio);
         }
       }

@@ -277,7 +277,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.39</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.40</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3972,6 +3972,18 @@ const HOL_DOW = ['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa'];
 function holDow(iso) { const [y, m, d] = iso.split('-').map(Number); return HOL_DOW[new Date(Date.UTC(y, m - 1, d)).getUTCDay()]; }
 function holFmt(iso) { if (!iso) return ''; const [y, m, d] = iso.split('-').map(Number); return `${String(d).padStart(2, '0')}/${String(m).padStart(2, '0')}/${y}`; }
 
+// Modal de mensaje simple (reemplaza alert). Solo cierra con su boton Aceptar
+// (openModal no cierra al hacer clic fuera). onOk opcional se corre al cerrar.
+function holInfo(titulo, htmlMsg, onOk) {
+  openModal(`
+    <div class="modal-head"><span>${titulo}</span></div>
+    <p style="font-size:13.5px;color:var(--ink-soft,#334155);margin:10px 0 0;line-height:1.55">${htmlMsg}</p>
+    <div class="modal-actions">
+      <button class="btn btn-primary" id="mOk">Aceptar</button>
+    </div>`);
+  $('#mOk').addEventListener('click', () => { closeModal(); if (onOk) onOk(); });
+}
+
 async function viewHolidays(user) {
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
 
@@ -4068,6 +4080,7 @@ function holEditModal(user, f) {
       <label class="flabel" style="display:flex;align-items:center;gap:7px;margin:0"><input type="checkbox" id="hMov" ${isEdit && f.movil ? 'checked' : ''}> Móvil</label>
     </div>
     <div class="modal-actions">
+      <span id="hErr" style="flex:1;color:var(--danger,#dc2626);font-size:12.5px;line-height:1.4;text-align:left"></span>
       <button class="btn" id="mCancel">Cancelar</button>
       <button class="btn btn-primary" id="mOk">Guardar</button>
     </div>`);
@@ -4081,9 +4094,12 @@ function holEditModal(user, f) {
       es_bancario: $('#hBan').checked, movil: $('#hMov').checked,
     };
     if (isEdit) payload.id = f.id;
-    if (!payload.fecha || !payload.nombre.trim()) { alert('La fecha y el nombre son obligatorios.'); return; }
+    const err = $('#hErr');
+    if (!payload.fecha || !payload.nombre.trim()) { if (err) err.textContent = 'La fecha y el nombre son obligatorios.'; return; }
+    if (err) err.textContent = '';
+    const btn = $('#mOk'); btn.disabled = true; btn.textContent = 'Guardando…';
     const d = await holidaysApi(payload);
-    if (!d.ok) { alert(d.error); return; }
+    if (!d.ok) { if (err) err.textContent = d.error || 'No se pudo guardar.'; btn.disabled = false; btn.textContent = 'Guardar'; return; }
     closeModal();
     if (viewHolidays._reload) viewHolidays._reload();
   });
@@ -4100,8 +4116,9 @@ function holDelete(user, id, nombre, esNac, fecha) {
     </div>`);
   $('#mCancel').addEventListener('click', closeModal);
   $('#mOk').addEventListener('click', async () => {
+    const btn = $('#mOk'); btn.disabled = true; btn.textContent = 'Eliminando…';
     const d = await holidaysApi({ action: 'delete', adminId: user.id, id });
-    if (!d.ok) { alert(d.error); return; }
+    if (!d.ok) { holInfo('No se pudo eliminar', d.error || 'Ocurrió un error al eliminar el feriado.'); return; }
     closeModal();
     if (viewHolidays._reload) viewHolidays._reload();
   });
@@ -4127,16 +4144,21 @@ function holSuggest(user) {
     const cur = await holidaysApi({ action: 'list', year: anio, filter: 'all' });
     const have = new Set(((cur.ok && cur.holidays) || []).map(h => h.fecha + '|' + h.nombre));
     const props = holGenerar(anio).filter(h => !have.has(h.fecha + '|' + h.nombre));
-    let added = 0, failed = 0;
+    let added = 0, failed = 0, lastErr = '';
     for (const h of props) {
       const d = await holidaysApi({ action: 'create', adminId: user.id, ...h, fecha_ejecucion: null });
-      if (d.ok) added++; else failed++;
+      if (d.ok) added++; else { failed++; lastErr = d.error || lastErr; }
     }
     closeModal();
     if (viewHolidays._reload) viewHolidays._reload();
-    alert(added
-      ? `Se agregaron ${added} feriados${failed ? ` (${failed} no se pudieron crear)` : ''}. Revisa los flags y completa los lunes bancarios.`
-      : 'No faltaba ninguno: el año ya tiene todos los feriados fijos y móviles.');
+    // Tres casos: nada que agregar / se agregaron (quiza con fallos) / todos fallaron.
+    if (props.length === 0) {
+      holInfo('Sin cambios', `El año ${anio} ya tiene todos los feriados fijos y móviles cargados.`);
+    } else if (added === 0) {
+      holInfo('No se pudieron agregar', `Ninguno de los ${failed} feriados se pudo crear.${lastErr ? `<br><br><span style="color:var(--danger,#dc2626)">${lastErr}</span>` : ''}`);
+    } else {
+      holInfo('Feriados agregados', `Se agregaron <b>${added}</b> feriados a ${anio}${failed ? ` (${failed} no se pudieron crear).` : '.'} Revisa los flags y completa a mano los lunes bancarios (fecha de ejecución).`);
+    }
   });
 }
 
