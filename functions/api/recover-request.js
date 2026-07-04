@@ -53,7 +53,9 @@ function makeToken() {
 
 /**
  * Busca la cuenta por identificador, en el MISMO orden que el login.
- * Devuelve { kind, id, email } o null. email puede ser null/'' (sin correo).
+ * Devuelve { kind, id, email, company } o null. email puede ser ''/null.
+ * 'company' (solo para kind='company') trae datos para identificar en el correo:
+ * { code, name, rif, zona, subzona, concepto }.
  */
 async function findAccount(env, identifier) {
   const isEmail = identifier.includes('@');
@@ -63,27 +65,92 @@ async function findAccount(env, identifier) {
     ? `email=eq.${encodeURIComponent(identifier)}`
     : `username=eq.${encodeURIComponent(identifier)}`;
   const admins = await sb(env, `admin_users?${adminFilter}&is_active=eq.true&select=id,email`);
-  if (admins && admins.length) return { kind: 'admin', id: admins[0].id, email: admins[0].email || '' };
+  if (admins && admins.length) return { kind: 'admin', id: admins[0].id, email: admins[0].email || '', company: null };
 
-  // 2) company_users (company_code o email)
+  // 2) company_users (company_code o email). Trae datos de la empresa por embed
+  //    para identificar la cuenta en el correo (alias, razon social, RIF, etc.).
   const compFilter = isEmail
     ? `email=eq.${encodeURIComponent(identifier)}`
     : `company_code=eq.${encodeURIComponent(identifier.toUpperCase())}`;
-  const comps = await sb(env, `company_users?${compFilter}&is_active=eq.true&select=id,email`);
-  if (comps && comps.length) return { kind: 'company', id: comps[0].id, email: comps[0].email || '' };
+  const compSelect = 'id,email,company_code,'
+    + 'companies!company_users_company_code_fkey('
+    + 'business_name,tax_id,'
+    + 'zones(name),subzones(name),concepts(name))';
+  let comps = null;
+  try {
+    comps = await sb(env, `company_users?${compFilter}&is_active=eq.true&select=${encodeURIComponent(compSelect)}`);
+  } catch {
+    // Si el embed falla (nombre de FK distinto), reintenta sin datos de empresa.
+    comps = await sb(env, `company_users?${compFilter}&is_active=eq.true&select=id,email,company_code`);
+  }
+  if (comps && comps.length) {
+    const c = comps[0];
+    const co = c.companies || {};
+    return {
+      kind: 'company', id: c.id, email: c.email || '',
+      company: {
+        code: c.company_code || '',
+        name: co.business_name || '',
+        rif: co.tax_id || '',
+        zona: (co.zones && co.zones.name) || '',
+        subzona: (co.subzones && co.subzones.name) || '',
+        concepto: (co.concepts && co.concepts.name) || '',
+      },
+    };
+  }
 
   // 3) enterprise_users (username o email)
   const euFilter = isEmail
     ? `email=eq.${encodeURIComponent(identifier)}`
     : `username=eq.${encodeURIComponent(identifier)}`;
   const eus = await sb(env, `enterprise_users?${euFilter}&is_active=eq.true&select=id,email`);
-  if (eus && eus.length) return { kind: 'enterprise', id: eus[0].id, email: eus[0].email || '' };
+  if (eus && eus.length) return { kind: 'enterprise', id: eus[0].id, email: eus[0].email || '', company: null };
 
   return null;
 }
 
-/** Correo HTML del enlace de recuperación (estilo del portal). */
-function buildHtml(link) {
+/** Escapa texto para HTML (evita romper el markup con datos). */
+function esc(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+}
+
+/** Fila del bloque de identificacion (label/valor), con borde inferior opcional. */
+function idRow(label, value, last) {
+  const bb = last ? '' : 'border-bottom:1px solid #eef2f7;';
+  return `<tr>`
+    + `<td style="padding:9px 14px;color:#64748b;width:38%;${bb}">${esc(label)}</td>`
+    + `<td style="padding:9px 14px;font-weight:600;${bb}">${esc(value)}</td>`
+    + `</tr>`;
+}
+
+/**
+ * Correo HTML del enlace de recuperacion (estilo del portal).
+ * @param link  URL con el token (va SOLO en el boton, no en texto visible).
+ * @param company  datos para identificar la cuenta (o null).
+ */
+function buildHtml(link, company) {
+  // Bloque de identificacion (solo si hay datos de tienda).
+  let idBlock = '';
+  if (company && (company.code || company.name)) {
+    const rows = [
+      ['Alias', company.code],
+      ['Razón social', company.name],
+      ['Concepto', company.concepto],
+      ['RIF', company.rif],
+      ['Zona', company.zona],
+      ['Subzona', company.subzona],
+    ].filter(r => r[1]);   // omitir filas vacias
+    const html = rows.map((r, i) => idRow(r[0], r[1], i === rows.length - 1)).join('');
+    idBlock = `<table style="width:100%;border-collapse:collapse;background:#f8fafc;`
+      + `border:1px solid #e2e8f0;border-radius:8px;margin:6px 0 18px;font-size:13px;color:#334155;">`
+      + html + `</table>`;
+  }
+  const intro = idBlock
+    ? 'Recibimos una solicitud para restablecer la contraseña del siguiente acceso al Portal de Nómina:'
+    : 'Recibimos una solicitud para restablecer la contraseña de tu acceso al Portal de Nómina.';
+
   return `<!DOCTYPE html><html><head><meta charset="UTF-8"></head>
 <body style="margin:0;padding:24px;background:#f1f5f9;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;">
   <div style="max-width:520px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.1);">
@@ -92,13 +159,14 @@ function buildHtml(link) {
       <h1 style="margin:0;color:#fff;font-size:18px;font-weight:700;">Restablecer contraseña</h1>
     </div>
     <div style="padding:26px 28px;">
-      <p style="color:#334155;font-size:14px;margin-top:0;">Recibimos una solicitud para restablecer la contraseña de tu acceso al Portal de Nómina.</p>
-      <p style="color:#334155;font-size:14px;">Haz clic en el botón para crear una contraseña nueva. El enlace vence en <strong>${TOKEN_TTL_MIN} minutos</strong>.</p>
-      <div style="text-align:center;margin:26px 0;">
+      <p style="color:#334155;font-size:14px;margin-top:0;">${intro}</p>
+      ${idBlock}
+      <p style="color:#334155;font-size:14px;">Si esta es tu cuenta, haz clic en el botón para crear una contraseña nueva. El enlace vence en <strong>${TOKEN_TTL_MIN} minutos</strong>.</p>
+      <div style="text-align:center;margin:24px 0;">
         <a href="${link}" style="display:inline-block;background:#1e3a8a;color:#fff;padding:12px 26px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px;">Restablecer contraseña</a>
       </div>
-      <p style="color:#64748b;font-size:12px;">Si no solicitaste esto, ignora este correo: tu contraseña no cambiará.</p>
-      <p style="color:#94a3b8;font-size:11px;word-break:break-all;">Si el botón no funciona, copia y pega este enlace:<br>${link}</p>
+      <p style="color:#64748b;font-size:12px;">Si el botón no funciona, vuelve al portal, entra en <strong>¿Olvidaste tu contraseña?</strong> y solicita un enlace nuevo.</p>
+      <p style="color:#64748b;font-size:12px;">Si no solicitaste esto, ignora este correo: tu contraseña no cambiará. Por seguridad, no compartas este mensaje con nadie.</p>
     </div>
     <div style="background:#f8fafc;padding:12px 28px;border-top:1px solid #e2e8f0;">
       <p style="margin:0;color:#94a3b8;font-size:11px;">Correo automático · ${new Date().toLocaleString('es-VE')}</p>
@@ -156,7 +224,7 @@ export async function onRequestPost({ request, env }) {
       body: JSON.stringify({
         to: acct.email,
         subject: 'Restablecer tu contraseña — Portal de Nómina',
-        html: buildHtml(link),
+        html: buildHtml(link, acct.company),
         secret: env.mail_shared_secret,
       }),
     }).then(r => r.json()).catch(() => null);
