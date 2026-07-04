@@ -102,7 +102,7 @@ export async function onRequestPost({ request, env }) {
         body: JSON.stringify({
           p_codes: admin.codes, p_q: q,
           p_gender: gender, p_age_min: ageMin, p_age_max: ageMax,
-          p_zone: zone, p_subzone: subzone, p_concept: concept, p_status: cstatus, p_limit: 100,
+          p_zone: zone, p_subzone: subzone, p_concept: concept, p_status: cstatus, p_limit: 5000,
           // Filtro por departamento: para admins con alcance por departamento
           // en una empresa, su personal se limita a esos departamentos.
           // superadmin pasa null (sin restriccion).

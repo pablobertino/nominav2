@@ -327,7 +327,7 @@ function paint() {
   }
 
   const total = SEARCH_ROWS.length;
-  if (countEl) countEl.textContent = `${total} resultado${total === 1 ? '' : 's'}${total === 100 ? ' (máx.; refina para acotar)' : ''}`;
+  if (countEl) countEl.textContent = `${total} resultado${total === 1 ? '' : 's'}${total === 5000 ? ' (máx.; refina para acotar)' : ''}`;
 
   // Paginacion en cliente.
   const pages = Math.max(1, Math.ceil(total / PER));
