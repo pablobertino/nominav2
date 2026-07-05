@@ -9,11 +9,12 @@
    y cargo), ciudad, fecha de expedicion y destinatario. Los defaults de
    salario/bono salen de app_settings (grupo 'Constancias').
 
-   Al "GENERAR" (esta iteracion) NO se produce el PDF todavia: solo se marca la
-   linea como 'generada' y se persiste el snapshot completo (salario, bono,
-   firmante, ciudad, etc.) + generated_at/by. La generacion real del PDF va en
-   la iteracion siguiente (leera ese snapshot). Rechazar marca 'rechazada' con
-   motivo (permiso shadow 'cert.reject').
+   Al "GENERAR" se persiste el snapshot completo (salario, bono, firmante,
+   ciudad, etc.), se genera el PDF (modulo _cert-pdf.js, pdf-lib), se sube al
+   bucket privado 'cert-docs' como '<line_id>.pdf' y la linea pasa a
+   'disponible' con pdf_key. Si el PDF falla, la linea queda 'generada' sin
+   pdf_key (reintentable), sin perder el snapshot. Rechazar marca 'rechazada'
+   con motivo (permiso shadow 'cert.reject').
 
    Acciones (POST {action}):
      - inbox      : bandeja del admin = solicitudes de SU alcance (todas, no
@@ -38,8 +39,11 @@
    ===================================================================== */
 
 import { shadowCan } from './_auth.js';
+import { buildConstanciaPdf } from './_cert-pdf.js';
 
 const SETTINGS_GROUP = 'Constancias';
+const SIG_BUCKET = 'cert-signatures';   // privado: firmas de los firmantes
+const DOCS_BUCKET = 'cert-docs';        // privado: PDFs generados
 
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -62,6 +66,67 @@ async function sb(env, path, opts = {}) {
 }
 
 function nowIso() { return new Date().toISOString(); }
+
+/* ---------- Storage helpers (firma de entrada, PDF de salida) ---------- */
+
+/* Baja los bytes de un objeto de un bucket privado (para la firma). Devuelve
+   Uint8Array o null si no existe / falla. Best-effort. */
+async function storageDownload(env, bucket, path) {
+  try {
+    const res = await fetch(`${env.supabase_url}/storage/v1/object/${bucket}/${path}`, {
+      headers: {
+        apikey: env.supabase_service_role,
+        Authorization: `Bearer ${env.supabase_service_role}`,
+      },
+    });
+    if (!res.ok) return null;
+    return new Uint8Array(await res.arrayBuffer());
+  } catch { return null; }
+}
+
+/* Sube un PDF (bytes) al bucket privado cert-docs (upsert). */
+async function storageUploadPdf(env, path, bytes) {
+  const res = await fetch(`${env.supabase_url}/storage/v1/object/${DOCS_BUCKET}/${path}`, {
+    method: 'POST',
+    headers: {
+      apikey: env.supabase_service_role,
+      Authorization: `Bearer ${env.supabase_service_role}`,
+      'Content-Type': 'application/pdf',
+      'x-upsert': 'true',
+      'cache-control': '3600',
+    },
+    body: bytes,
+  });
+  if (!res.ok) throw new Error(`Storage upload ${res.status}: ${await res.text()}`);
+  return true;
+}
+
+/* Resuelve la firma del firmante de una linea: si signer_id apunta a un
+   cert_signers con signature_key, baja el PNG del bucket cert-signatures.
+   Devuelve { bytes, mime } o null (sin firma -> el PDF va sin firma). */
+async function resolveSignature(env, merged) {
+  const signerId = merged.signer_id;
+  if (!signerId) return null;
+  const rows = await sb(env,
+    `cert_signers?id=eq.${encodeURIComponent(signerId)}&select=signature_key`).catch(() => null);
+  const key = rows && rows[0] && rows[0].signature_key;
+  if (!key) return null;
+  const bytes = await storageDownload(env, SIG_BUCKET, `${key}.png`);
+  if (!bytes || !bytes.length) return null;
+  return { bytes, mime: 'image/png' };
+}
+
+/* Genera el PDF de una linea (snapshot merged), lo sube a cert-docs y
+   devuelve el pdf_key. Lanza si algo falla (el caller decide el fallback). */
+async function generatePdfForLine(env, lineId, merged) {
+  const sig = await resolveSignature(env, merged);
+  const bytes = await buildConstanciaPdf(env, merged, sig
+    ? { signatureBytes: sig.bytes, signatureMime: sig.mime }
+    : {});
+  const pdfKey = `${lineId}.pdf`;
+  await storageUploadPdf(env, pdfKey, bytes);
+  return pdfKey;
+}
 
 /* ---------- resolucion del ADMIN + alcance ----------
    Devuelve { id, role, actor, codes } donde:
@@ -248,7 +313,7 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, line_id: lineId });
     }
 
-    /* ---------- generar (marca 'generada' + snapshot; SIN PDF por ahora) ---------- */
+    /* ---------- generar (snapshot final + PDF real -> disponible) ---------- */
     if (action === 'generate') {
       const legacyOk = true;
       await shadowCan(env, body.user, 'cert-admin', 'generate', 'cert.generate', legacyOk);
@@ -282,17 +347,40 @@ export async function onRequestPost({ request, env }) {
 
         const finalPatch = {
           ...patch,
-          status: 'generada',
           generated_at: nowIso(),
           generated_by: String(adm.id),
           updated_at: nowIso(),
         };
+
+        // 1) Persistir el snapshot final ANTES de generar (asi el PDF lee lo
+        //    definitivo y, si el PDF falla, el snapshot ya quedo guardado).
+        //    Estado 'generada' como intermedio; pasa a 'disponible' al subir
+        //    el PDF con exito.
         await sb(env, `cert_request_lines?id=eq.${it.line_id}`, {
           method: 'PATCH', headers: { Prefer: 'return=minimal' },
-          body: JSON.stringify(finalPatch),
+          body: JSON.stringify({ ...finalPatch, status: 'generada' }),
         });
-        await audit(env, it.line_id, line.status, 'generada', adm, 'Constancia generada (snapshot, PDF pendiente)');
-        results.push({ line_id: it.line_id, ok: true });
+
+        // 2) Generar el PDF (leyendo el snapshot final) y subirlo a cert-docs.
+        //    Si algo falla, la linea queda 'generada' SIN pdf_key: se puede
+        //    reintentar; no perdemos el snapshot ni bloqueamos el resto.
+        let pdfKey = null;
+        try {
+          pdfKey = await generatePdfForLine(env, it.line_id, merged);
+        } catch (e) {
+          await audit(env, it.line_id, line.status, 'generada', adm,
+            'Snapshot generado; PDF fallo: ' + String(e && e.message || e));
+          results.push({ line_id: it.line_id, ok: false, error: 'PDF: ' + String(e && e.message || e), partial: true });
+          continue;
+        }
+
+        // 3) PDF listo: guardar pdf_key y pasar la linea a 'disponible'.
+        await sb(env, `cert_request_lines?id=eq.${it.line_id}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ status: 'disponible', pdf_key: pdfKey, updated_at: nowIso() }),
+        });
+        await audit(env, it.line_id, line.status, 'disponible', adm, 'Constancia generada (PDF ' + pdfKey + ')');
+        results.push({ line_id: it.line_id, ok: true, pdf_key: pdfKey });
       }
 
       // Actualizar estado de cabecera(s) afectada(s): si TODAS sus lineas
@@ -308,9 +396,15 @@ export async function onRequestPost({ request, env }) {
         const pending = ls.some(l => l.status === 'solicitada' || l.status === 'en_revision');
         const anyGen = ls.some(l => l.status === 'generada' || l.status === 'disponible');
         if (!pending && anyGen) {
+          // Si TODAS las que no estan rechazadas/anuladas quedaron
+          // 'disponible' (PDF listo), la cabecera pasa a 'disponible'; si
+          // alguna quedo 'generada' sin PDF (fallo), queda 'generada'.
+          const activas = ls.filter(l => l.status === 'generada' || l.status === 'disponible');
+          const todasDisp = activas.length > 0 && activas.every(l => l.status === 'disponible');
+          const headStatus = todasDisp ? 'disponible' : 'generada';
           await sb(env, `cert_requests?id=eq.${rid}`, {
             method: 'PATCH', headers: { Prefer: 'return=minimal' },
-            body: JSON.stringify({ status: 'generada', admin_id: String(adm.id), updated_at: nowIso() }),
+            body: JSON.stringify({ status: headStatus, admin_id: String(adm.id), updated_at: nowIso() }),
           }).catch(() => {});
         }
       }

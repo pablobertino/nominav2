@@ -16,13 +16,15 @@
 
    Circuito: el SOLICITANTE solo elige empleados + destinatario. El salario,
    bono y firmante los completa el ADMIN en la revisión (panel de revisión de
-   esta misma vista). "Generar" (por ahora) marca la línea 'generada' y guarda
-   el snapshot; el PDF se enchufa en la iteración siguiente.
+   esta misma vista). "Generar" produce el PDF (endpoint cert-admin -> modulo
+   _cert-pdf) y deja la constancia 'disponible'; el solicitante la descarga
+   desde "Mis solicitudes" (endpoint cert-download, URL firmada).
 
    Endpoints:
      /api/cert-requests  (solicitante): companies, departments, roster, create,
                                          mine, cancel
      /api/cert-admin     (admin):       inbox, detail, save_line, generate, reject
+     /api/cert-download  (descarga):    url (signed URL del PDF)
 
    Export: renderCertRequests(user)
      user = { kind:'admin', id, role, name } | { kind:'company', companyCode, companyType }
@@ -481,7 +483,7 @@ function renderMine() {
   body.querySelectorAll('[data-cancel]').forEach(b =>
     b.addEventListener('click', () => cancelRequest(+b.dataset.cancel)));
   body.querySelectorAll('[data-download]').forEach(b =>
-    b.addEventListener('click', () => toast('La descarga del PDF estará disponible en la próxima versión.', 'info')));
+    b.addEventListener('click', () => downloadConstancia(+b.dataset.download, b)));
 }
 function bindMineFilters() {
   const cc = $('#crMineCompany'), st = $('#crMineStatus');
@@ -492,8 +494,11 @@ function mineRow({ req, line }) {
   let acts = '';
   if (line.status === 'solicitada' || line.status === 'en_revision') {
     acts = `<button class="cr-b cr-b-mini" data-cancel="${req.id}">Anular</button>`;
-  } else if (line.status === 'disponible' || line.status === 'generada') {
+  } else if (line.status === 'disponible') {
     acts = `<button class="cr-b cr-b-mini cr-b-primary" data-download="${line.id}">${dlIco()} Descargar</button>`;
+  } else if (line.status === 'generada') {
+    // Snapshot generado pero el PDF aun no quedo listo (reintento pendiente).
+    acts = `<span class="cr-sub">PDF en proceso…</span>`;
   } else if (line.status === 'rechazada') {
     acts = `<span class="cr-sub">${esc(line.reject_reason || 'rechazada')}</span>`;
   }
@@ -509,6 +514,31 @@ function mineRow({ req, line }) {
 }
 function dlIco() {
   return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>';
+}
+
+/* Descarga el PDF de una constancia: pide una URL firmada al backend y la
+   abre en una pestana nueva (el navegador la muestra/descarga). */
+async function downloadConstancia(lineId, btn) {
+  const orig = btn ? btn.innerHTML : null;
+  if (btn) { btn.disabled = true; btn.innerHTML = 'Preparando…'; }
+  let d;
+  try {
+    d = await fetch('/api/cert-download', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...actorPayload(), action: 'url', line_id: lineId }),
+    }).then(x => x.json());
+  } catch { d = { ok: false, error: 'Error de red.' }; }
+  if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+  if (!d || !d.ok || !d.url) { toast((d && d.error) || 'No se pudo obtener la constancia.', 'err'); return; }
+  // Abrir en pestana nueva; el navegador la visualiza y permite guardar.
+  const w = window.open(d.url, '_blank', 'noopener');
+  if (!w) {
+    // Bloqueo de pop-ups: forzar descarga via <a>.
+    const a = document.createElement('a');
+    a.href = d.url; a.target = '_blank'; a.rel = 'noopener';
+    if (d.filename) a.download = d.filename;
+    document.body.appendChild(a); a.click(); a.remove();
+  }
 }
 
 async function cancelRequest(reqId) {
@@ -1001,14 +1031,20 @@ async function generateCurrent() {
   if (!patch.signer_id && !patch.signer_name_snap) { toast('Falta el firmante.', 'err'); return; }
   const ok = await confirmModal({
     title: 'Generar constancia',
-    bodyHtml: `<p>Se marcará como <span class="cr-strong">generada</span> la constancia de <span class="cr-strong">${esc(patch.worker_full_name || line.worker_full_name)}</span> y se guardará el snapshot.</p><p class="cr-sub">El PDF se producirá en la próxima versión; el solicitante ya la verá como disponible.</p>`,
+    bodyHtml: `<p>Se generará el PDF de la constancia de <span class="cr-strong">${esc(patch.worker_full_name || line.worker_full_name)}</span> y quedará <span class="cr-strong">disponible</span> para descargar.</p><p class="cr-sub">Recuerda el sello húmedo al imprimirla.</p>`,
     okLabel: 'Generar',
   });
   if (!ok) return;
+  const gb = $('#rvGen'); const gbOrig = gb ? gb.textContent : null;
+  if (gb) { gb.disabled = true; gb.textContent = 'Generando…'; }
   const d = await apiAdmin({ action: 'generate', line_id: line.id, patch });
+  if (gb) { gb.disabled = false; gb.textContent = gbOrig; }
   if (!d.ok) { toast((d.results && d.results[0] && d.results[0].error) || d.error || 'No se pudo generar.', 'err'); return; }
-  REVIEW.lines[REVIEW.idx] = { ...line, ...patch, status: 'generada' };
-  toast('Constancia generada');
+  const res0 = d.results && d.results[0];
+  const newStatus = (res0 && res0.pdf_key) ? 'disponible' : 'generada';
+  REVIEW.lines[REVIEW.idx] = { ...line, ...patch, status: newStatus, pdf_key: res0 ? res0.pdf_key : null };
+  toast(newStatus === 'disponible' ? 'Constancia generada y disponible' : 'Constancia generada (PDF en proceso)');
+  await loadMine();
   // Avanzar al siguiente pendiente si hay.
   const nextPending = REVIEW.lines.findIndex((l, i) => i !== REVIEW.idx && (l.status === 'solicitada' || l.status === 'en_revision'));
   if (nextPending >= 0) { REVIEW.idx = nextPending; paintReview(); }
@@ -1026,7 +1062,7 @@ async function generateAll() {
   }
   const ok = await confirmModal({
     title: 'Generar todas',
-    bodyHtml: `<p>Se marcarán como <span class="cr-strong">generadas</span> ${pend.length} constancia${pend.length === 1 ? '' : 's'} de la solicitud #${REVIEW.req.id}.</p>`,
+    bodyHtml: `<p>Se generarán los PDF de ${pend.length} constancia${pend.length === 1 ? '' : 's'} de la solicitud #${REVIEW.req.id} y quedarán <span class="cr-strong">disponibles</span> para descargar.</p>`,
     okLabel: 'Generar todas',
   });
   if (!ok) return;

@@ -48,8 +48,9 @@ function seccion(n) {
   if (c > 0) out += CENTENAS[c];
   if (resto > 0) {
     if (out) out += ' ';
-    if (ESPECIALES[resto]) out += ESPECIALES[resto];
-    else {
+    if (resto < 10) out += UNIDADES[resto];               // 1..9  -> sin "Y"
+    else if (ESPECIALES[resto]) out += ESPECIALES[resto]; // 10..29
+    else {                                                // 30..99
       const d = Math.floor(resto / 10), u = resto % 10;
       out += DECENAS[d];
       if (u > 0) out += ' Y ' + UNIDADES[u];
