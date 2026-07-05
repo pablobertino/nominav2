@@ -331,11 +331,13 @@ export async function renderCertRequests(user) {
     <div class="cr-head"><div><h1>Constancias de trabajo</h1>
       <p>Solicitud, revisión y descarga de constancias laborales.</p></div></div>
     <div class="pnl-loading" style="margin-top:18px">Cargando…</div>`;
-  // Cargar empresas (para combos) + datos según rol.
+  // Cargar empresas (para combos) + datos segun rol.
   if (IS_ADMIN) {
+    // El admin NO tiene "Mis solicitudes": inicia solicitudes que quedan a
+    // nombre de la empresa (la ve la tienda) y las gestiona desde la Bandeja.
     const [comp] = await Promise.all([apiReq({ action: 'companies' })]);
     COMPANIES = (comp && comp.ok && comp.companies) ? comp.companies : [];
-    await Promise.all([loadInbox(), loadMine()]);
+    await loadInbox();
   } else {
     await loadMine();
   }
@@ -371,30 +373,18 @@ function companyName(code) {
 }
 
 function paint() {
-  const inboxRows = flatten(INBOX);
-  const inboxPending = inboxRows.filter(r => r.line.status === 'solicitada' || r.line.status === 'en_revision').length;
-
-  const tabs = IS_ADMIN ? `
-    <div class="cr-tabs">
-      <button class="cr-tab ${TAB === 'inbox' ? 'on' : ''}" data-tab="inbox">Bandeja${inboxPending ? `<span class="cr-n">${inboxPending}</span>` : ''}</button>
-      <button class="cr-tab ${TAB === 'mine' ? 'on' : ''}" data-tab="mine">Mis solicitudes</button>
-    </div>` : '';
-
   $('#pnlMain').innerHTML = `
     <div class="cr-head">
       <div><h1>Constancias de trabajo</h1>
-        <p>${IS_ADMIN ? 'Revisa y genera las constancias de tu alcance, o crea tus propias solicitudes.' : 'Solicita constancias para tu personal y descárgalas cuando estén listas.'}</p></div>
+        <p>${IS_ADMIN ? 'Revisa y genera las constancias de tu alcance. Tambien puedes iniciar una solicitud para una empresa (quedara en su lista).' : 'Solicita constancias para tu personal y descárgalas cuando estén listas.'}</p></div>
       <button class="cr-b cr-b-primary" id="crNew">${plusIco()} Nueva solicitud</button>
     </div>
-    ${tabs}
     <div id="crBody"></div>`;
 
   const nb = $('#crNew');
   if (nb) nb.addEventListener('click', () => openCreate());
-  document.querySelectorAll('#pnlMain [data-tab]').forEach(b =>
-    b.addEventListener('click', () => { TAB = b.dataset.tab; paint(); }));
 
-  if (IS_ADMIN && TAB === 'inbox') renderInbox();
+  if (IS_ADMIN) renderInbox();
   else renderMine();
 }
 
@@ -437,7 +427,7 @@ function renderInbox() {
   body.innerHTML = filters + `
     <table class="cr-table">
       <thead><tr>
-        <th>Solicitud</th><th>Empresa</th><th>Empleado</th><th>Solicitante</th><th>Fecha</th><th>Estado</th><th></th>
+        <th>Solicitud</th><th>Empresa</th><th>Empleado</th><th>Origen</th><th>Fecha</th><th>Estado</th><th></th>
       </tr></thead>
       <tbody>${rows.map(inboxRow).join('')}</tbody>
     </table>`;
@@ -475,11 +465,15 @@ function inboxRow({ req, line }) {
     const delay = fmtDelay(req.requested_at, line.generated_at);
     genSub = `<div class="cr-sub">${esc(fmtDateTime(line.generated_at))}${delay ? ' · ' + esc(delay) : ''}</div>`;
   }
+  // Origen de la solicitud: la inicio un admin o la pidio la propia tienda.
+  const origen = req.created_via === 'admin'
+    ? '<span class="cr-pill cr-gen">Iniciada por admin</span>'
+    : '<span class="cr-pill cr-sol">Pedida por la tienda</span>';
   return `<tr>
     <td><span class="cr-strong">#${req.id}</span></td>
     <td>${esc(companyName(req.company_code))}<div class="cr-sub">${esc(req.company_code)}</div></td>
     <td><span class="cr-strong">${esc(line.worker_full_name)}</span><div class="cr-sub">${esc(fmtCedula(line.worker_id_number))}</div></td>
-    <td>${esc(req.requester_id)}<div class="cr-sub">${esc(req.requester_kind)}</div></td>
+    <td>${origen}</td>
     <td>${esc(fmtDateTime(req.requested_at))}</td>
     <td>${statusPill(line.status)}${genSub}</td>
     <td><div class="cr-acts">${acts}</div></td>
@@ -803,8 +797,9 @@ async function submitCreate() {
     note: CREATE.note || null,
   });
   if (!d.ok) { toast(d.error || 'No se pudo crear la solicitud.', 'err'); send.disabled = false; send.textContent = orig; return; }
-  // Recargar y volver a la lista.
-  if (IS_ADMIN) { await Promise.all([loadInbox(), loadMine()]); TAB = 'mine'; }
+  // Recargar y volver a la lista. El admin ve la nueva solicitud en su Bandeja
+  // (queda a nombre de la empresa); la tienda la vera en su propia lista.
+  if (IS_ADMIN) await loadInbox();
   else await loadMine();
   paint();
   toast(`Solicitud enviada (${d.lines} constancia${d.lines === 1 ? '' : 's'})`);

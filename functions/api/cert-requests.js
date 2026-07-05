@@ -282,13 +282,21 @@ export async function onRequestPost({ request, env }) {
       }
 
       // Cabecera de la solicitud.
+      // REGLA: la solicitud SIEMPRE pertenece a la EMPRESA/tienda destino
+      // (requester_kind='company', requester_id=company_code), aunque la haya
+      // iniciado un admin. Asi la tienda la ve como propia en su lista.
+      // 'created_via' distingue el origen: 'company' = la pidio la tienda;
+      // 'admin' = la inicio un admin/superadmin (admin_id guarda quien).
+      const viaAdmin = act.kind === 'admin';
       const reqRow = {
         company_code: cc,
         cert_type: 'constancia_trabajo',
         recipient,
         status: 'solicitada',
-        requester_kind: requesterKind(act),
-        requester_id: requesterId(act),
+        requester_kind: 'company',
+        requester_id: cc,
+        created_via: viaAdmin ? 'admin' : 'company',
+        admin_id: viaAdmin ? String(act.id) : null,
         note,
       };
       const ins = await sb(env, 'cert_requests', {
@@ -325,9 +333,12 @@ export async function onRequestPost({ request, env }) {
 
       // Auditoria por linea (solicitada).
       if (Array.isArray(insLines) && insLines.length) {
+        const detalle = viaAdmin
+          ? `Solicitud creada por admin #${act.id} a nombre de ${cc}`
+          : 'Solicitud creada';
         const audit = insLines.map(l => ({
           line_id: l.id, from_status: null, to_status: 'solicitada',
-          actor_kind: act.kind, actor_id: requesterId(act), detail: 'Solicitud creada',
+          actor_kind: act.kind, actor_id: requesterId(act), detail: detalle,
         }));
         await sb(env, 'cert_line_audit', { method: 'POST', body: JSON.stringify(audit) }).catch(() => {});
       }
