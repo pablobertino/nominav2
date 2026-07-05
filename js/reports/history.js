@@ -19,6 +19,11 @@ import {
 // veces al backend si el usuario copia y luego descarga el mismo reporte.
 const _ticketCache = {};
 
+// URL base del Sistema de Tickets (osTicket). Se usa para el acceso directo
+// desde la cabecera del Historial. Es la raiz del portal de clientes; el
+// enlace por-fila al ticket puntual sigue usando ST.osticketUrl del backend.
+const OSTICKET_BASE = 'https://ticketgrupocanaima.com/ostnoccsdemo/index.php';
+
 // Envuelve fetchTicketText con cache local (copiar + descargar reusan).
 async function getTicketText(user, reportId) {
   if (_ticketCache[reportId]) return _ticketCache[reportId];
@@ -104,7 +109,10 @@ export function renderHistory(user) {
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Historial de reportes</h1>
       <p>${isCompany ? 'Tus reportes enviados a Capital Humano.' : isSuper ? 'Todos los reportes del grupo.' : 'Reportes de las tiendas dentro de tu alcance.'}</p></div>
-      ${canManage ? `<div class="head-actions"><button class="btn" id="hSyncPending" title="Reenviar a osTicket el estado de los reportes pendientes o con error de sincronizacion">\u21BB Sincronizar pendientes</button></div>` : ''}
+      <div class="head-actions">
+        <a class="btn" id="hOsticket" href="${OSTICKET_BASE}" target="_blank" rel="noopener" title="Abrir el Sistema de Tickets (osTicket) en una pestaña nueva"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v1a2 2 0 0 0 0 4v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1a2 2 0 0 0 0-4V9z"/><path d="M13 5v2M13 11v2M13 17v2"/></svg> Sistema de Tickets</a>
+        ${canManage ? `<button class="btn" id="hSyncPending" title="Reenviar a osTicket el estado de los reportes pendientes o con error de sincronizacion">\u21BB Sincronizar pendientes</button>` : ''}
+      </div>
     </div>
 
     <div class="hist-filters">
