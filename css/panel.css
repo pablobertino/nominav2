@@ -1640,4 +1640,72 @@ input.needfill:focus, select.needfill:focus {
   .pnl-main { padding:16px 14px; }
   .pnl-head { flex-direction:column; align-items:flex-start; gap:10px; margin-bottom:18px; }
   .pnl-head h1 { font-size:19px; }
+
+  /* ---------------------------------------------------------------
+     BLOQUE 2 — HISTORIAL: tabla -> tarjetas apiladas.
+     El JS pinta #hCards en movil y oculta .tablebox. Aqui damos estilo
+     a las tarjetas y compactamos filtros/atajos/paginador.
+     --------------------------------------------------------------- */
+  /* Filtros del historial: apilados, cada control a lo ancho (combos). */
+  .hist-filters { flex-direction:column; align-items:stretch; gap:9px; }
+  .hist-filters .fl { width:100%; }
+  .hist-filters .fl select, .hist-filters .fl > input,
+  .hist-filters .hsearch, .hist-filters .hsearch input { width:100%; box-sizing:border-box; }
+  .hist-filters .fl-search { min-width:0; }
+  /* Atajos (chips): se pueden deslizar, pero sin romper el ancho. */
+  .chip-row { flex-wrap:nowrap; overflow-x:auto; -webkit-overflow-scrolling:touch;
+    padding-bottom:4px; margin-bottom:14px; }
+  .chip-row .chip { flex:0 0 auto; }
+  /* Barra de seleccion multiple: apilada. */
+  .hsel-bar { flex-wrap:wrap; gap:8px; }
+  .hsel-bar #hSelComment { flex:1 1 100%; }
+  /* Paginador: apilado y centrado. */
+  .hist-pager { flex-direction:column; align-items:stretch; gap:10px; }
+  .hist-pager .hp-left { justify-content:space-between; }
+  .hist-pager .pages { justify-content:center; flex-wrap:wrap; }
+
+  /* Contenedor de tarjetas (oculto en escritorio; el JS lo muestra). */
+  .hist-cards { display:flex; flex-direction:column; gap:11px; }
+  .hc-empty { padding:26px 14px; text-align:center; color:var(--muted);
+    border:1px dashed var(--border); border-radius:var(--radius-lg); font-size:13px; }
+
+  /* Tarjeta */
+  .hist-card { border:1px solid var(--border); border-radius:var(--radius-lg);
+    background:var(--surface); box-shadow:var(--shadow-md); padding:13px 14px; overflow:hidden; }
+  /* Cabecera: (checkbox) + icono + N/tipo + pill de atencion a la derecha */
+  .hc-top { display:flex; align-items:center; gap:10px; margin-bottom:11px; min-width:0; }
+  .hc-check { width:17px; height:17px; margin:0; accent-color:var(--brand); flex-shrink:0; }
+  .hc-ic { width:36px; height:36px; border-radius:10px; background:var(--brand-bg);
+    display:flex; align-items:center; justify-content:center; font-size:18px; flex-shrink:0; }
+  .hc-tt { min-width:0; flex:1; }
+  .hc-t1 { font-size:14.5px; font-weight:700; letter-spacing:-.01em; line-height:1.15; }
+  .hc-t2 { font-size:12px; color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .hc-top .pill { flex-shrink:0; }
+
+  /* Datos en pares etiqueta -> valor */
+  .hc-grid { display:grid; grid-template-columns:auto 1fr; gap:7px 12px; font-size:13px; align-items:baseline; }
+  .hc-k { color:var(--faint); white-space:nowrap; }
+  .hc-v { text-align:right; min-width:0; overflow:hidden; text-overflow:ellipsis; }
+  .hc-v b { font-weight:650; }
+  .hc-sub { font-size:11.5px; color:var(--faint); font-weight:400; margin-top:1px; }
+
+  /* Bloque de gestion (admin): selector de atencion en su fila */
+  .hc-manage { margin-top:11px; padding-top:11px; border-top:1px solid var(--border-soft);
+    display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .hc-manage .hc-k { flex-shrink:0; }
+  .hc-att { display:flex; align-items:center; gap:7px; flex:1; min-width:0; }
+  .hc-att select { flex:1; min-width:0; height:38px; border:1px solid var(--border);
+    border-radius:var(--radius-sm); padding:0 10px; font-size:13px; font-family:inherit; background:var(--surface); }
+  .hc-manage .att-audit { flex:1 1 100%; }
+
+  /* Acciones: principal (Ver detalle) a lo ancho + iconos */
+  .hc-acts { display:flex; gap:7px; margin-top:12px; }
+  .hc-acts .hc-detail { flex:1; height:40px; }
+  .hc-acts .hc-ib { width:42px; flex:0 0 42px; height:40px; display:flex;
+    align-items:center; justify-content:center; padding:0; font-size:17px;
+    border:1px solid var(--border); border-radius:var(--radius-sm); background:var(--surface);
+    color:var(--ink-soft); cursor:pointer; }
+  .hc-acts .hc-ib:hover { background:var(--border-soft); }
+  .hc-acts2 { margin-top:8px; }
+  .hc-acts2 .btn-send { width:100%; }
 }

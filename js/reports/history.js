@@ -79,6 +79,13 @@ function originPill(r) {
     : '<span class="pill pill-origin-company">Empresa</span>';
 }
 
+// ¿viewport movil? (mismo umbral que el resto del portal: <=768px). Se
+// consulta en cada pintado para decidir tabla (escritorio) vs tarjetas
+// apiladas (movil).
+function isMobile() {
+  return window.matchMedia('(max-width:768px)').matches;
+}
+
 /* Feedback breve en un boton-icono SIN tocar su glifo: marca .is-ok o
    .is-err por ~1.2s y lo rehabilita. */
 function flashBtn(b, ok) {
@@ -172,6 +179,7 @@ export function renderHistory(user) {
         <th style="text-align:right">Acciones</th>
       </tr></thead><tbody id="hBody"></tbody></table>
     </div>
+    <div class="hist-cards" id="hCards"></div>
 
     <div class="hist-pager">
       <div class="hp-left">
@@ -246,12 +254,29 @@ export function renderHistory(user) {
   }
 
   function paintRows() {
+    // Host activo: en movil pintamos TARJETAS en #hCards; en escritorio, filas
+    // en #hBody. Los listeners se enganchan sobre el host activo (wireRows).
+    const mobile = isMobile();
+    const tableBox = document.querySelector('.tablebox');
+    const cardsBox = $('#hCards');
+    if (tableBox) tableBox.style.display = mobile ? 'none' : '';
+    if (cardsBox) cardsBox.style.display = mobile ? '' : 'none';
+    const host = mobile ? cardsBox : $('#hBody');
+    if (!host) return;
     if (!ST.rows.length) {
-      $('#hBody').innerHTML = `<tr><td colspan="${ncols}" class="empty">No hay reportes con los filtros actuales.</td></tr>`;
+      host.innerHTML = mobile
+        ? '<div class="hc-empty">No hay reportes con los filtros actuales.</div>'
+        : `<tr><td colspan="${ncols}" class="empty">No hay reportes con los filtros actuales.</td></tr>`;
       return;
     }
-    $('#hBody').innerHTML = ST.rows.map(r => {
-      const t = TYPES[r.type] || { label: r.type, icon: '📄' };
+    host.innerHTML = ST.rows.map(r => mobile ? mobileCard(r) : desktopRow(r)).join('');
+    wireRows(host);
+    syncHeaderCheckbox();
+  }
+
+  // ---- Fila de ESCRITORIO (<tr>) ----
+  function desktopRow(r) {
+    const t = TYPES[r.type] || { label: r.type, icon: '📄' };
       const storeTd = showStore
         ? `<td><div class="store-cell">${r.company_code}<div class="sub2">${r.company_name || ''}</div></div></td>` : '';
       const resend = !r.osticket_id
@@ -297,13 +322,82 @@ export function renderHistory(user) {
           ${resend}
         </td>
       </tr>`;
-    }).join('');
+  }
 
-    $('#hBody').querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', e => {
+  // ---- Tarjeta MOVIL (<div>) ----
+  // Mismo contenido y MISMOS data-* que la fila (para que wireRows los
+  // enganche igual). Cabecera (checkbox si gestiona + icono + N/tipo + pill
+  // de atencion si NO gestiona) / datos en pares / (si gestiona) selector de
+  // atencion / acciones (Ver detalle + iconos + reenviar).
+  function mobileCard(r) {
+    const t = TYPES[r.type] || { label: r.type, icon: '\uD83D\uDCC4' };
+    const rows = [];
+    if (showStore) {
+      rows.push(['Tienda', `<b>${r.company_code}</b>${r.company_name ? `<div class="hc-sub">${r.company_name}</div>` : ''}`]);
+    }
+    rows.push(['Enviado', fmtSent(r.sent_at)]);
+    rows.push(['Responsable', (r.responsible || '\u2014') + (r.position ? `<div class="hc-sub">${r.position}</div>` : '')]);
+    rows.push(['Origen', originPill(r)]);
+    rows.push(['Trabaj.', `<b>${r.workers_count}</b>`]);
+    rows.push(['osTicket', otPill(r, ST.osticketUrl, ST.viewerIsAgent)]);
+    const grid = rows.map(([k, v]) => `<span class="hc-k">${k}</span><span class="hc-v">${v}</span>`).join('');
+
+    const headPill = canManage ? '' : attPill(r.attention);
+    const checkbox = canManage
+      ? `<input type="checkbox" class="chk hrow-chk hc-check" data-pick="${r.id}" ${ST.selected.has(r.id) ? 'checked' : ''} title="Seleccionar">` : '';
+
+    let manageBlock = '';
+    if (canManage) {
+      const audit = attAuditText(r);
+      const auditHtml = audit ? `<div class="att-audit">${audit}</div>` : '';
+      const syncBtn = r.osticket_id
+        ? `<button class="icon-btn att-syncbtn" data-syncone="${r.id}" title="Reenviar a osTicket el estado actual de este reporte">\u21BB</button>`
+        : '';
+      manageBlock = `<div class="hc-manage">
+        <span class="hc-k">Atencion</span>
+        <div class="hc-att">
+          <select class="att-row-sel att-${r.attention}" data-attsel="${r.id}" title="Cambiar estado de este reporte">
+            ${ATT_ORDER.map(k => `<option value="${k}" ${k === r.attention ? 'selected' : ''}>${ATT_STATES[k].label}</option>`).join('')}
+          </select>${syncDot(r.osticket_sync)}${syncBtn}
+        </div>${auditHtml}</div>`;
+    }
+
+    const resend = !r.osticket_id
+      ? `<div class="hc-acts hc-acts2"><button class="btn btn-sm btn-send" data-resend="${r.id}">Enviar a osTicket</button></div>` : '';
+    const acts = `<div class="hc-acts">
+      <button class="btn btn-sm hc-detail" data-open="${r.id}">Ver detalle</button>
+      <button class="icon-btn hc-ib" data-copytxt="${r.id}" title="Copiar el texto del ticket">\u29C9</button>
+      <button class="icon-btn hc-ib" data-dltxt="${r.id}" title="Descargar el texto del ticket (.txt)">\u2913</button>
+      <button class="icon-btn hc-ib" data-dlxls="${r.id}" title="Descargar la plantilla de Excel (.xlsx)">\u{1F4C4}</button>
+    </div>${resend}`;
+
+    return `<div class="hist-card" data-open="${r.id}">
+      <div class="hc-top">
+        ${checkbox}
+        <div class="hc-ic">${t.icon}</div>
+        <div class="hc-tt"><div class="hc-t1">N\u00b0 ${r.id}</div><div class="hc-t2">${t.label}</div></div>
+        ${headPill}
+      </div>
+      <div class="hc-grid">${grid}</div>
+      ${manageBlock}
+      ${acts}
+    </div>`;
+  }
+
+  // ---- Cableado de listeners sobre el host activo (tabla o tarjetas) ----
+  // Ambos formatos usan los MISMOS data-* attributes; un solo conjunto de
+  // listeners sirve para los dos. `host` es #hBody (tabla) o #hCards (movil).
+  function wireRows(host) {
+    host.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', e => {
+      // No abrir el detalle si el clic viene de un control interno.
+      if (e.target.closest('[data-copytxt],[data-dltxt],[data-dlxls],[data-resend],[data-attsel],[data-syncone],[data-pick],[data-otlink]')) return;
+      // Si es el contenedor (fila/tarjeta) y el clic cayo en el boton interno
+      // "Ver detalle", dejar que lo maneje el boton (evita doble apertura).
+      if (el.matches('.hist-card, tr') && e.target.closest('[data-open]') !== el) return;
       e.stopPropagation();
       openDetail(parseInt(el.dataset.open, 10));
     }));
-    $('#hBody').querySelectorAll('[data-resend]').forEach(b => b.addEventListener('click', e => {
+    host.querySelectorAll('[data-resend]').forEach(b => b.addEventListener('click', e => {
       e.stopPropagation();
       const id = parseInt(b.dataset.resend, 10);
       const row = ST.rows.find(x => x.id === id) || { id };
@@ -311,15 +405,12 @@ export function renderHistory(user) {
         id, type: row.type, company_code: row.company_code, company_name: row.company_name,
       }, () => load());
     }));
-
-    // Enlace al ticket en osTicket: no debe disparar "Ver detalle" de la fila.
-    $('#hBody').querySelectorAll('[data-otlink]').forEach(a => a.addEventListener('click', e => {
+    // Enlace al ticket en osTicket: no debe disparar "Ver detalle".
+    host.querySelectorAll('[data-otlink]').forEach(a => a.addEventListener('click', e => {
       e.stopPropagation();
     }));
-
-    // Copiar el texto del ticket (regenerado con la misma regla del envio).
-    // Feedback por clase (no se toca el glifo del boton-icono).
-    $('#hBody').querySelectorAll('[data-copytxt]').forEach(b => b.addEventListener('click', async e => {
+    // Copiar el texto del ticket.
+    host.querySelectorAll('[data-copytxt]').forEach(b => b.addEventListener('click', async e => {
       e.stopPropagation();
       const id = parseInt(b.dataset.copytxt, 10);
       b.disabled = true; b.classList.add('is-busy');
@@ -329,9 +420,8 @@ export function renderHistory(user) {
       const ok = await copyText(r.text);
       flashBtn(b, ok);
     }));
-
-    // Descargar el texto del ticket como .txt (nombre AAAAMMDD_NNNN_ALIAS_TIPO).
-    $('#hBody').querySelectorAll('[data-dltxt]').forEach(b => b.addEventListener('click', async e => {
+    // Descargar el texto del ticket como .txt.
+    host.querySelectorAll('[data-dltxt]').forEach(b => b.addEventListener('click', async e => {
       e.stopPropagation();
       const id = parseInt(b.dataset.dltxt, 10);
       b.disabled = true; b.classList.add('is-busy');
@@ -341,9 +431,8 @@ export function renderHistory(user) {
       downloadText(r.text, r.filename);
       flashBtn(b, true);
     }));
-
     // Descargar la plantilla de Excel del ticket (.xlsx).
-    $('#hBody').querySelectorAll('[data-dlxls]').forEach(b => b.addEventListener('click', async e => {
+    host.querySelectorAll('[data-dlxls]').forEach(b => b.addEventListener('click', async e => {
       e.stopPropagation();
       const id = parseInt(b.dataset.dlxls, 10);
       b.disabled = true; b.classList.add('is-busy');
@@ -353,18 +442,15 @@ export function renderHistory(user) {
       downloadBase64(r.base64, r.filename, r.mime);
       flashBtn(b, true);
     }));
-
     // ---- Gestion de estado de atencion (solo admin/superadmin) ----
     if (canManage) {
-      // Checkbox por fila -> actualiza la seleccion.
-      $('#hBody').querySelectorAll('[data-pick]').forEach(c => c.addEventListener('click', e => {
+      host.querySelectorAll('[data-pick]').forEach(c => c.addEventListener('click', e => {
         e.stopPropagation();
         const id = parseInt(c.dataset.pick, 10);
         if (c.checked) ST.selected.add(id); else ST.selected.delete(id);
         updateSelBar();
       }));
-      // Selector inline por fila -> cambia SOLO ese reporte.
-      $('#hBody').querySelectorAll('[data-attsel]').forEach(s => {
+      host.querySelectorAll('[data-attsel]').forEach(s => {
         s.addEventListener('click', e => e.stopPropagation());
         s.addEventListener('change', async e => {
           e.stopPropagation();
@@ -372,8 +458,7 @@ export function renderHistory(user) {
           await applyAttention([id], s.value, null, s);
         });
       });
-      // Boton re-sincronizar por fila -> reenvia el estado actual a osTicket.
-      $('#hBody').querySelectorAll('[data-syncone]').forEach(b => {
+      host.querySelectorAll('[data-syncone]').forEach(b => {
         b.addEventListener('click', async e => {
           e.stopPropagation();
           const id = parseInt(b.dataset.syncone, 10);
@@ -381,8 +466,6 @@ export function renderHistory(user) {
         });
       });
     }
-    // Reflejar en el header el estado del checkbox "todos".
-    syncHeaderCheckbox();
   }
 
   // Actualiza la barra de seleccion multiple (contador + visibilidad).
