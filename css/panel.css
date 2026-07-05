@@ -1847,4 +1847,26 @@ input.needfill:focus, select.needfill:focus {
 
   /* Config de Sincronizacion: los grid de 3 columnas se apilan. */
   .cfg-grid3 { grid-template-columns:1fr; }
+
+  /* ---------------------------------------------------------------
+     BLOQUE 6 — VISTA PERSONAL: barra de acciones a SOLO-ICONO.
+     La cabecera de Personal (#wpGridView .head-actions) tiene hasta 6
+     botones con texto largo (¿Como tomar la foto?, Recargar, Reporte 10,
+     Reporte AX, Sincronizar, Limpiar) que no caben en movil. Se colapsa
+     el texto con font-size:0 (el SVG tiene tamano fijo, no depende de la
+     fuente) dejando solo el icono; cada boton ya lleva title/aria-label.
+     El grid de fotos (.wp-grid) y la ficha ya son responsive por su cuenta.
+     --------------------------------------------------------------- */
+  #wpGridView .head-actions { gap:8px; }
+  #wpGridView .head-actions .btn {
+    font-size:0; padding:0; width:var(--btn-h); flex:0 0 auto; justify-content:center; gap:0;
+  }
+  #wpGridView .head-actions .btn svg { margin:0; }
+  /* El boton primario (Sincronizar) y el de peligro (Limpiar) conservan su
+     color distintivo aunque queden como icono. */
+
+  /* Barra de roster y barra de seleccion: que envuelvan sin desbordar. */
+  #wpGridView .wp-rosterbar { font-size:12px; }
+  #wpSelBar { gap:8px; }
+  #wpSelBar select { flex:1 1 100%; min-width:0; }
 }
