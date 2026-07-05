@@ -41,9 +41,9 @@ import { PDFDocument, StandardFonts, rgb } from './vendor/pdf-lib.esm.min.js';
 const UNIDADES = ['', 'UNO', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO', 'NUEVE'];
 const ESPECIALES = {
   10: 'DIEZ', 11: 'ONCE', 12: 'DOCE', 13: 'TRECE', 14: 'CATORCE', 15: 'QUINCE',
-  16: 'DIECISEIS', 17: 'DIECISIETE', 18: 'DIECIOCHO', 19: 'DIECINUEVE',
-  20: 'VEINTE', 21: 'VEINTIUNO', 22: 'VEINTIDOS', 23: 'VEINTITRES', 24: 'VEINTICUATRO',
-  25: 'VEINTICINCO', 26: 'VEINTISEIS', 27: 'VEINTISIETE', 28: 'VEINTIOCHO', 29: 'VEINTINUEVE',
+  16: 'DIECISÉIS', 17: 'DIECISIETE', 18: 'DIECIOCHO', 19: 'DIECINUEVE',
+  20: 'VEINTE', 21: 'VEINTIUNO', 22: 'VEINTIDÓS', 23: 'VEINTITRÉS', 24: 'VEINTICUATRO',
+  25: 'VEINTICINCO', 26: 'VEINTISÉIS', 27: 'VEINTISIETE', 28: 'VEINTIOCHO', 29: 'VEINTINUEVE',
 };
 const DECENAS = ['', '', 'VEINTE', 'TREINTA', 'CUARENTA', 'CINCUENTA', 'SESENTA', 'SETENTA', 'OCHENTA', 'NOVENTA'];
 const CENTENAS = ['', 'CIENTO', 'DOSCIENTOS', 'TRESCIENTOS', 'CUATROCIENTOS', 'QUINIENTOS', 'SEISCIENTOS', 'SETECIENTOS', 'OCHOCIENTOS', 'NOVECIENTOS'];
@@ -77,7 +77,7 @@ function enteroALetras(n) {
   const miles = Math.floor((n % 1000000) / 1000);
   const cientos = n % 1000;
   if (millones > 0) {
-    out += (millones === 1) ? 'UN MILLON' : (seccion(millones) + ' MILLONES');
+    out += (millones === 1) ? 'UN MILLÓN' : (seccion(millones) + ' MILLONES');
   }
   if (miles > 0) {
     if (out) out += ' ';
@@ -96,7 +96,7 @@ export function montoBsALetras(amount) {
   const entero = Math.floor(num);
   const cent = Math.round((num - entero) * 100);
   const letras = enteroALetras(entero);
-  const bolivares = entero === 1 ? 'BOLIVAR' : 'BOLIVARES';
+  const bolivares = entero === 1 ? 'BOLÍVAR' : 'BOLÍVARES';
   const cc = String(cent).padStart(2, '0');
   return `${letras} ${bolivares} CON ${cc}/100`;
 }
@@ -227,7 +227,7 @@ export async function buildConstanciaPdf(env, line, opts = {}) {
 
   /* ---------- destinatario (izquierda) ---------- */
   const dest = (line.recipient || 'A quien pueda interesar').toUpperCase();
-  drawLeft('Senores:', fItal, 11.5, ink, 3);
+  drawLeft('Señores:', fItal, 11.5, ink, 3);
   drawLeft(dest + '.', fBold, 11.5, ink, 3);
   drawLeft('Presente. -', fItal, 11.5, ink, 22);
 
@@ -248,12 +248,12 @@ export async function buildConstanciaPdf(env, line, opts = {}) {
   const bonoNum = tieneBono ? fmtBsNum(line.bonus_amount) : '';
 
   let cuerpo = `Por medio de la presente se hace constar que el(la) ciudadano(a) ${nombre}, `
-    + `venezolano(a), mayor de edad, titular de la cedula de identidad No. ${ced}, `
+    + `venezolano(a), mayor de edad, titular de la cédula de identidad No. ${ced}, `
     + `presta sus servicios en esta empresa desde el ${ingreso}, `
-    + `desempenando el cargo de ${cargo}, `
+    + `desempeñando el cargo de ${cargo}, `
     + `devengando un salario mensual de ${salLetras} (Bs. ${salNum})`;
   if (tieneBono) {
-    cuerpo += `, y un beneficio de alimentacion (Cestaticket) de ${bonoLetras} (Bs. ${bonoNum})`;
+    cuerpo += `, y un beneficio de alimentación (Cestaticket) de ${bonoLetras} (Bs. ${bonoNum})`;
   }
   cuerpo += '.';
 
@@ -263,8 +263,8 @@ export async function buildConstanciaPdf(env, line, opts = {}) {
   /* ---------- cierre: se expide en CIUDAD a los DIA de MES de ANIO ---------- */
   const ciudad = line.city || 'Caracas';
   const f = fechaLarga(hoyCaracasYMD());
-  const cierre = `Constancia que se expide a peticion de la parte interesada, en ${ciudad}, `
-    + `a los ${f.dia} dias del mes de ${f.mes} de ${f.anio}.`;
+  const cierre = `Constancia que se expide a petición de la parte interesada, en ${ciudad}, `
+    + `a los ${f.dia} días del mes de ${f.mes} de ${f.anio}.`;
   drawParagraph(cierre, fReg, 11.5, ink, 6, 30);
 
   /* ---------- FIRMA ---------- */
