@@ -64,6 +64,22 @@ function fmtDateTime(iso) {
   if (isNaN(dt)) return '—';
   return dt.toLocaleString('es-VE', { timeZone: 'America/Caracas', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
 }
+/* Desfase legible entre dos instantes (solicitud -> generacion). Devuelve
+   algo como "2 h 15 min", "3 d 4 h" o "12 min". '' si falta algun dato. */
+function fmtDelay(fromIso, toIso) {
+  if (!fromIso || !toIso) return '';
+  const a = new Date(fromIso), b = new Date(toIso);
+  if (isNaN(a) || isNaN(b)) return '';
+  let ms = b - a;
+  if (ms < 0) ms = 0;
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return 'menos de 1 min';
+  if (min < 60) return `${min} min`;
+  const h = Math.floor(min / 60), rm = min % 60;
+  if (h < 24) return rm ? `${h} h ${rm} min` : `${h} h`;
+  const d = Math.floor(h / 24), rh = h % 24;
+  return rh ? `${d} d ${rh} h` : `${d} d`;
+}
 /* Cédula: solo número al entrar; letra V/E automática (>80M → E) salvo override;
    se muestra con puntos de miles. */
 function cedLetter(numStr, override) {
@@ -275,6 +291,11 @@ function reasonModal({ title, placeholder, okLabel = 'Confirmar' }) {
 }
 
 /* ---------- API helpers ---------- */
+// admin/superadmin pueden editar y RE-generar una constancia ya emitida
+// (gestor_empresa y editor_personal no).
+function isPowerAdmin() {
+  return USER && USER.kind === 'admin' && (USER.role === 'admin' || USER.role === 'superadmin');
+}
 function actorPayload() {
   return USER.kind === 'company'
     ? { actor: { kind: 'company', companyCode: USER.companyCode } }
@@ -439,13 +460,19 @@ function inboxRow({ req, line }) {
     : (line.status === 'rechazada'
         ? `<span class="cr-sub">${esc(line.reject_reason || 'rechazada')}</span>`
         : `<button class="cr-b cr-b-mini" data-review="${line.id}">Ver</button>`);
+  // Bajo el estado: si ya fue generada, cuando y cuanto tardo desde la solicitud.
+  let genSub = '';
+  if ((line.status === 'generada' || line.status === 'disponible') && line.generated_at) {
+    const delay = fmtDelay(req.requested_at, line.generated_at);
+    genSub = `<div class="cr-sub">${esc(fmtDateTime(line.generated_at))}${delay ? ' · ' + esc(delay) : ''}</div>`;
+  }
   return `<tr>
     <td><span class="cr-strong">#${req.id}</span></td>
     <td>${esc(companyName(req.company_code))}<div class="cr-sub">${esc(req.company_code)}</div></td>
     <td><span class="cr-strong">${esc(line.worker_full_name)}</span><div class="cr-sub">${esc(fmtCedula(line.worker_id_number))}</div></td>
     <td>${esc(req.requester_id)}<div class="cr-sub">${esc(req.requester_kind)}</div></td>
     <td>${esc(fmtDateTime(req.requested_at))}</td>
-    <td>${statusPill(line.status)}</td>
+    <td>${statusPill(line.status)}${genSub}</td>
     <td><div class="cr-acts">${acts}</div></td>
   </tr>`;
 }
@@ -502,13 +529,18 @@ function mineRow({ req, line }) {
   } else if (line.status === 'rechazada') {
     acts = `<span class="cr-sub">${esc(line.reject_reason || 'rechazada')}</span>`;
   }
+  // Bajo el estado: fecha en que quedo lista (generada/disponible).
+  let genSub = '';
+  if ((line.status === 'generada' || line.status === 'disponible') && line.generated_at) {
+    genSub = `<div class="cr-sub">lista ${esc(fmtDate(line.generated_at))}</div>`;
+  }
   return `<tr>
     <td><span class="cr-strong">#${req.id}</span></td>
     ${IS_ADMIN ? `<td>${esc(companyName(req.company_code))}<div class="cr-sub">${esc(req.company_code)}</div></td>` : ''}
     <td><span class="cr-strong">${esc(line.worker_full_name)}</span><div class="cr-sub">${esc(fmtCedula(line.worker_id_number))}</div></td>
     <td>${esc(line.recipient || req.recipient || DEFAULT_RECIPIENT)}</td>
     <td>${esc(fmtDate(req.requested_at))}</td>
-    <td>${statusPill(line.status)}</td>
+    <td>${statusPill(line.status)}${genSub}</td>
     <td><div class="cr-acts">${acts}</div></td>
   </tr>`;
 }
@@ -835,13 +867,32 @@ function paintReview() {
   const req = REVIEW.req;
   const line = curLine();
   const total = REVIEW.lines.length;
-  const readonly = line.status === 'generada' || line.status === 'disponible' || line.status === 'rechazada' || line.status === 'anulada';
+  const emitida = line.status === 'generada' || line.status === 'disponible';
+  const cerrada = line.status === 'rechazada' || line.status === 'anulada';
+  // Editable si: pendiente (solicitada/en_revision), o si esta emitida y el
+  // actor es admin/superadmin (puede corregir y RE-generar). Rechazada/anulada
+  // siempre en solo lectura.
+  const canEdit = !cerrada && (!emitida || isPowerAdmin());
+  const readonly = !canEdit;
+
+  // Franja informativa de generacion (cuando ya fue emitida): cuando se genero
+  // y cuanto tardo el admin desde la solicitud.
+  let genBanner = '';
+  if (emitida && line.generated_at) {
+    const delay = fmtDelay(req.requested_at, line.generated_at);
+    genBanner = `<p style="margin:3px 0 0;font-size:12px;color:var(--muted)">Generada el <b>${esc(fmtDateTime(line.generated_at))}</b>${delay ? ` · ${esc(delay)} después de la solicitud` : ''}.</p>`;
+  }
+
+  const estadoTxt = readonly
+    ? (cerrada ? 'Solo lectura (' + esc(line.status) + ')' : 'Emitida (' + esc(line.status) + ') — solo lectura')
+    : (emitida ? 'Constancia emitida — puedes corregir y RE-generar el PDF.' : 'Todos los campos son editables antes de generar.');
 
   $('#pnlMain').innerHTML = `
     <button class="cr-back" id="rvBack">‹ Volver a la bandeja</button>
     <div class="cr-head">
       <div><h1>Revisar constancia — #${req.id}</h1>
-        <p>${esc(companyName(req.company_code))} · Empleado ${REVIEW.idx + 1} de ${total} · ${readonly ? 'Solo lectura (' + esc(line.status) + ')' : 'Todos los campos son editables antes de generar.'}</p></div>
+        <p>${esc(companyName(req.company_code))} · Empleado ${REVIEW.idx + 1} de ${total} · ${estadoTxt}</p>
+        ${genBanner}</div>
       <div class="cr-revnav">
         <button class="cr-b cr-b-mini" id="rvPrev" ${REVIEW.idx === 0 ? 'disabled' : ''}>‹ Anterior</button>
         <span class="cr-count">${REVIEW.idx + 1}/${total}</span>
@@ -857,13 +908,15 @@ function paintReview() {
       </div>
     </div>
     <div class="cr-savebar">
-      <span class="cr-muted">Empleado <b>${REVIEW.idx + 1} de ${total}</b>${readonly ? '' : ' · guarda o genera cada uno'}.</span>
+      <span class="cr-muted">Empleado <b>${REVIEW.idx + 1} de ${total}</b>${readonly ? '' : (emitida ? ' · corrige y RE-genera' : ' · guarda o genera cada uno')}.</span>
       <span class="cr-sp"></span>
-      ${readonly ? '' : `
+      ${readonly ? '' : (emitida ? `
+        <button class="cr-b" id="rvSave">Guardar cambios</button>
+        <button class="cr-b cr-b-success" id="rvGen">Regenerar PDF</button>` : `
         <button class="cr-b cr-b-warn" id="rvReject">Rechazar</button>
         <button class="cr-b" id="rvSave">Guardar cambios</button>
         <button class="cr-b cr-b-success" id="rvGen">Generar</button>
-        ${total > 1 ? '<button class="cr-b cr-b-success" id="rvGenAll">Generar todas</button>' : ''}`}
+        ${total > 1 ? '<button class="cr-b cr-b-success" id="rvGenAll">Generar todas</button>' : ''}`)}
     </div>`;
 
   bindReview(readonly);
@@ -1007,11 +1060,11 @@ function bindReview(readonly) {
     refreshPaper();
   });
 
-  $('#rvSave').addEventListener('click', () => saveCurrent(false));
-  $('#rvGen').addEventListener('click', () => generateCurrent());
+  const bSave = $('#rvSave'); if (bSave) bSave.addEventListener('click', () => saveCurrent(false));
+  const bGen = $('#rvGen'); if (bGen) bGen.addEventListener('click', () => generateCurrent());
   const genAll = $('#rvGenAll');
   if (genAll) genAll.addEventListener('click', () => generateAll());
-  $('#rvReject').addEventListener('click', () => rejectLine(curLine().id));
+  const bRej = $('#rvReject'); if (bRej) bRej.addEventListener('click', () => rejectLine(curLine().id));
 }
 
 async function saveCurrent(silent) {
@@ -1029,26 +1082,47 @@ async function generateCurrent() {
   const patch = collectPatch();
   if (patch.salary_amount == null) { toast('Falta el salario base.', 'err'); return; }
   if (!patch.signer_id && !patch.signer_name_snap) { toast('Falta el firmante.', 'err'); return; }
+
+  const emitida = line.status === 'generada' || line.status === 'disponible';
+  const sinBono = patch.bonus_amount == null || patch.bonus_amount === '' || Number(patch.bonus_amount) === 0;
+  const worker = esc(patch.worker_full_name || line.worker_full_name);
+
+  // Aviso (no bloqueante) si va SIN cestaticket: se puede generar solo con
+  // salario y luego editar/regenerar para agregarlo.
+  const bonoWarn = sinBono
+    ? `<p class="cr-sub" style="background:#fef6e7;border:1px solid #f0d9a8;color:#92400e;border-radius:8px;padding:9px 11px;margin-top:8px">⚠️ Esta constancia se generará <b>sin bono Cestaticket</b> (solo salario). Puedes editarla y regenerarla después para agregarlo.</p>`
+    : '';
+
+  const cuerpo = emitida
+    ? `<p>Se <b>reemplazará</b> el PDF de la constancia de <span class="cr-strong">${worker}</span> con los datos actuales.</p>${bonoWarn}`
+    : `<p>Se generará el PDF de la constancia de <span class="cr-strong">${worker}</span> y quedará <span class="cr-strong">disponible</span> para descargar.</p>${bonoWarn}<p class="cr-sub">Recuerda el sello húmedo al imprimirla.</p>`;
+
   const ok = await confirmModal({
-    title: 'Generar constancia',
-    bodyHtml: `<p>Se generará el PDF de la constancia de <span class="cr-strong">${esc(patch.worker_full_name || line.worker_full_name)}</span> y quedará <span class="cr-strong">disponible</span> para descargar.</p><p class="cr-sub">Recuerda el sello húmedo al imprimirla.</p>`,
-    okLabel: 'Generar',
+    title: emitida ? 'Regenerar constancia' : 'Generar constancia',
+    bodyHtml: cuerpo,
+    okLabel: emitida ? 'Regenerar' : 'Generar',
   });
   if (!ok) return;
   const gb = $('#rvGen'); const gbOrig = gb ? gb.textContent : null;
-  if (gb) { gb.disabled = true; gb.textContent = 'Generando…'; }
+  if (gb) { gb.disabled = true; gb.textContent = emitida ? 'Regenerando…' : 'Generando…'; }
   const d = await apiAdmin({ action: 'generate', line_id: line.id, patch });
   if (gb) { gb.disabled = false; gb.textContent = gbOrig; }
   if (!d.ok) { toast((d.results && d.results[0] && d.results[0].error) || d.error || 'No se pudo generar.', 'err'); return; }
   const res0 = d.results && d.results[0];
   const newStatus = (res0 && res0.pdf_key) ? 'disponible' : 'generada';
-  REVIEW.lines[REVIEW.idx] = { ...line, ...patch, status: newStatus, pdf_key: res0 ? res0.pdf_key : null };
-  toast(newStatus === 'disponible' ? 'Constancia generada y disponible' : 'Constancia generada (PDF en proceso)');
-  await loadMine();
-  // Avanzar al siguiente pendiente si hay.
-  const nextPending = REVIEW.lines.findIndex((l, i) => i !== REVIEW.idx && (l.status === 'solicitada' || l.status === 'en_revision'));
-  if (nextPending >= 0) { REVIEW.idx = nextPending; paintReview(); }
-  else paintReview();
+  // Al regenerar, actualizamos tambien generated_at localmente (aprox ahora).
+  REVIEW.lines[REVIEW.idx] = { ...line, ...patch, status: newStatus, pdf_key: res0 ? res0.pdf_key : null, generated_at: new Date().toISOString() };
+  toast(emitida
+    ? (newStatus === 'disponible' ? 'Constancia regenerada' : 'Constancia regenerada (PDF en proceso)')
+    : (newStatus === 'disponible' ? 'Constancia generada y disponible' : 'Constancia generada (PDF en proceso)'));
+  await loadInbox(); await loadMine();
+  // Si era pendiente, avanzar al siguiente pendiente; si era regeneracion,
+  // quedarse en la misma para ver el resultado.
+  if (!emitida) {
+    const nextPending = REVIEW.lines.findIndex((l, i) => i !== REVIEW.idx && (l.status === 'solicitada' || l.status === 'en_revision'));
+    if (nextPending >= 0) { REVIEW.idx = nextPending; paintReview(); return; }
+  }
+  paintReview();
 }
 
 async function generateAll() {

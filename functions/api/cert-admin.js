@@ -287,7 +287,11 @@ export async function onRequestPost({ request, env }) {
       const legacyOk = true;   // cualquier admin del alcance
       await shadowCan(env, body.user, 'cert-admin', 'save_line', 'cert.generate', legacyOk);
 
-      if (line.status === 'generada' || line.status === 'disponible') {
+      // Editar una constancia YA generada/disponible: permitido SOLO a
+      // admin/superadmin (no gestor_empresa ni editor_personal). Tras editar,
+      // hay que RE-GENERAR para rehacer el PDF (se avisa desde el front).
+      const isPowerAdmin = adm.role === 'admin' || adm.role === 'superadmin';
+      if ((line.status === 'generada' || line.status === 'disponible') && !isPowerAdmin) {
         return json({ ok: false, error: 'No se puede editar: la constancia ya fue generada.' }, 409);
       }
       if (line.status === 'rechazada' || line.status === 'anulada') {
@@ -326,11 +330,15 @@ export async function onRequestPost({ request, env }) {
       if (!items.length) return json({ ok: false, error: 'No hay lineas para generar.' }, 400);
 
       const results = [];
+      // Re-generar una constancia ya emitida (reemplazar el PDF) es potestad
+      // de admin/superadmin. gestor/editor solo generan las pendientes.
+      const isPowerAdmin = adm.role === 'admin' || adm.role === 'superadmin';
       for (const it of items) {
         const found = await lineInScope(env, adm, it.line_id);
         if (!found) { results.push({ line_id: it.line_id, ok: false, error: 'Fuera de alcance.' }); continue; }
         const { line } = found;
-        if (line.status === 'generada' || line.status === 'disponible') {
+        const yaEmitida = line.status === 'generada' || line.status === 'disponible';
+        if (yaEmitida && !isPowerAdmin) {
           results.push({ line_id: it.line_id, ok: false, error: 'Ya generada.' }); continue;
         }
         if (line.status === 'rechazada' || line.status === 'anulada') {
@@ -379,7 +387,8 @@ export async function onRequestPost({ request, env }) {
           method: 'PATCH', headers: { Prefer: 'return=minimal' },
           body: JSON.stringify({ status: 'disponible', pdf_key: pdfKey, updated_at: nowIso() }),
         });
-        await audit(env, it.line_id, line.status, 'disponible', adm, 'Constancia generada (PDF ' + pdfKey + ')');
+        const regen = yaEmitida ? 'Constancia RE-generada (PDF ' + pdfKey + ')' : 'Constancia generada (PDF ' + pdfKey + ')';
+        await audit(env, it.line_id, line.status, 'disponible', adm, regen);
         results.push({ line_id: it.line_id, ok: true, pdf_key: pdfKey });
       }
 
