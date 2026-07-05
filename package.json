@@ -1,0 +1,9 @@
+{
+  "name": "nominav2",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Portal de Nomina NominaV2 - Cloudflare Pages Functions",
+  "dependencies": {
+    "pdf-lib": "1.17.1"
+  }
+}

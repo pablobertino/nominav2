@@ -155,7 +155,10 @@ async function companySnapshot(env, cc) {
 async function companyRoster(env, cc, { department = null, q = '' } = {}) {
   // Traer de ambas fuentes; una empresa es tienda O no-tienda, pero
   // consultamos las dos por robustez (no se solapan por company_code+tipo).
-  const sel = 'id_number,full_name,role,start_date,end_date,department_id,photo_key';
+  // OJO: store_workers / enterprise_workers NO tienen columna de foto; la
+  // foto (photo_key) vive en workers_master (por cedula). Por eso el select
+  // NO pide photo_key aqui (pedirlo devuelve 400 y vacia el roster).
+  const sel = 'id_number,full_name,role,start_date,end_date,department_id';
   const [sw, ew] = await Promise.all([
     sb(env, `store_workers?company_code=eq.${encodeURIComponent(cc)}&is_active=eq.true&select=${sel}&order=full_name.asc`),
     sb(env, `enterprise_workers?company_code=eq.${encodeURIComponent(cc)}&is_active=eq.true&select=${sel}&order=full_name.asc`),
@@ -177,6 +180,18 @@ async function companyRoster(env, cc, { department = null, q = '' } = {}) {
       String(r.full_name || '').toLowerCase().includes(needle)
       || String(r.id_number || '').includes(needle));
   }
+  // Fotos (miniatura publica) desde workers_master por cedula. Best-effort:
+  // si falla, el roster igual carga (la foto es opcional en el picker).
+  let photoByCed = {};
+  const ceds = [...new Set(rows.map(r => r.id_number).filter(Boolean))];
+  if (ceds.length) {
+    try {
+      const inList = ceds.map(c => `"${c}"`).join(',');
+      const wm = await sb(env,
+        `workers_master?id_number=in.(${inList})&select=id_number,photo_key`);
+      (wm || []).forEach(w => { if (w.photo_key) photoByCed[w.id_number] = w.photo_key; });
+    } catch { /* sin fotos: el roster carga igual */ }
+  }
   return rows.map(r => ({
     id_number: r.id_number,
     full_name: r.full_name,
@@ -184,7 +199,7 @@ async function companyRoster(env, cc, { department = null, q = '' } = {}) {
     start_date: r.start_date || null,
     department_id: r.department_id || null,
     department_name: r.department_id != null ? (deptName[r.department_id] || null) : null,
-    thumb_url: thumbUrl(env, r.photo_key),
+    thumb_url: thumbUrl(env, photoByCed[r.id_number] || null),
   }));
 }
 
