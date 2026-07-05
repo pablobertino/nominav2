@@ -310,7 +310,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.57</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.58</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1028,13 +1028,12 @@ async function companyEditModal(user, c, canEdit) {
     </div>
 
     <div class="ce-sec-title" style="font-weight:600;font-size:12.5px;margin:0 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em">Dirección</div>
-    <div style="display:flex;gap:10px;margin-bottom:12px">
-      <div style="flex:1"><label class="flabel">Estado</label>
-        <select id="stInput"${ro}><option value="">— Cargando… —</option></select></div>
-      <div style="flex:1"><label class="flabel">Ciudad</label>
-        <select id="ctInput"${ro}><option value="">— Seleccione un estado —</option></select></div>
-    </div>
-    <p class="muted" id="muniLine" style="font-size:11.5px;margin:-4px 0 12px">Municipio: <b id="muniVal">—</b></p>
+    <label class="flabel">Estado</label>
+    <select id="stInput" style="width:100%;margin-bottom:12px"${ro}><option value="">— Cargando… —</option></select>
+    <label class="flabel">Ciudad</label>
+    <select id="ctInput" style="width:100%;margin-bottom:12px"${ro}><option value="">— Seleccione un estado —</option></select>
+    <label class="flabel">Municipio</label>
+    <select id="muInput" style="width:100%;margin-bottom:12px"${ro}><option value="">— Seleccione una ciudad —</option></select>
     <label class="flabel">Dirección completa</label>
     <textarea id="adInput" rows="3" placeholder="Av., calle, edificio, local, punto de referencia…" style="margin-bottom:6px;resize:vertical;width:100%"${ro}>${(c.address || '').replace(/</g,'&lt;')}</textarea>
     <p class="muted" style="font-size:11.5px;margin:0">${canEdit ? 'El teléfono se guarda en formato internacional (+58). Deja un campo vacío para quitarlo.' : 'Esta vista es de solo lectura.'}</p>
@@ -1049,50 +1048,89 @@ async function companyEditModal(user, c, canEdit) {
   $('#mX').addEventListener('click', closeModal);
   $('#mCancel').addEventListener('click', closeModal);
 
-  const stSel = $('#stInput'), ctSel = $('#ctInput'), muniVal = $('#muniVal');
+  const stSel = $('#stInput'), ctSel = $('#ctInput'), muSel = $('#muInput');
   const errBox = $('#ceErr');
   const showErr = msg => { errBox.textContent = msg; errBox.style.display = 'block'; };
   const hideErr = () => { errBox.style.display = 'none'; };
 
   // Poblar los combos con el catalogo geografico (perezoso).
   const geo = await loadGeo();
-  // Estado: opciones ordenadas por nombre. Se conserva el valor actual aunque
-  // el catalogo no lo tenga (empresa cargada a mano).
   const curState = (c.state || '').trim();
   const curCity = (c.city || '').trim();
+  const curMuni = (c.municipality || '').trim();
   const stateExists = geo.states.some(s => s.name === curState);
   stSel.innerHTML = '<option value="">— Sin estado —</option>'
     + geo.states.map(s => `<option value="${s.name.replace(/"/g,'&quot;')}"${s.name === curState ? ' selected' : ''}>${s.name}</option>`).join('')
     + (curState && !stateExists ? `<option value="${curState.replace(/"/g,'&quot;')}" selected>${curState} (actual)</option>` : '');
 
-  // Rellena el combo de Ciudad segun el estado elegido. Mantiene la ciudad
-  // actual si aplica; deduce el municipio de la ciudad seleccionada.
+  // Helpers de catalogo por estado seleccionado.
+  function stateId() {
+    const stObj = geo.states.find(s => s.name === stSel.value);
+    return stObj ? stObj.id : null;
+  }
+  function citiesOfState() {
+    const sid = stateId();
+    return sid ? geo.cities.filter(ci => ci.state === sid) : [];
+  }
+  // Municipios distintos del estado (ordenados).
+  function munisOfState() {
+    const set = new Set(citiesOfState().map(ci => ci.municipality).filter(Boolean));
+    return [...set].sort((a, b) => a.localeCompare(b, 'es'));
+  }
+  function muniOfCity(cityName) {
+    const hit = citiesOfState().find(ci => ci.name === cityName);
+    return (hit && hit.municipality) ? hit.municipality : '';
+  }
+
+  // Rellena Ciudad segun el estado. preserveCity=true usa la ciudad actual de
+  // la empresa; si no, conserva la seleccion vigente del combo.
   function fillCities(preserveCity) {
-    const stName = stSel.value;
-    // Buscar el state_id por nombre (los datos vienen con state=id en cities).
-    const stObj = geo.states.find(s => s.name === stName);
-    const sid = stObj ? stObj.id : null;
-    const list = sid ? geo.cities.filter(ci => ci.state === sid) : [];
+    const list = citiesOfState();
     const keep = preserveCity ? curCity : ctSel.value;
     const cityExists = list.some(ci => ci.name === keep);
     ctSel.innerHTML = '<option value="">— Sin ciudad —</option>'
       + list.map(ci => `<option value="${ci.name.replace(/"/g,'&quot;')}"${ci.name === keep ? ' selected' : ''}>${ci.name}</option>`).join('')
       + (keep && !cityExists ? `<option value="${keep.replace(/"/g,'&quot;')}" selected>${keep} (actual)</option>` : '');
-    updateMuni();
   }
 
-  // Deduce y muestra el municipio de la ciudad seleccionada.
-  function updateMuni() {
-    const stObj = geo.states.find(s => s.name === stSel.value);
-    const sid = stObj ? stObj.id : null;
-    const hit = sid ? geo.cities.find(ci => ci.state === sid && ci.name === ctSel.value) : null;
-    muniVal.textContent = (hit && hit.municipality) ? hit.municipality : '—';
+  // Rellena Municipio con los del estado. selectMuni = municipio a marcar
+  // (normalmente el de la ciudad elegida). Conserva un municipio 'actual'
+  // fuera de catalogo si hiciera falta.
+  function fillMunis(selectMuni) {
+    const list = munisOfState();
+    const keep = selectMuni != null ? selectMuni : muSel.value;
+    const exists = list.some(m => m === keep);
+    muSel.innerHTML = '<option value="">— Sin municipio —</option>'
+      + list.map(m => `<option value="${m.replace(/"/g,'&quot;')}"${m === keep ? ' selected' : ''}>${m}</option>`).join('')
+      + (keep && !exists ? `<option value="${keep.replace(/"/g,'&quot;')}" selected>${keep} (actual)</option>` : '');
   }
 
+  // Al cambiar la CIUDAD: el municipio se ajusta al de esa ciudad.
+  function onCityChange() {
+    fillMunis(muniOfCity(ctSel.value));
+  }
+  // Al cambiar el MUNICIPIO: la ciudad salta a la PRIMERA ciudad de ese
+  // municipio (si hay varias, la primera del catalogo).
+  function onMuniChange() {
+    const m = muSel.value;
+    if (!m) return;
+    const first = citiesOfState().find(ci => ci.municipality === m);
+    if (first) {
+      // Asegurar que la opcion exista y seleccionarla.
+      if (![...ctSel.options].some(o => o.value === first.name)) fillCities(false);
+      ctSel.value = first.name;
+    }
+  }
+
+  // Carga inicial: Estado -> Ciudad (actual) -> Municipio (el de la ciudad, o
+  // el municipio actual guardado si la ciudad no lo resuelve).
   fillCities(true);
+  fillMunis(muniOfCity(curCity) || curMuni);
+
   if (canEdit) {
-    stSel.addEventListener('change', () => { fillCities(false); hideErr(); });
-    ctSel.addEventListener('change', () => { updateMuni(); hideErr(); });
+    stSel.addEventListener('change', () => { fillCities(false); fillMunis(muniOfCity(ctSel.value)); hideErr(); });
+    ctSel.addEventListener('change', () => { onCityChange(); hideErr(); });
+    muSel.addEventListener('change', () => { onMuniChange(); hideErr(); });
     ['emInput','phInput','phInput2','adInput'].forEach(id => {
       const el = $('#' + id); if (el) el.addEventListener('input', hideErr);
     });
@@ -1100,11 +1138,9 @@ async function companyEditModal(user, c, canEdit) {
     $('#mOk').addEventListener('click', async () => {
       hideErr();
       const btn = $('#mOk'); btn.disabled = true; btn.textContent = 'Guardando…';
-      // Municipio deducido de la ciudad (o vacio si no hay ciudad).
-      const stObj = geo.states.find(s => s.name === stSel.value);
-      const sid = stObj ? stObj.id : null;
-      const hit = sid ? geo.cities.find(ci => ci.state === sid && ci.name === ctSel.value) : null;
-      const muni = (hit && hit.municipality) ? hit.municipality : '';
+      // Municipio = el elegido en el combo (o el deducido de la ciudad si el
+      // combo quedara vacio).
+      const muni = muSel.value || muniOfCity(ctSel.value) || '';
       let d;
       try {
         d = await fetch('/api/company-contact', {

@@ -95,17 +95,24 @@ function actorCanCompany(act, cc) {
 }
 
 /* Nombre de archivo amable para la descarga:
-   "Constancia de trabajo - <CODIGO_EMPRESA> - #<solicitud> - <NOMBRE>.pdf".
-   El nombre del trabajador se incluye porque una solicitud puede tener varias
-   lineas (un PDF por empleado) y evita colisiones al descargar. */
+   "Constancia-<CODIGO_EMPRESA>-<Nombre>-#<solicitud>.pdf".
+   <Nombre> = primer token + ultimo token del nombre completo (ej.
+   "JOSE MANUEL PEREZ GOMEZ" -> "Jose Gomez"), sin acentos. Se incluye para
+   evitar colisiones cuando una solicitud tiene varias lineas (un PDF por
+   empleado). */
 function buildFilename(line, req) {
   const codigo = String((req && req.company_code) || '').trim() || 'EMP';
   const sol = (req && req.request_id != null) ? req.request_id : (line.request_id != null ? line.request_id : '');
-  const name = String(line.worker_full_name || 'trabajador')
+  const clean = String(line.worker_full_name || 'trabajador')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')   // sin acentos
-    .replace(/\s+/g, ' ').trim()
-    .replace(/[^A-Za-z0-9 ]+/g, '').slice(0, 45).trim();
-  return `Constancia de trabajo - ${codigo} - #${sol}${name ? ' - ' + name : ''}.pdf`;
+    .replace(/[^A-Za-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+  const parts = clean ? clean.split(' ') : [];
+  let nombre;
+  if (parts.length >= 2) nombre = parts[0] + ' ' + parts[parts.length - 1];
+  else nombre = parts[0] || 'trabajador';
+  // Capitalizar cada palabra (Jose Gomez).
+  nombre = nombre.split(' ').map(w => w ? w[0].toUpperCase() + w.slice(1).toLowerCase() : w).join(' ').slice(0, 40);
+  return `Constancia-${codigo}-${nombre}-#${sol}.pdf`;
 }
 
 export async function onRequestPost({ request, env }) {
