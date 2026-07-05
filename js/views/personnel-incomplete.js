@@ -134,10 +134,10 @@ function ensureStyles() {
   .pi-row:hover{border-color:var(--brand,#2563eb);box-shadow:0 2px 10px rgba(15,23,42,.06)}
   .pi-ava{width:42px;height:42px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;overflow:hidden}
   .pi-ava img{width:100%;height:100%;object-fit:cover;display:block}
-  .pi-main{flex:1;min-width:0}
+  .pi-main{flex:0 1 auto;min-width:0;max-width:34%}
   .pi-name{font-weight:600;color:var(--ink);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .pi-sub{color:var(--muted);font-size:12px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .pi-right{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex:none;text-align:right;max-width:52%}
+  .pi-right{display:flex;flex-direction:column;align-items:flex-end;gap:3px;flex:none;text-align:right;max-width:52%;margin-left:auto}
   .pi-emp{font-size:12px;color:var(--brand,#2563eb);font-weight:700;font-family:ui-monospace,Menlo,monospace}
   .pi-empn{font-size:11.5px;color:var(--ink);max-width:240px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .pi-miss{display:flex;gap:5px;margin-top:2px;flex-wrap:wrap;justify-content:flex-end}
@@ -431,12 +431,12 @@ function paint() {
         <div class="pi-name">${esc(w.full_name)}</div>
         <div class="pi-sub">${sub.join(' · ')}</div>
       </div>
+      ${acts}
       <div class="pi-right">
         <span class="pi-emp">${esc(w.company_code)}${w.data_area ? ` · <span style="color:var(--muted);font-weight:600">${esc(w.data_area)}</span>` : ''}</span>
         ${empn ? `<span class="pi-empn">${empn}</span>` : ''}
         <div class="pi-miss">${tags}</div>
       </div>
-      ${acts}
     </div>`;
   }).join('');
 

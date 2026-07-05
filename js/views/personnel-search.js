@@ -136,10 +136,10 @@ function ensureStyles() {
   .ps-row:hover{border-color:var(--brand,#2563eb);box-shadow:0 2px 10px rgba(15,23,42,.06)}
   .ps-ava{width:42px;height:42px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;overflow:hidden}
   .ps-ava img{width:100%;height:100%;object-fit:cover;display:block}
-  .ps-main{flex:1;min-width:0}
+  .ps-main{flex:0 1 auto;min-width:0;max-width:34%}
   .ps-name{font-weight:600;color:var(--ink);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ps-sub{color:var(--muted);font-size:12px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .ps-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex:none;text-align:right;max-width:46%}
+  .ps-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex:none;text-align:right;max-width:46%;margin-left:auto}
   .ps-emp{font-size:12px;color:var(--brand,#2563eb);font-weight:700;font-family:ui-monospace,Menlo,monospace}
   .ps-emp .da{color:var(--muted);font-weight:600}
   .ps-empn{font-size:12px;color:var(--ink);font-weight:600;max-width:230px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -451,13 +451,13 @@ function paint() {
         <div class="ps-name">${esc(w.full_name)}</div>
         <div class="ps-sub">${subParts.join(' · ')}</div>
       </div>
+      ${acts}
       <div class="ps-right">
         <span class="ps-emp">${esc(w.company_code)}${w.data_area ? ` · <span class="da">${esc(w.data_area)}</span>` : ''}</span>
         <span class="ps-empn">${esc(w.company_name || '')}</span>
         ${empMeta ? `<span class="ps-empmeta">${empMeta}</span>` : ''}
         <div class="ps-tags">${estado}<span class="ps-pill ps-type">${esc(tipo)}</span>${cst}</div>
       </div>
-      ${acts}
     </div>`;
   }).join('');
 
