@@ -94,13 +94,18 @@ function actorCanCompany(act, cc) {
   return act.codes.includes(cc);
 }
 
-/* Nombre de archivo amable para la descarga. */
-function buildFilename(line) {
-  const ced = String(line.worker_id_number || '').replace(/[^\dVE]/gi, '');
-  const name = String(line.worker_full_name || 'constancia')
+/* Nombre de archivo amable para la descarga:
+   "Constancia de trabajo - <CODIGO_EMPRESA> - #<solicitud> - <NOMBRE>.pdf".
+   El nombre del trabajador se incluye porque una solicitud puede tener varias
+   lineas (un PDF por empleado) y evita colisiones al descargar. */
+function buildFilename(line, req) {
+  const codigo = String((req && req.company_code) || '').trim() || 'EMP';
+  const sol = (req && req.request_id != null) ? req.request_id : (line.request_id != null ? line.request_id : '');
+  const name = String(line.worker_full_name || 'trabajador')
     .normalize('NFD').replace(/[\u0300-\u036f]/g, '')   // sin acentos
-    .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 40);
-  return `constancia_${name || 'trabajo'}${ced ? '_' + ced : ''}.pdf`;
+    .replace(/\s+/g, ' ').trim()
+    .replace(/[^A-Za-z0-9 ]+/g, '').slice(0, 45).trim();
+  return `Constancia de trabajo - ${codigo} - #${sol}${name ? ' - ' + name : ''}.pdf`;
 }
 
 export async function onRequestPost({ request, env }) {
@@ -145,7 +150,7 @@ export async function onRequestPost({ request, env }) {
     const url = await storageSignedUrl(env, line.pdf_key);
     if (!url) return json({ ok: false, error: 'No se pudo generar el enlace de descarga. Reintenta.' }, 502);
 
-    return json({ ok: true, url, filename: buildFilename(line) });
+    return json({ ok: true, url, filename: buildFilename(line, req) });
   } catch (err) {
     return json({ ok: false, error: String(err.message || err) }, 500);
   }

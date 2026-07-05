@@ -321,7 +321,7 @@ function openEditor(id) {
         <div class="csg-drop-s">PNG con fondo transparente (ideal) · máx. 500 KB</div>
       </div>
       <input type="file" id="csgFile" accept="image/png,image/webp,image/jpeg" style="display:none">
-      <p class="csg-hint">Cómo obtenerla: firma en papel → toma foto o escanea → quita el fondo (app o web) → sube el PNG.
+      <p class="csg-hint">Cómo obtenerla: firma en papel → toma foto o escanea → quita el fondo (app o web) → sube el PNG. O genera una en <a href="https://onlinesignatures.net/es" target="_blank" rel="noopener noreferrer" style="color:var(--brand,#2563eb);font-weight:600">onlinesignatures.net</a>.
         ${isEdit ? 'Si no subes una nueva, se conserva la firma actual.' : ''}</p>
 
       <div class="csg-preview ${(isEdit && row.signature_url) ? 'on' : ''}" id="csgPv">

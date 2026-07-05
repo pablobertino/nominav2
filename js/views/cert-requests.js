@@ -446,6 +446,8 @@ function renderInbox() {
     b.addEventListener('click', () => openReview(+b.dataset.review)));
   body.querySelectorAll('[data-reject]').forEach(b =>
     b.addEventListener('click', () => rejectLine(+b.dataset.reject)));
+  body.querySelectorAll('[data-download]').forEach(b =>
+    b.addEventListener('click', () => downloadConstancia(+b.dataset.download, b)));
 }
 function bindInboxFilters() {
   const cc = $('#crInbCompany'), st = $('#crInbStatus');
@@ -454,12 +456,19 @@ function bindInboxFilters() {
 }
 function inboxRow({ req, line }) {
   const canAct = line.status === 'solicitada' || line.status === 'en_revision';
-  const acts = canAct
-    ? `<button class="cr-b cr-b-mini cr-b-warn" data-reject="${line.id}">Rechazar</button>
-       <button class="cr-b cr-b-mini cr-b-primary" data-review="${line.id}">Revisar</button>`
-    : (line.status === 'rechazada'
-        ? `<span class="cr-sub">${esc(line.reject_reason || 'rechazada')}</span>`
-        : `<button class="cr-b cr-b-mini" data-review="${line.id}">Ver</button>`);
+  let acts;
+  if (canAct) {
+    acts = `<button class="cr-b cr-b-mini cr-b-warn" data-reject="${line.id}">Rechazar</button>
+       <button class="cr-b cr-b-mini cr-b-primary" data-review="${line.id}">Revisar</button>`;
+  } else if (line.status === 'rechazada') {
+    acts = `<span class="cr-sub">${esc(line.reject_reason || 'rechazada')}</span>`;
+  } else if (line.status === 'disponible') {
+    // Ya emitida: el admin puede verla/editarla y descargar el PDF.
+    acts = `<button class="cr-b cr-b-mini" data-review="${line.id}">Ver</button>
+       <button class="cr-b cr-b-mini cr-b-primary" data-download="${line.id}">${dlIco()} Descargar</button>`;
+  } else {
+    acts = `<button class="cr-b cr-b-mini" data-review="${line.id}">Ver</button>`;
+  }
   // Bajo el estado: si ya fue generada, cuando y cuanto tardo desde la solicitud.
   let genSub = '';
   if ((line.status === 'generada' || line.status === 'disponible') && line.generated_at) {
@@ -548,8 +557,9 @@ function dlIco() {
   return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>';
 }
 
-/* Descarga el PDF de una constancia: pide una URL firmada al backend y la
-   abre en una pestana nueva (el navegador la muestra/descarga). */
+/* Descarga el PDF de una constancia: pide una URL firmada al backend, baja el
+   PDF como blob y lo guarda con el nombre amable (blob URL respeta 'download'
+   aunque la URL firmada sea de otro dominio). Fallback a abrir en pestana. */
 async function downloadConstancia(lineId, btn) {
   const orig = btn ? btn.innerHTML : null;
   if (btn) { btn.disabled = true; btn.innerHTML = 'Preparando…'; }
@@ -560,17 +570,33 @@ async function downloadConstancia(lineId, btn) {
       body: JSON.stringify({ ...actorPayload(), action: 'url', line_id: lineId }),
     }).then(x => x.json());
   } catch { d = { ok: false, error: 'Error de red.' }; }
-  if (btn) { btn.disabled = false; btn.innerHTML = orig; }
-  if (!d || !d.ok || !d.url) { toast((d && d.error) || 'No se pudo obtener la constancia.', 'err'); return; }
-  // Abrir en pestana nueva; el navegador la visualiza y permite guardar.
-  const w = window.open(d.url, '_blank', 'noopener');
-  if (!w) {
-    // Bloqueo de pop-ups: forzar descarga via <a>.
-    const a = document.createElement('a');
-    a.href = d.url; a.target = '_blank'; a.rel = 'noopener';
-    if (d.filename) a.download = d.filename;
-    document.body.appendChild(a); a.click(); a.remove();
+  if (!d || !d.ok || !d.url) {
+    if (btn) { btn.disabled = false; btn.innerHTML = orig; }
+    toast((d && d.error) || 'No se pudo obtener la constancia.', 'err');
+    return;
   }
+  const fname = d.filename || 'Constancia de trabajo.pdf';
+  // Bajar el PDF como blob para poder imponer el nombre del archivo.
+  try {
+    const resp = await fetch(d.url);
+    if (!resp.ok) throw new Error('fetch pdf ' + resp.status);
+    const blob = await resp.blob();
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = objUrl; a.download = fname;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(objUrl), 4000);
+  } catch {
+    // Fallback: abrir la URL firmada directamente (el navegador usara su
+    // propio nombre, pero al menos se descarga/visualiza).
+    const w = window.open(d.url, '_blank', 'noopener');
+    if (!w) {
+      const a = document.createElement('a');
+      a.href = d.url; a.target = '_blank'; a.rel = 'noopener'; a.download = fname;
+      document.body.appendChild(a); a.click(); a.remove();
+    }
+  }
+  if (btn) { btn.disabled = false; btn.innerHTML = orig; }
 }
 
 async function cancelRequest(reqId) {
@@ -910,6 +936,7 @@ function paintReview() {
     <div class="cr-savebar">
       <span class="cr-muted">Empleado <b>${REVIEW.idx + 1} de ${total}</b>${readonly ? '' : (emitida ? ' · corrige y RE-genera' : ' · guarda o genera cada uno')}.</span>
       <span class="cr-sp"></span>
+      ${line.status === 'disponible' ? `<button class="cr-b" id="rvDownload">${dlIco()} Descargar</button>` : ''}
       ${readonly ? '' : (emitida ? `
         <button class="cr-b" id="rvSave">Guardar cambios</button>
         <button class="cr-b cr-b-success" id="rvGen">Regenerar PDF</button>` : `
@@ -1034,6 +1061,10 @@ function bindReview(readonly) {
   const prev = $('#rvPrev'), next = $('#rvNext');
   if (prev) prev.addEventListener('click', () => { if (!readonly) stashCurrent(); REVIEW.idx--; paintReview(); });
   if (next) next.addEventListener('click', () => { if (!readonly) stashCurrent(); REVIEW.idx++; paintReview(); });
+
+  // Descargar disponible tambien en solo-lectura (antes del return).
+  const bDl = $('#rvDownload');
+  if (bDl) bDl.addEventListener('click', () => downloadConstancia(curLine().id, bDl));
 
   if (readonly) return;
 
