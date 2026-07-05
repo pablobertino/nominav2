@@ -25,13 +25,17 @@
    el patch) y opts trae { signatureBytes?, signatureMime? } opcionales.
    ===================================================================== */
 
-/* pdf-lib se importa desde CDN (esm.sh) porque este proyecto de Cloudflare
-   Pages NO tiene build command -> Pages NO ejecuta `npm install`, y esbuild
-   no puede resolver el paquete npm 'pdf-lib' al bundlear /functions. Las URLs
-   http(s) las marca esbuild como EXTERNAS (no rompen el bundle) y el runtime
-   de Workers las carga en ejecucion. Solo usamos fuentes estandar (Times/
-   WinAnsi), NO fontkit, asi que el import simple es suficiente. */
-import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1?target=es2022';
+/* pdf-lib VENDORIZADO en el repo: functions/api/vendor/pdf-lib.esm.min.js
+   (build ESM oficial, autocontenido, sin dependencias de Node).
+
+   POR QUE VENDORIZADO Y NO npm NI CDN:
+   Este proyecto de Cloudflare Pages NO tiene build command -> Pages NO corre
+   `npm install`, y el runtime de Workers NO resuelve imports HTTP remotos en
+   ejecucion (da 'No such module "https:/esm.sh/..."'). La UNICA via que
+   funciona sin build step es tener el paquete como archivo LOCAL del repo e
+   importarlo por ruta relativa: esbuild lo bundlea junto con la Function.
+   Solo usamos fuentes estandar (Times/WinAnsi), NO fontkit. */
+import { PDFDocument, StandardFonts, rgb } from './vendor/pdf-lib.esm.min.js';
 
 /* ---------- numero -> letras (formato VE) ---------- */
 const UNIDADES = ['', 'UNO', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO', 'NUEVE'];

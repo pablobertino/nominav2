@@ -310,7 +310,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.55</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.56</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1775,6 +1775,10 @@ let CU_ROWS = null;       // filas crudas de company-users (para acciones/export
 let USERS_ROWS = [];      // filas combinadas (tienda + portal + osticket)
 let USERS_USER = null;    // user de sesion
 let USERS_F = { q: '', portal: 'all', ost: 'all', key: 'all' };
+// Filtro por ESTADO de la empresa (multi-select, igual que en Empresas).
+// null = primera vez (arranca en "Activas" = Abierto + Cerrada temporal).
+// Cuando se inicializa pasa a ser un Set de estados seleccionados.
+let USERS_STATUS_SEL = null;
 
 async function viewUsuarios(user) {
   USERS_USER = user;
@@ -1824,6 +1828,11 @@ async function usersLoad(user) {
     const phone2 = p ? phoneDisplay(p.companyPhone2) : '';
     return {
       code, name, email,
+      // Estado de la EMPRESA ligada (Abierto/Cerrado/Cerrada temporal/...).
+      // Viene del lado portal (company-users list ya trae c.status). Si esa
+      // tienda no existiera del lado portal, queda null (se trata como "sin
+      // estado" -> no se oculta por el filtro).
+      status: (p && p.status) || null,
       phoneLine: [phone1, phone2].filter(Boolean).join(' / '),
       portal: p,
       portalState: p && p.user ? (p.user.is_active ? 'Activo' : 'Inactivo') : 'Sin acceso',
@@ -1864,6 +1873,18 @@ function usersDayMonth(iso) {
 
 function usersRender(user, sum) {
   const body = $('#usersBody');
+  // Estados de empresa presentes en las filas (para el multi-select).
+  const USERS_STATUSES = [...new Set(USERS_ROWS.map(r => r.status).filter(Boolean))].sort();
+  // "Activas" por defecto: Abierto + Cerrada temporal.
+  const USERS_ACTIVE_STATES = USERS_STATUSES.filter(s => /abier/i.test(s) || (/cerrad/i.test(s) && /temp/i.test(s)));
+  // Primera vez: arranca en Activas (o todas si no hubiera activos). Luego se
+  // conserva la seleccion del usuario entre re-render de filas.
+  if (USERS_STATUS_SEL === null) {
+    USERS_STATUS_SEL = new Set(USERS_ACTIVE_STATES.length ? USERS_ACTIVE_STATES : USERS_STATUSES);
+  } else {
+    // Depurar estados que ya no existan (por si cambio el universo).
+    USERS_STATUS_SEL = new Set([...USERS_STATUS_SEL].filter(s => USERS_STATUSES.includes(s)));
+  }
   body.innerHTML = `
     <div class="sum-cards">
       <div class="sum-card portal"><div class="n">${sum.portalActivo}</div><div class="l">Con acceso activo al portal</div></div>
@@ -1891,6 +1912,21 @@ function usersRender(user, sum) {
         <option value="yes">Con clave</option>
         <option value="no">Sin clave</option>
       </select>
+      <div class="ms-wrap" id="uStatusWrap">
+        <button type="button" class="ms-toggle" id="uStatusBtn">
+          <span class="ms-label" id="uStatusLabel">Estados</span>
+          ${I.chevron.replace('<svg', '<svg class="ms-caret"')}
+        </button>
+        <div class="ms-menu" id="uStatusMenu" hidden>
+          <div class="ms-quick">
+            <button type="button" data-q="active">Activas</button>
+            <button type="button" data-q="all">Todos</button>
+            <button type="button" data-q="none">Ninguno</button>
+          </div>
+          <div class="ms-sep"></div>
+          ${USERS_STATUSES.map(s => `<label class="ms-opt"><input type="checkbox" value="${s}" ${USERS_STATUS_SEL.has(s) ? 'checked' : ''}><span>${/nulo|vac/i.test(s) ? 'Sin estado' : s}</span><span class="ms-count">${USERS_ROWS.filter(r => r.status === s).length}</span></label>`).join('')}
+        </div>
+      </div>
     </div>
     <p id="uCount" class="muted" style="font-size:12.5px;margin:0 2px 10px"></p>
     <div class="tablebox scroll-x u-compact"><table><thead>
@@ -1911,17 +1947,71 @@ function usersRender(user, sum) {
   [fp, fo, fk].forEach(el => el.addEventListener('change', () => {
     USERS_F.portal = fp.value; USERS_F.ost = fo.value; USERS_F.key = fk.value; usersRenderRows(user);
   }));
+
+  // ----- Multi-select de ESTADO de empresa (igual que en Empresas) -----
+  const uMsWrap = $('#uStatusWrap'), uMsBtn = $('#uStatusBtn'), uMsMenu = $('#uStatusMenu'), uMsLabel = $('#uStatusLabel');
+  function uUpdateStatusLabel() {
+    const n = USERS_STATUS_SEL.size;
+    if (n === 0) uMsLabel.textContent = 'Sin estados';
+    else if (n === USERS_STATUSES.length) uMsLabel.textContent = 'Todos los estados';
+    else if (USERS_ACTIVE_STATES.length && n === USERS_ACTIVE_STATES.length && USERS_ACTIVE_STATES.every(s => USERS_STATUS_SEL.has(s)))
+      uMsLabel.textContent = 'Activas';
+    else if (n === 1) uMsLabel.textContent = /nulo|vac/i.test([...USERS_STATUS_SEL][0]) ? 'Sin estado' : [...USERS_STATUS_SEL][0];
+    else uMsLabel.textContent = `${n} estados`;
+  }
+  if (uMsBtn) {
+    uMsBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const open = uMsMenu.hidden;
+      uMsMenu.hidden = !open;
+      uMsWrap.classList.toggle('open', open);
+    });
+    uMsMenu.addEventListener('click', (e) => e.stopPropagation());
+    uMsMenu.querySelectorAll('input[type=checkbox]').forEach(cb =>
+      cb.addEventListener('change', () => {
+        if (cb.checked) USERS_STATUS_SEL.add(cb.value); else USERS_STATUS_SEL.delete(cb.value);
+        uUpdateStatusLabel(); usersRenderRows(user);
+      }));
+    uMsMenu.querySelectorAll('.ms-quick button').forEach(b =>
+      b.addEventListener('click', () => {
+        USERS_STATUS_SEL.clear();
+        if (b.dataset.q === 'all') USERS_STATUSES.forEach(s => USERS_STATUS_SEL.add(s));
+        else if (b.dataset.q === 'active') USERS_ACTIVE_STATES.forEach(s => USERS_STATUS_SEL.add(s));
+        // 'none' deja el set vacio
+        uMsMenu.querySelectorAll('input[type=checkbox]').forEach(cb => { cb.checked = USERS_STATUS_SEL.has(cb.value); });
+        uUpdateStatusLabel(); usersRenderRows(user);
+      }));
+    // Cerrar el menu al hacer clic fuera.
+    document.addEventListener('click', () => {
+      if (!uMsMenu.hidden) { uMsMenu.hidden = true; uMsWrap.classList.remove('open'); }
+    });
+    uUpdateStatusLabel();
+  }
+
   usersRenderRows(user);
 }
 
 function usersRenderRows(user) {
   const q = USERS_F.q.toLowerCase();
+  // Set de estados seleccionados (multi-select). Si es null (aun no se
+  // inicializo), no filtra por estado.
+  const selSt = USERS_STATUS_SEL;
   const rows = USERS_ROWS.filter(r => {
     if (q && !(`${r.code} ${r.name || ''}`.toLowerCase().includes(q))) return false;
     if (USERS_F.portal !== 'all' && r.portalState !== USERS_F.portal) return false;
     if (USERS_F.ost !== 'all' && (!r.ost || r.ost.state !== USERS_F.ost)) return false;
     if (USERS_F.key === 'yes' && !(r.ost && r.ost.has_access)) return false;
     if (USERS_F.key === 'no' && (r.ost && r.ost.has_access)) return false;
+    // Filtro por ESTADO de empresa (multi-select, igual criterio que Empresas):
+    // - Si el usuario eligio "Ninguno" (set vacio): no pasa nada.
+    // - Las tiendas SIN estado (null/nulo/vacio) NO se ocultan (se muestran
+    //   como "sin estado") salvo que el set este vacio.
+    // - El resto pasa solo si su estado esta en el set.
+    if (selSt) {
+      const hasStatus = !!(r.status && !/nulo|vac/i.test(r.status));
+      const passStatus = selSt.size === 0 ? false : (!hasStatus ? true : selSt.has(r.status));
+      if (!passStatus) return false;
+    }
     return true;
   });
   $('#uCount').textContent = `${rows.length} de ${USERS_ROWS.length} tiendas`;
