@@ -94,6 +94,22 @@ function ensureStyles() {
   .egr-toast .egr-toast-ico{display:inline-flex;width:20px;height:20px;border-radius:999px;align-items:center;justify-content:center;font-size:12px;flex:none}
   .egr-toast-ok .egr-toast-ico{background:#16a34a;color:#fff}
   .egr-toast-info .egr-toast-ico{background:#2563eb;color:#fff}
+
+  /* MOVIL (<=768px): la tabla de egresos se aplana en tarjetas (una por
+     egreso). El thead se oculta y cada celda se vuelve etiqueta->valor con
+     el data-label. Los botones de accion van a lo ancho debajo. */
+  @media (max-width:768px){
+    .egr-table,.egr-table tbody,.egr-table tr,.egr-table td{display:block;width:auto}
+    .egr-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0)}
+    .egr-table tr{border:1px solid var(--border);border-radius:12px;background:var(--surface);box-shadow:0 1px 3px rgba(15,23,42,.06);padding:4px 12px;margin-bottom:11px}
+    .egr-table tr:hover td{background:none}
+    .egr-table td{display:flex;align-items:flex-start;justify-content:space-between;gap:14px;padding:8px 0;border-bottom:1px solid var(--border);text-align:right}
+    .egr-table td:last-child{border-bottom:0}
+    .egr-table td::before{content:attr(data-label);flex:none;text-align:left;color:var(--muted);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+    .egr-table td b,.egr-table .egr-by{display:inline}
+    .egr-acts{justify-content:flex-end}
+    .egr-acts .egr-b{flex:1 1 auto;text-align:center}
+  }
   `;
   document.head.appendChild(st);
 }
@@ -278,12 +294,12 @@ function rowHtml(r) {
   }
 
   return `<tr>
-    <td><b>${esc(r.company_code)}</b><br><span class="egr-by" style="margin:0">${esc(r.company_name || '')}</span></td>
-    <td><b>${esc(r.worker_name)}</b><br><span class="egr-by" style="margin:0">${esc(r.worker_id_number)}</span></td>
-    <td>${esc(fmtDate(r.report_date))}</td>
-    <td>${storeMot}</td>
-    <td>${review}</td>
-    <td><div class="egr-acts">${acts}</div></td>
+    <td data-label="Empresa"><b>${esc(r.company_code)}</b><br><span class="egr-by" style="margin:0">${esc(r.company_name || '')}</span></td>
+    <td data-label="Trabajador"><b>${esc(r.worker_name)}</b><br><span class="egr-by" style="margin:0">${esc(r.worker_id_number)}</span></td>
+    <td data-label="Fecha egreso">${esc(fmtDate(r.report_date))}</td>
+    <td data-label="Motivo (tienda)">${storeMot}</td>
+    <td data-label="Revisi\u00f3n del admin">${review}</td>
+    <td data-label="Acci\u00f3n"><div class="egr-acts">${acts}</div></td>
   </tr>`;
 }
 

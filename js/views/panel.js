@@ -312,7 +312,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.77</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.78</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3792,18 +3792,18 @@ async function viewRosterSync(user) {
     return `<button class="rs-chg" data-run="${r.id}" style="background:none;border:0;color:var(--brand,#2563eb);cursor:pointer;padding:0;font:inherit;text-decoration:underline">${r.changes_count} cambio${r.changes_count === 1 ? '' : 's'}</button>`;
   };
   const rows = runs.map(r => `<tr>
-    <td>${fmtDeadline(r.finished_at || r.started_at)}</td>
-    <td><b>${escHtml(r.company_code)}</b>${r.business_name ? `<br><span class="muted" style="font-size:11px">${escHtml(r.business_name)}</span>` : ''}</td>
-    <td>${originLabel(r)}</td>
-    <td>${r.status === 'ok' ? '<span class="pill pill-open">OK</span>' : '<span class="pill pill-closed">Error</span>'}</td>
-    <td>${resultCell(r)}</td>
-    <td>${changesCell(r)}</td>
+    <td data-label="Fecha">${fmtDeadline(r.finished_at || r.started_at)}</td>
+    <td data-label="Empresa"><b>${escHtml(r.company_code)}</b>${r.business_name ? `<br><span class="muted" style="font-size:11px">${escHtml(r.business_name)}</span>` : ''}</td>
+    <td data-label="Origen">${originLabel(r)}</td>
+    <td data-label="Estado">${r.status === 'ok' ? '<span class="pill pill-open">OK</span>' : '<span class="pill pill-closed">Error</span>'}</td>
+    <td data-label="Resultado">${resultCell(r)}</td>
+    <td data-label="Cambios">${changesCell(r)}</td>
   </tr>`).join('') || '<tr><td colspan="6" class="empty">Aún no hay sincronizaciones de personal.</td></tr>';
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Sinc. Personal</h1><p>Últimas sincronizaciones de personal desde AX${runs.length ? ` · ${runs.length}` : ''}</p></div></div>
     <div class="card">
-      <table class="cfg-cat-table"><thead><tr><th>Fecha</th><th>Empresa</th><th>Origen</th><th>Estado</th><th>Resultado</th><th>Cambios</th></tr></thead><tbody>${rows}</tbody></table>
+      <table class="cfg-cat-table tbl-cards"><thead><tr><th>Fecha</th><th>Empresa</th><th>Origen</th><th>Estado</th><th>Resultado</th><th>Cambios</th></tr></thead><tbody>${rows}</tbody></table>
       <p class="muted" style="font-size:12px;margin:12px 2px 0">Muestra las sincronizaciones de personal de tus empresas (las tuyas y las que hizo cualquiera sobre ellas). Haz clic en los cambios para ver el detalle.</p>
     </div>`;
 

@@ -1869,4 +1869,20 @@ input.needfill:focus, select.needfill:focus {
   #wpGridView .wp-rosterbar { font-size:12px; }
   #wpSelBar { gap:8px; }
   #wpSelBar select { flex:1 1 100%; min-width:0; }
+
+  /* ---------------------------------------------------------------
+     BLOQUE 7 — MODAL "Categorias de documentos": en movil los botones
+     Renombrar / Desactivar se salian del borde. La fila (.pd-catrow)
+     envuelve y la zona de acciones pasa a ancho completo debajo del
+     nombre. El modal ancho no debe exceder el viewport.
+     --------------------------------------------------------------- */
+  .modal-ov .modal.wide, .modal-ov .modal.wide2 { max-width:100%; }
+  .pd-catrow { flex-wrap:wrap; }
+  .pd-catrow .pd-catname { flex:1 1 100%; }
+  .pd-catrow .pd-catacts { flex:1 1 100%; justify-content:flex-start; margin-top:8px; }
+  .pd-catrow .pd-catacts .btn { flex:1 1 auto; justify-content:center; }
+  /* Alta de categoria: input + boton apilados. */
+  .pd-catadd { flex-wrap:wrap; }
+  .pd-catadd input { flex:1 1 100%; }
+  .pd-catadd .btn { flex:1 1 100%; justify-content:center; }
 }
