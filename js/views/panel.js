@@ -312,7 +312,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.64</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.65</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1878,7 +1878,9 @@ function wirePwdBlock() {
 let CU_ROWS = null;       // filas crudas de company-users (para acciones/exportar)
 let USERS_ROWS = [];      // filas combinadas (tienda + portal + osticket)
 let USERS_USER = null;    // user de sesion
-let USERS_F = { q: '', portal: 'all', ost: 'all', key: 'all' };
+let USERS_F = { q: '', portal: 'all', ost: 'all', key: 'all', zone: 'all', subzone: 'all' };
+// Catalogos de zona/subzona (para los combos del filtro). Se llenan en load.
+let USERS_CATS = { zones: [], subzones: [] };
 // Filtro por ESTADO de la empresa (multi-select, igual que en Empresas).
 // null = primera vez (arranca en "Activas" = Abierto + Cerrada temporal).
 // Cuando se inicializa pasa a ser un Set de estados seleccionados.
@@ -1915,6 +1917,8 @@ async function usersLoad(user) {
   if (!ou.ok) { body.innerHTML = `<div class="pnl-loading">Error cargando osTicket: ${ou.error || ''}</div>`; return; }
 
   CU_ROWS = pu.rows || [];
+  // Catalogos de zona/subzona para los combos del filtro.
+  USERS_CATS = { zones: pu.zones || [], subzones: pu.subzones || [] };
   // Solo tiendas del lado portal, indexadas por codigo.
   const portalByCode = {};
   CU_ROWS.filter(r => r.type === 'Tienda').forEach(r => { portalByCode[r.code] = r; });
@@ -1937,6 +1941,11 @@ async function usersLoad(user) {
       // tienda no existiera del lado portal, queda null (se trata como "sin
       // estado" -> no se oculta por el filtro).
       status: (p && p.status) || null,
+      // Zona/subzona (de la empresa ligada) para los filtros nuevos.
+      zoneId: (p && p.zoneId) || null,
+      zoneName: (p && p.zoneName) || null,
+      subzoneId: (p && p.subzoneId) || null,
+      subzoneName: (p && p.subzoneName) || null,
       phoneLine: [phone1, phone2].filter(Boolean).join(' / '),
       portal: p,
       portalState: p && p.user ? (p.user.is_active ? 'Activo' : 'Inactivo') : 'Sin acceso',
@@ -2016,6 +2025,8 @@ function usersRender(user, sum) {
         <option value="yes">Con clave</option>
         <option value="no">Sin clave</option>
       </select>
+      <select id="uZone"><option value="all">Zona: Todas</option></select>
+      <select id="uSubzone"><option value="all">Subzona: Todas</option></select>
       <div class="ms-wrap" id="uStatusWrap">
         <button type="button" class="ms-toggle" id="uStatusBtn">
           <span class="ms-label" id="uStatusLabel">Estados</span>
@@ -2051,6 +2062,42 @@ function usersRender(user, sum) {
   [fp, fo, fk].forEach(el => el.addEventListener('change', () => {
     USERS_F.portal = fp.value; USERS_F.ost = fo.value; USERS_F.key = fk.value; usersRenderRows(user);
   }));
+
+  // ----- Combos Zona / Subzona (dependientes; ligados a la empresa) -----
+  // Solo se listan las zonas/subzonas que existen en las filas cargadas.
+  const fz = $('#uZone'), fsz = $('#uSubzone');
+  const zonesInRows = new Set(USERS_ROWS.map(r => r.zoneId).filter(Boolean));
+  const uZones = (USERS_CATS.zones || []).filter(z => zonesInRows.has(z.id));
+  function uFillZones() {
+    if (!fz) return;
+    fz.innerHTML = '<option value="all">Zona: Todas</option>'
+      + uZones.map(z => `<option value="${z.id}">${z.name}</option>`).join('');
+    fz.value = uZones.some(z => z.id === USERS_F.zone) ? USERS_F.zone : 'all';
+    if (fz.value === 'all') USERS_F.zone = 'all';
+  }
+  function uFillSubzones() {
+    if (!fsz) return;
+    const subzInRows = new Set(USERS_ROWS.map(r => r.subzoneId).filter(Boolean));
+    let subs = (USERS_CATS.subzones || []).filter(s => subzInRows.has(s.id));
+    // Si hay una zona elegida, acotar las subzonas a esa zona.
+    if (USERS_F.zone !== 'all') subs = subs.filter(s => s.zone_id === USERS_F.zone);
+    fsz.innerHTML = '<option value="all">Subzona: Todas</option>'
+      + subs.map(s => `<option value="${s.id}">${s.name}</option>`).join('');
+    fsz.value = subs.some(s => s.id === USERS_F.subzone) ? USERS_F.subzone : 'all';
+    if (fsz.value === 'all') USERS_F.subzone = 'all';
+  }
+  uFillZones();
+  uFillSubzones();
+  if (fz) fz.addEventListener('change', () => {
+    USERS_F.zone = fz.value;
+    // Al cambiar de zona, la subzona vuelve a "Todas" y se recalcula el combo.
+    USERS_F.subzone = 'all';
+    uFillSubzones();
+    usersRenderRows(user);
+  });
+  if (fsz) fsz.addEventListener('change', () => {
+    USERS_F.subzone = fsz.value; usersRenderRows(user);
+  });
 
   // ----- Multi-select de ESTADO de empresa (igual que en Empresas) -----
   const uMsWrap = $('#uStatusWrap'), uMsBtn = $('#uStatusBtn'), uMsMenu = $('#uStatusMenu'), uMsLabel = $('#uStatusLabel');
@@ -2106,6 +2153,9 @@ function usersRenderRows(user) {
     if (USERS_F.ost !== 'all' && (!r.ost || r.ost.state !== USERS_F.ost)) return false;
     if (USERS_F.key === 'yes' && !(r.ost && r.ost.has_access)) return false;
     if (USERS_F.key === 'no' && (r.ost && r.ost.has_access)) return false;
+    // Filtro por ZONA / SUBZONA (ligadas a la empresa de la tienda).
+    if (USERS_F.zone !== 'all' && r.zoneId !== USERS_F.zone) return false;
+    if (USERS_F.subzone !== 'all' && r.subzoneId !== USERS_F.subzone) return false;
     // Filtro por ESTADO de empresa (multi-select, igual criterio que Empresas):
     // - Si el usuario eligio "Ninguno" (set vacio): no pasa nada.
     // - Las tiendas SIN estado (null/nulo/vacio) NO se ocultan (se muestran
@@ -4644,6 +4694,7 @@ async function viewConfig(user) {
         <button class="cfg-side-item" data-tab="dingreso"><span class="cfg-side-ic">➕</span> Ingresos</button>
         <button class="cfg-side-item" data-tab="degreso"><span class="cfg-side-ic">🔴</span> Egresos</button>
         <div class="cfg-side-group">Sistema</div>
+        <button class="cfg-side-item" data-tab="constancias"><span class="cfg-side-ic">📄</span> Constancias</button>
         <button class="cfg-side-item" data-tab="cor"><span class="cfg-side-ic">📆</span> Corte y períodos</button>
         <button class="cfg-side-item" data-tab="int"><span class="cfg-side-ic">🔌</span> Integraciones</button>
       </nav>
@@ -4668,6 +4719,7 @@ function cfgRenderTab(user) {
   else if (CFG_TAB === 'dingreso') cfgRenderIncDocs(user, body, 'ingreso');
   else if (CFG_TAB === 'degreso') cfgRenderIncDocs(user, body, 'egreso');
   else if (CFG_TAB === 'motegreso') cfgRenderEgressReasons(user, body);
+  else if (CFG_TAB === 'constancias') cfgRenderConstancias(user, body);
   else if (CFG_TAB === 'cor') cfgRenderCorte(user, body);
   else if (CFG_TAB === 'int') cfgRenderIntegraciones(user, body);
 }
@@ -4712,6 +4764,21 @@ async function cfgSaveSection(user, container, savedEl, btn) {
   btn.disabled = false; btn.textContent = orig;
   if (firstError) { alert('Algunos campos no se guardaron:\n' + firstError); return; }
   if (savedEl) { savedEl.style.display = 'inline'; setTimeout(() => savedEl.style.display = 'none', 1800); }
+}
+
+/* ===== Pestana CONSTANCIAS (valores por defecto del PDF) ===== */
+function cfgRenderConstancias(user, body) {
+  const grupo = CFG_DATA.settings.filter(s => s.grupo === 'Constancias');
+  body.innerHTML = `
+    <div class="card">
+      <div class="cfg-card-head"><h3>Constancias de trabajo</h3><span class="cfg-saved" id="savedCert">✓ Guardado</span></div>
+      <p class="cfg-desc" style="margin:0 0 8px">Valores por defecto que se precargan al crear una constancia. El <b>salario</b> se expresa en bolívares (VES) y el <b>cesta ticket</b> en dólares (USD); ambos son editables por solicitud antes de emitir el PDF.</p>
+      <div id="certFields">${grupo.length ? grupo.map(cfgFieldRow).join('') : '<p class="muted" style="margin:0">No hay parámetros de constancias configurados.</p>'}</div>
+      <div class="cfg-foot"><button class="btn btn-primary" id="saveCert">Guardar cambios</button></div>
+    </div>`;
+  const btn = $('#saveCert');
+  if (btn) btn.addEventListener('click', () =>
+    cfgSaveSection(user, $('#certFields'), $('#savedCert'), $('#saveCert')));
 }
 
 /* ===== Pestana CORTE Y PERIODOS ===== */

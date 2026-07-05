@@ -74,18 +74,28 @@ export async function onRequestPost({ request, env }) {
     const canTouch = (code) => allowed === null || allowed.has(code);
 
     if (action === 'list') {
-      const companies = await sb(env, 'companies?select=company_code,business_name,company_type,status,email,phone,phone2&order=company_code');
+      const companies = await sb(env, 'companies?select=company_code,business_name,company_type,status,email,phone,phone2,zone_id,subzone_id&order=company_code');
       const users = await sb(env, 'company_users?select=company_code,email,is_active');
+      // Catalogos de zona/subzona para resolver nombres y poblar los combos
+      // del filtro en la vista Usuarios (subzona depende de zona via zone_id).
+      const zones = await sb(env, 'zones?select=id,letter,name&order=name');
+      const subzones = await sb(env, 'subzones?select=id,letter,name,zone_id&order=name');
+      const zoneName = Object.fromEntries((zones || []).map(z => [z.id, z.name]));
+      const subzoneName = Object.fromEntries((subzones || []).map(s => [s.id, s.name]));
       const byCode = Object.fromEntries((users || []).map(u => [u.company_code, u]));
       let rows = companies.map(c => ({
         code: c.company_code, name: c.business_name, type: c.company_type, status: c.status,
         companyEmail: c.email || null,
         companyPhone: c.phone || null,
         companyPhone2: c.phone2 || null,
+        zoneId: c.zone_id || null,
+        zoneName: c.zone_id ? (zoneName[c.zone_id] || null) : null,
+        subzoneId: c.subzone_id || null,
+        subzoneName: c.subzone_id ? (subzoneName[c.subzone_id] || null) : null,
         user: byCode[c.company_code] || null,
       }));
       if (allowed !== null) rows = rows.filter(r => allowed.has(r.code));
-      return json({ ok: true, rows });
+      return json({ ok: true, rows, zones: zones || [], subzones: subzones || [] });
     }
 
     if (action === 'create') {
