@@ -311,7 +311,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.61</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.62</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5336,7 +5336,51 @@ async function ensureCatalog(user) {
   CATALOG = d;
 }
 
-async function navigate(view, user) {
+/* ---------- Guardian del boton Atras del navegador ----------
+   El portal es un SPA: sin esto, dar "Atras" en el navegador SALE del portal
+   (vuelve al login o a la pagina previa) porque las vistas cambian sin tocar
+   el historial. Con el guardian, cada navegacion empuja una entrada al
+   historial y el boton Atras funciona como "volver a la vista anterior DENTRO
+   del portal". En la vista raiz, Atras no hace nada (se repone la trampa).
+   VIEW_STACK guarda el recorrido de vistas para saber a cual volver. */
+let VIEW_STACK = [];
+let NAV_USER = null;
+let BACK_GUARD_ON = false;
+
+function installBackGuard(user) {
+  if (BACK_GUARD_ON) return;
+  BACK_GUARD_ON = true;
+  NAV_USER = user;
+  // Entrada base (trampa): asegura que siempre haya algo que "consumir" al dar
+  // Atras estando en la raiz, sin salir del portal.
+  try { history.replaceState({ gcView: currentView, root: true }, '', location.href); } catch (_) {}
+  window.addEventListener('popstate', () => {
+    // El usuario dio Atras. Si tenemos una vista anterior en el stack, vamos a
+    // ella (sin re-empujar). Si no, reponemos la trampa (no se sale).
+    if (VIEW_STACK.length > 1) {
+      VIEW_STACK.pop();                     // descartar la actual
+      const prev = VIEW_STACK[VIEW_STACK.length - 1];
+      navigate(prev, NAV_USER, true);       // fromHistory: no re-empuja
+    } else {
+      // Estamos en la raiz: reponer una entrada para que el proximo Atras
+      // tampoco salga. La vista no cambia.
+      try { history.pushState({ gcView: currentView, root: true }, '', location.href); } catch (_) {}
+    }
+  });
+}
+
+async function navigate(view, user, fromHistory = false) {
+  NAV_USER = user;
+  // Mantener el stack y el historial del navegador sincronizados. Si venimos
+  // del boton Atras (fromHistory) NO empujamos (ya lo maneja el guardian).
+  if (!fromHistory) {
+    if (VIEW_STACK[VIEW_STACK.length - 1] !== view) {
+      VIEW_STACK.push(view);
+      if (BACK_GUARD_ON) {
+        try { history.pushState({ gcView: view }, '', location.href); } catch (_) {}
+      }
+    }
+  }
   currentView = view;
   document.querySelectorAll('#pnlNav button').forEach(b =>
     b.classList.toggle('active', b.dataset.view === view));
@@ -5551,6 +5595,10 @@ export function renderPanel() {
   if (reopenBtn && layout) reopenBtn.addEventListener('click', () => layout.classList.remove('hidden-nav'));
   // Campanita de novedades (solo admins; si no existe el boton, no hace nada).
   initBell(user);
+  // Guardian del boton Atras: convierte el Atras del navegador en "volver a la
+  // vista anterior dentro del portal" y evita salirse de la pagina por error.
+  VIEW_STACK = [];
+  installBackGuard(user);
   // Landing unificado: ambos arrancan en el Dashboard (Inicio).
   navigate('dashboard', user);
 }

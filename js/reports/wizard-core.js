@@ -91,7 +91,7 @@ export function launchWizard(user, reportDef, onExit) {
     host.innerHTML = `
       <div class="wiz">
         <div class="wiz-top">
-          <button class="btn btn-ghost wiz-exit" id="wzExit">← Volver a reportes</button>
+          <button class="btn wiz-exit" id="wzExit" style="display:inline-flex;align-items:center;gap:8px;font-size:14px;font-weight:600;padding:10px 18px;border:1.5px solid var(--brand,#2563eb);color:var(--brand,#2563eb);background:#eff6ff;border-radius:10px;box-shadow:0 1px 2px rgba(37,99,235,.12)"><span style="font-size:17px;line-height:1">←</span> Volver a reportes</button>
           <span class="tag">${reportDef.icon || ''} ${reportDef.tag || 'Wizard'}</span>
         </div>
         <h1 class="wiz-h1">${reportDef.title}</h1>
