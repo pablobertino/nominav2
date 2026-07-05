@@ -146,7 +146,7 @@ function confirmModal({ title, bodyHtml, okLabel = 'Aceptar', cancelLabel = 'Can
     const done = (val) => { ov.remove(); resolve(val); };
     ov.querySelector('[data-cfx-cancel]').addEventListener('click', () => done(false));
     ov.querySelector('[data-cfx-ok]').addEventListener('click', () => done(true));
-    ov.addEventListener('click', e => { if (e.target === ov) done(false); });
+    // Se cierra SOLO con sus botones (Cancelar / Aceptar); no al hacer clic fuera.
   });
 }
 
@@ -163,7 +163,7 @@ function noticeModal(msg) {
   document.body.appendChild(ov);
   const close = () => ov.remove();
   ov.querySelector('[data-cfx-ok]').addEventListener('click', close);
-  ov.addEventListener('click', e => { if (e.target === ov) close(); });
+  // Se cierra SOLO con su boton (Entendido); no al hacer clic fuera.
 }
 
 async function loadReasons() {
@@ -362,7 +362,7 @@ function openRectify(lineId) {
   sync();
 
   ov.querySelector('#egrCancel').addEventListener('click', () => ov.remove());
-  ov.addEventListener('click', e => { if (e.target === ov) ov.remove(); });
+  // Se cierra SOLO con sus botones (Cancelar / Guardar); no al hacer clic fuera.
   save.addEventListener('click', async () => {
     if (!sel.value) return;
     save.disabled = true; save.textContent = 'Guardando\u2026';

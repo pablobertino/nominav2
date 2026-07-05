@@ -611,5 +611,5 @@ function openModifView(w) {
   document.body.appendChild(ov);
   const close = () => ov.remove();
   ov.querySelector('#mvClose').addEventListener('click', close);
-  ov.addEventListener('click', e => { if (e.target === ov) close(); });
+  // Se cierra SOLO con su boton (Cerrar); no al hacer clic fuera.
 }

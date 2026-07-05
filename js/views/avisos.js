@@ -400,7 +400,7 @@ function openTplModal(type) {
   const close = () => { bg.remove(); };
   $('#avTplX').addEventListener('click', close);
   $('#avTplCancel').addEventListener('click', close);
-  bg.addEventListener('click', e => { if (e.target === bg) close(); });
+  // Se cierra SOLO con sus botones (X / Cancelar / Guardar); no al hacer clic fuera.
   $('#avTplSave').addEventListener('click', async () => {
     const r = await api({
       action: 'tpl_save', type,
@@ -459,7 +459,7 @@ async function openManualModal(editId) {
   const close = () => bg.remove();
   $('#avManX').addEventListener('click', close);
   $('#avManCancel').addEventListener('click', close);
-  bg.addEventListener('click', e => { if (e.target === bg) close(); });
+  // Se cierra SOLO con sus botones (X / Cancelar / Guardar); no al hacer clic fuera.
   if (editId) {
     const del = $('#avManDel');
     if (del) del.addEventListener('click', async () => {

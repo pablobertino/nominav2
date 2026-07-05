@@ -145,7 +145,7 @@ export function showPayHelpModal() {
   };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
 
-  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  // Se cierra SOLO con sus botones (X / Entendido) o Escape; no al hacer clic fuera.
   document.getElementById('payHelpX').addEventListener('click', close);
   document.getElementById('payHelpOk').addEventListener('click', close);
   document.addEventListener('keydown', onKey);

@@ -31,7 +31,7 @@ export async function openResendModal(user, report, onDone) {
 
   const close = () => { document.removeEventListener('keydown', onKey); ov.remove(); };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
-  ov.addEventListener('click', e => { if (e.target === ov) close(); });
+  // Se cierra SOLO con sus botones (Cancelar / Cerrar) o Escape; no al hacer clic fuera.
   document.addEventListener('keydown', onKey);
 
   const info = await fetchResendInfo(user, report.id);

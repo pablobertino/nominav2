@@ -7,6 +7,7 @@
 import { $, mount } from '../core/dom.js';
 import { getSession, clearSession } from '../core/session.js';
 import { go } from '../core/router.js';
+import { registerBackHandler } from '../core/back-nav.js';
 import { launchWizard } from '../reports/wizard-core.js';
 import { marcajeReport } from '../reports/report-marcaje.js';
 import { ausenciaReport } from '../reports/report-ausencia.js';
@@ -311,7 +312,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.62</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.63</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -942,7 +943,16 @@ function viewTiendas(user) {
         const mode = c && NON_STORE_TYPES.has(c.type) ? 'enterprise' : 'store';
         currentView = 'fotos';
         document.querySelectorAll('#pnlNav button').forEach(x => x.classList.remove('active'));
-        renderWorkerPhotos(user, b.dataset.photosCode, () => { currentView = 'tiendas'; CATALOG = null; navigate('tiendas', user); }, { mode });
+        // Interceptor de back: al dar Atras en fotos, volver a Empresas (misma
+        // accion que el boton Volver de la ficha). Devuelve true = back
+        // consumido (el guardian no hace nada mas).
+        let removeFotoBack = null;
+        const backToTiendas = () => {
+          if (removeFotoBack) { removeFotoBack(); removeFotoBack = null; }
+          currentView = 'tiendas'; CATALOG = null; navigate('tiendas', user);
+        };
+        removeFotoBack = pushBackInterceptor(() => { backToTiendas(); return true; });
+        renderWorkerPhotos(user, b.dataset.photosCode, backToTiendas, { mode });
       }));
     $('#tBody').querySelectorAll('[data-dep-code]').forEach(b =>
       b.addEventListener('click', () => {
@@ -3467,9 +3477,7 @@ function scopeResultModal(user, p, targetUser, backTo) {
   const finish = () => { closeModal(); done(); };
   $('#mX').addEventListener('click', finish);
   $('#mClose').addEventListener('click', finish);
-  // Cerrar al hacer clic fuera tambien vuelve a la lista
-  const ov = document.getElementById('modalOv');
-  if (ov) ov.addEventListener('click', e => { if (e.target === ov) finish(); });
+  // El modal se cierra SOLO con sus botones (X / Listo); no al hacer clic fuera.
 
   // Botones de copiado por campo
   document.querySelectorAll('[data-copy]').forEach(b =>
@@ -5342,21 +5350,59 @@ async function ensureCatalog(user) {
    el historial. Con el guardian, cada navegacion empuja una entrada al
    historial y el boton Atras funciona como "volver a la vista anterior DENTRO
    del portal". En la vista raiz, Atras no hace nada (se repone la trampa).
-   VIEW_STACK guarda el recorrido de vistas para saber a cual volver. */
+   VIEW_STACK guarda el recorrido de vistas para saber a cual volver.
+
+   INTERCEPTORES: componentes con navegacion interna (el wizard con sus pasos,
+   una sub-vista, un modal) pueden registrar una funcion con pushBackInterceptor.
+   Al dar Atras, el guardian consulta el ULTIMO interceptor: si devuelve true,
+   el back se "consumio" adentro (p.ej. retrocedio un paso) y NO se cambia de
+   vista; si devuelve false, el interceptor ya no aplica (se descarta) y el
+   back sigue su curso normal (volver a la vista anterior del portal). */
 let VIEW_STACK = [];
 let NAV_USER = null;
 let BACK_GUARD_ON = false;
+let BACK_INTERCEPTORS = [];
+
+/* Registra un interceptor de back. Devuelve una funcion para quitarlo (que el
+   componente debe llamar al desmontarse / salir). fn() debe devolver true si
+   consumio el back, false si ya no aplica. */
+function pushBackInterceptor(fn) {
+  BACK_INTERCEPTORS.push(fn);
+  // Aseguramos una entrada extra en el historial para "tener con que" consumir
+  // el primer Atras dentro del componente sin salir de la vista.
+  if (BACK_GUARD_ON) { try { history.pushState({ gcTrap: true }, '', location.href); } catch (_) {} }
+  return function removeInterceptor() {
+    const i = BACK_INTERCEPTORS.indexOf(fn);
+    if (i !== -1) BACK_INTERCEPTORS.splice(i, 1);
+  };
+}
 
 function installBackGuard(user) {
   if (BACK_GUARD_ON) return;
   BACK_GUARD_ON = true;
   NAV_USER = user;
+  // Conectar el bus de back-nav: los componentes (wizard, etc.) registran sus
+  // interceptores via core/back-nav.js sin depender de este modulo.
+  registerBackHandler(pushBackInterceptor);
   // Entrada base (trampa): asegura que siempre haya algo que "consumir" al dar
   // Atras estando en la raiz, sin salir del portal.
   try { history.replaceState({ gcView: currentView, root: true }, '', location.href); } catch (_) {}
   window.addEventListener('popstate', () => {
-    // El usuario dio Atras. Si tenemos una vista anterior en el stack, vamos a
-    // ella (sin re-empujar). Si no, reponemos la trampa (no se sale).
+    // 1) Si hay un interceptor activo, dejarlo intentar consumir el back.
+    if (BACK_INTERCEPTORS.length) {
+      const top = BACK_INTERCEPTORS[BACK_INTERCEPTORS.length - 1];
+      let consumed = false;
+      try { consumed = !!top(); } catch (_) { consumed = false; }
+      if (consumed) {
+        // Reponer la entrada para que el proximo Atras vuelva a entrar aqui.
+        try { history.pushState({ gcTrap: true }, '', location.href); } catch (_) {}
+        return;
+      }
+      // El interceptor ya no aplica (p.ej. wizard en el paso 1): descartarlo y
+      // seguir con la navegacion normal de vistas.
+      BACK_INTERCEPTORS.pop();
+    }
+    // 2) Navegacion normal por vistas del portal.
     if (VIEW_STACK.length > 1) {
       VIEW_STACK.pop();                     // descartar la actual
       const prev = VIEW_STACK[VIEW_STACK.length - 1];
@@ -5371,6 +5417,9 @@ function installBackGuard(user) {
 
 async function navigate(view, user, fromHistory = false) {
   NAV_USER = user;
+  // Al cambiar de vista por el menu, se abandonan los interceptores activos
+  // (p.ej. el wizard): dejan de tener sentido.
+  if (!fromHistory) BACK_INTERCEPTORS = [];
   // Mantener el stack y el historial del navegador sincronizados. Si venimos
   // del boton Atras (fromHistory) NO empujamos (ya lo maneja el guardian).
   if (!fromHistory) {

@@ -222,7 +222,7 @@ export function showAttHelpModal() {
   };
   const onKey = (e) => { if (e.key === 'Escape') close(); };
 
-  ov.addEventListener('click', (e) => { if (e.target === ov) close(); });
+  // Se cierra SOLO con sus botones (X / Entendido) o Escape; no al hacer clic fuera.
   document.getElementById('attHelpX').addEventListener('click', close);
   document.getElementById('attHelpOk').addEventListener('click', close);
   document.addEventListener('keydown', onKey);
@@ -267,7 +267,7 @@ export function confirmModal(opts = {}) {
       resolve(val);
     };
     const onKey = (e) => { if (e.key === 'Escape') finish(false); };
-    ov.addEventListener('click', (e) => { if (e.target === ov) finish(false); });
+    // Se cierra SOLO con sus botones (Cancelar / Aceptar / X) o Escape; no al hacer clic fuera.
     ov.querySelectorAll('[data-act]').forEach(b =>
       b.addEventListener('click', () => finish(b.dataset.act === 'ok')));
     document.addEventListener('keydown', onKey);
@@ -311,7 +311,7 @@ export function noticeModal(opts = {}) {
       resolve();
     };
     const onKey = (e) => { if (e.key === 'Escape') finish(); };
-    ov.addEventListener('click', (e) => { if (e.target === ov) finish(); });
+    // Se cierra SOLO con su boton (Entendido / X) o Escape; no al hacer clic fuera.
     ov.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', finish));
     document.addEventListener('keydown', onKey);
     const okBtn = ov.querySelector('.btn-primary');

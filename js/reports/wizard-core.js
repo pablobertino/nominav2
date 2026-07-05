@@ -22,6 +22,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { pushBackInterceptor } from '../core/back-nav.js';
 import * as DW from './shared/date-window.js';
 import * as Roster from './shared/roster.js';
 import * as Resp from './shared/responsables.js';
@@ -110,11 +111,13 @@ export function launchWizard(user, reportDef, onExit) {
       </div>
     `;
     $('#wzExit').addEventListener('click', () => {
-      if (S.stopClock) S.stopClock();
-      onExit && onExit();
+      exitWizard();
     });
     if (S.stopClock) S.stopClock();
     S.stopClock = DW.startClock('wzClock');
+    // Registrar el interceptor de Atras una sola vez (el wizard puede repintar
+    // varias veces, pero el interceptor debe existir una vez).
+    if (!removeBackInterceptor) removeBackInterceptor = pushBackInterceptor(wizardBack);
     paintStep();
   }
 
@@ -126,6 +129,33 @@ export function launchWizard(user, reportDef, onExit) {
   }
 
   function setStep(n) { S.step = n; paintStep(); }
+
+  // Interceptor del boton Atras del navegador: mientras el wizard este activo,
+  // el Atras retrocede UN paso del wizard (respetando los saltos por rol). Si
+  // ya estamos en el paso 1, devuelve false para que el guardian saque del
+  // wizard a la vista anterior del portal. removeBackInterceptor lo quita al
+  // salir (boton "Volver a reportes").
+  let removeBackInterceptor = null;
+  function wizardBack() {
+    // Paso 6 (pantalla "listo"): el back sale del wizard (ya se envio).
+    if (S.step === 6) { exitWizard(); return true; }
+    // Paso 1: no hay a donde retroceder dentro del wizard -> salir del wizard a
+    // la vista anterior (onExit), consumiendo el back.
+    if (S.step <= 1) { exitWizard(); return true; }
+    let prev;
+    if (S.step === 5) prev = 4;
+    else if (S.step === 4) prev = stepBefore4;             // 3 normal; 1/2 si se omite el paso 3
+    else if (S.step === 3) prev = isAdmin ? 1 : 2;
+    else if (S.step === 2) prev = 1;
+    else prev = 1;
+    setStep(prev);
+    return true;
+  }
+  function exitWizard() {
+    if (removeBackInterceptor) { removeBackInterceptor(); removeBackInterceptor = null; }
+    if (S.stopClock) S.stopClock();
+    onExit && onExit();
+  }
 
   function paintStep() {
     // marcar stepper

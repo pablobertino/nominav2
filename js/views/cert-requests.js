@@ -256,7 +256,7 @@ function confirmModal({ title, bodyHtml, okLabel = 'Aceptar', cancelLabel = 'Can
     const done = v => { ov.remove(); resolve(v); };
     ov.querySelector('[data-c]').addEventListener('click', () => done(false));
     ov.querySelector('[data-o]').addEventListener('click', () => done(true));
-    ov.addEventListener('click', e => { if (e.target === ov) done(false); });
+    // Se cierra SOLO con sus botones (Cancelar / Aceptar); no al hacer clic fuera.
   });
 }
 /* Modal para pedir un motivo (rechazo/anulación). Resuelve string o null. */
@@ -285,7 +285,7 @@ function reasonModal({ title, placeholder, okLabel = 'Confirmar' }) {
       if (!v) { err.textContent = 'El motivo es obligatorio.'; err.style.display = 'block'; ta.focus(); return; }
       done(v);
     });
-    ov.addEventListener('click', e => { if (e.target === ov) done(null); });
+    // Se cierra SOLO con sus botones (Cancelar / Confirmar); no al hacer clic fuera.
     ta.focus();
   });
 }
