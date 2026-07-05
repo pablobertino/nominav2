@@ -23,7 +23,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
-import { renderWorkerPhotos } from './worker-photos.js';
+import { renderWorkerPhotos, openWorkerLightbox } from './worker-photos.js';
 
 const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
 
@@ -52,6 +52,15 @@ function avatarCell(w) {
   }
   const ci = avatarColor(w.id_number);
   return `<div class="ps-ava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>`;
+}
+
+/* Iconos de accion por fila (trazo del portal). Foto = camara; ficha =
+   tarjeta de persona con lineas. */
+function icoPhoto() {
+  return '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>';
+}
+function icoFicha() {
+  return '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="10" r="2"/><path d="M13 9h5M13 13h5M6.5 15.5c.4-1.2 1.4-2 2.5-2s2.1.8 2.5 2"/></svg>';
 }
 
 let USER = null;
@@ -123,7 +132,7 @@ function ensureStyles() {
   .ps-filterbar svg{flex:none;color:var(--muted)}
   .ps-filterbar input{flex:1;font:inherit;font-size:13.5px;border:0;background:transparent;color:var(--ink);outline:none}
   .ps-list{display:flex;flex-direction:column;gap:8px}
-  .ps-row{display:flex;align-items:center;gap:13px;padding:11px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);cursor:pointer;transition:border-color .12s,box-shadow .12s}
+  .ps-row{display:flex;align-items:center;gap:13px;padding:11px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);transition:border-color .12s,box-shadow .12s}
   .ps-row:hover{border-color:var(--brand,#2563eb);box-shadow:0 2px 10px rgba(15,23,42,.06)}
   .ps-ava{width:42px;height:42px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;overflow:hidden}
   .ps-ava img{width:100%;height:100%;object-fit:cover;display:block}
@@ -153,6 +162,14 @@ function ensureStyles() {
   .ps-pager .pg-nav button.on{background:var(--brand,#2563eb);color:#fff;border-color:var(--brand,#2563eb)}
   .ps-pager .pg-info{font-size:12px;color:var(--muted)}
   @media (max-width:640px){ .ps-right{max-width:50%} .ps-empn,.ps-empmeta{max-width:150px} }
+  /* Acciones por fila: dos botones iconizados (foto / ficha) con estilo del
+     portal. El de foto se deshabilita (gris) cuando el trabajador no tiene
+     foto. */
+  .ps-actions{display:flex;gap:6px;flex:none;align-items:center}
+  .ps-iconbtn{width:36px;height:36px;display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:9px;background:var(--surface,#fff);color:var(--ink-soft,#475569);cursor:pointer;transition:background .12s,border-color .12s,color .12s}
+  .ps-iconbtn:hover{background:var(--brand-bg,#eff6ff);border-color:var(--brand,#2563eb);color:var(--brand,#2563eb)}
+  .ps-iconbtn:disabled{opacity:.45;cursor:default;background:var(--bg-soft,#f1f5f9);color:var(--faint,#94a3b8);border-color:var(--border)}
+  .ps-iconbtn:disabled:hover{background:var(--bg-soft,#f1f5f9);border-color:var(--border);color:var(--faint,#94a3b8)}
   `;
   document.head.appendChild(st);
 }
@@ -423,7 +440,12 @@ function paint() {
     if (w.age != null) subParts.push(`${w.age} años`);
     // Empresa: zona · subzona · concepto (solo lo que exista).
     const empMeta = [w.zona, w.subzona, w.concepto].filter(Boolean).map(esc).join(' · ');
-    return `<div class="ps-row" data-i="${start + i}">
+    const hasPhoto = !!w.thumb_url;
+    const acts = `<div class="ps-actions">
+        <button type="button" class="ps-iconbtn" data-photo="${start + i}" title="${hasPhoto ? 'Ver foto' : 'Sin foto'}" ${hasPhoto ? '' : 'disabled'}>${icoPhoto()}</button>
+        <button type="button" class="ps-iconbtn" data-ficha="${start + i}" title="Ver ficha">${icoFicha()}</button>
+      </div>`;
+    return `<div class="ps-row">
       ${avatarCell(w)}
       <div class="ps-main">
         <div class="ps-name">${esc(w.full_name)}</div>
@@ -435,12 +457,20 @@ function paint() {
         ${empMeta ? `<span class="ps-empmeta">${empMeta}</span>` : ''}
         <div class="ps-tags">${estado}<span class="ps-pill ps-type">${esc(tipo)}</span>${cst}</div>
       </div>
+      ${acts}
     </div>`;
   }).join('');
 
-  // Click abre la ficha (indice sobre el conjunto filtrado 'shown').
-  list.querySelectorAll('.ps-row').forEach(el =>
-    el.addEventListener('click', () => openWorker(shown[+el.dataset.i])));
+  // Acciones por fila: foto abre el visor grande (miniatura publica); ficha
+  // abre el detalle del trabajador. La fila ya NO abre nada por si sola.
+  list.querySelectorAll('[data-ficha]').forEach(b =>
+    b.addEventListener('click', () => openWorker(shown[+b.dataset.ficha])));
+  list.querySelectorAll('[data-photo]').forEach(b =>
+    b.addEventListener('click', () => {
+      const w = shown[+b.dataset.photo];
+      if (!w || !w.thumb_url) return;
+      openWorkerLightbox(w.thumb_url, `${w.full_name} · C.I. ${w.id_number}`, `${w.id_number}.jpg`);
+    }));
 
   paintPager(pager, total, pages, start, pageRows.length);
 }

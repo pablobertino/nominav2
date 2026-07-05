@@ -108,6 +108,11 @@ function guideSvg() {
 
 /* ---------- helpers ---------- */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+
+/* Icono "ver" (ojo) con el trazo del portal, para el boton "Ver foto". */
+function eyeIco() {
+  return '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>';
+}
 function fmtDate(iso) {
   if (!iso) return '';
   const d = String(iso).slice(0, 10).split('-');
@@ -681,9 +686,16 @@ function paintGrid() {
     const bday = isBirthday(w.birth_date);
     const bflag = (bday && !sel) ? '<span class="wp-bflag">\uD83C\uDF82 \u00a1Cumple hoy!</span>' : '';
     const conf = bday ? confettiHtml() : '';
+    // Overlay de la tarjeta. En modo normal ofrece DOS acciones: "Ver ficha"
+    // (clic en la tarjeta) y, si hay foto, "Ver foto" (abre el visor grande
+    // sin entrar al detalle). En modo seleccion, la etiqueta de marcar/quitar.
+    const hasPhoto = !!(w.thumb_url || w.has_photo);
+    const ov = sel
+      ? `<div class="wp-ov"><span>${checked ? 'Quitar' : 'Seleccionar'}</span></div>`
+      : `<div class="wp-ov"><span>Ver ficha</span>${hasPhoto ? '<button type="button" class="wp-ov-photo" data-viewphoto="' + w.id_number + '">' + eyeIco() + ' Ver foto</button>' : ''}</div>`;
     return `<div class="wp-card" data-ced="${w.id_number}"${sel && checked ? ' style="outline:2px solid var(--brand);outline-offset:2px;border-radius:14px"' : ''}>
       ${deptBar}
-      <div class="wp-photo${bday ? ' wp-bday' : ''}">${chk}${conf}${photo}${bflag}<div class="wp-ov"><span>${sel ? (checked ? 'Quitar' : 'Seleccionar') : 'Ver ficha'}</span></div></div>
+      <div class="wp-photo${bday ? ' wp-bday' : ''}">${chk}${conf}${photo}${bflag}${ov}</div>
       <div class="wp-body">
         <p class="wp-name">${esc(w.full_name)}</p>
         <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}</span>
@@ -702,6 +714,22 @@ function paintGrid() {
         if (STATE.selected.has(ced)) STATE.selected.delete(ced); else STATE.selected.add(ced);
         paintGrid(); paintSelBar();
       } else openFicha(ced);
+    }));
+
+  // Boton "Ver foto" del overlay: abre el visor grande sin entrar a la ficha.
+  // stopPropagation para que el clic no dispare el openFicha de la tarjeta.
+  grid.querySelectorAll('[data-viewphoto]').forEach(btn =>
+    btn.addEventListener('click', async (ev) => {
+      ev.stopPropagation();
+      const ced = String(btn.dataset.viewphoto);
+      const w = STATE.workers.find(x => String(x.id_number) === ced);
+      if (!w) return;
+      // Pedir la version grande (firma on-demand); si no se logra, usar la
+      // miniatura publica (que a tamano carnet se ve bien).
+      if (!w.full_url && w.has_photo) await ensureFull(ced);
+      const src = w.full_url || w.thumb_url;
+      if (!src) return;
+      openLightbox(src, `${w.full_name} \u00b7 ${w.ced_kind || ''}-${w.id_number}`, `${w.ced_kind || ''}-${w.id_number}.jpg`);
     }));
 
   observePhotos();
@@ -1372,6 +1400,16 @@ function closeLightbox() {
   const el = document.getElementById('wpLb');
   if (el) { el.classList.remove('show'); document.getElementById('wpLbImg').src = ''; }
   lbCurrent = null;
+}
+
+/* Lightbox PUBLICO reutilizable desde otras vistas (Buscar personal, Datos
+   incompletos): abre la foto grande de un trabajador en el mismo visor de
+   Personal (imagen + Descargar + X + Escape + clic-fuera). Recibe la URL de
+   la imagen (normalmente la miniatura publica, que a ~300px se ve nitida como
+   foto carnet), un texto de pie y el nombre de archivo para la descarga.
+   No depende del STATE interno de Personal: es autonoma. */
+export function openWorkerLightbox(src, cap, filename) {
+  openLightbox(src, cap, filename);
 }
 
 /* ===================== MODAL DE FOTO (recortador arrastrar + zoom) ===================== */
