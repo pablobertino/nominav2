@@ -673,12 +673,19 @@ function paintGrid() {
           + `</div>`;
     const egr = w.end_date ? `<span class="pill pill-out" style="margin-top:4px;display:inline-block">egresó ${fmtDate(w.end_date)}</span>` : '';
     const manualTag = w.source === 'manual' ? '<span class="pill wp-pill-manual" style="margin-top:4px;display:inline-block">manual</span>' : '';
-    // Barra de departamento ARRIBA de la tarjeta. Solo LECTURA: si tiene
-    // departamento, etiqueta gris discreta; si no tiene, no se muestra nada
-    // (la asignacion de departamento se hace desde otra vista, no aqui).
-    const deptBar = w.department_name
-      ? `<div class="wp-deptbar"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span>${esc(w.department_name)}</span></div>`
-      : '';
+    // Barra de departamento ARRIBA de la tarjeta.
+    //  - Con departamento: etiqueta gris discreta (solo lectura).
+    //  - Sin departamento + admin: accion azul clickeable para asignarlo.
+    //      * empresa (enterprise): abre modal para elegir de sus departamentos.
+    //      * tienda (store): asigna "Retail" directo (unico departamento valido).
+    //  - Sin departamento + no admin: no se muestra nada.
+    let deptBar = '';
+    if (w.department_name) {
+      deptBar = `<div class="wp-deptbar"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span>${esc(w.department_name)}</span></div>`;
+    } else if (STATE.isAdmin) {
+      const label = STATE.mode === 'enterprise' ? 'Asignar departamento' : 'Asignar Retail';
+      deptBar = `<div class="wp-deptbar assign" data-assigndept="${w.id_number}"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg><span>${label}</span></div>`;
+    }
     const checked = STATE.selected.has(String(w.id_number));
     const chk = sel
       ? `<span class="wp-selchk" style="position:absolute;top:8px;left:8px;width:22px;height:22px;border-radius:6px;border:2px solid #fff;box-shadow:0 0 0 1px rgba(15,23,42,.18);background:${checked ? 'var(--brand)' : 'rgba(255,255,255,.9)'};display:flex;align-items:center;justify-content:center;color:#fff;font-size:13px;z-index:3">${checked ? '✓' : ''}</span>`
@@ -730,6 +737,17 @@ function paintGrid() {
       const src = w.full_url || w.thumb_url;
       if (!src) return;
       openLightbox(src, `${w.full_name} \u00b7 ${w.ced_kind || ''}-${w.id_number}`, `${w.ced_kind || ''}-${w.id_number}.jpg`);
+    }));
+
+  // Barra "Asignar": en empresa abre el modal (elegir departamento); en tienda
+  // asigna "Retail" directo (unico departamento valido). stopPropagation para
+  // no disparar el openFicha de la tarjeta.
+  grid.querySelectorAll('[data-assigndept]').forEach(el =>
+    el.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const ced = String(el.dataset.assigndept);
+      if (STATE.mode === 'enterprise') { openAssignDeptModal(ced); return; }
+      assignRetail(ced, el);
     }));
 
   observePhotos();
@@ -923,6 +941,31 @@ async function applyBulkDept() {
   STATE.selMode = false; STATE.selected = new Set();
   const ab = $('#wpAssignDept'); if (ab) ab.classList.remove('btn-primary');
   paintSelBar(); paintGrid();
+}
+
+/* ---- Asignacion DIRECTA de "Retail" en tiendas ----
+   En tiendas el unico departamento valido es "Retail". En vez de un modal con
+   un solo item, la barra lo asigna directo. Busca el registro "Retail" de esta
+   tienda en STATE.departments (cada tienda tiene el suyo con su propio id) y
+   llama set_department. Feedback breve en la barra mientras guarda. */
+async function assignRetail(ced, barEl) {
+  const w = STATE.workers.find(x => String(x.id_number) === String(ced));
+  if (!w) return;
+  const retail = (STATE.departments || []).find(d => /^retail$/i.test(String(d.name || '')));
+  if (!retail) { alert('Esta tienda no tiene el departamento Retail creado. Avisá a Sistemas.'); return; }
+  if (barEl) { barEl.style.pointerEvents = 'none'; const sp = barEl.querySelector('span'); if (sp) sp.textContent = 'Asignando…'; }
+  const r = await api({
+    action: 'set_department', company_code: STATE.cc, user: sessionUserPayload(STATE.user),
+    id_numbers: [String(ced)], department_id: retail.id,
+  });
+  if (!r.ok) {
+    if (barEl) { barEl.style.pointerEvents = ''; const sp = barEl.querySelector('span'); if (sp) sp.textContent = 'Asignar Retail'; }
+    alert(r.error || 'No se pudo asignar Retail.');
+    return;
+  }
+  w.department_id = retail.id; w.department_name = retail.name;
+  paintGrid();
+  if (CUR && String(CUR.id_number) === String(ced)) openFicha(String(ced));
 }
 
 /* ---- Asignacion PUNTUAL de departamento (desde la barra azul de la tarjeta) ----
