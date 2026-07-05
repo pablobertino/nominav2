@@ -68,7 +68,7 @@ function normalizePhone(raw) {
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'Solicitud inválida.' }, 400); }
-  const { adminId, companyCode, email, phone, phone2 } = body;
+  const { adminId, companyCode, email, phone, phone2, address, city, state, municipality } = body;
 
   try {
     const admin = await getAdmin(env, adminId);
@@ -103,6 +103,26 @@ export async function onRequestPost({ request, env }) {
       patch.phone2 = norm2.e164;
     }
 
+    // --- Direccion: address / city / state / municipality (texto simple) ---
+    // Regla de negocio: SOLO superadmin puede tocar la direccion. El contacto
+    // (correo/telefonos) lo puede editar quien tenga alcance (canTouch arriba).
+    const addrKeys = ['address', 'city', 'state', 'municipality'];
+    const addrIncoming = { address, city, state, municipality };
+    const wantsAddr = addrKeys.some(k => addrIncoming[k] !== undefined);
+    if (wantsAddr && admin.role !== 'superadmin') {
+      return json({ ok: false, error: 'Solo un superadmin puede editar la direccion.' }, 403);
+    }
+    // Normaliza cada campo de texto: trim; vacio => null (limpiar).
+    const cleanText = v => {
+      if (v === undefined) return undefined;
+      const s = (v == null ? '' : String(v)).trim();
+      return s === '' ? null : s;
+    };
+    addrKeys.forEach(k => {
+      const val = cleanText(addrIncoming[k]);
+      if (val !== undefined) patch[k] = val;
+    });
+
     if (Object.keys(patch).length === 0) {
       return json({ ok: false, error: 'Nada que actualizar.' }, 400);
     }
@@ -111,7 +131,11 @@ export async function onRequestPost({ request, env }) {
       method: 'PATCH', headers: { Prefer: 'return=minimal' },
       body: JSON.stringify(patch),
     });
-    return json({ ok: true, email: patch.email, phone: patch.phone, phone2: patch.phone2 });
+    return json({
+      ok: true,
+      email: patch.email, phone: patch.phone, phone2: patch.phone2,
+      address: patch.address, city: patch.city, state: patch.state, municipality: patch.municipality,
+    });
   } catch (err) {
     return json({ ok: false, error: err.message }, 500);
   }

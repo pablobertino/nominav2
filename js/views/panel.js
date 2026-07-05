@@ -36,6 +36,20 @@ const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Se
 let CATALOG = null;       // { companies, zones, subzones, concepts }
 let currentView = 'tiendas';
 
+/* Catalogo geografico (estados + ciudades) para el modal de Empresas. Se
+   carga una sola vez (perezoso) desde /api/logistic-geo y se cachea en el
+   modulo. GEO = { states:[{id,name}], cities:[{state,name,municipality}] }. */
+let GEO = null;
+async function loadGeo() {
+  if (GEO) return GEO;
+  try {
+    const d = await fetch('/api/logistic-geo').then(r => r.json());
+    if (d && d.ok) GEO = { states: d.states || [], cities: d.cities || [] };
+    else GEO = { states: [], cities: [] };
+  } catch { GEO = { states: [], cities: [] }; }
+  return GEO;
+}
+
 /* Filtros de la vista Empresas persistidos a nivel de modulo: al entrar a una
    empresa (Personal/Departamentos), sincronizar y volver, viewTiendas se
    re-ejecuta desde cero; guardar aqui lo elegido evita tener que volver a
@@ -71,6 +85,7 @@ const I = {
   bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
   megaphone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 13v-2z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>',
   wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
+  pin: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
 };
 
 /* ---------- NAVEGACION (admin / superadmin) ----------
@@ -277,7 +292,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.49</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.50</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -623,10 +638,14 @@ function viewTiendas(user) {
   const isGestor = user.kind === 'admin' && user.role === 'gestor_empresa';
   // El gestor de empresa NO administra: sin "Sincronizar todo", sin editar
   // contacto y sin Departamentos; pero SI puede entrar a Personal y Reportar.
+  const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   const canSyncAll = isAdmin && !isGestor;
   const canEditContact = !isEditor && !isGestor;
   const canDepartments = !isEditor && !isGestor;
   const canReport = !isEditor;   // gestor si reporta; editor no
+  // Direccion + contacto de la empresa: SOLO superadmin edita; el resto abre
+  // el modal en modo consulta (campos disabled, sin boton Guardar).
+  const canEditCompany = isSuper;
   const types = [...new Set(CATALOG.companies.map(c => c.type).filter(Boolean))].sort();
   const statuses = [...new Set(CATALOG.companies.map(c => c.status).filter(Boolean))].sort();
   const concepts = CATALOG.concepts.map(c => c.name);
@@ -812,7 +831,6 @@ function viewTiendas(user) {
             <span class="${c.email ? '' : 'muted'}">${c.email || 'sin correo'}</span>
             <span class="muted" style="font-size:12px">${telLine}</span>
           </div>
-          ${canEditContact ? `<button class="email-edit" data-code="${c.code}" data-name="${(c.name||'').replace(/"/g,'')}" data-email="${c.email||''}" data-phone="${c.phone||''}" data-phone2="${c.phone2||''}" title="Editar contacto">${I.pencil}</button>` : ''}
         </div>`;
       return `
       <tr>
@@ -824,12 +842,15 @@ function viewTiendas(user) {
         <td>${personalCell(c)}</td>
         <td>${statusPill(c.status)}</td>
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
-        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" style="margin-right:4px">Personal</button>${(canDepartments && NON_STORE_TYPES.has(c.type)) ? `<button class="btn btn-mini" data-dep-code="${c.code}" style="margin-right:4px">Departamentos${c.deptCount ? ` <span class="dep-count">${c.deptCount}</span>` : ''}</button>` : ''}${canReport ? `<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}">Reportar</button>` : ''}</td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" title="Personal / fichas" style="margin-right:4px">${I.photo} Personal</button>${(canDepartments && NON_STORE_TYPES.has(c.type)) ? `<button class="btn btn-mini" data-dep-code="${c.code}" title="Departamentos" style="margin-right:4px">${I.grid} Deptos${c.deptCount ? ` <span class="dep-count">${c.deptCount}</span>` : ''}</button>` : ''}${canReport ? `<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}" title="Reportar" style="margin-right:4px">${I.bizreport} Reportar</button>` : ''}<button class="btn btn-mini" data-addr-code="${c.code}" data-addr-name="${(c.name||'').replace(/"/g,'')}" title="${canEditCompany ? 'Editar direccion y contacto' : 'Ver direccion y contacto'}">${I.pin} Direcci\u00f3n</button></td>
       </tr>`;
     }).join('') || '<tr><td colspan="9" class="empty">Sin resultados.</td></tr>';
 
-    $('#tBody').querySelectorAll('.email-edit').forEach(b =>
-      b.addEventListener('click', () => contactEditModal(user, b.dataset)));
+    $('#tBody').querySelectorAll('[data-addr-code]').forEach(b =>
+      b.addEventListener('click', () => {
+        const c = CATALOG.companies.find(x => x.code === b.dataset.addrCode);
+        companyEditModal(user, c, canEditCompany);
+      }));
     $('#tBody').querySelectorAll('[data-report-code]').forEach(b =>
       b.addEventListener('click', () => {
         const rc = CATALOG.companies.find(x => x.code === b.dataset.reportCode);
@@ -962,35 +983,129 @@ async function exportTiendas(fmt, rows) {
 }
 
 /* Modal para editar datos de contacto (correo + teléfono) de una compañía */
-function contactEditModal(user, ds) {
+/* Modal unificado de Empresa: contacto (correo/tel1/tel2) + direccion
+   (estado -> ciudad dependientes, municipio deducido, direccion larga).
+   - canEdit === true  => superadmin: campos editables, boton Guardar.
+   - canEdit === false => resto de roles: modo consulta (disabled, sin Guardar).
+   Los combos Estado/Ciudad se llenan del catalogo geografico (/api/logistic-geo,
+   cacheado en GEO). La ciudad determina el municipio (se guarda deducido, no se
+   elige). No usa alert/confirm nativos: los errores van en un aviso inline. */
+async function companyEditModal(user, c, canEdit) {
+  if (!c) return;
+  const ro = canEdit ? '' : ' disabled';
+  const title = canEdit ? 'Editar empresa' : 'Datos de la empresa';
+
   openModal(`
-    <div class="modal-head"><span>Datos de contacto</span><button class="modal-x" id="mX">✕</button></div>
-    <p class="muted" style="font-size:12.5px;margin:0 0 16px">${ds.code}${ds.name ? ' · ' + ds.name : ''}</p>
+    <div class="modal-head"><span>${title}</span><button class="modal-x" id="mX">✕</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 14px">${c.code}${c.name ? ' · ' + c.name : ''}${canEdit ? '' : ' · <span style="color:var(--muted)">solo consulta</span>'}</p>
+
+    <div class="ce-sec-title" style="font-weight:600;font-size:12.5px;margin:0 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em">Contacto</div>
     <label class="flabel">Correo</label>
-    <input type="text" id="emInput" value="${ds.email || ''}" placeholder="compania@grupocanaima.com" style="margin-bottom:14px">
-    <label class="flabel">Teléfono móvil 1 <span class="muted">(04XX-XXXXXXX)</span></label>
-    <input type="text" id="phInput" value="${phoneNational(ds.phone)}" placeholder="04121234567" style="margin-bottom:12px">
-    <label class="flabel">Teléfono móvil 2 <span class="muted">(opcional)</span></label>
-    <input type="text" id="phInput2" value="${phoneNational(ds.phone2)}" placeholder="04241234567" style="margin-bottom:6px">
-    <p class="muted" style="font-size:11.5px;margin:0">Deja los campos vacíos para quitarlos. Se guarda en formato internacional (+58).</p>
+    <input type="text" id="emInput" value="${(c.email || '').replace(/"/g,'&quot;')}" placeholder="compania@grupocanaima.com" style="margin-bottom:12px"${ro}>
+    <div style="display:flex;gap:10px;margin-bottom:14px">
+      <div style="flex:1"><label class="flabel">Teléfono 1 <span class="muted">(04XX)</span></label>
+        <input type="text" id="phInput" value="${phoneNational(c.phone)}" placeholder="04121234567"${ro}></div>
+      <div style="flex:1"><label class="flabel">Teléfono 2 <span class="muted">(opcional)</span></label>
+        <input type="text" id="phInput2" value="${phoneNational(c.phone2)}" placeholder="04241234567"${ro}></div>
+    </div>
+
+    <div class="ce-sec-title" style="font-weight:600;font-size:12.5px;margin:0 0 8px;color:var(--muted);text-transform:uppercase;letter-spacing:.03em">Dirección</div>
+    <div style="display:flex;gap:10px;margin-bottom:12px">
+      <div style="flex:1"><label class="flabel">Estado</label>
+        <select id="stInput"${ro}><option value="">— Cargando… —</option></select></div>
+      <div style="flex:1"><label class="flabel">Ciudad</label>
+        <select id="ctInput"${ro}><option value="">— Seleccione un estado —</option></select></div>
+    </div>
+    <p class="muted" id="muniLine" style="font-size:11.5px;margin:-4px 0 12px">Municipio: <b id="muniVal">—</b></p>
+    <label class="flabel">Dirección completa</label>
+    <textarea id="adInput" rows="3" placeholder="Av., calle, edificio, local, punto de referencia…" style="margin-bottom:6px;resize:vertical;width:100%"${ro}>${(c.address || '').replace(/</g,'&lt;')}</textarea>
+    <p class="muted" style="font-size:11.5px;margin:0">${canEdit ? 'El teléfono se guarda en formato internacional (+58). Deja un campo vacío para quitarlo.' : 'Esta vista es de solo lectura.'}</p>
+
+    <div class="ce-err" id="ceErr" style="display:none;margin-top:12px;padding:9px 12px;border-radius:8px;background:#fee2e2;color:#991b1b;font-size:12.5px"></div>
+
     <div class="modal-actions">
-      <button class="btn" id="mCancel">Cancelar</button>
-      <button class="btn btn-primary" id="mOk">Guardar</button>
+      <button class="btn" id="mCancel">${canEdit ? 'Cancelar' : 'Cerrar'}</button>
+      ${canEdit ? '<button class="btn btn-primary" id="mOk">Guardar</button>' : ''}
     </div>`);
+
   $('#mX').addEventListener('click', closeModal);
   $('#mCancel').addEventListener('click', closeModal);
-  $('#mOk').addEventListener('click', async () => {
-    const d = await fetch('/api/company-contact', {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ adminId: user.id, companyCode: ds.code,
-        email: $('#emInput').value, phone: $('#phInput').value, phone2: $('#phInput2').value }),
-    }).then(r => r.json());
-    if (!d.ok) { alert(d.error); return; }
-    closeModal();
-    const c = CATALOG.companies.find(x => x.code === ds.code);
-    if (c) { c.email = d.email; c.phone = d.phone; c.phone2 = d.phone2; }
-    viewTiendas(user);
-  });
+
+  const stSel = $('#stInput'), ctSel = $('#ctInput'), muniVal = $('#muniVal');
+  const errBox = $('#ceErr');
+  const showErr = msg => { errBox.textContent = msg; errBox.style.display = 'block'; };
+  const hideErr = () => { errBox.style.display = 'none'; };
+
+  // Poblar los combos con el catalogo geografico (perezoso).
+  const geo = await loadGeo();
+  // Estado: opciones ordenadas por nombre. Se conserva el valor actual aunque
+  // el catalogo no lo tenga (empresa cargada a mano).
+  const curState = (c.state || '').trim();
+  const curCity = (c.city || '').trim();
+  const stateExists = geo.states.some(s => s.name === curState);
+  stSel.innerHTML = '<option value="">— Sin estado —</option>'
+    + geo.states.map(s => `<option value="${s.name.replace(/"/g,'&quot;')}"${s.name === curState ? ' selected' : ''}>${s.name}</option>`).join('')
+    + (curState && !stateExists ? `<option value="${curState.replace(/"/g,'&quot;')}" selected>${curState} (actual)</option>` : '');
+
+  // Rellena el combo de Ciudad segun el estado elegido. Mantiene la ciudad
+  // actual si aplica; deduce el municipio de la ciudad seleccionada.
+  function fillCities(preserveCity) {
+    const stName = stSel.value;
+    // Buscar el state_id por nombre (los datos vienen con state=id en cities).
+    const stObj = geo.states.find(s => s.name === stName);
+    const sid = stObj ? stObj.id : null;
+    const list = sid ? geo.cities.filter(ci => ci.state === sid) : [];
+    const keep = preserveCity ? curCity : ctSel.value;
+    const cityExists = list.some(ci => ci.name === keep);
+    ctSel.innerHTML = '<option value="">— Sin ciudad —</option>'
+      + list.map(ci => `<option value="${ci.name.replace(/"/g,'&quot;')}"${ci.name === keep ? ' selected' : ''}>${ci.name}</option>`).join('')
+      + (keep && !cityExists ? `<option value="${keep.replace(/"/g,'&quot;')}" selected>${keep} (actual)</option>` : '');
+    updateMuni();
+  }
+
+  // Deduce y muestra el municipio de la ciudad seleccionada.
+  function updateMuni() {
+    const stObj = geo.states.find(s => s.name === stSel.value);
+    const sid = stObj ? stObj.id : null;
+    const hit = sid ? geo.cities.find(ci => ci.state === sid && ci.name === ctSel.value) : null;
+    muniVal.textContent = (hit && hit.municipality) ? hit.municipality : '—';
+  }
+
+  fillCities(true);
+  if (canEdit) {
+    stSel.addEventListener('change', () => { fillCities(false); hideErr(); });
+    ctSel.addEventListener('change', () => { updateMuni(); hideErr(); });
+    ['emInput','phInput','phInput2','adInput'].forEach(id => {
+      const el = $('#' + id); if (el) el.addEventListener('input', hideErr);
+    });
+
+    $('#mOk').addEventListener('click', async () => {
+      hideErr();
+      const btn = $('#mOk'); btn.disabled = true; btn.textContent = 'Guardando…';
+      // Municipio deducido de la ciudad (o vacio si no hay ciudad).
+      const stObj = geo.states.find(s => s.name === stSel.value);
+      const sid = stObj ? stObj.id : null;
+      const hit = sid ? geo.cities.find(ci => ci.state === sid && ci.name === ctSel.value) : null;
+      const muni = (hit && hit.municipality) ? hit.municipality : '';
+      let d;
+      try {
+        d = await fetch('/api/company-contact', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            adminId: user.id, companyCode: c.code,
+            email: $('#emInput').value, phone: $('#phInput').value, phone2: $('#phInput2').value,
+            address: $('#adInput').value, state: stSel.value, city: ctSel.value, municipality: muni,
+          }),
+        }).then(r => r.json());
+      } catch (e) { d = { ok: false, error: 'No se pudo guardar (red).' }; }
+      if (!d || !d.ok) { showErr((d && d.error) || 'No se pudo guardar.'); btn.disabled = false; btn.textContent = 'Guardar'; return; }
+      closeModal();
+      // Refrescar el objeto en memoria y re-render.
+      c.email = d.email; c.phone = d.phone; c.phone2 = d.phone2;
+      c.address = d.address; c.state = d.state; c.city = d.city; c.municipality = d.municipality;
+      viewTiendas(user);
+    });
+  }
 }
 
 /* ---------- Sincronizar todo (admin): recorre las empresas visibles ----------
