@@ -1708,4 +1708,47 @@ input.needfill:focus, select.needfill:focus {
   .hc-acts .hc-ib:hover { background:var(--border-soft); }
   .hc-acts2 { margin-top:8px; }
   .hc-acts2 .btn-send { width:100%; }
+
+  /* ---------------------------------------------------------------
+     BLOQUE 3 — EMPRESAS: tabla -> tarjetas apiladas.
+     El JS (viewTiendas/render) pinta #tCards en movil y oculta .tablebox.
+     La tarjeta REUSA las clases .hc-* del bloque 2 (Historial): cabecera
+     .hc-top/.hc-ic/.hc-tt, pares .hc-grid/.hc-k/.hc-v y acciones
+     .hc-acts/.hc-detail/.hc-ib. Aqui solo definimos lo propio de Empresas:
+     el contenedor, el estado vacio, el marco de la tarjeta, el alias
+     coloreado dentro de la cabecera y el chip de Acceso; y ademas apilamos
+     los filtros (buscador + selects + multi-select de estados).
+     --------------------------------------------------------------- */
+  /* Filtros de Empresas: apilados, cada control a lo ancho. */
+  .pnl-filters { flex-direction:column; align-items:stretch; gap:9px; }
+  .pnl-filters .search { width:100%; box-sizing:border-box; }
+  .pnl-filters .search input { width:100%; box-sizing:border-box; }
+  .pnl-filters > select { width:100%; box-sizing:border-box; }
+  /* Multi-select de estados a lo ancho; su menu se ancla debajo, full width. */
+  .pnl-filters .ms-wrap { width:100%; position:relative; }
+  .pnl-filters .ms-toggle { width:100%; box-sizing:border-box; justify-content:space-between; }
+  .pnl-filters .ms-menu { left:0; right:0; width:auto; }
+
+  /* Contenedor de tarjetas (oculto en escritorio; el JS lo muestra). */
+  .emp-cards { display:flex; flex-direction:column; gap:11px; }
+  .emp-empty { padding:26px 14px; text-align:center; color:var(--muted);
+    border:1px dashed var(--border); border-radius:var(--radius-lg); font-size:13px; }
+
+  /* Tarjeta de empresa (mismo marco visual que .hist-card). */
+  .emp-card { border:1px solid var(--border); border-radius:var(--radius-lg);
+    background:var(--surface); box-shadow:var(--shadow-md); padding:13px 14px; overflow:hidden; }
+  /* En la cabecera, el icono lleva el alias coloreado por tipo (no un emoji). */
+  .emp-card .hc-ic { background:var(--brand-bg); font-family:ui-monospace,Menlo,monospace;
+    font-weight:800; font-size:12px; letter-spacing:-.02em; }
+  .emp-card .hc-ic .alias { font-family:inherit; font-weight:800; }
+  /* Titulo: alias grande coloreado + DataArea chico al lado. */
+  .emp-card .hc-t1 { font-family:ui-monospace,Menlo,monospace; }
+  .emp-card .hc-t1 .darea { font-size:11px; color:var(--faint); font-weight:600; }
+  /* Chip de Acceso dentro de la grilla de pares. */
+  .emp-acc { display:inline-flex; align-items:center; gap:5px; font-size:12px; font-weight:600; }
+  .emp-acc svg { width:15px; height:15px; }
+  .emp-acc.yes { color:var(--success); }
+  .emp-acc.no { color:var(--faint); }
+  /* El contador de departamentos entra tambien en el boton-icono de la tarjeta. */
+  .emp-card .hc-ib .dep-count { margin-left:3px; }
 }

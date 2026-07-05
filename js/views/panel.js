@@ -312,7 +312,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.72</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.73</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -783,6 +783,7 @@ function viewTiendas(user) {
         <th>Código</th><th>Razón social</th><th>Tipo</th><th>Ubicación / Concepto</th><th>Contacto</th><th>Personal</th><th>Estado</th><th>Acceso</th><th style="text-align:right">Reportar</th>
       </tr></thead><tbody id="tBody"></tbody></table>
     </div>
+    <div class="emp-cards" id="tCards"></div>
     <div class="legend">
       <span class="ico-ok">${I.check} con acceso</span>
       <span class="ico-no">${I.circle} sin usuario</span>
@@ -898,7 +899,25 @@ function viewTiendas(user) {
     }
     $('#tCount').textContent = `${rows.length} de ${CATALOG.companies.length} entidades`;
     visibleRows = rows;
-    $('#tBody').innerHTML = rows.map(c => {
+    // Host activo: en movil TARJETAS en #tCards; en escritorio filas en #tBody.
+    const mobile = window.matchMedia('(max-width:768px)').matches;
+    const tableBox = $('#pnlMain').querySelector('.tablebox');
+    const cardsBox = $('#tCards');
+    if (tableBox) tableBox.style.display = mobile ? 'none' : '';
+    if (cardsBox) cardsBox.style.display = mobile ? '' : 'none';
+    const host = mobile ? cardsBox : $('#tBody');
+    if (!rows.length) {
+      host.innerHTML = mobile
+        ? '<div class="emp-empty">Sin resultados.</div>'
+        : '<tr><td colspan="9" class="empty">Sin resultados.</td></tr>';
+    } else {
+      host.innerHTML = rows.map(c => mobile ? empCard(c) : empRow(c)).join('');
+    }
+    wireEmpRows(host);
+  }
+
+  // ---- Fila de ESCRITORIO (<tr>) ----
+  function empRow(c) {
       const tel = phoneDisplay(c.phone);
       const tel2 = phoneDisplay(c.phone2);
       const telLine = [tel, tel2].filter(Boolean).join(' / ') || 'sin teléfono';
@@ -921,20 +940,75 @@ function viewTiendas(user) {
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
         <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" title="Personal / fichas" style="margin-right:4px">${I.photo} Personal</button>${(canDepartments && NON_STORE_TYPES.has(c.type)) ? `<button class="btn btn-mini" data-dep-code="${c.code}" title="Departamentos" style="margin-right:4px">${I.grid} Deptos${c.deptCount ? ` <span class="dep-count">${c.deptCount}</span>` : ''}</button>` : ''}${canReport ? `<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}" title="Reportar" style="margin-right:4px">${I.bizreport} Reportar</button>` : ''}<button class="btn btn-mini" data-addr-code="${c.code}" data-addr-name="${(c.name||'').replace(/"/g,'')}" title="${canEditCompany ? 'Editar direccion y contacto' : 'Ver direccion y contacto'}">${I.pin} Direcci\u00f3n</button></td>
       </tr>`;
-    }).join('') || '<tr><td colspan="9" class="empty">Sin resultados.</td></tr>';
+  }
 
-    $('#tBody').querySelectorAll('[data-addr-code]').forEach(b =>
+  // ---- Tarjeta MOVIL (<div>) ----
+  // Empresas NO tiene "abrir fila": la accion principal es Personal. Cabecera
+  // (icono por tipo + codigo/alias + razon social + estado a la derecha),
+  // datos en pares (Tipo, Ubicacion, Concepto, Personal, Correo, Telefono,
+  // Acceso) y acciones abajo: Personal (texto) + secundarias solo-icono
+  // (Reportar / Deptos / Direccion). Mismos data-* que la fila -> wireEmpRows.
+  function empCard(c) {
+    const tel = phoneDisplay(c.phone);
+    const tel2 = phoneDisplay(c.phone2);
+    const telLine = [tel, tel2].filter(Boolean).join(' / ') || 'sin tel\u00e9fono';
+    const rows = [];
+    rows.push(['Tipo', typePill(c.type)]);
+    rows.push(['Ubicaci\u00f3n', `${c.zone || '\u2014'}${c.subzone ? ' \u00b7 ' + c.subzone : ''}`]);
+    if (c.concept) rows.push(['Concepto', c.concept]);
+    rows.push(['Personal', personalCell(c)]);
+    rows.push(['Correo', c.email ? c.email : '<span class="muted">sin correo</span>']);
+    rows.push(['Tel\u00e9fono', `<span class="muted">${telLine}</span>`]);
+    rows.push(['Acceso', c.hasAccess
+      ? `<span class="emp-acc yes">${I.check} con acceso</span>`
+      : `<span class="emp-acc no">${I.circle} sin usuario</span>`]);
+    const grid = rows.map(([k, v]) => `<span class="hc-k">${k}</span><span class="hc-v">${v}</span>`).join('');
+
+    const nameEsc = (c.name || '').replace(/"/g, '');
+    // Acciones: Personal (principal, con texto) + iconos segun permisos.
+    const iconBtns = []
+      .concat(canReport
+        ? [`<button class="btn hc-ib" data-report-code="${c.code}" data-report-name="${nameEsc}" title="Reportar" aria-label="Reportar">${I.bizreport}</button>`]
+        : [])
+      .concat((canDepartments && NON_STORE_TYPES.has(c.type))
+        ? [`<button class="btn hc-ib" data-dep-code="${c.code}" title="Departamentos" aria-label="Departamentos">${I.grid}${c.deptCount ? `<span class="dep-count">${c.deptCount}</span>` : ''}</button>`]
+        : [])
+      .concat([`<button class="btn hc-ib" data-addr-code="${c.code}" data-addr-name="${nameEsc}" title="${canEditCompany ? 'Editar direccion y contacto' : 'Ver direccion y contacto'}" aria-label="Direccion">${I.pin}</button>`])
+      .join('');
+    const acts = `<div class="hc-acts">
+      <button class="btn hc-detail" data-photos-code="${c.code}" data-photos-name="${nameEsc}">${I.photo} Personal</button>
+      ${iconBtns}
+    </div>`;
+
+    return `<div class="emp-card">
+      <div class="hc-top">
+        <div class="hc-ic"><span class="alias ${tyClass(c.type)}">${(c.code || '').slice(0, 4)}</span></div>
+        <div class="hc-tt">
+          <div class="hc-t1 alias ${tyClass(c.type)}">${c.code}${c.dataArea ? ` <span class="darea">${c.dataArea}</span>` : ''}</div>
+          <div class="hc-t2">${c.name || '\u2014'}${c.taxId ? ` \u00b7 RIF ${c.taxId}` : ''}</div>
+        </div>
+        ${statusPill(c.status)}
+      </div>
+      <div class="hc-grid">${grid}</div>
+      ${acts}
+    </div>`;
+  }
+
+  // ---- Cableado de listeners sobre el host activo (tabla o tarjetas) ----
+  // Mismos data-* en fila y tarjeta -> un solo conjunto de listeners.
+  function wireEmpRows(host) {
+    host.querySelectorAll('[data-addr-code]').forEach(b =>
       b.addEventListener('click', () => {
         const c = CATALOG.companies.find(x => x.code === b.dataset.addrCode);
         companyEditModal(user, c, canEditCompany);
       }));
-    $('#tBody').querySelectorAll('[data-report-code]').forEach(b =>
+    host.querySelectorAll('[data-report-code]').forEach(b =>
       b.addEventListener('click', () => {
         const rc = CATALOG.companies.find(x => x.code === b.dataset.reportCode);
         const u = { ...user, pickedCompany: b.dataset.reportCode, pickedCompanyName: b.dataset.reportName, pickedCompanyType: rc ? rc.type : null };
         openReportPicker(u, () => viewTiendas(user));
       }));
-    $('#tBody').querySelectorAll('[data-photos-code]').forEach(b =>
+    host.querySelectorAll('[data-photos-code]').forEach(b =>
       b.addEventListener('click', () => {
         // Admin/superadmin entra a las fichas/fotos de la empresa elegida.
         // El "Volver" regresa a la lista de Empresas. Si la empresa NO es
@@ -943,9 +1017,6 @@ function viewTiendas(user) {
         const mode = c && NON_STORE_TYPES.has(c.type) ? 'enterprise' : 'store';
         currentView = 'fotos';
         document.querySelectorAll('#pnlNav button').forEach(x => x.classList.remove('active'));
-        // Interceptor de back: al dar Atras en fotos, volver a Empresas (misma
-        // accion que el boton Volver de la ficha). Devuelve true = back
-        // consumido (el guardian no hace nada mas).
         let removeFotoBack = null;
         const backToTiendas = () => {
           if (removeFotoBack) { removeFotoBack(); removeFotoBack = null; }
@@ -954,7 +1025,7 @@ function viewTiendas(user) {
         removeFotoBack = pushBackInterceptor(() => { backToTiendas(); return true; });
         renderWorkerPhotos(user, b.dataset.photosCode, backToTiendas, { mode });
       }));
-    $('#tBody').querySelectorAll('[data-dep-code]').forEach(b =>
+    host.querySelectorAll('[data-dep-code]').forEach(b =>
       b.addEventListener('click', () => {
         const c = CATALOG.companies.find(x => x.code === b.dataset.depCode);
         if (!c) return;
