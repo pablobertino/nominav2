@@ -1,9 +1,6 @@
 {
   "name": "nominav2",
-  "version": "1.0.0",
   "private": true,
-  "description": "Portal de Nomina NominaV2 - Cloudflare Pages Functions",
-  "dependencies": {
-    "pdf-lib": "1.17.1"
-  }
+  "description": "Cloudflare Pages estatico + Functions. Las Functions NO usan dependencias npm: pdf-lib se importa desde CDN (esm.sh) porque Pages no ejecuta npm install (sin build command). Este archivo NO declara dependencias a proposito.",
+  "dependencies": {}
 }

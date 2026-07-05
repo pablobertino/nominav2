@@ -25,7 +25,13 @@
    el patch) y opts trae { signatureBytes?, signatureMime? } opcionales.
    ===================================================================== */
 
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+/* pdf-lib se importa desde CDN (esm.sh) porque este proyecto de Cloudflare
+   Pages NO tiene build command -> Pages NO ejecuta `npm install`, y esbuild
+   no puede resolver el paquete npm 'pdf-lib' al bundlear /functions. Las URLs
+   http(s) las marca esbuild como EXTERNAS (no rompen el bundle) y el runtime
+   de Workers las carga en ejecucion. Solo usamos fuentes estandar (Times/
+   WinAnsi), NO fontkit, asi que el import simple es suficiente. */
+import { PDFDocument, StandardFonts, rgb } from 'https://esm.sh/pdf-lib@1.17.1?target=es2022';
 
 /* ---------- numero -> letras (formato VE) ---------- */
 const UNIDADES = ['', 'UNO', 'DOS', 'TRES', 'CUATRO', 'CINCO', 'SEIS', 'SIETE', 'OCHO', 'NUEVE'];
