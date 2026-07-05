@@ -293,6 +293,7 @@ function shell(user) {
     .pnl-bell{position:relative;background:none;border:0;cursor:pointer;color:var(--muted);padding:6px;border-radius:8px;display:flex;align-items:center}
     .pnl-bell:hover{background:var(--bg-soft,#f1f2f4);color:var(--text,#0f172a)}
     .pnl-bell-badge{position:absolute;top:-1px;right:-1px;min-width:16px;height:16px;padding:0 4px;border-radius:9px;background:#e11d48;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1}
+    .pnl-bell-badge.is-solic{background:#16a34a}
     .pnl-bell-pop{position:absolute;top:calc(100% + 8px);right:0;width:340px;max-width:calc(100vw - 24px);max-height:70vh;overflow:auto;background:var(--card,#fff);border:1px solid var(--border,#e5e7eb);border-radius:12px;box-shadow:0 12px 32px rgba(15,23,42,.16);z-index:60}
     .pnl-bell-pop h4{margin:0;padding:12px 14px;border-bottom:1px solid var(--border,#e5e7eb);font-size:13px;position:sticky;top:0;background:var(--card,#fff);display:flex;justify-content:space-between;align-items:center}
     .pnl-bell-pop h4 a{color:var(--brand,#2563eb);text-decoration:none}
@@ -310,7 +311,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.59</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.60</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -381,7 +382,7 @@ const BELL_SVG = {
 };
 
 /* Estado de la campanita: feed de avisos (todos) + novedades de empresa (admin). */
-let BELL_AUTO = [], BELL_MANUAL = [], BELL_EMPRESA = [];
+let BELL_AUTO = [], BELL_MANUAL = [], BELL_EMPRESA = [], BELL_SOLIC = [];
 
 function bellAutoHtml(a) {
   return `<div class="pnl-bell-item">`
@@ -408,10 +409,21 @@ function bellEmpresaHtml(c) {
     + `<div style="margin-top:2px">Estatus: ${escHtml(c.old_value || '\u2014')} \u2192 <b>${escHtml(c.new_value || '\u2014')}</b></div>`
     + `<div class="muted" style="font-size:11px;margin-top:2px">${when}</div></div></div>`;
 }
+/* Item de la campanita para una constancia lista (tienda). Verde. */
+function bellSolicHtml(s) {
+  const worker = s.worker_full_name ? escHtml(s.worker_full_name) : 'Constancia';
+  return `<div class="pnl-bell-item" data-goto-solic="1" style="cursor:pointer">`
+    + `<span class="ic" style="color:#16a34a">\u2705</span>`
+    + `<div><div><b>Constancia lista</b> \u2014 ${worker}</div>`
+    + `<div class="muted" style="font-size:11px;margin-top:2px">Ya puedes descargarla en Constancias</div></div></div>`;
+}
 function bellRender() {
   const pop = document.getElementById('pnlBellPop');
   if (!pop) return;
   let html = `<h4>Avisos <a id="pnlBellAll" style="font-size:11.5px;font-weight:500;cursor:pointer">Ver todos</a></h4>`;
+  if (BELL_SOLIC.length) {
+    html += `<div class="bell-group">Solicitudes</div>` + BELL_SOLIC.map(bellSolicHtml).join('');
+  }
   if (BELL_AUTO.length) {
     html += `<div class="bell-group">Per\u00edodo de n\u00f3mina</div>` + BELL_AUTO.map(bellAutoHtml).join('');
   }
@@ -426,6 +438,12 @@ function bellRender() {
   // "Ver todos" -> ir a la seccion Avisos
   const all = document.getElementById('pnlBellAll');
   if (all) all.addEventListener('click', () => { pop.hidden = true; navigate('avisos', BELL_USER); });
+  // clic en un aviso de constancia lista -> ir a Constancias
+  pop.querySelectorAll('[data-goto-solic]').forEach(el =>
+    el.addEventListener('click', () => {
+      pop.hidden = true;
+      navigate('constancias', BELL_USER);
+    }));
   // clic en un manual -> ir a Avisos y resaltar
   pop.querySelectorAll('[data-goto]').forEach(el =>
     el.addEventListener('click', () => {
@@ -444,7 +462,10 @@ function bellRender() {
 async function bellLoad(user) {
   const badge = document.getElementById('pnlBellBadge');
   if (!badge) return;
-  let unread = 0;
+  // unreadRojo = avisos que fuerzan ROJO (nomina, comunicados, novedades).
+  // unreadSolic = constancias listas (solo company) -> VERDE si no hay rojo.
+  let unreadRojo = 0;
+  let unreadSolic = 0;
   // 1) feed de avisos (todos los usuarios)
   try {
     const a = await fetch('/api/announcements', {
@@ -454,7 +475,7 @@ async function bellLoad(user) {
         user: user.kind === 'company' ? { kind: 'company', companyCode: user.companyCode } : { kind: 'admin', id: user.id },
       }),
     }).then(x => x.json());
-    if (a && a.ok) { BELL_AUTO = a.auto || []; BELL_MANUAL = a.manual || []; unread += (a.unread || 0); }
+    if (a && a.ok) { BELL_AUTO = a.auto || []; BELL_MANUAL = a.manual || []; unreadRojo += (a.unread || 0); }
   } catch (_) { /* nada */ }
   // 2) novedades de empresa (solo admin)
   if (user.kind === 'admin') {
@@ -463,11 +484,29 @@ async function bellLoad(user) {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ action: 'get', adminId: user.id }),
       }).then(x => x.json());
-      if (r && r.ok) { BELL_EMPRESA = r.items || []; unread += (r.unread || 0); }
+      if (r && r.ok) { BELL_EMPRESA = r.items || []; unreadRojo += (r.unread || 0); }
     } catch (_) { /* nada */ }
   }
-  if (unread > 0) { badge.textContent = unread > 99 ? '99+' : String(unread); badge.style.display = 'flex'; }
-  else { badge.style.display = 'none'; }
+  // 3) constancias listas (solo company/tienda) -> aviso VERDE
+  if (user.kind === 'company') {
+    try {
+      const c = await fetch('/api/cert-requests', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'bell', actor: { kind: 'company', companyCode: user.companyCode } }),
+      }).then(x => x.json());
+      if (c && c.ok) { BELL_SOLIC = c.items || []; unreadSolic += (c.unread || 0); }
+    } catch (_) { /* nada */ }
+  }
+  const total = unreadRojo + unreadSolic;
+  if (total > 0) {
+    badge.textContent = total > 99 ? '99+' : String(total);
+    // Rojo PRIMA: solo verde si no hay ningun aviso rojo.
+    badge.classList.toggle('is-solic', unreadRojo === 0 && unreadSolic > 0);
+    badge.style.display = 'flex';
+  } else {
+    badge.classList.remove('is-solic');
+    badge.style.display = 'none';
+  }
   const pop = document.getElementById('pnlBellPop');
   if (pop && !pop.hidden) bellRender();
 }
@@ -502,6 +541,16 @@ function initBell(user) {
               body: JSON.stringify({ action: 'seen', adminId: user.id }),
             });
           } catch (_) { /* nada */ }
+        }
+        // marcar visto las constancias listas (company)
+        if (user.kind === 'company') {
+          try {
+            await fetch('/api/cert-requests', {
+              method: 'POST', headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ action: 'bell_seen', actor: { kind: 'company', companyCode: user.companyCode } }),
+            });
+          } catch (_) { /* nada */ }
+          badge.classList.remove('is-solic');
         }
       }
     }

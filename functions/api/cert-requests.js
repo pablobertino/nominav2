@@ -418,6 +418,54 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, request_id: reqId, cancelled: true });
     }
 
+    /* ---------- campanita: constancias listas (disponibles) sin ver ----------
+       Solo para company (tienda/gestor de su empresa). Cuenta las lineas
+       'disponible' de sus solicitudes con generated_at posterior al ultimo
+       "visto" (cert_bell_seen). Devuelve { unread, items } (items = las mas
+       recientes para el pop). */
+    if (action === 'bell') {
+      if (act.kind !== 'company') return json({ ok: true, unread: 0, items: [] });
+      const cc = act.companyCode;
+      // Ultimo visto.
+      let seenAt = null;
+      try {
+        const s = await sb(env, `cert_bell_seen?company_code=eq.${encodeURIComponent(cc)}&select=seen_at`);
+        seenAt = (s && s[0]) ? s[0].seen_at : null;
+      } catch { /* sin registro: todo es nuevo */ }
+      // Solicitudes de la empresa.
+      const reqs = await sb(env,
+        `cert_requests?company_code=eq.${encodeURIComponent(cc)}&requester_kind=eq.company&requester_id=eq.${encodeURIComponent(cc)}&select=id&limit=1000`) || [];
+      if (!reqs.length) return json({ ok: true, unread: 0, items: [] });
+      const ids = reqs.map(r => r.id);
+      // Lineas disponibles de esas solicitudes.
+      let lpath = `cert_request_lines?request_id=in.(${ids.join(',')})&status=eq.disponible&select=id,request_id,worker_full_name,generated_at&order=generated_at.desc&limit=50`;
+      const lines = await sb(env, lpath) || [];
+      const isNew = l => {
+        if (!l.generated_at) return false;
+        if (!seenAt) return true;
+        return new Date(l.generated_at) > new Date(seenAt);
+      };
+      const nuevas = lines.filter(isNew);
+      const items = nuevas.slice(0, 12).map(l => ({
+        line_id: l.id, request_id: l.request_id,
+        worker_full_name: l.worker_full_name || '', generated_at: l.generated_at,
+      }));
+      return json({ ok: true, unread: nuevas.length, items });
+    }
+
+    /* ---------- campanita: marcar visto (company) ---------- */
+    if (action === 'bell_seen') {
+      if (act.kind !== 'company') return json({ ok: true });
+      const cc = act.companyCode;
+      const now = new Date().toISOString();
+      await sb(env, 'cert_bell_seen', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify([{ company_code: cc, seen_at: now, updated_at: now }]),
+      }).catch(() => {});
+      return json({ ok: true });
+    }
+
     return json({ ok: false, error: 'Accion desconocida.' }, 400);
   } catch (err) {
     return json({ ok: false, error: String(err.message || err) }, 500);
