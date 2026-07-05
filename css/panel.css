@@ -1805,4 +1805,46 @@ input.needfill:focus, select.needfill:focus {
   /* Acciones: botones a lo ancho, se envuelven si no caben. */
   .usr-sec-acts { display:flex; flex-wrap:wrap; gap:7px; margin-top:9px; }
   .usr-sec-acts .btn-mini { flex:1 1 auto; justify-content:center; height:36px; }
+
+  /* ---------------------------------------------------------------
+     BLOQUE 5 (opcion A, CSS puro) — TABLAS SIMPLES: Quincenas, Feriados
+     y "Ultimas ejecuciones" (Sincronizacion). Cada tabla marcada con
+     .tbl-cards se APLANA: el thead se oculta y cada fila se vuelve una
+     tarjeta con pares etiqueta->valor. La etiqueta sale del data-label
+     de cada <td> (robusto: no depende del orden de columnas, que cambia
+     con isSuper). No se toca el render en JS salvo agregar data-label.
+     --------------------------------------------------------------- */
+  .tbl-cards { border:0; box-shadow:none; background:none; overflow:visible; }
+  .tbl-cards table { display:block; width:100%; }
+  .tbl-cards thead { position:absolute; width:1px; height:1px; overflow:hidden;
+    clip:rect(0 0 0 0); white-space:nowrap; }   /* oculto accesible */
+  .tbl-cards tbody { display:flex; flex-direction:column; gap:11px; }
+  .tbl-cards tbody tr { display:block; border:1px solid var(--border);
+    border-radius:var(--radius-lg); background:var(--surface); box-shadow:var(--shadow-md);
+    padding:6px 14px; }
+  /* Fila destacada (quincena en curso): borde de marca. */
+  .tbl-cards tbody tr.row-current { border-color:var(--brand); background:var(--brand-bg); }
+  .tbl-cards tbody tr.row-current td { background:none; }
+  /* Cada celda = una linea etiqueta / valor. */
+  .tbl-cards tbody td { display:flex; align-items:baseline; justify-content:space-between;
+    gap:14px; padding:7px 0; border:0; border-bottom:1px solid var(--border-soft);
+    text-align:right; white-space:normal; }
+  .tbl-cards tbody td:last-child { border-bottom:0; }
+  .tbl-cards tbody td::before { content:attr(data-label); flex-shrink:0; text-align:left;
+    color:var(--faint); font-size:12px; font-weight:600; }
+  /* Celda sin data-label (ej. fila de "cargando/vacio" con colspan): centrada,
+     sin etiqueta ni layout de par. */
+  .tbl-cards tbody td:not([data-label]) { display:block; text-align:center; }
+  .tbl-cards tbody td:not([data-label])::before { display:none; }
+  /* La primera celda (codigo/quincena/fecha) resalta como titulo de la tarjeta. */
+  .tbl-cards tbody td.code { font-weight:700; font-size:14px; }
+  /* Los grupos de color (periodo de pago) pierden el borde lateral en tarjeta. */
+  .tbl-cards tbody td.grp, .tbl-cards tbody td.grp-first, .tbl-cards tbody td.grp-last,
+  .tbl-cards tbody td.hito-cell { border-left:0; border-right:0; }
+  /* Acciones: los mini-botones se alinean a la derecha y pueden envolverse. */
+  .tbl-cards tbody td[data-label="Acciones"] { flex-wrap:wrap; }
+  .tbl-cards tbody td[data-label="Acciones"] .btn-mini { margin-left:6px; }
+
+  /* Config de Sincronizacion: los grid de 3 columnas se apilan. */
+  .cfg-grid3 { grid-template-columns:1fr; }
 }

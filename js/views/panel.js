@@ -312,7 +312,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.75</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.76</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4014,11 +4014,11 @@ async function viewSync(user) {
       const est = r.status === 'ok' ? '<span class="pill pill-open">OK</span>' : '<span class="pill pill-closed">Error</span>';
       const result = r.status === 'ok' ? changesCell(r)
         : `<span style="color:var(--danger)">${escH((r.error || '').slice(0, 70))}</span>`;
-      return `<tr><td>${when}</td><td>${origin}</td><td>${est}</td><td>${result}</td><td style="text-align:right">${dur}</td></tr>`;
+      return `<tr><td data-label="Fecha">${when}</td><td data-label="Origen">${origin}</td><td data-label="Estado">${est}</td><td data-label="Cambios">${result}</td><td data-label="Duración" style="text-align:right">${dur}</td></tr>`;
     }).join('');
     return `<div class="card">
       <h3 style="margin:0 0 10px;font-size:15px">Últimas ejecuciones</h3>
-      <table class="cfg-cat-table"><thead><tr><th>Fecha</th><th>Origen</th><th>Estado</th><th>Cambios</th><th style="text-align:right">Duración</th></tr></thead><tbody>${rows}</tbody></table>
+      <table class="cfg-cat-table tbl-cards"><thead><tr><th>Fecha</th><th>Origen</th><th>Estado</th><th>Cambios</th><th style="text-align:right">Duración</th></tr></thead><tbody>${rows}</tbody></table>
     </div>`;
   };
   const wireRunToggles = () => {
@@ -4283,7 +4283,7 @@ async function viewPeriods(user) {
         ${genBtn}
       </div>
     </div>
-    <div class="tablebox scroll-x"><table><thead><tr>
+    <div class="tablebox scroll-x tbl-cards"><table><thead><tr>
       <th>Quincena</th><th>Período</th>
       <th class="grp grp-first">Código Pago</th><th class="grp grp-last">Rango de Pago</th>
       <th>Último día de cálculo</th><th>Día de Cálculo</th><th>Día de Pago</th>
@@ -4329,16 +4329,16 @@ async function viewPeriods(user) {
              ${p.is_overridden ? `<button class="btn btn-mini" data-act="reset" data-id="${p.id}" data-name="${p.name}">Restablecer</button>` : ''}
            </td>` : '';
       return `<tr class="${isCurr ? 'row-current' : ''}">
-        <td class="code">${p.name}</td>
-        <td>${rangeCell(p.range_start, p.range_end)}</td>
-        <td class="grp grp-first"><span class="pp-code">${p.pay_code || '—'}</span></td>
-        <td class="grp grp-last">${rangeCell(p.pay_from, p.pay_to)}</td>
-        <td class="hito-cell">${dateCell(p.milestone_date)}</td>
-        <td>${dateCell(p.cutoff_date, { countdown: isCurr ? countdown(p.cutoff_date, today) : '' })}</td>
-        <td>${dateCell(p.pay_date, { countdown: isCurr ? countdown(p.pay_date, today) : '' })}</td>
-        <td class="claim-cell">${p.claim_deadline ? rangeCell(p.pay_date, p.claim_deadline) : '<span class="muted">—</span>'}</td>
-        <td>${fmtDeadline(p.report_deadline)}</td>
-        <td>${periodEstado(p, rel)}</td>
+        <td class="code" data-label="Quincena">${p.name}</td>
+        <td data-label="Período">${rangeCell(p.range_start, p.range_end)}</td>
+        <td class="grp grp-first" data-label="Código Pago"><span class="pp-code">${p.pay_code || '—'}</span></td>
+        <td class="grp grp-last" data-label="Rango de Pago">${rangeCell(p.pay_from, p.pay_to)}</td>
+        <td class="hito-cell" data-label="Último día de cálculo">${dateCell(p.milestone_date)}</td>
+        <td data-label="Día de Cálculo">${dateCell(p.cutoff_date, { countdown: isCurr ? countdown(p.cutoff_date, today) : '' })}</td>
+        <td data-label="Día de Pago">${dateCell(p.pay_date, { countdown: isCurr ? countdown(p.pay_date, today) : '' })}</td>
+        <td class="claim-cell" data-label="Plazo Reclamo">${p.claim_deadline ? rangeCell(p.pay_date, p.claim_deadline) : '<span class="muted">—</span>'}</td>
+        <td data-label="Tope de reporte">${fmtDeadline(p.report_deadline)}</td>
+        <td data-label="Estado">${periodEstado(p, rel)}</td>
         ${acc}
       </tr>`;
     }).join('');
@@ -4505,7 +4505,7 @@ async function viewHolidays(user) {
         <button class="btn btn-primary" id="hAdd">${I.plus} Agregar feriado</button>` : ''}
       </div>
     </div>
-    <div class="tablebox scroll-x"><table><thead><tr>
+    <div class="tablebox scroll-x tbl-cards"><table><thead><tr>
       <th>Fecha</th><th>Nombre</th><th>Nacional</th><th>Bancario</th>
       <th>Ejecución bancaria</th><th>Móvil</th>${isSuper ? '<th style="text-align:right">Acciones</th>' : ''}
     </tr></thead><tbody id="hBody"></tbody></table></div>`;
@@ -4536,13 +4536,13 @@ async function viewHolidays(user) {
       return;
     }
     $('#hBody').innerHTML = rows.map(f => `<tr>
-      <td class="code">${holFmt(f.fecha)} <span class="muted" style="font-size:11px">${holDow(f.fecha)}</span></td>
-      <td>${f.nombre}</td>
-      <td>${f.es_nacional ? '<span class="pill" style="background:#dbeafe;color:#1e40af">Nacional</span>' : '<span class="muted">—</span>'}</td>
-      <td>${f.es_bancario ? '<span class="pill" style="background:#f1f5f9;color:#475569">Bancario</span>' : '<span class="muted">—</span>'}</td>
-      <td>${f.fecha_ejecucion ? `<span class="muted">${holFmt(f.fecha_ejecucion)}</span>` : '<span class="muted">—</span>'}</td>
-      <td>${f.movil ? '<span class="pill" style="background:#f3e8ff;color:#7c3aed">Móvil</span>' : '<span class="muted">—</span>'}</td>
-      ${isSuper ? `<td style="text-align:right;white-space:nowrap">
+      <td class="code" data-label="Fecha">${holFmt(f.fecha)} <span class="muted" style="font-size:11px">${holDow(f.fecha)}</span></td>
+      <td data-label="Nombre">${f.nombre}</td>
+      <td data-label="Nacional">${f.es_nacional ? '<span class="pill" style="background:#dbeafe;color:#1e40af">Nacional</span>' : '<span class="muted">—</span>'}</td>
+      <td data-label="Bancario">${f.es_bancario ? '<span class="pill" style="background:#f1f5f9;color:#475569">Bancario</span>' : '<span class="muted">—</span>'}</td>
+      <td data-label="Ejecución bancaria">${f.fecha_ejecucion ? `<span class="muted">${holFmt(f.fecha_ejecucion)}</span>` : '<span class="muted">—</span>'}</td>
+      <td data-label="Móvil">${f.movil ? '<span class="pill" style="background:#f3e8ff;color:#7c3aed">Móvil</span>' : '<span class="muted">—</span>'}</td>
+      ${isSuper ? `<td data-label="Acciones" style="text-align:right;white-space:nowrap">
         <button class="btn btn-mini" data-hedit="${f.id}">Editar</button>
         <button class="btn btn-mini" data-hdel="${f.id}" data-hnom="${(f.nombre || '').replace(/"/g, '&quot;')}" data-hnac="${f.es_nacional ? 1 : 0}" data-hfec="${f.fecha}">Eliminar</button>
       </td>` : ''}
