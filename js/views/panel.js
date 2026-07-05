@@ -24,6 +24,7 @@ import { renderPersonnelSearch } from './personnel-search.js';
 import { renderPersonnelIncomplete } from './personnel-incomplete.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
+import { renderCertSigners } from './cert-signers.js';
 import { injectPeriodTimeline } from './period-timeline.js';
 import { renderPayGrid } from './pay-grid.js';
 import { renderDepartments } from './departments.js';
@@ -125,6 +126,9 @@ const NAV_GROUPS = [
   { title: 'Comunicación', items: [
     ['avisos', I.bell, 'Avisos'],
     ['avisosconfig', I.megaphone, 'Envío de avisos'],
+  ] },
+  { title: 'Solicitudes', superonly: true, items: [
+    ['firmantes', I.pencil, 'Firmantes'],
   ] },
   { title: 'Administración', superonly: true, items: [
     ['equipo', I.team, 'Equipo'],
@@ -292,7 +296,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.50</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.51</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5150,6 +5154,7 @@ async function navigate(view, user) {
   else if (view === 'calendario') viewPeriods(user);
   else if (view === 'equipo') viewEquipo(user);
   else if (view === 'permisos') viewPermisos(user);
+  else if (view === 'firmantes') renderCertSigners(user);
   else if (view === 'sync') viewSync(user);
   else if (view === 'rostersync') viewRosterSync(user);
   else if (view === 'config') viewConfig(user);
