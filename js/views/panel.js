@@ -312,7 +312,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.73</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.74</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2125,7 +2125,8 @@ function usersRender(user, sum) {
         <th class="grp-portal">Estado</th><th class="grp-portal" style="text-align:right">Acciones</th>
         <th class="grp-ost">Estado</th><th class="grp-ost" style="text-align:right">Acciones</th>
       </tr>
-    </thead><tbody id="uBody"></tbody></table></div>`;
+    </thead><tbody id="uBody"></tbody></table></div>
+    <div class="usr-cards" id="uCards"></div>`;
 
   const fq = $('#uSearch'), fp = $('#uPortal'), fo = $('#uOst'), fk = $('#uKey');
   fq.value = USERS_F.q; fp.value = USERS_F.portal; fo.value = USERS_F.ost; fk.value = USERS_F.key;
@@ -2288,7 +2289,15 @@ function usersRenderRows(user) {
     return { st, acts };
   };
 
-  $('#uBody').innerHTML = rows.map(r => {
+  // ---- Host activo: en movil TARJETAS en #uCards; escritorio filas en #uBody ----
+  const mobile = window.matchMedia('(max-width:768px)').matches;
+  const tableBox = $('#pnlMain').querySelector('.tablebox');
+  const cardsBox = $('#uCards');
+  if (tableBox) tableBox.style.display = mobile ? 'none' : '';
+  if (cardsBox) cardsBox.style.display = mobile ? '' : 'none';
+  const host = mobile ? cardsBox : $('#uBody');
+
+  const desktopRow = (r) => {
     const p = portalCell(r), o = ostCell(r);
     const correo = r.email || '<span class="muted" style="font-size:12px">\u2014</span>';
     const tel = r.phoneLine ? `<br><span class="muted">${r.phoneLine}</span>` : '';
@@ -2301,18 +2310,60 @@ function usersRenderRows(user) {
       <td class="grp-ost">${o.st}</td>
       <td class="grp-ost" style="text-align:right"><div class="cell-actions">${o.acts}</div></td>
     </tr>`;
-  }).join('') || '<tr><td colspan="7" class="empty">Sin resultados.</td></tr>';
+  };
 
-  // Acciones PORTAL (reusa cuAction con el shape {act,code,name,email,type,active}).
-  $('#uBody').querySelectorAll('button[data-p]').forEach(b =>
+  // ---- Tarjeta MOVIL: cabecera (codigo + tienda + estado empresa) y dos
+  // sub-secciones tintadas "Acceso al portal" (azul) y "osTicket" (verde),
+  // cada una con su estado y sus acciones. Mismos data-* que la fila. ----
+  const mobileCard = (r) => {
+    const p = portalCell(r), o = ostCell(r);
+    const correo = r.email ? `<span class="usr-mail">${r.email}</span>` : '<span class="muted">sin correo</span>';
+    const tel = r.phoneLine ? `<span class="usr-tel muted">${r.phoneLine}</span>` : '';
+    const stPill = r.status && !/nulo|vac/i.test(r.status) ? statusPill(r.status) : '';
+    return `<div class="usr-card">
+      <div class="hc-top">
+        <div class="hc-ic"><span class="alias ty-tienda">${(r.code || '').slice(0, 4)}</span></div>
+        <div class="hc-tt">
+          <div class="hc-t1">${r.code}</div>
+          <div class="hc-t2">${r.name || '\u2014'}</div>
+        </div>
+        ${stPill}
+      </div>
+      <div class="usr-contact">${correo}${tel}</div>
+      <div class="usr-sec portal">
+        <div class="usr-sec-h"><span class="usr-sec-t">Acceso al portal</span>${p.st}</div>
+        ${p.acts ? `<div class="usr-sec-acts">${p.acts}</div>` : ''}
+      </div>
+      <div class="usr-sec ost">
+        <div class="usr-sec-h"><span class="usr-sec-t">osTicket</span>${o.st}</div>
+        ${o.acts ? `<div class="usr-sec-acts">${o.acts}</div>` : ''}
+      </div>
+    </div>`;
+  };
+
+  if (!rows.length) {
+    host.innerHTML = mobile
+      ? '<div class="usr-empty">Sin resultados.</div>'
+      : '<tr><td colspan="7" class="empty">Sin resultados.</td></tr>';
+  } else {
+    host.innerHTML = rows.map(r => mobile ? mobileCard(r) : desktopRow(r)).join('');
+  }
+  wireUserRows(host, user);
+}
+
+// ---- Cableado de acciones sobre el host activo (tabla o tarjetas) ----
+// Mismos data-* en fila y tarjeta -> un solo conjunto de listeners.
+function wireUserRows(host, user) {
+  // Acciones PORTAL (reusa cuAction con {act,code,name,email,type,active}).
+  host.querySelectorAll('button[data-p]').forEach(b =>
     b.addEventListener('click', () => cuAction({
       act: b.dataset.p, code: b.dataset.code, name: b.dataset.name,
       email: b.dataset.email, type: b.dataset.type, active: b.dataset.active,
     }, user)));
   // Acciones osTICKET.
-  $('#uBody').querySelectorAll('button[data-o="sync"]').forEach(b =>
+  host.querySelectorAll('button[data-o="sync"]').forEach(b =>
     b.addEventListener('click', () => ouSyncOne(user, b.dataset.code, b)));
-  $('#uBody').querySelectorAll('button[data-o="grant"]').forEach(b =>
+  host.querySelectorAll('button[data-o="grant"]').forEach(b =>
     b.addEventListener('click', () => ouGrantAccess(user, b.dataset.code, b)));
 }
 

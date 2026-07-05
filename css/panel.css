@@ -1719,11 +1719,22 @@ input.needfill:focus, select.needfill:focus {
      coloreado dentro de la cabecera y el chip de Acceso; y ademas apilamos
      los filtros (buscador + selects + multi-select de estados).
      --------------------------------------------------------------- */
-  /* Filtros de Empresas: apilados, cada control a lo ancho. */
+  /* Filtros de Empresas: apilados, cada control a lo ancho.
+     CLAVE: al pasar a columna hay que ANULAR el flex-grow que traen del
+     layout horizontal (.pnl-filters>select = flex:1 1 140px; .search =
+     flex:2 1 240px). En columna ese grow reparte la ALTURA del contenedor
+     entre los items y los estira a cientos de px (los <select> nativos no
+     fijan altura propia). Por eso: flex:0 0 auto en todos + altura fija
+     (--control-h) en los <select> para que queden como los demas controles. */
   .pnl-filters { flex-direction:column; align-items:stretch; gap:9px; }
+  .pnl-filters > .search,
+  .pnl-filters > select,
+  .pnl-filters > .ms-wrap { flex:0 0 auto; width:100%; box-sizing:border-box; min-width:0; }
   .pnl-filters .search { width:100%; box-sizing:border-box; }
   .pnl-filters .search input { width:100%; box-sizing:border-box; }
-  .pnl-filters > select { width:100%; box-sizing:border-box; }
+  .pnl-filters > select { width:100%; box-sizing:border-box; height:var(--control-h);
+    padding:0 12px; border:1px solid var(--border); border-radius:var(--radius-sm);
+    font-size:13px; font-family:inherit; background:var(--surface); }
   /* Multi-select de estados a lo ancho; su menu se ancla debajo, full width. */
   .pnl-filters .ms-wrap { width:100%; position:relative; }
   .pnl-filters .ms-toggle { width:100%; box-sizing:border-box; justify-content:space-between; }
@@ -1751,4 +1762,47 @@ input.needfill:focus, select.needfill:focus {
   .emp-acc.no { color:var(--faint); }
   /* El contador de departamentos entra tambien en el boton-icono de la tarjeta. */
   .emp-card .hc-ib .dep-count { margin-left:3px; }
+
+  /* ---------------------------------------------------------------
+     BLOQUE 4 — USUARIOS: tabla (portal + osTicket) -> tarjetas.
+     El JS (usersRenderRows) pinta #uCards en movil y oculta .tablebox.
+     La tarjeta reutiliza la cabecera .hc-top/.hc-ic/.hc-tt/.hc-t1/.hc-t2
+     del bloque 2, y define debajo el contacto y DOS sub-secciones
+     tintadas: "Acceso al portal" (azul) y "osTicket" (verde), cada una
+     con su estado (pill) y su fila de acciones. Los filtros ya se apilan
+     por el bloque de Empresas (.pnl-filters column + .ms-wrap/.ms-menu).
+     --------------------------------------------------------------- */
+  .usr-cards { display:flex; flex-direction:column; gap:11px; }
+  .usr-empty { padding:26px 14px; text-align:center; color:var(--muted);
+    border:1px dashed var(--border); border-radius:var(--radius-lg); font-size:13px; }
+
+  .usr-card { border:1px solid var(--border); border-radius:var(--radius-lg);
+    background:var(--surface); box-shadow:var(--shadow-md); padding:13px 14px; overflow:hidden; }
+  /* Icono de cabecera: alias de tienda en azul (misma familia mono). */
+  .usr-card .hc-ic { background:var(--brand-bg); font-family:ui-monospace,Menlo,monospace;
+    font-weight:800; font-size:12px; letter-spacing:-.02em; }
+  .usr-card .hc-ic .alias { font-family:inherit; font-weight:800; }
+  .usr-card .hc-t1 { font-family:ui-monospace,Menlo,monospace; }
+
+  /* Contacto (correo + telefono) bajo la cabecera. */
+  .usr-contact { display:flex; flex-direction:column; gap:1px; margin:2px 0 11px;
+    font-size:12.5px; line-height:1.4; }
+  .usr-contact .usr-mail { color:var(--ink-soft); word-break:break-all; }
+  .usr-contact .usr-tel { font-size:12px; }
+
+  /* Sub-seccion tintada: cabecera (titulo + estado) y acciones debajo. */
+  .usr-sec { border-radius:var(--radius-md); padding:10px 11px; margin-top:8px; }
+  .usr-sec.portal { background:rgba(37,99,235,.05); border:1px solid rgba(37,99,235,.12); }
+  .usr-sec.ost { background:rgba(22,163,74,.05); border:1px solid rgba(22,163,74,.12); }
+  .usr-sec-h { display:flex; align-items:center; justify-content:space-between; gap:10px;
+    min-width:0; }
+  .usr-sec-t { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:.03em;
+    flex-shrink:0; }
+  .usr-sec.portal .usr-sec-t { color:#1d4ed8; }
+  .usr-sec.ost .usr-sec-t { color:#15803d; }
+  /* El estado (pill o .ost-state) va a la derecha; permite dos lineas en osTicket. */
+  .usr-sec-h .ost-state { align-items:flex-end; text-align:right; }
+  /* Acciones: botones a lo ancho, se envuelven si no caben. */
+  .usr-sec-acts { display:flex; flex-wrap:wrap; gap:7px; margin-top:9px; }
+  .usr-sec-acts .btn-mini { flex:1 1 auto; justify-content:center; height:36px; }
 }
