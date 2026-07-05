@@ -522,15 +522,16 @@ function bindMineFilters() {
 }
 function mineRow({ req, line }) {
   let acts = '';
-  if (line.status === 'solicitada' || line.status === 'en_revision') {
-    acts = `<button class="cr-b cr-b-mini" data-cancel="${req.id}">Anular</button>`;
-  } else if (line.status === 'disponible') {
+  if (line.status === 'disponible') {
     acts = `<button class="cr-b cr-b-mini cr-b-primary" data-download="${line.id}">${dlIco()} Descargar</button>`;
   } else if (line.status === 'generada') {
     // Snapshot generado pero el PDF aun no quedo listo (reintento pendiente).
     acts = `<span class="cr-sub">PDF en proceso…</span>`;
   } else if (line.status === 'rechazada') {
     acts = `<span class="cr-sub">${esc(line.reject_reason || 'rechazada')}</span>`;
+  } else if (line.status === 'solicitada' || line.status === 'en_revision') {
+    // Anular solo lo hace admin/superadmin (desde su gestion); la tienda espera.
+    acts = `<span class="cr-sub">en proceso</span>`;
   }
   // Bajo el estado: fecha en que quedo lista (generada/disponible).
   let genSub = '';

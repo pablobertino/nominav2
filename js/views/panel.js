@@ -311,7 +311,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.60</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.61</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -487,12 +487,17 @@ async function bellLoad(user) {
       if (r && r.ok) { BELL_EMPRESA = r.items || []; unreadRojo += (r.unread || 0); }
     } catch (_) { /* nada */ }
   }
-  // 3) constancias listas (solo company/tienda) -> aviso VERDE
-  if (user.kind === 'company') {
+  // 3) constancias listas -> aviso VERDE. Para tienda (company) y para
+  //    gestor_empresa (admin con alcance de empresas).
+  const esGestor = user.kind === 'admin' && user.role === 'gestor_empresa';
+  if (user.kind === 'company' || esGestor) {
     try {
+      const actor = user.kind === 'company'
+        ? { kind: 'company', companyCode: user.companyCode }
+        : { kind: 'admin', id: user.id };
       const c = await fetch('/api/cert-requests', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ action: 'bell', actor: { kind: 'company', companyCode: user.companyCode } }),
+        body: JSON.stringify({ action: 'bell', actor }),
       }).then(x => x.json());
       if (c && c.ok) { BELL_SOLIC = c.items || []; unreadSolic += (c.unread || 0); }
     } catch (_) { /* nada */ }
@@ -542,12 +547,16 @@ function initBell(user) {
             });
           } catch (_) { /* nada */ }
         }
-        // marcar visto las constancias listas (company)
-        if (user.kind === 'company') {
+        // marcar visto las constancias listas (company o gestor)
+        const esGestorSeen = user.kind === 'admin' && user.role === 'gestor_empresa';
+        if (user.kind === 'company' || esGestorSeen) {
           try {
+            const actor = user.kind === 'company'
+              ? { kind: 'company', companyCode: user.companyCode }
+              : { kind: 'admin', id: user.id };
             await fetch('/api/cert-requests', {
               method: 'POST', headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ action: 'bell_seen', actor: { kind: 'company', companyCode: user.companyCode } }),
+              body: JSON.stringify({ action: 'bell_seen', actor }),
             });
           } catch (_) { /* nada */ }
           badge.classList.remove('is-solic');

@@ -373,18 +373,22 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, requests: out });
     }
 
-    /* ---------- anular solicitud propia ---------- */
+    /* ---------- anular solicitud (solo admin/superadmin) ---------- */
     if (action === 'cancel') {
+      // La anulacion de una solicitud completa queda reservada a admin y
+      // superadmin. Tienda y gestor ya no anulan (esperan la gestion del
+      // admin, que ademas puede Rechazar por linea en la Bandeja).
+      const isPowerAdmin = act.kind === 'admin' && (act.role === 'admin' || act.role === 'superadmin');
+      if (!isPowerAdmin) return json({ ok: false, error: 'Solo un administrador puede anular la solicitud.' }, 403);
+
       const reqId = parseInt(body.request_id, 10);
       if (!reqId) return json({ ok: false, error: 'Falta la solicitud.' }, 400);
-      const reason = String(body.reason || '').trim() || 'Anulada por el solicitante';
+      const reason = String(body.reason || '').trim() || 'Anulada por el administrador';
 
-      // Debe ser del actor.
-      const rid = requesterId(act);
-      const rk = requesterKind(act);
-      const r = await sb(env,
-        `cert_requests?id=eq.${reqId}&requester_kind=eq.${rk}&requester_id=eq.${encodeURIComponent(rid)}&select=id,status`);
+      // La solicitud debe existir y estar dentro del alcance del admin.
+      const r = await sb(env, `cert_requests?id=eq.${reqId}&select=id,status,company_code`);
       if (!r || !r.length) return json({ ok: false, error: 'Solicitud no encontrada.' }, 404);
+      if (!actorCanCompany(act, r[0].company_code)) return json({ ok: false, error: 'Sin acceso a esa empresa.' }, 403);
 
       // Solo se puede anular si NINGUNA linea fue generada/disponible.
       const lines = await sb(env, `cert_request_lines?request_id=eq.${reqId}&select=id,status`) || [];
@@ -419,22 +423,35 @@ export async function onRequestPost({ request, env }) {
     }
 
     /* ---------- campanita: constancias listas (disponibles) sin ver ----------
-       Solo para company (tienda/gestor de su empresa). Cuenta las lineas
-       'disponible' de sus solicitudes con generated_at posterior al ultimo
-       "visto" (cert_bell_seen). Devuelve { unread, items } (items = las mas
-       recientes para el pop). */
+       Para company (tienda/gestor de su empresa) y para admin con rol
+       gestor_empresa (cuenta sobre TODAS las empresas de su alcance). Cuenta
+       las lineas 'disponible' con generated_at posterior al ultimo "visto"
+       (cert_bell_seen). Devuelve { unread, items }. */
     if (action === 'bell') {
-      if (act.kind !== 'company') return json({ ok: true, unread: 0, items: [] });
-      const cc = act.companyCode;
+      // Determinar el conjunto de empresas y la clave de "visto".
+      let scopeCodes = null;   // null = no aplica; array = empresas a mirar
+      let seenKey = null;
+      if (act.kind === 'company') {
+        scopeCodes = [act.companyCode];
+        seenKey = act.companyCode;
+      } else if (act.kind === 'admin' && act.role === 'gestor_empresa') {
+        scopeCodes = act.codes || [];
+        seenKey = 'admin:' + act.id;
+      } else {
+        // superadmin/admin normal: no reciben este aviso (gestionan por Bandeja).
+        return json({ ok: true, unread: 0, items: [] });
+      }
+      if (!scopeCodes.length) return json({ ok: true, unread: 0, items: [] });
       // Ultimo visto.
       let seenAt = null;
       try {
-        const s = await sb(env, `cert_bell_seen?company_code=eq.${encodeURIComponent(cc)}&select=seen_at`);
+        const s = await sb(env, `cert_bell_seen?company_code=eq.${encodeURIComponent(seenKey)}&select=seen_at`);
         seenAt = (s && s[0]) ? s[0].seen_at : null;
       } catch { /* sin registro: todo es nuevo */ }
-      // Solicitudes de la empresa.
+      // Solicitudes de las empresas del alcance.
+      const inList = scopeCodes.map(c => `"${c}"`).join(',');
       const reqs = await sb(env,
-        `cert_requests?company_code=eq.${encodeURIComponent(cc)}&requester_kind=eq.company&requester_id=eq.${encodeURIComponent(cc)}&select=id&limit=1000`) || [];
+        `cert_requests?company_code=in.(${inList})&requester_kind=eq.company&select=id&limit=2000`) || [];
       if (!reqs.length) return json({ ok: true, unread: 0, items: [] });
       const ids = reqs.map(r => r.id);
       // Lineas disponibles de esas solicitudes.
@@ -453,15 +470,17 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, unread: nuevas.length, items });
     }
 
-    /* ---------- campanita: marcar visto (company) ---------- */
+    /* ---------- campanita: marcar visto (company o gestor) ---------- */
     if (action === 'bell_seen') {
-      if (act.kind !== 'company') return json({ ok: true });
-      const cc = act.companyCode;
+      let seenKey = null;
+      if (act.kind === 'company') seenKey = act.companyCode;
+      else if (act.kind === 'admin' && act.role === 'gestor_empresa') seenKey = 'admin:' + act.id;
+      else return json({ ok: true });
       const now = new Date().toISOString();
       await sb(env, 'cert_bell_seen', {
         method: 'POST',
         headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-        body: JSON.stringify([{ company_code: cc, seen_at: now, updated_at: now }]),
+        body: JSON.stringify([{ company_code: seenKey, seen_at: now, updated_at: now }]),
       }).catch(() => {});
       return json({ ok: true });
     }

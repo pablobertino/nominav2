@@ -177,22 +177,37 @@ export async function buildConstanciaPdf(env, line, opts = {}) {
   doc.setProducer('NominaV2 - Grupo Canaima');
   doc.setCreator('NominaV2');
 
-  const page = doc.addPage([595.28, 841.89]); // A4 vertical (pt)
+  // Tamano CARTA (Letter): 8.5 x 11 pulgadas = 612 x 792 pt (21.59 x 27.94 cm).
+  const page = doc.addPage([612, 792]);
   const { width, height } = page.getSize();
-  const MARGIN = 60;
+  const MARGIN = 64;
   const contentW = width - MARGIN * 2;
 
   const fReg = await doc.embedFont(StandardFonts.TimesRoman);
   const fBold = await doc.embedFont(StandardFonts.TimesRomanBold);
+  const fItal = await doc.embedFont(StandardFonts.TimesRomanItalic);
+  const fBoldItal = await doc.embedFont(StandardFonts.TimesRomanBoldItalic);
   const ink = rgb(0.09, 0.11, 0.15);
   const soft = rgb(0.35, 0.38, 0.43);
+  // Gris mas claro para el membrete (razon social + RIF) y el footer, como en
+  // la plantilla aprobada.
+  const faint = rgb(0.55, 0.58, 0.63);
 
   let y = height - MARGIN;
 
-  const drawCentered = (text, font, size, color = ink, gapAfter = 0) => {
+  // Texto alineado a la IZQUIERDA (una linea).
+  const drawLeft = (text, font, size, color = ink, gapAfter = 0) => {
+    page.drawText(toWinAnsi(text), { x: MARGIN, y: y - size, size, font, color });
+    y -= size + gapAfter;
+  };
+  const drawCentered = (text, font, size, color = ink, gapAfter = 0, underline = false) => {
     const t = toWinAnsi(text);
     const w = font.widthOfTextAtSize(t, size);
-    page.drawText(t, { x: (width - w) / 2, y: y - size, size, font, color });
+    const x = (width - w) / 2;
+    page.drawText(t, { x, y: y - size, size, font, color });
+    if (underline) {
+      page.drawLine({ start: { x, y: y - size - 2 }, end: { x: x + w, y: y - size - 2 }, thickness: 0.9, color });
+    }
     y -= size + gapAfter;
   };
   const drawParagraph = (text, font, size, color = ink, lineGap = 5, gapAfter = 10) => {
@@ -204,17 +219,20 @@ export async function buildConstanciaPdf(env, line, opts = {}) {
     y -= gapAfter;
   };
 
-  /* ---------- HEADER: razon social + RIF ---------- */
+  /* ---------- MEMBRETE (izquierda, grisado): razon social + RIF ---------- */
   const razon = line.company_name_snap || '';
   const rif = line.company_rif_snap || '';
-  if (razon) drawCentered(razon, fBold, 14, ink, 2);
-  if (rif) drawCentered(`RIF: ${rif}`, fReg, 11, soft, 6);
-  y -= 10;
+  if (razon) drawLeft(razon.toUpperCase(), fBoldItal, 13, faint, 2);
+  if (rif) drawLeft(`RIF: ${rif}`, fBoldItal, 10, faint, 16);
 
-  /* ---------- destinatario + titulo ---------- */
+  /* ---------- destinatario (izquierda) ---------- */
   const dest = (line.recipient || 'A quien pueda interesar').toUpperCase();
-  drawCentered(dest, fBold, 12, ink, 14);
-  drawCentered('CONSTANCIA DE TRABAJO', fBold, 13, ink, 20);
+  drawLeft('Senores:', fItal, 11.5, ink, 3);
+  drawLeft(dest + '.', fBold, 11.5, ink, 3);
+  drawLeft('Presente. -', fItal, 11.5, ink, 22);
+
+  /* ---------- TITULO (centrado, subrayado) ---------- */
+  drawCentered('CONSTANCIA DE TRABAJO', fBold, 13.5, ink, 22, true);
 
   /* ---------- CUERPO: formula legal ---------- */
   const nombre = (line.worker_full_name || '').toUpperCase();
@@ -239,7 +257,7 @@ export async function buildConstanciaPdf(env, line, opts = {}) {
   }
   cuerpo += '.';
 
-  y -= 6;
+  y -= 4;
   drawParagraph(cuerpo, fReg, 11.5, ink, 6, 16);
 
   /* ---------- cierre: se expide en CIUDAD a los DIA de MES de ANIO ---------- */
@@ -295,15 +313,15 @@ export async function buildConstanciaPdf(env, line, opts = {}) {
 
   if (footParts.length) {
     let fy = MARGIN + 6;
-    page.drawLine({ start: { x: MARGIN, y: fy + 24 }, end: { x: width - MARGIN, y: fy + 24 }, thickness: 0.6, color: rgb(0.8, 0.83, 0.88) });
+    page.drawLine({ start: { x: MARGIN, y: fy + 24 }, end: { x: width - MARGIN, y: fy + 24 }, thickness: 0.6, color: rgb(0.82, 0.85, 0.89) });
     // El footer se dibuja de abajo hacia arriba para no solaparse con la firma.
     const footLines = [];
-    footParts.forEach(p => { wrapLines(p, fReg, 8.5, contentW).forEach(l => footLines.push(l)); });
-    // Dibujar centrado, apilado hacia arriba desde fy.
+    footParts.forEach(p => { wrapLines(p, fItal, 8.5, contentW).forEach(l => footLines.push(l)); });
+    // Dibujar centrado, apilado hacia arriba desde fy. Grisado (faint).
     let yy = fy + (footLines.length - 1) * 11;
     for (const ln of footLines) {
-      const w = fReg.widthOfTextAtSize(ln, 8.5);
-      page.drawText(ln, { x: (width - w) / 2, y: yy, size: 8.5, font: fReg, color: soft });
+      const w = fItal.widthOfTextAtSize(ln, 8.5);
+      page.drawText(ln, { x: (width - w) / 2, y: yy, size: 8.5, font: fItal, color: faint });
       yy -= 11;
     }
   }
