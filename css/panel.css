@@ -1584,3 +1584,60 @@ input.needfill:focus, select.needfill:focus {
   min-width:16px; height:16px; padding:0 5px; margin-left:2px; border-radius:9px;
   background:var(--brand-bg); color:var(--brand); font-size:10.5px; font-weight:700;
   line-height:1; vertical-align:middle; }
+
+/* =====================================================================
+   MOVIL (<=768px) — BLOQUE 1: ARMAZON
+   Telefono y tablet chica. El sidebar se comporta como CAJON deslizante
+   (off-canvas) reutilizando la clase .hidden-nav que ya maneja el boton
+   hamburguesa. En movil el layout ARRANCA con .hidden-nav (lo pone el JS
+   de renderPanel); aqui solo definimos como se ve el cajon, el backdrop
+   y la topbar/paddings compactos. Nada de esto afecta al escritorio.
+   ===================================================================== */
+@media (max-width:768px) {
+  /* El sidebar deja de empujar el contenido: pasa a cajon fijo por encima. */
+  .pnl-side {
+    position:fixed; left:0; top:0; height:100dvh; z-index:120;
+    width:270px; max-width:82vw;
+    box-shadow:2px 0 22px rgba(0,0,0,.20);
+    transition:transform .24s ease;
+  }
+  /* Cerrado por defecto (fuera de pantalla). El layout arranca en
+     .hidden-nav, asi que el estado normal en movil es: cajon oculto. */
+  .pnl-layout.hidden-nav .pnl-side { position:fixed; transform:translateX(-100%); box-shadow:none; }
+  /* Abierto: cuando NO esta .hidden-nav (el hamburguesa lo quito). */
+  .pnl-layout:not(.hidden-nav) .pnl-side { transform:translateX(0); }
+
+  /* En movil no aplica el modo riel: si quedara la clase, se ignora. */
+  .pnl-layout.rail .pnl-side { width:270px; max-width:82vw; }
+  .pnl-layout.rail .pnl-bname, .pnl-layout.rail .pnl-bver,
+  .pnl-layout.rail .pnl-nav button span, .pnl-layout.rail .gh-label,
+  .pnl-layout.rail .nav-ghead-chev, .pnl-layout.rail .pnl-logo,
+  .pnl-layout.rail .pnl-brand > .pnl-bwrap { display:revert; }
+
+  /* Backdrop oscuro detras del cajon (creado por JS con id=pnlBackdrop).
+     Visible solo cuando el cajon esta abierto (layout sin .hidden-nav). */
+  #pnlBackdrop {
+    position:fixed; inset:0; z-index:110; background:rgba(0,0,0,.42);
+    opacity:0; pointer-events:none; transition:opacity .24s ease; }
+  .pnl-layout:not(.hidden-nav) ~ #pnlBackdrop,
+  body.nav-open #pnlBackdrop { opacity:1; pointer-events:auto; }
+
+  /* El boton flotante .nav-reopen no se usa en movil: abre con el
+     hamburguesa de la topbar. Se oculta para no duplicar controles. */
+  .pnl-layout.hidden-nav .nav-reopen { display:none; }
+
+  /* Topbar compacta: el hamburguesa a la izquierda, usuario/campana a la
+     derecha. Menos padding y datos de usuario mas discretos. */
+  .pnl-topbar { padding:10px 14px; gap:10px; }
+  .pnl-ham { display:flex; margin-right:auto; }
+  .pnl-uinfo { display:none; }            /* nombre/rol ya estan en el cajon */
+  .pnl-logout { padding:8px 10px; }
+  .pnl-logout span, .pnl-logout { font-size:0; }
+  .pnl-logout svg { width:18px; height:18px; }
+
+  /* Contenido a todo el ancho, con respiro reducido. */
+  .pnl-content { width:100%; }
+  .pnl-main { padding:16px 14px; }
+  .pnl-head { flex-direction:column; align-items:flex-start; gap:10px; margin-bottom:18px; }
+  .pnl-head h1 { font-size:19px; }
+}

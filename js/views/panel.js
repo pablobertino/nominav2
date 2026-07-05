@@ -312,7 +312,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.70</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.71</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5681,6 +5681,63 @@ async function viewMiEmpresa(user) {
   });
 }
 
+/* ---------- Cajon movil (<=768px) ----------
+   En movil el sidebar es un cajon deslizante que reutiliza la clase
+   .hidden-nav. Diferencias respecto al escritorio:
+     - Arranca OCULTO (en escritorio arranca visible).
+     - Al abrir se muestra un backdrop oscuro; tocarlo (o elegir un item del
+       menu) lo cierra.
+     - body.nav-open refleja el estado ABIERTO para que el CSS pinte el
+       backdrop (el cajon en si lo maneja .hidden-nav sobre .pnl-layout).
+   Todo se activa solo bajo el media query; en escritorio esta funcion deja
+   el layout intacto (visible, sin backdrop). */
+const MOBILE_MQ = '(max-width:768px)';
+function setupMobileDrawer(layout) {
+  if (!layout) return;
+  const mq = window.matchMedia(MOBILE_MQ);
+
+  // Backdrop (hermano del layout, en el body). Se crea una sola vez.
+  let backdrop = document.getElementById('pnlBackdrop');
+  if (!backdrop) {
+    backdrop = document.createElement('div');
+    backdrop.id = 'pnlBackdrop';
+    document.body.appendChild(backdrop);
+  }
+
+  const isOpen = () => !layout.classList.contains('hidden-nav');
+  // Sincroniza body.nav-open (para el CSS del backdrop) con el estado real.
+  const syncOpenClass = () => document.body.classList.toggle('nav-open', mq.matches && isOpen());
+  const closeDrawer = () => { layout.classList.add('hidden-nav'); syncOpenClass(); };
+
+  // Estado inicial segun el ancho: movil -> oculto; escritorio -> visible.
+  const applyMode = () => {
+    if (mq.matches) layout.classList.add('hidden-nav');   // movil: cajon cerrado
+    else layout.classList.remove('hidden-nav', 'rail');   // escritorio: menu normal
+    syncOpenClass();
+  };
+  applyMode();
+
+  // Cambios de tamano (girar el telefono, redimensionar): re-aplicar modo.
+  if (mq.addEventListener) mq.addEventListener('change', applyMode);
+  else if (mq.addListener) mq.addListener(applyMode);   // Safari viejo
+
+  // El hamburguesa/reopen ya togglean .hidden-nav; enganchamos el sync del
+  // backdrop despues de ellos (capturamos en el propio boton).
+  const ham = document.getElementById('pnlHam');
+  const reopen = document.getElementById('pnlReopen');
+  if (ham) ham.addEventListener('click', () => setTimeout(syncOpenClass, 0));
+  if (reopen) reopen.addEventListener('click', () => setTimeout(syncOpenClass, 0));
+
+  // Tocar el backdrop cierra el cajon.
+  backdrop.addEventListener('click', closeDrawer);
+
+  // Elegir un item del menu cierra el cajon (solo en movil).
+  const nav = document.getElementById('pnlNav');
+  if (nav) nav.addEventListener('click', (e) => {
+    if (mq.matches && e.target.closest('button[data-view]')) closeDrawer();
+  });
+}
+
 export function renderPanel() {
   const user = getSession();
   if (!user) { go('/login'); return; }
@@ -5709,6 +5766,11 @@ export function renderPanel() {
   if (railBtn && layout) railBtn.addEventListener('click', () => layout.classList.toggle('rail'));
   if (hamBtn && layout) hamBtn.addEventListener('click', () => layout.classList.toggle('hidden-nav'));
   if (reopenBtn && layout) reopenBtn.addEventListener('click', () => layout.classList.remove('hidden-nav'));
+  // --- Cajon movil (<=768px) ---
+  // En movil el sidebar es un cajon off-canvas: reutiliza la clase
+  // .hidden-nav (misma que el hamburguesa) pero ARRANCA oculto y muestra un
+  // backdrop al abrir. body.nav-open refleja el estado "abierto" para el CSS.
+  setupMobileDrawer(layout);
   // Campanita de novedades (solo admins; si no existe el boton, no hace nada).
   initBell(user);
   // Guardian del boton Atras: convierte el Atras del navegador en "volver a la
