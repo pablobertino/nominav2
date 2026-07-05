@@ -312,7 +312,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.78</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.79</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3286,14 +3286,14 @@ async function viewPermisos(user) {
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Permisos</h1><p>Alcance de cada admin · Tiendas y Empresas por separado · el superadmin ve todo</p></div></div>
     ${admins.length === 0 ? '<div class="card"><p class="muted" style="margin:0">No hay admins (no superadmin) aún. Crea uno en la sección Equipo.</p></div>' : `
-    <div class="tablebox"><table><thead><tr>
+    <div class="tablebox tbl-cards"><table><thead><tr>
       <th>Usuario</th><th>Nombre</th><th>Rol</th><th>Estado</th><th style="text-align:right">Alcance</th>
     </tr></thead><tbody>
       ${admins.map(a => `<tr>
-        <td class="code">${a.username}</td><td>${a.name || '—'}</td>
-        <td><span class="pill pill-gray">${ROLE_LABELS[a.role] || a.role}</span></td>
-        <td>${a.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>'}</td>
-        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-id="${a.id}" data-u="${a.username}" data-kind="store" style="margin-right:4px">${I.sliders} Tiendas</button><button class="btn btn-mini" data-id="${a.id}" data-u="${a.username}" data-kind="enterprise">${I.sliders} Empresas</button></td>
+        <td class="code" data-label="Usuario">${a.username}</td><td data-label="Nombre">${a.name || '—'}</td>
+        <td data-label="Rol"><span class="pill pill-gray">${ROLE_LABELS[a.role] || a.role}</span></td>
+        <td data-label="Estado">${a.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>'}</td>
+        <td data-label="Alcance" style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-id="${a.id}" data-u="${a.username}" data-kind="store" style="margin-right:4px">${I.sliders} Tiendas</button><button class="btn btn-mini" data-id="${a.id}" data-u="${a.username}" data-kind="enterprise">${I.sliders} Empresas</button></td>
       </tr>`).join('')}
     </tbody></table></div>`}`;
   $('#pnlMain').querySelectorAll('button[data-id]').forEach(b =>
@@ -4989,10 +4989,10 @@ function cfgRenderAusencia(user, body) {
     const enf = t.doc ? enfPill(t.doc.enforcement) : '<span class="pill pill-opt">—</span>';
     const estado = t.is_active ? '<span class="pill pill-open">activo</span>' : '<span class="pill pill-closed">inactivo</span>';
     return `<tr>
-      <td><b>${t.label}</b></td>
-      <td><span class="pill pill-ax">${t.ax_code}</span></td>
-      <td>${atras}</td><td>${fut}</td>
-      <td>${doc}</td><td>${enf}</td><td>${estado}</td>
+      <td data-label="Tipo"><b>${t.label}</b></td>
+      <td data-label="Cód. AX"><span class="pill pill-ax">${t.ax_code}</span></td>
+      <td data-label="Atrás">${atras}</td><td data-label="Futuro">${fut}</td>
+      <td data-label="Documento">${doc}</td><td data-label="Exigencia">${enf}</td><td data-label="Estado">${estado}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn btn-mini" data-edit-aus="${t.code}">${I.pencil}</button>
         <button class="btn btn-mini" data-toggle-aus="${t.code}" data-active="${t.is_active}">${t.is_active ? 'Desactivar' : 'Activar'}</button>
@@ -5004,7 +5004,7 @@ function cfgRenderAusencia(user, body) {
       <div class="cfg-card-head"><h3>Tipos de ausencia</h3>
         <button class="btn btn-primary btn-mini" id="ausNew">${I.plus} Nuevo tipo</button></div>
       <p class="cfg-desc" style="margin:0 0 14px">Código AX, ventanas de fecha y documento requerido por tipo. El límite hacia atrás "corte global" lo manda la pestaña Corte; cambiarlo allí ajusta todos estos tipos.</p>
-      <table class="cfg-cat-table"><thead><tr>
+      <table class="cfg-cat-table tbl-cards"><thead><tr>
         <th>Tipo</th><th>Cód. AX</th><th>Atrás</th><th>Futuro</th><th>Documento</th><th>Exigencia</th><th>Estado</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>
     </div>`;
@@ -5087,9 +5087,9 @@ function cfgRenderCausas(user, body) {
     const tipo = c.is_other ? '<span class="pill pill-warn2">texto libre</span>' : '';
     const estado = c.is_active ? '<span class="pill pill-open">activa</span>' : '<span class="pill pill-closed">inactiva</span>';
     return `<tr>
-      <td style="font-family:monospace;color:var(--muted)">${i + 1}</td>
-      <td><b>${c.label}</b><br><span class="muted" style="font-size:11px;font-family:monospace">${c.code}</span></td>
-      <td>${tipo}</td><td>${estado}</td>
+      <td data-label="#" style="font-family:monospace;color:var(--muted)">${i + 1}</td>
+      <td data-label="Causa"><b>${c.label}</b><br><span class="muted" style="font-size:11px;font-family:monospace">${c.code}</span></td>
+      <td data-label="Tipo">${tipo}</td><td data-label="Estado">${estado}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn btn-mini" data-edit-causa="${c.code}">${I.pencil}</button>
         <button class="btn btn-mini" data-toggle-causa="${c.code}" data-active="${c.is_active}">${c.is_active ? 'Desactivar' : 'Activar'}</button>
@@ -5101,7 +5101,7 @@ function cfgRenderCausas(user, body) {
       <div class="cfg-card-head"><h3>Causas de marcaje</h3>
         <button class="btn btn-primary btn-mini" id="causaNew">${I.plus} Nueva causa</button></div>
       <p class="cfg-desc" style="margin:0 0 14px">Motivos que la tienda elige al reportar un marcaje manual. "Texto libre" pide una descripción adicional (tipo Otros).</p>
-      <table class="cfg-cat-table"><thead><tr>
+      <table class="cfg-cat-table tbl-cards"><thead><tr>
         <th>#</th><th>Causa</th><th>Tipo</th><th>Estado</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>
     </div>`;
@@ -5150,9 +5150,9 @@ function cfgRenderEgressReasons(user, body) {
     const tipo = r.is_other ? '<span class="pill pill-warn2">texto libre</span>' : '';
     const estado = r.is_active ? '<span class="pill pill-open">activo</span>' : '<span class="pill pill-closed">inactivo</span>';
     return `<tr>
-      <td style="font-family:monospace;color:var(--muted)">${i + 1}</td>
-      <td><b>${r.label}</b><br><span class="muted" style="font-size:11px;font-family:monospace">${r.code}</span></td>
-      <td>${tipo}</td><td>${estado}</td>
+      <td data-label="#" style="font-family:monospace;color:var(--muted)">${i + 1}</td>
+      <td data-label="Motivo"><b>${r.label}</b><br><span class="muted" style="font-size:11px;font-family:monospace">${r.code}</span></td>
+      <td data-label="Tipo">${tipo}</td><td data-label="Estado">${estado}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn btn-mini" data-edit-egr="${r.code}">${I.pencil}</button>
         <button class="btn btn-mini" data-toggle-egr="${r.code}" data-active="${r.is_active}">${r.is_active ? 'Desactivar' : 'Activar'}</button>
@@ -5164,7 +5164,7 @@ function cfgRenderEgressReasons(user, body) {
       <div class="cfg-card-head"><h3>Motivos de egreso</h3>
         <button class="btn btn-primary btn-mini" id="egrNew">${I.plus} Nuevo motivo</button></div>
       <p class="cfg-desc" style="margin:0 0 14px">Motivos que la tienda elige al reportar un egreso (obligatorio). El tipo "texto libre" es el "Otro": sugiere escribir el detalle en el comentario.</p>
-      <table class="cfg-cat-table"><thead><tr>
+      <table class="cfg-cat-table tbl-cards"><thead><tr>
         <th>#</th><th>Motivo</th><th>Tipo</th><th>Estado</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>
     </div>`;
@@ -5217,11 +5217,11 @@ function cfgRenderCargos(user, body) {
     const estado = c.is_active ? '<span class="pill pill-open">activo</span>' : '<span class="pill pill-closed">inactivo</span>';
     const pats = (c.patterns || []).map(p => p.pattern).join(', ') || '<span style="color:var(--muted)">—</span>';
     return `<tr>
-      <td><b>${c.label}</b><br><span class="muted" style="font-size:11px;font-family:monospace">${c.code}</span></td>
-      <td><span class="pill pill-ax">${c.ax_code}</span></td>
-      <td>${resp}</td><td>${ing}</td>
-      <td style="font-size:11.5px;color:var(--muted)">${pats}</td>
-      <td>${estado}</td>
+      <td data-label="Cargo"><b>${c.label}</b><br><span class="muted" style="font-size:11px;font-family:monospace">${c.code}</span></td>
+      <td data-label="Cód. plantilla"><span class="pill pill-ax">${c.ax_code}</span></td>
+      <td data-label="Responsable">${resp}</td><td data-label="En ingreso">${ing}</td>
+      <td data-label="Patrones" style="font-size:11.5px;color:var(--muted)">${pats}</td>
+      <td data-label="Estado">${estado}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn btn-mini" data-edit-car="${c.code}">${I.pencil}</button>
         <button class="btn btn-mini" data-toggle-car="${c.code}" data-active="${c.is_active}">${c.is_active ? 'Desactivar' : 'Activar'}</button>
@@ -5233,7 +5233,7 @@ function cfgRenderCargos(user, body) {
       <div class="cfg-card-head"><h3>Cargos</h3>
         <button class="btn btn-primary btn-mini" id="carNew">${I.plus} Nuevo cargo</button></div>
       <p class="cfg-desc" style="margin:0 0 14px">Catálogo único de cargos. La <b>etiqueta</b> es lo que ve la tienda; el <b>código de plantilla</b> es lo que se exporta (puede diferir, ej. Cajero → CAJEROS). Quien puede ser <b>responsable</b> y los <b>patrones</b> de lectura de la lista de personal se definen aquí.</p>
-      <table class="cfg-cat-table"><thead><tr>
+      <table class="cfg-cat-table tbl-cards"><thead><tr>
         <th>Cargo</th><th>Cód. plantilla</th><th>Responsable</th><th>En ingreso</th><th>Patrones (lista de personal)</th><th>Estado</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>
     </div>`;
@@ -5302,9 +5302,9 @@ function cfgRenderBancos(user, body) {
   const rows = (CFG_DATA.bancos || []).map(b => {
     const estado = b.is_active ? '<span class="pill pill-open">activo</span>' : '<span class="pill pill-closed">inactivo</span>';
     return `<tr>
-      <td style="font-family:monospace;font-weight:600">${b.code}</td>
-      <td><b>${b.name}</b></td>
-      <td>${estado}</td>
+      <td data-label="Prefijo" style="font-family:monospace;font-weight:600">${b.code}</td>
+      <td data-label="Banco"><b>${b.name}</b></td>
+      <td data-label="Estado">${estado}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn btn-mini" data-edit-ban="${b.code}">${I.pencil}</button>
         <button class="btn btn-mini" data-toggle-ban="${b.code}" data-active="${b.is_active}">${b.is_active ? 'Desactivar' : 'Activar'}</button>
@@ -5316,7 +5316,7 @@ function cfgRenderBancos(user, body) {
       <div class="cfg-card-head"><h3>Bancos</h3>
         <button class="btn btn-primary btn-mini" id="banNew">${I.plus} Nuevo banco</button></div>
       <p class="cfg-desc" style="margin:0 0 14px">Prefijo de 4 dígitos de la cuenta bancaria (20 dígitos en total). Si el prefijo no está activo aquí, la cuenta no se acepta en los reportes.</p>
-      <table class="cfg-cat-table"><thead><tr>
+      <table class="cfg-cat-table tbl-cards"><thead><tr>
         <th>Prefijo</th><th>Banco</th><th>Estado</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>
     </div>`;
@@ -5362,9 +5362,9 @@ function cfgRenderOperadoras(user, body) {
   const rows = (CFG_DATA.operadoras || []).map(o => {
     const estado = o.is_active ? '<span class="pill pill-open">activa</span>' : '<span class="pill pill-closed">inactiva</span>';
     return `<tr>
-      <td style="font-family:monospace;font-weight:600">${o.code}</td>
-      <td><b>${o.name}</b></td>
-      <td>${estado}</td>
+      <td data-label="Prefijo" style="font-family:monospace;font-weight:600">${o.code}</td>
+      <td data-label="Operadora"><b>${o.name}</b></td>
+      <td data-label="Estado">${estado}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn btn-mini" data-edit-ope="${o.code}">${I.pencil}</button>
         <button class="btn btn-mini" data-toggle-ope="${o.code}" data-active="${o.is_active}">${o.is_active ? 'Desactivar' : 'Activar'}</button>
@@ -5376,7 +5376,7 @@ function cfgRenderOperadoras(user, body) {
       <div class="cfg-card-head"><h3>Operadoras móviles</h3>
         <button class="btn btn-primary btn-mini" id="opeNew">${I.plus} Nueva operadora</button></div>
       <p class="cfg-desc" style="margin:0 0 14px">Prefijo de 4 dígitos del teléfono móvil (04XX). Si el prefijo no está activo aquí, el teléfono no se acepta. El número se guarda en formato internacional (+58).</p>
-      <table class="cfg-cat-table"><thead><tr>
+      <table class="cfg-cat-table tbl-cards"><thead><tr>
         <th>Prefijo</th><th>Operadora</th><th>Estado</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>
     </div>`;
@@ -5435,9 +5435,9 @@ function cfgRenderIncDocs(user, body, inc) {
   const rows = list.map(d => {
     const estado = d.is_active ? '<span class="pill pill-open">activo</span>' : '<span class="pill pill-closed">inactivo</span>';
     return `<tr>
-      <td><b>${d.name}</b>${d.note ? `<br><span class="muted" style="font-size:11px">${d.note}</span>` : ''}</td>
-      <td>${enfPill(d.enforcement)}</td>
-      <td>${estado}</td>
+      <td data-label="Documento"><b>${d.name}</b>${d.note ? `<br><span class="muted" style="font-size:11px">${d.note}</span>` : ''}</td>
+      <td data-label="Exigencia">${enfPill(d.enforcement)}</td>
+      <td data-label="Estado">${estado}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn btn-mini" data-edit-doc="${d.id}">${I.pencil}</button>
         <button class="btn btn-mini" data-toggle-doc="${d.id}" data-active="${d.is_active}">${d.is_active ? 'Desactivar' : 'Activar'}</button>
@@ -5449,7 +5449,7 @@ function cfgRenderIncDocs(user, body, inc) {
       <div class="cfg-card-head"><h3>${titulo}</h3>
         <button class="btn btn-primary btn-mini" id="docNew">${I.plus} Nuevo documento</button></div>
       <p class="cfg-desc" style="margin:0 0 14px">${desc}</p>
-      <table class="cfg-cat-table"><thead><tr>
+      <table class="cfg-cat-table tbl-cards"><thead><tr>
         <th>Documento</th><th>Exigencia</th><th>Estado</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>
     </div>`;
