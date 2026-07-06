@@ -65,7 +65,7 @@ function icoFicha() {
 
 let USER = null;
 let FACETS = null;          // { zones, subzones, concepts, statuses, types, companies } cache
-let SCOPE = { total: 0, active: 0 };  // totales del alcance (denominador del contador)
+let SCOPE_COUNT = 0;        // universo del alcance con los filtros aplicados (denominador del contador)
 // Criterios (se conservan al volver de una ficha).
 let C = { q: '', type: '', company: '', photo: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
 let SEARCH_ROWS = null;     // null = aun no se ha buscado
@@ -299,7 +299,6 @@ export async function renderPersonnelSearch(user) {
   if (!FACETS) {
     const r = await api({ action: 'facets', adminId: USER.id });
     FACETS = (r && r.ok && r.facets) ? r.facets : { zones: [], subzones: [], concepts: [], statuses: [], types: [], companies: [] };
-    SCOPE = (r && r.ok && r.totals) ? r.totals : { total: 0, active: 0 };
   }
   // Tipo de empresa.
   const tSel = $('#psType');
@@ -400,6 +399,7 @@ async function runSearch() {
     photo: C.photo || null,
   });
   SEARCH_ROWS = (r && r.ok) ? (r.rows || []) : [];
+  SCOPE_COUNT = (r && r.ok && Number.isFinite(r.scope_count)) ? r.scope_count : 0;
   FQ = '';
   PAGE = 1;
   paint();
@@ -436,14 +436,16 @@ function paint() {
   const total = shown.length;
   if (countEl) {
     const capNote = totalAll === 5000 ? ' (máx.; refina para acotar)' : '';
-    // Denominador fijo = todo el personal del alcance (SCOPE.total). El % es
-    // cuantos resultados dio la busqueda sobre ese universo.
-    const uni = SCOPE.total || 0;
+    // Denominador (Forma B) = universo del alcance CON los filtros aplicados
+    // (tipo/empresa/zona/subzona/concepto/estado), sin los criterios (texto,
+    // sexo, edad, foto). El % es cuantos resultados dio la busqueda sobre ese
+    // universo filtrado.
+    const uni = SCOPE_COUNT || 0;
     const pct = uni > 0 ? Math.round((totalAll / uni) * 100) : null;
-    const scopeNote = uni > 0 ? ` de ${uni} en tu alcance${pct != null ? ` · ${pct}%` : ''}` : '';
+    const scopeNote = uni > 0 ? ` de ${uni} en el alcance filtrado${pct != null ? ` · ${pct}%` : ''}` : '';
     if (groups.length) {
       // Con filtro por coma: subconjunto filtrado, y aparte el total de la
-      // busqueda con su % sobre el alcance.
+      // busqueda con su % sobre el universo.
       countEl.textContent = `${total} de ${totalAll} filtrados · ${totalAll}${scopeNote}${capNote}`;
     } else {
       countEl.textContent = `${totalAll} resultado${totalAll === 1 ? '' : 's'}${scopeNote}${capNote}`;

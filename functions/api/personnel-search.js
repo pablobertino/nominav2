@@ -80,26 +80,12 @@ export async function onRequestPost({ request, env }) {
     if (action === 'facets') {
       const EMPTY = { zones: [], subzones: [], concepts: [], statuses: [], types: [], companies: [] };
       if (admin.codes !== null && !admin.codes.length) {
-        return json({ ok: true, facets: EMPTY, totals: { total: 0, active: 0 } });
+        return json({ ok: true, facets: EMPTY });
       }
       const f = await sb(env, 'rpc/personnel_search_facets', {
         method: 'POST', body: JSON.stringify({ p_codes: admin.codes }),
       });
-      // Totales del ALCANCE (denominador fijo del contador en Buscar y Datos
-      // incompletos): total = todo el personal del alcance; active = solo
-      // activos. Respeta alcance por empresa y por departamento.
-      let totals = { total: 0, active: 0 };
-      try {
-        const t = await sb(env, 'rpc/personnel_scope_totals', {
-          method: 'POST',
-          body: JSON.stringify({
-            p_codes: admin.codes,
-            p_admin_id: admin.role === 'superadmin' ? null : admin.id,
-          }),
-        });
-        if (t && t[0]) totals = { total: Number(t[0].total) || 0, active: Number(t[0].active) || 0 };
-      } catch (_) { /* si falla, el front no muestra denominador */ }
-      return json({ ok: true, facets: f || EMPTY, totals });
+      return json({ ok: true, facets: f || EMPTY });
     }
 
     if (action === 'search') {
@@ -126,7 +112,7 @@ export async function onRequestPost({ request, env }) {
       const hasFilter = !!(gender || ageMin != null || ageMax != null || zone || subzone || concept || cstatus || ctype || ccompany || cphoto);
       // Permite buscar por texto (>=2) o solo por filtros.
       if (q.length < 2 && !hasFilter) return json({ ok: true, rows: [], short: true });
-      if (admin.codes !== null && !admin.codes.length) return json({ ok: true, rows: [] });
+      if (admin.codes !== null && !admin.codes.length) return json({ ok: true, rows: [], scope_count: 0 });
       const rows = await sb(env, 'rpc/personnel_search', {
         method: 'POST',
         body: JSON.stringify({
@@ -140,7 +126,24 @@ export async function onRequestPost({ request, env }) {
           p_type: ctype, p_company: ccompany, p_photo: cphoto,
         }),
       });
-      return json({ ok: true, rows: withThumbs(env, rows) });
+      // Denominador del contador (Forma B): universo del ALCANCE con los
+      // filtros de alcance aplicados (tipo/empresa/zona/subzona/concepto/
+      // estado + departamento), SIN los criterios de acierto (texto, sexo,
+      // edad, foto). Se recalcula por busqueda porque depende de esos filtros.
+      let scopeCount = 0;
+      try {
+        const sc = await sb(env, 'rpc/personnel_scope_count', {
+          method: 'POST',
+          body: JSON.stringify({
+            p_codes: admin.codes,
+            p_zone: zone, p_subzone: subzone, p_concept: concept, p_status: cstatus,
+            p_admin_id: admin.role === 'superadmin' ? null : admin.id,
+            p_type: ctype, p_company: ccompany, p_active_only: false,
+          }),
+        });
+        scopeCount = Number(sc) || 0;
+      } catch (_) { /* si falla, el front oculta el denominador */ }
+      return json({ ok: true, rows: withThumbs(env, rows), scope_count: scopeCount });
     }
 
     if (action === 'incomplete') {
@@ -162,7 +165,7 @@ export async function onRequestPost({ request, env }) {
       const ccompany = body.company ? String(body.company) : null;
       // Filtro por presencia de foto: 'with' | 'without' | null (todos).
       const cphoto = (body.photo === 'with' || body.photo === 'without') ? body.photo : null;
-      if (admin.codes !== null && !admin.codes.length) return json({ ok: true, rows: [] });
+      if (admin.codes !== null && !admin.codes.length) return json({ ok: true, rows: [], scope_count: 0 });
       const rows = await sb(env, 'rpc/personnel_incomplete', {
         method: 'POST',
         body: JSON.stringify({
@@ -174,7 +177,24 @@ export async function onRequestPost({ request, env }) {
           p_type: ctype, p_company: ccompany, p_photo: cphoto,
         }),
       });
-      return json({ ok: true, rows: withThumbs(env, rows), fields });
+      // Denominador (Forma B): universo ACTIVO del alcance con los filtros de
+      // alcance aplicados (tipo/empresa/zona/subzona/concepto/estado +
+      // departamento), SIN los criterios. p_active_only=true porque esta vista
+      // solo evalua personal activo.
+      let scopeCount = 0;
+      try {
+        const sc = await sb(env, 'rpc/personnel_scope_count', {
+          method: 'POST',
+          body: JSON.stringify({
+            p_codes: admin.codes,
+            p_zone: zone, p_subzone: subzone, p_concept: concept, p_status: cstatus,
+            p_admin_id: admin.role === 'superadmin' ? null : admin.id,
+            p_type: ctype, p_company: ccompany, p_active_only: true,
+          }),
+        });
+        scopeCount = Number(sc) || 0;
+      } catch (_) { /* si falla, el front oculta el denominador */ }
+      return json({ ok: true, rows: withThumbs(env, rows), fields, scope_count: scopeCount });
     }
 
     return json({ ok: false, error: 'Accion desconocida.' }, 400);

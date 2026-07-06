@@ -86,7 +86,7 @@ function matchesSearch(w, groups) {
 
 let USER = null;
 let FACETS = null;
-let SCOPE = { total: 0, active: 0 };  // totales del alcance (denominador del contador)
+let SCOPE_COUNT = 0;  // universo ACTIVO del alcance con filtros aplicados (denominador del contador)
 // Estado: campos evaluados + filtros de alcance + resultados.
 let C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '', type: '', company: '', photo: '' };
 let ROWS = null;   // null = aun no consultado
@@ -273,7 +273,6 @@ export async function renderPersonnelIncomplete(user) {
   if (!FACETS) {
     const r = await api({ action: 'facets', adminId: USER.id });
     FACETS = (r && r.ok && r.facets) ? r.facets : { zones: [], subzones: [], concepts: [], statuses: [], types: [], companies: [] };
-    SCOPE = (r && r.ok && r.totals) ? r.totals : { total: 0, active: 0 };
   }
   // Tipo de empresa (combo).
   const tSel = $('#piType');
@@ -380,6 +379,7 @@ async function run() {
     photo: C.photo || null,
   });
   ROWS = (r && r.ok) ? (r.rows || []) : [];
+  SCOPE_COUNT = (r && r.ok && Number.isFinite(r.scope_count)) ? r.scope_count : 0;
   PAGE = 1;
   paint();
 }
@@ -421,9 +421,10 @@ function paint() {
   const shown = groups.length ? ROWS.filter(w => matchesSearch(w, groups)) : ROWS;
 
   if (countEl) {
-    // Denominador fijo = personal ACTIVO del alcance (SCOPE.active). El % es
-    // cuantos activos tienen datos incompletos sobre ese universo.
-    const uni = SCOPE.active || 0;
+    // Denominador (Forma B) = personal ACTIVO del alcance CON los filtros
+    // aplicados (tipo/empresa/zona/subzona/concepto/estado), sin criterios.
+    // El % es cuantos activos filtrados tienen datos incompletos.
+    const uni = SCOPE_COUNT || 0;
     const pct = uni > 0 ? Math.round((ROWS.length / uni) * 100) : null;
     const den = uni > 0 ? ` de ${uni} activos` : '';
     const pctNote = pct != null ? ` · ${pct}%` : '';
