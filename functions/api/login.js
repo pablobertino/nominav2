@@ -33,6 +33,24 @@ async function sb(env, path) {
   return res.json();
 }
 
+/** Marca el ultimo inicio de sesion exitoso (columna last_login_at). Es
+ *  best-effort: si falla NO rompe el login (el usuario ya fue validado). */
+async function touchLastLogin(env, table, id) {
+  try {
+    await fetch(`${env.supabase_url}/rest/v1/${table}?id=eq.${id}`, {
+      method: 'PATCH',
+      headers: {
+        apikey: env.supabase_service_role,
+        Authorization: `Bearer ${env.supabase_service_role}`,
+        'Content-Profile': 'nomina_v2',
+        'Content-Type': 'application/json',
+        Prefer: 'return=minimal',
+      },
+      body: JSON.stringify({ last_login_at: new Date().toISOString() }),
+    });
+  } catch { /* no critico: el inicio de sesion no depende de esto */ }
+}
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status,
@@ -66,6 +84,7 @@ export async function onRequestPost({ request, env }) {
     if (admins.length) {
       const u = admins[0];
       if (u.password_hash !== hash) return json({ ok: false, error: 'Credenciales incorrectas.' }, 401);
+      await touchLastLogin(env, 'admin_users', u.id);
       return json({
         ok: true,
         user: { kind: 'admin', id: u.id, username: u.username, name: u.name, role: u.role,
@@ -82,6 +101,7 @@ export async function onRequestPost({ request, env }) {
     if (users.length) {
       const u = users[0];
       if (u.password_hash !== hash) return json({ ok: false, error: 'Credenciales incorrectas.' }, 401);
+      await touchLastLogin(env, 'company_users', u.id);
       // Tipo de empresa: define si su Personal/Reportes operan sobre el mundo
       // tienda (store_workers) o empresa no-tienda (enterprise_workers).
       let companyType = null;
@@ -106,6 +126,7 @@ export async function onRequestPost({ request, env }) {
     if (eus.length) {
       const u = eus[0];
       if (u.password_hash !== hash) return json({ ok: false, error: 'Credenciales incorrectas.' }, 401);
+      await touchLastLogin(env, 'enterprise_users', u.id);
       // Cargar su alcance: pares Empresa+Departamento (con nombres legibles).
       const scope = await sb(env,
         `enterprise_user_scope?enterprise_user_id=eq.${u.id}`
