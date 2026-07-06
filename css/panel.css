@@ -315,7 +315,8 @@
 .modal-ov { position:fixed; inset:0; background:rgba(15,23,42,.45); backdrop-filter:blur(2px);
   display:flex; align-items:center; justify-content:center; z-index:1000; padding:20px; }
 .modal-box { background:var(--surface); border-radius:var(--radius-lg); padding:22px 24px;
-  width:100%; max-width:460px; box-shadow:var(--shadow-lg); animation:modalpop .18s ease; }
+  width:100%; max-width:460px; box-shadow:var(--shadow-lg); animation:modalpop .18s ease;
+  max-height:90vh; overflow-y:auto; }
 @keyframes modalpop { from { transform:scale(.97); opacity:0; } to { transform:scale(1); opacity:1; } }
 .modal-head { display:flex; justify-content:space-between; align-items:center;
   font-size:16.5px; font-weight:650; letter-spacing:-.01em; margin-bottom:4px; }
@@ -1578,6 +1579,10 @@ input.needfill:focus, select.needfill:focus {
 .cell-name { font-weight:500; }
 .cell-mail { font-size:12.5px; color:var(--muted); }
 
+/* Ultimo acceso al portal (last_login_at): linea gris chica bajo el estado. */
+.cell-lastlogin { font-size:10.5px; color:var(--faint); margin-top:4px; white-space:nowrap; }
+.cell-lastlogin.none { font-style:italic; }
+
 /* Aviso "que ve el agente en osTicket" dentro del editor de alcance */
 .sc-ostinfo { display:flex; align-items:flex-start; gap:10px; background:#f0f7ff;
   border:1px solid #d3e2fd; border-radius:var(--radius-md); padding:12px 16px;
@@ -1888,8 +1893,17 @@ input.needfill:focus, select.needfill:focus {
      Nombre+CodigoAX / Codigo+Estado / Documento+Exigencia se salian por la
      derecha. Y el modal en si se acota al viewport. */
   .cfg-grid2 { grid-template-columns:1fr; }
-  .modal-ov { padding:14px; }
-  .modal-box { max-width:100%; width:100%; box-sizing:border-box; }
+  /* Filas de parametro (Corte y periodos, Constancias, Integraciones): la
+     etiqueta+descripcion y el control estaban lado a lado (justify-content:
+     space-between) con el input a 230px fijo, y en movil se desbordaban. Se
+     apilan: etiqueta arriba, control debajo a ancho completo. */
+  .cfg-row { flex-direction:column; align-items:stretch; gap:10px; }
+  .cfg-input { flex:0 0 auto; width:100%; max-width:100%; }
+  .cfg-input input { width:100%; box-sizing:border-box; }
+  .cfg-input input.narrow { width:100%; }
+  .cfg-secret { align-items:flex-start; }
+  .modal-ov { padding:14px; align-items:flex-start; }
+  .modal-box { max-width:100%; width:100%; box-sizing:border-box; max-height:calc(100dvh - 28px); overflow-y:auto; }
   .modal-box input, .modal-box select, .modal-box textarea { max-width:100%; box-sizing:border-box; }
 
   /* ---------------------------------------------------------------

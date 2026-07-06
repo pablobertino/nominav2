@@ -312,7 +312,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.84</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.85</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2244,9 +2244,11 @@ function usersRenderRows(user) {
 
   const portalCell = (r) => {
     const u = r.portal && r.portal.user;
-    const st = !r.portal ? '<span class="pill pill-gray">Sin datos</span>'
+    const baseSt = !r.portal ? '<span class="pill pill-gray">Sin datos</span>'
       : u ? (u.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>')
           : '<span class="pill pill-gray">Sin acceso</span>';
+    // Bajo el pill, el ultimo acceso al portal (solo si la tienda tiene usuario).
+    const st = u ? `${baseSt}${lastLoginLabel(u.last_login_at)}` : baseSt;
     let acts = '';
     if (r.portal) {
       acts = u
@@ -2769,6 +2771,21 @@ function estadoPill(a) {
   return a.is_active ? '<span class="pill pill-open">Activo</span>' : '<span class="pill pill-closed">Inactivo</span>';
 }
 
+/* Ultimo acceso al portal (last_login_at). Formato corto en hora de Caracas.
+   Devuelve una linea gris bajo el estado; 'Nunca' si aun no ha entrado. */
+function lastLoginLabel(iso) {
+  if (!iso) return '<div class="cell-lastlogin none">Ultimo acceso: nunca</div>';
+  const dt = new Date(iso);
+  if (isNaN(dt)) return '';
+  const car = new Date(dt.getTime() - 4 * 3600 * 1000);
+  const p = n => String(n).padStart(2, '0');
+  let h = car.getUTCHours(); const ap = h < 12 ? 'a.m.' : 'p.m.';
+  h = h % 12; if (h === 0) h = 12;
+  const fecha = `${p(car.getUTCDate())}/${p(car.getUTCMonth() + 1)}/${car.getUTCFullYear()}`;
+  const hora = `${h}:${p(car.getUTCMinutes())} ${ap}`;
+  return `<div class="cell-lastlogin">Ultimo acceso: ${fecha} \u00b7 ${hora}</div>`;
+}
+
 async function viewEquipo(user) {
   $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Equipo</h1><p>Miembros del portal por rol</p></div></div><div class="pnl-loading">Cargando\u2026</div>`;
   const d = await auApi({ action: 'list', adminId: user.id });
@@ -2794,6 +2811,7 @@ async function viewEquipo(user) {
         <div class="su-sub"><span class="su-user">${a.username}</span>
           <span class="pill pill-role">superadmin</span>
           <span>\u00b7 Ve todo \u00b7 sin alcance ni osTicket</span></div>
+        ${lastLoginLabel(a.last_login_at)}
       </div>
       <div class="su-acts">
         <button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>
@@ -2817,7 +2835,7 @@ async function viewEquipo(user) {
       ${emailCell(a)}
       <td data-label="Alcance">${scopeCellBoth(a)}</td>
       <td data-label="osTicket">${ostAgentCell(a)}</td>
-      <td data-label="Estado">${estadoPill(a)}</td>
+      <td data-label="Estado">${estadoPill(a)}${lastLoginLabel(a.last_login_at)}</td>
       <td class="cell-actcell" style="text-align:right"><div class="cell-actions">
         <button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas">${I.sliders} Tiendas</button>
         <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>
@@ -2845,7 +2863,7 @@ async function viewEquipo(user) {
       ${emailCell(a)}
       <td data-label="Alcance">${scopeCellEnt(a)}</td>
       <td data-label="osTicket">${ostClientCell(a)}</td>
-      <td data-label="Estado">${estadoPill(a)}</td>
+      <td data-label="Estado">${estadoPill(a)}${lastLoginLabel(a.last_login_at)}</td>
       <td class="cell-actcell" style="text-align:right"><div class="cell-actions">
         <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>
         ${roleBtn}
@@ -2870,7 +2888,7 @@ async function viewEquipo(user) {
       <td class="cell-name" data-label="Nombre">${a.name || '\u2014'}</td>
       ${emailCell(a)}
       <td data-label="Alcance">${scopeCellBoth(a)}</td>
-      <td data-label="Estado">${estadoPill(a)}</td>
+      <td data-label="Estado">${estadoPill(a)}${lastLoginLabel(a.last_login_at)}</td>
       <td class="cell-actcell" style="text-align:right"><div class="cell-actions">
         <button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas">${I.sliders} Tiendas</button>
         <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>

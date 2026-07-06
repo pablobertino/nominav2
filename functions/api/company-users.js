@@ -75,7 +75,7 @@ export async function onRequestPost({ request, env }) {
 
     if (action === 'list') {
       const companies = await sb(env, 'companies?select=company_code,business_name,company_type,status,email,phone,phone2,zone_id,subzone_id&order=company_code');
-      const users = await sb(env, 'company_users?select=company_code,email,is_active');
+      const users = await sb(env, 'company_users?select=company_code,email,is_active,last_login_at');
       // Catalogos de zona/subzona para resolver nombres y poblar los combos
       // del filtro en la vista Usuarios (subzona depende de zona via zone_id).
       const zones = await sb(env, 'zones?select=id,letter,name&order=name');

@@ -121,7 +121,7 @@ export async function onRequestPost({ request, env }) {
     if (!(await isSuperadmin(env, adminId))) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
 
     if (action === 'list') {
-      const rows = await sb(env, 'admin_users?select=id,username,name,email,role,is_active,osticket_staff_id,osticket_user_id,osticket_user_synced_at&order=role.desc,username');
+      const rows = await sb(env, 'admin_users?select=id,username,name,email,role,is_active,osticket_staff_id,osticket_user_id,osticket_user_synced_at,last_login_at&order=role.desc,username');
       // Resumen de alcance por admin: conteo de reglas include/exclude por
       // tipo (zone/subzone/company/department). Barato (2 lecturas), suficiente
       // para el resumen de la grilla; el detalle se edita en el editor de scope.
