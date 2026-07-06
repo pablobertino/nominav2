@@ -1219,7 +1219,7 @@ function fichaHtml(w, c) {
         <div class="ff-grid">
           <div class="ff-row"><span class="ff-lbl">Cargo <span class="src excel"><span class="dot"></span></span></span><span class="ff-val" data-v="role"></span></div>
           <div class="ff-row"><span class="ff-lbl">Departamento <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="department"></span></div>
-          <div class="ff-field"><label>Cargo</label><input id="e_role" type="text"></div>
+          <div class="ff-field ff-role-locked"><label>Cargo</label><div class="ff-locked" data-v="role_locked" style="padding:9px 11px;border:1px dashed var(--border);border-radius:8px;background:var(--bg-soft,#f8fafc);color:var(--text);min-height:20px"></div><div class="ff-hint">El cargo se actualiza solo por la sincronización de personal desde AX.</div></div>
           <div class="ff-field"><label>Departamento</label><select id="e_department"><option value="">— Sin departamento —</option>${(STATE.departments || []).map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></div>
         </div>
 
@@ -1320,7 +1320,15 @@ function wireFicha(host, w) {
     host.querySelector('#ffDel').style.display = w.thumb_url ? '' : 'none';
     q('#e_first').value = w.first_name || ''; q('#e_second').value = w.second_name || ''; q('#e_last').value = w.last_names || '';
     q('#e_birth').value = w.birth_date || ''; q('#e_gender').value = w.gender || ''; q('#e_marital').value = w.marital_status || '';
-    q('#e_role').value = w.role || ''; q('#e_account').value = w.account_number || ''; q('#e_phone').value = phoneNat(w.phone);
+    q('#e_account').value = w.account_number || ''; q('#e_phone').value = phoneNat(w.phone);
+    // Cargo: SIEMPRE solo-lectura (nadie lo edita desde la ficha; solo cambia
+    // por la sincronizacion de personal desde AX). Se muestra el valor actual.
+    const roleLocked = host.querySelector('[data-v="role_locked"]');
+    if (roleLocked) {
+      const empty = !w.role;
+      roleLocked.textContent = empty ? 'Sin cargo' : w.role;
+      roleLocked.classList.toggle('empty', empty);
+    }
     if (q('#e_department')) q('#e_department').value = w.department_id || '';
     q('#e_email').value = w.email || ''; q('#e_address').value = w.address || '';
     runValidations();
@@ -1349,13 +1357,15 @@ function wireFicha(host, w) {
       birth_date: birth || null,
       gender: q('#e_gender').value || null,
       marital_status: q('#e_marital').value || null,
-      role: q('#e_role').value.trim().toUpperCase() || null,
       account_number: accRaw || null,
       bank_code: accRaw ? accRaw.slice(0, 4) : null,
       phone: phRaw ? '+58' + phRaw.slice(1) : null,
       email: q('#e_email').value.trim() || null,
       address: q('#e_address').value.trim() || null,
     };
+    // El CARGO (role) NUNCA se envia desde la ficha: es dato maestro que solo
+    // cambia por la sincronizacion de personal desde AX (afecta el salario).
+    // El backend ademas ignora 'role' aunque llegara.
 
     const deptVal = q('#e_department') ? (q('#e_department').value || '') : '';
     const department_id = deptVal === '' ? null : parseInt(deptVal, 10);

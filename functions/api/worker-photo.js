@@ -600,7 +600,6 @@ async function saveProfile(env, cc, body, table, deptScope) {
     second_name: p.second_name || null,
     last_names: p.last_names || null,
     full_name: p.full_name || null,
-    role: p.role || null,
     birth_date: p.birth_date || null,
     gender: p.gender || null,
     marital_status: p.marital_status || null,
@@ -611,6 +610,11 @@ async function saveProfile(env, cc, body, table, deptScope) {
     address: p.address || null,
     last_source_company: cc,
   };
+  // El CARGO (role) NUNCA se edita desde la ficha: es dato maestro que llega
+  // solo por la sincronizacion de personal desde AX (la API). El cargo afecta
+  // el salario, por lo que se evita cualquier via de cambio manual en el
+  // portal. Por eso NO se incluye 'role' en el patch bajo ninguna condicion
+  // (asi ademas se evita borrarlo con null si el front lo mandara).
 
   const exists = await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=id_number`);
   if (exists && exists.length) {
