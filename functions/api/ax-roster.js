@@ -392,6 +392,9 @@ export async function onRequestPost({ request, env }) {
         last_names: r.last_names,
         first_lastname: r.first_lastname,
         role: r.role,                 // la API SI trae cargo -> manda
+        // La sincronizacion de AX es la fuente de verdad: alinea el cargo de
+        // reporte al cargo real (ambos = cargo de AX).
+        report_role: r.role,
         birth_date: r.birth_date,
         gender: r.gender,
         marital_status: r.marital_status,
@@ -441,6 +444,8 @@ export async function onRequestPost({ request, env }) {
           last_names: r.last_names,
           first_lastname: r.first_lastname,
           role: r.role,               // la API trae cargo -> manda
+          // AX alinea el cargo de reporte al cargo real (ambos = cargo AX).
+          report_role: r.role,
           birth_date: r.birth_date,
           gender: r.gender,
           marital_status: r.marital_status,

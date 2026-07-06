@@ -321,7 +321,7 @@ export async function onRequestPost({ request, env }) {
       if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);
       const workers = await sb(env,
         `store_workers?company_code=eq.${encodeURIComponent(cc)}`
-        + `&select=id_number,full_name,role,has_biometric,start_date,end_date,is_active,account_number,phone,email,gender,marital_status,birth_date,address,todo_ticket,data_id,first_name,second_name,last_names&order=full_name.asc`);
+        + `&select=id_number,full_name,role,report_role,has_biometric,start_date,end_date,is_active,account_number,phone,email,gender,marital_status,birth_date,address,todo_ticket,data_id,first_name,second_name,last_names&order=full_name.asc`);
       // Marcar cada trabajador con su rol de responsable detectado
       // (manager_role: 'Gerente'|'Sub-Gerente'|null) y, si el catalogo de
       // cargos lo resuelve, tambien el cargo canonico (cargo_code/label)
@@ -332,10 +332,14 @@ export async function onRequestPost({ request, env }) {
       const roleRules = await sb(env,
         'manager_role_rules?is_active=eq.true&select=pattern,result_role&order=sort_order.asc');
       const out = (workers || []).map(w => {
-        const cargo = resolveCargo(w.role, cargoCat);
+        // La DETECCION de responsables y el cargo canonico usan el cargo de
+        // REPORTE (report_role), con fallback a role. El cargo salarial (role)
+        // se muestra aparte y solo lo escribe la sincronizacion de AX.
+        const reportRole = w.report_role || w.role || null;
+        const cargo = resolveCargo(reportRole, cargoCat);
         return {
           ...w,
-          manager_role: detectManagerRole(w.role, roleRules, cargoCat),
+          manager_role: detectManagerRole(reportRole, roleRules, cargoCat),
           cargo_code: cargo ? cargo.code : null,
           cargo_label: cargo ? cargo.label : null,
         };
@@ -438,10 +442,14 @@ export async function onRequestPost({ request, env }) {
         company_code: cc,
         id_number: r.id_number,
         full_name: r.full_name,
-        // CARGO: se conserva el previo por cedula (regla: solo la API de AX
-        // escribe el cargo). Personal nuevo sin cargo previo toma el del
+        // CARGO SALARIAL (role): se conserva el previo por cedula (regla: solo
+        // la API de AX lo escribe). Personal nuevo sin cargo previo toma el del
         // Reporte 10 como valor inicial provisional.
         role: roleByCed[r.id_number] || r.role || null,
+        // CARGO DE REPORTE (report_role): el texto de cargo del Reporte 10.
+        // Sirve para saber quien es gerente/subgerente en tienda. NO afecta el
+        // salario. La sincronizacion de AX lo alinea al cargo real.
+        report_role: r.role || null,
         has_biometric: r.has_biometric,
         start_date: r.start_date,
         end_date: r.end_date,
@@ -622,6 +630,10 @@ export async function onRequestPost({ request, env }) {
         second_name: second || null,
         last_names: last,
         role,
+        // Alta manual: el cargo es provisional (la persona aun no esta en AX).
+        // Se pone tambien como cargo de reporte para que la deteccion de
+        // responsables lo tome; AX alineara ambos al sincronizar.
+        report_role: role,
         has_biometric: false,
         start_date: today,
         end_date: isEgresado ? today : null,
@@ -698,11 +710,18 @@ export async function onRequestPost({ request, env }) {
       const egresados = valid.filter(r => r.end_date);
 
       // El AX NO trae cargo: leemos el cargo previo por cedula para conservarlo.
+      // Se conservan tanto el cargo salarial (role) como el de reporte
+      // (report_role); el Excel AX no trae ninguno de los dos.
       const prev = await sb(env,
-        `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,role,department_id`);
+        `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,role,report_role,department_id`);
       const roleByCed = {};
+      const reportRoleByCed = {};
       const deptByCed = {};
-      (prev || []).forEach(p => { roleByCed[p.id_number] = p.role || null; deptByCed[p.id_number] = p.department_id || null; });
+      (prev || []).forEach(p => {
+        roleByCed[p.id_number] = p.role || null;
+        reportRoleByCed[p.id_number] = p.report_role || p.role || null;
+        deptByCed[p.id_number] = p.department_id || null;
+      });
       // Regla del negocio: todo el personal de tienda pertenece a Retail;
       // quien no tenga departamento (nuevo) entra a Retail.
       const retailId = await retailDeptId(env, cc);
@@ -743,6 +762,8 @@ export async function onRequestPost({ request, env }) {
         has_biometric: true,
         // El AX NO trae cargo -> se conserva el previo por cedula:
         role: roleByCed[r.id_number] || null,
+        // El cargo de reporte tampoco lo trae el AX-Excel -> se conserva:
+        report_role: reportRoleByCed[r.id_number] || null,
         // El AX NO trae departamento -> se conserva el previo; si no tenia,
         // entra a Retail (regla del negocio para tiendas):
         department_id: deptByCed[r.id_number] || retailId || null,
