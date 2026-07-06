@@ -32,6 +32,21 @@
    ===================================================================== */
 
 import { buildReportText, buildAxWorkbookBase64 } from './_ax-template.js';
+import { shadowCan } from './_auth.js';
+
+// Mapa accion -> code. list/detail/ticket_* son lectura del Historial
+// (view.historial). set_attention/sync_osticket/resend_* son gestion del
+// estado de atencion del reporte (report.attention, solo admin/super).
+const RH_CODE_BY_ACTION = {
+  list: 'view.historial',
+  detail: 'view.historial',
+  ticket_text: 'view.historial',
+  ticket_excel: 'view.historial',
+  set_attention: 'report.attention',
+  sync_osticket: 'report.attention',
+  resend_info: 'report.attention',
+  resend_osticket: 'report.attention',
+};
 
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -234,6 +249,23 @@ export async function onRequestPost({ request, env }) {
       if (body.action === 'detail') return json({ ok: false, error: 'Sin acceso a este reporte.' }, 403);
       return json({ ok: true, rows: [], total: 0, page: 1, per_page: 20 });
     }
+
+    // SHADOW: gate legacy. Para lectura, tener alcance basta (view.historial).
+    // Para las acciones de gestion, el legacy exige admin/superadmin (se valida
+    // dentro de cada handler); aqui reflejamos ese gate con report.attention.
+    const isMgmt = ['set_attention', 'sync_osticket', 'resend_info', 'resend_osticket'].includes(body.action);
+    let legacyOk = true;
+    if (isMgmt) {
+      const u = body.user || {};
+      if (u.kind === 'admin' && u.id) {
+        const a = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(u.id)}&is_active=eq.true&select=role`);
+        const role = a && a[0] ? a[0].role : null;
+        legacyOk = (role === 'admin' || role === 'superadmin');
+      } else {
+        legacyOk = false;
+      }
+    }
+    await shadowCan(env, body.user || null, 'reports-history', body.action || '?', RH_CODE_BY_ACTION[body.action] || 'view.historial', legacyOk);
 
     if (body.action === 'list') return await listReports(env, body, scope);
     if (body.action === 'detail') return await detailReport(env, body, scope);
