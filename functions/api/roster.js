@@ -402,10 +402,21 @@ export async function onRequestPost({ request, env }) {
       //    departamento, asi que se CONSERVA lo que ya tenia cada persona.
       //    Regla del negocio: TODO el personal de tienda pertenece a Retail,
       //    asi que quien no tenga departamento (personal nuevo) entra a Retail.
-      const prevDept = await sb(env,
-        `store_workers?company_code=eq.${encodeURIComponent(cc)}&department_id=not.is.null&select=id_number,department_id`);
+      // 0) Datos previos por cedula que NO deben venir del Reporte 10:
+      //    - department_id: el Reporte 10 no trae departamento (se conserva).
+      //    - role (CARGO): por regla del negocio el cargo SOLO lo escribe la
+      //      sincronizacion de la API de AX (afecta el salario). El Reporte 10
+      //      NO debe cambiarlo: se conserva el cargo previo por cedula. Solo
+      //      el personal nuevo (sin cargo previo) toma el del Reporte como
+      //      valor inicial provisional hasta la proxima sincronizacion AX.
+      const prevRows = await sb(env,
+        `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,department_id,role`);
       const deptByCed = {};
-      (prevDept || []).forEach(p => { deptByCed[p.id_number] = p.department_id; });
+      const roleByCed = {};
+      (prevRows || []).forEach(p => {
+        if (p.department_id != null) deptByCed[p.id_number] = p.department_id;
+        if (p.role) roleByCed[p.id_number] = p.role;
+      });
       const retailId = await retailDeptId(env, cc);
       // 1) Manuales actuales de la tienda.
       const manualNow = await sb(env,
@@ -427,7 +438,10 @@ export async function onRequestPost({ request, env }) {
         company_code: cc,
         id_number: r.id_number,
         full_name: r.full_name,
-        role: r.role,
+        // CARGO: se conserva el previo por cedula (regla: solo la API de AX
+        // escribe el cargo). Personal nuevo sin cargo previo toma el del
+        // Reporte 10 como valor inicial provisional.
+        role: roleByCed[r.id_number] || r.role || null,
         has_biometric: r.has_biometric,
         start_date: r.start_date,
         end_date: r.end_date,
@@ -458,7 +472,14 @@ export async function onRequestPost({ request, env }) {
       // el roster ya quedo guardado y se reintenta en la proxima carga.
       let masterSynced = 0;
       try {
-        masterSynced = await upsertWorkersMaster(env, cc, valid);
+        // Al sincronizar la maestra, el CARGO tambien se conserva (no lo pisa
+        // el Reporte 10): se manda el cargo efectivo (previo, o el del reporte
+        // si es personal nuevo), igual que en store_workers.
+        const validForMaster = valid.map(r => ({
+          ...r,
+          role: roleByCed[r.id_number] || r.role || null,
+        }));
+        masterSynced = await upsertWorkersMaster(env, cc, validForMaster);
       } catch (e) {
         // Incluir el mensaje real para diagnosticar (temporal). Si esto vuelve
         // a fallar, el texto del error aparece en el resumen de la carga.
