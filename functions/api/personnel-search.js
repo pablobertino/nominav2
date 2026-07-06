@@ -80,12 +80,26 @@ export async function onRequestPost({ request, env }) {
     if (action === 'facets') {
       const EMPTY = { zones: [], subzones: [], concepts: [], statuses: [], types: [], companies: [] };
       if (admin.codes !== null && !admin.codes.length) {
-        return json({ ok: true, facets: EMPTY });
+        return json({ ok: true, facets: EMPTY, totals: { total: 0, active: 0 } });
       }
       const f = await sb(env, 'rpc/personnel_search_facets', {
         method: 'POST', body: JSON.stringify({ p_codes: admin.codes }),
       });
-      return json({ ok: true, facets: f || EMPTY });
+      // Totales del ALCANCE (denominador fijo del contador en Buscar y Datos
+      // incompletos): total = todo el personal del alcance; active = solo
+      // activos. Respeta alcance por empresa y por departamento.
+      let totals = { total: 0, active: 0 };
+      try {
+        const t = await sb(env, 'rpc/personnel_scope_totals', {
+          method: 'POST',
+          body: JSON.stringify({
+            p_codes: admin.codes,
+            p_admin_id: admin.role === 'superadmin' ? null : admin.id,
+          }),
+        });
+        if (t && t[0]) totals = { total: Number(t[0].total) || 0, active: Number(t[0].active) || 0 };
+      } catch (_) { /* si falla, el front no muestra denominador */ }
+      return json({ ok: true, facets: f || EMPTY, totals });
     }
 
     if (action === 'search') {

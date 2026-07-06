@@ -86,6 +86,7 @@ function matchesSearch(w, groups) {
 
 let USER = null;
 let FACETS = null;
+let SCOPE = { total: 0, active: 0 };  // totales del alcance (denominador del contador)
 // Estado: campos evaluados + filtros de alcance + resultados.
 let C = { fields: DEFAULT_FIELDS.slice(), zone: '', subzone: '', concept: '', status: '', q: '', type: '', company: '', photo: '' };
 let ROWS = null;   // null = aun no consultado
@@ -272,6 +273,7 @@ export async function renderPersonnelIncomplete(user) {
   if (!FACETS) {
     const r = await api({ action: 'facets', adminId: USER.id });
     FACETS = (r && r.ok && r.facets) ? r.facets : { zones: [], subzones: [], concepts: [], statuses: [], types: [], companies: [] };
+    SCOPE = (r && r.ok && r.totals) ? r.totals : { total: 0, active: 0 };
   }
   // Tipo de empresa (combo).
   const tSel = $('#piType');
@@ -419,10 +421,16 @@ function paint() {
   const shown = groups.length ? ROWS.filter(w => matchesSearch(w, groups)) : ROWS;
 
   if (countEl) {
+    // Denominador fijo = personal ACTIVO del alcance (SCOPE.active). El % es
+    // cuantos activos tienen datos incompletos sobre ese universo.
+    const uni = SCOPE.active || 0;
+    const pct = uni > 0 ? Math.round((ROWS.length / uni) * 100) : null;
+    const den = uni > 0 ? ` de ${uni} activos` : '';
+    const pctNote = pct != null ? ` · ${pct}%` : '';
     if (groups.length) {
-      countEl.textContent = `${shown.length} de ${ROWS.length} trabajador${ROWS.length === 1 ? '' : 'es'} con datos incompletos`;
+      countEl.textContent = `${shown.length} de ${ROWS.length} filtrados · ${ROWS.length}${den} con datos incompletos${pctNote}`;
     } else {
-      countEl.textContent = `${ROWS.length} trabajador${ROWS.length === 1 ? '' : 'es'} con datos incompletos`;
+      countEl.textContent = `${ROWS.length}${den} con datos incompletos${pctNote}`;
     }
   }
 
