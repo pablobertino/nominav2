@@ -14,8 +14,9 @@
         usuario-tienda con name="CC - Razon Social", email, phone) y guarda
         el user_id devuelto + la fecha en companies.
 
-   Autorizacion: { adminId } de un superadmin activo (se revalida).
-   La clave API de osTicket NO viaja al navegador: la usa este Worker
+   Autorizacion: { adminId } de un admin activo (se revalida). Un admin ve y
+   gestiona SOLO las tiendas de su alcance (get_admin_companies); superadmin,
+   todas. La clave API de osTicket NO viaja al navegador: la usa este Worker
    (Secret osticket_api_key). La URL sale de app_settings.osticket_url.
 
    Secrets: supabase_url, supabase_service_role, osticket_api_key
@@ -81,12 +82,21 @@ async function gcUser(env, base, data) {
   return js; // { ok, user_id, created }
 }
 
-// Valida que el llamador sea superadmin activo.
-async function requireSuper(env, adminId) {
-  if (!adminId) return false;
-  const rows = await sb(env,
-    `admin_users?id=eq.${encodeURIComponent(adminId)}&role=eq.superadmin&is_active=eq.true&select=id`);
-  return !!(rows && rows.length);
+// Devuelve { id, role } del admin activo, o null. Igual patron que company-users.
+async function getAdmin(env, adminId) {
+  if (!adminId) return null;
+  const rows = await sb(env, `admin_users?id=eq.${encodeURIComponent(adminId)}&is_active=eq.true&select=id,role`);
+  return rows && rows.length ? rows[0] : null;
+}
+
+// Set de company_codes que el admin puede gestionar (null = todas, si
+// superadmin). Mismo criterio de alcance que company-users.
+async function allowedCompanies(env, admin) {
+  if (admin.role === 'superadmin') return null; // todas
+  const rows = await sb(env, 'rpc/get_admin_companies', {
+    method: 'POST', body: JSON.stringify({ p_admin_id: admin.id }),
+  });
+  return new Set((rows || []).map(r => r.company_code));
 }
 
 export async function onRequestPost({ request, env }) {
@@ -95,26 +105,41 @@ export async function onRequestPost({ request, env }) {
   const { action, adminId } = body;
 
   try {
-    const legacyOk = await requireSuper(env, adminId);
-    // SHADOW: gate legacy = superadmin. Code por accion (view.usuarios/config.osticket).
-    await shadowCan(env, adminId, 'osticket-users', action || '?', OU_CODE_BY_ACTION[action] || 'view.usuarios', legacyOk);
-    if (!legacyOk) {
-      return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+    // Gate: admin activo (ya no solo superadmin). El alcance por empresa se
+    // aplica en cada accion (list filtra; sync/grant validan que la tienda
+    // este en el alcance). superadmin -> allowed=null (todas).
+    const admin = await getAdmin(env, adminId);
+    // SHADOW: gate legacy = admin activo. Code por accion (view.usuarios/config.osticket).
+    await shadowCan(env, adminId, 'osticket-users', action || '?', OU_CODE_BY_ACTION[action] || 'view.usuarios', !!admin);
+    if (!admin) {
+      return json({ ok: false, error: 'No autorizado.' }, 401);
     }
+    const allowed = await allowedCompanies(env, admin);
 
-    if (action === 'list') return await listTiendas(env);
-    if (action === 'sync') return await syncTiendas(env, body);
-    if (action === 'grant_access') return await grantAccess(env, body);
+    if (action === 'list') return await listTiendas(env, allowed);
+    if (action === 'sync') return await syncTiendas(env, body, allowed);
+    if (action === 'grant_access') return await grantAccess(env, body, allowed);
     return json({ ok: false, error: 'Accion no reconocida.' }, 400);
   } catch (e) {
     return json({ ok: false, error: String(e.message || e) }, 500);
   }
 }
 
-/* Lista las tiendas (company_type Tienda) con su estado osTicket. */
-async function listTiendas(env) {
+/* Lista las tiendas (company_type Tienda) con su estado osTicket, filtradas
+   al ALCANCE del admin (allowed = Set de company_code, o null = todas). */
+async function listTiendas(env, allowed) {
+  // superadmin (allowed=null) -> todas; admin -> solo sus tiendas del alcance.
+  let filter = 'company_type=eq.Tienda';
+  if (allowed !== null) {
+    // Sin empresas en el alcance: no hay tiendas que mostrar.
+    if (!allowed.size) {
+      return json({ ok: true, tiendas: [], summary: { total: 0, synced: 0, pending: 0, no_email: 0, with_access: 0 } });
+    }
+    const list = [...allowed].map(c => encodeURIComponent(c)).join(',');
+    filter += `&company_code=in.(${list})`;
+  }
   const rows = await sb(env,
-    `companies?company_type=eq.Tienda&select=company_code,business_name,email,phone,osticket_user_id,osticket_synced_at,osticket_access_granted_at&order=company_code`);
+    `companies?${filter}&select=company_code,business_name,email,phone,osticket_user_id,osticket_synced_at,osticket_access_granted_at&order=company_code`);
   const tiendas = (rows || []).map(c => ({
     code: c.company_code,
     name: c.business_name || '',
@@ -144,11 +169,17 @@ async function listTiendas(env) {
    ~24 subrequests) y se devuelve remaining/done para que el cliente
    vuelva a llamar en bucle. Con codes:[...] se procesan las indicadas
    (el cliente ya las acota). */
-async function syncTiendas(env, body) {
+async function syncTiendas(env, body, allowed) {
   const base = await osticketBase(env);
   if (!base || !env.osticket_api_key) {
     return json({ ok: false, error: 'osTicket no esta configurado (URL o clave API).' }, 400);
   }
+
+  // Segmento de alcance para las consultas (admin -> solo sus tiendas).
+  // superadmin (allowed=null) no agrega restriccion.
+  const scopeSeg = allowed !== null
+    ? (allowed.size ? `&company_code=in.(${[...allowed].map(c => encodeURIComponent(c)).join(',')})` : '&company_code=in.(__none__)')
+    : '';
 
   // Resolver el conjunto de tiendas a sincronizar.
   let filter, isAll = false, limit = 0;
@@ -159,9 +190,14 @@ async function syncTiendas(env, body) {
     limit = Math.min(Math.max(parseInt(body.limit, 10) || 12, 1), 20);
     // Solo PENDIENTES con correo: las que aun no tienen osticket_user_id.
     // Asi cada tanda avanza sobre las que faltan (idempotente y sin repetir).
-    filter = `company_type=eq.Tienda&email=not.is.null&osticket_user_id=is.null&order=company_code&limit=${limit}`;
+    filter = `company_type=eq.Tienda&email=not.is.null&osticket_user_id=is.null${scopeSeg}&order=company_code&limit=${limit}`;
   } else if (Array.isArray(body.codes) && body.codes.length) {
-    const list = body.codes.map(c => encodeURIComponent(String(c))).join(',');
+    // Filtrar los codes pedidos a los que esten dentro del alcance (defensa:
+    // un admin no puede sincronizar tiendas ajenas).
+    let codes = body.codes.map(c => String(c));
+    if (allowed !== null) codes = codes.filter(c => allowed.has(c));
+    if (!codes.length) return json({ ok: false, error: 'Ninguna de esas tiendas esta en tu alcance.' }, 403);
+    const list = codes.map(c => encodeURIComponent(c)).join(',');
     filter = `company_code=in.(${list})`;
   } else {
     return json({ ok: false, error: 'Indica codes:[...] o all:true.' }, 400);
@@ -209,7 +245,7 @@ async function syncTiendas(env, body) {
   let remaining = 0, done = true;
   if (isAll) {
     const pend = await sb(env,
-      `companies?company_type=eq.Tienda&email=not.is.null&osticket_user_id=is.null&select=company_code`);
+      `companies?company_type=eq.Tienda&email=not.is.null&osticket_user_id=is.null${scopeSeg}&select=company_code`);
     remaining = (pend || []).length;
     done = remaining === 0;
   }
@@ -230,7 +266,7 @@ async function syncTiendas(env, body) {
    FIJA (no se fuerza el cambio). Reusa gc-user.json con username+password.
    Ademas asegura el remitente (mismo endpoint) y guarda osticket_user_id +
    osticket_access_granted_at. Requiere: la tienda debe tener correo. */
-async function grantAccess(env, body) {
+async function grantAccess(env, body, allowed) {
   const base = await osticketBase(env);
   if (!base || !env.osticket_api_key) {
     return json({ ok: false, error: 'osTicket no esta configurado (URL o clave API).' }, 400);
@@ -238,6 +274,10 @@ async function grantAccess(env, body) {
   const code = body.code ? String(body.code).trim() : '';
   const password = body.password != null ? String(body.password) : '';
   if (!code) return json({ ok: false, error: 'Falta la tienda (code).' }, 400);
+  // Alcance: un admin solo puede dar acceso a tiendas de su alcance.
+  if (allowed !== null && !allowed.has(code)) {
+    return json({ ok: false, error: 'Esa tienda esta fuera de tu alcance.' }, 403);
+  }
   if (!password || password.length < 6) {
     return json({ ok: false, error: 'La clave debe tener al menos 6 caracteres.' }, 400);
   }
