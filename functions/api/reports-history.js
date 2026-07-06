@@ -222,17 +222,22 @@ async function resolveScope(env, user) {
       method: 'POST', body: JSON.stringify({ p_admin_id: a[0].id }),
     });
     const codes = (rows || []).map(r => r.company_code);
-    // Para cada empresa del alcance, ver si esta restringida por departamento.
-    // get_admin_dept_ids -> null (empresa completa) | array (solo esos deptos).
+    // Mapa de restriccion por departamento en UNA sola llamada (antes se
+    // llamaba get_admin_dept_ids una vez por empresa -> con un admin de
+    // alcance amplio eso disparaba "Too many subrequests" en Cloudflare).
+    // get_admin_dept_map devuelve solo las empresas restringidas por depto,
+    // cada una con su array de dept_ids. Las de acceso completo no vienen.
     const deptByCompany = {};
-    for (const cc of codes) {
-      try {
-        const ids = await sbJson(env, 'rpc/get_admin_dept_ids', {
-          method: 'POST', body: JSON.stringify({ p_admin_id: a[0].id, p_company_code: cc }),
-        });
-        if (Array.isArray(ids) && ids.length) deptByCompany[cc] = ids.map(Number);
-      } catch { /* si falla, se trata como empresa completa */ }
-    }
+    try {
+      const mapRows = await sbJson(env, 'rpc/get_admin_dept_map', {
+        method: 'POST', body: JSON.stringify({ p_admin_id: a[0].id }),
+      });
+      (mapRows || []).forEach(m => {
+        if (Array.isArray(m.dept_ids) && m.dept_ids.length) {
+          deptByCompany[m.company_code] = m.dept_ids.map(Number);
+        }
+      });
+    } catch { /* si falla, se tratan todas como empresas completas */ }
     return { codes, adminId: a[0].id, deptByCompany };
   }
   return { codes: [] };
