@@ -133,11 +133,11 @@ const NAV_GROUPS = [
     ['constancias', I.docs, 'Constancias'],
     ['firmantes', I.pencil, 'Firmantes', 'superonly'],
   ] },
-  { title: 'Administración', superonly: true, items: [
+  { title: 'Administración', items: [
     ['equipo', I.team, 'Equipo'],
-    ['permisos', I.shield, 'Permisos'],
-    ['sync', I.sync, 'Sincronización'],
-    ['config', I.cog, 'Configuración'],
+    ['permisos', I.shield, 'Permisos', 'superonly'],
+    ['sync', I.sync, 'Sincronización', 'superonly'],
+    ['config', I.cog, 'Configuración', 'superonly'],
   ] },
 ];
 
@@ -312,7 +312,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.98</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.99</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2752,8 +2752,10 @@ function ostClientCell(a) {
 /* Botones de accion comunes (rol/resetear/activar) para un miembro. `self`
    es true si la fila es el propio usuario logueado (no puede cambiarse rol
    ni desactivarse). */
-function auRowCommonActs(a, self) {
-  const roleBtn = self ? ''
+function auRowCommonActs(a, self, isSuper = true) {
+  // El cambio de ROL es exclusivo de superadmin (create/update_role son
+  // SUPER_ONLY en el backend). Para un admin no-super no se muestra.
+  const roleBtn = (self || !isSuper) ? ''
     : `<button class="btn btn-mini" data-act="role" data-id="${a.id}" data-u="${a.username}" data-role="${a.role}" title="Cambiar rol">Rol</button>`;
   const resetBtn = `<button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>`;
   const toggleBtn = self ? ''
@@ -2792,6 +2794,12 @@ async function viewEquipo(user) {
   if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
   const rows = d.rows || [];
 
+  // El editor de equipo completo (crear miembros, cambiar roles, ver todos
+  // los roles) es de superadmin. Un admin no-super entra a Equipo para VER y
+  // gestionar (reset/toggle/osTicket) SOLO los gestores de su alcance; el
+  // backend ya le devuelve unicamente esos gestores.
+  const isSuper = user.role === 'superadmin';
+
   const supers = rows.filter(a => a.role === 'superadmin');
   const admins = rows.filter(a => a.role === 'admin');
   const gestores = rows.filter(a => a.role === 'gestor_empresa');
@@ -2828,7 +2836,7 @@ async function viewEquipo(user) {
   };
   const adminRows = admins.map(a => {
     const self = String(a.id) === String(user.id);
-    const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self);
+    const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self, isSuper);
     return `<tr>
       <td class="code" data-label="Usuario">${a.username}</td>
       <td class="cell-name" data-label="Nombre">${a.name || '\u2014'}</td>
@@ -2856,7 +2864,7 @@ async function viewEquipo(user) {
   };
   const gestorRows = gestores.map(a => {
     const self = String(a.id) === String(user.id);
-    const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self);
+    const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self, isSuper);
     return `<tr>
       <td class="code" data-label="Usuario">${a.username}</td>
       <td class="cell-name" data-label="Nombre">${a.name || '\u2014'}</td>
@@ -2865,7 +2873,7 @@ async function viewEquipo(user) {
       <td data-label="osTicket">${ostClientCell(a)}</td>
       <td data-label="Estado">${estadoPill(a)}${lastLoginLabel(a.last_login_at)}</td>
       <td class="cell-actcell" style="text-align:right"><div class="cell-actions">
-        <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>
+        ${isSuper ? `<button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>` : ''}
         ${roleBtn}
         <button class="btn btn-mini" data-act="osticket" data-id="${a.id}" data-u="${a.username}" title="Crear/actualizar como cliente de osTicket">osTicket</button>
         ${resetBtn}
@@ -2882,7 +2890,7 @@ async function viewEquipo(user) {
   };
   const editorRows = editores.map(a => {
     const self = String(a.id) === String(user.id);
-    const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self);
+    const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self, isSuper);
     return `<tr>
       <td class="code" data-label="Usuario">${a.username}</td>
       <td class="cell-name" data-label="Nombre">${a.name || '\u2014'}</td>
@@ -2900,15 +2908,15 @@ async function viewEquipo(user) {
   }).join('') || '<tr><td colspan="6" class="empty">Sin editores de personal.</td></tr>';
 
   $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Equipo</h1><p>${rows.length} miembros \u00b7 cada rol con sus columnas y acciones</p></div>
-      <div class="head-actions">
+    <div class="pnl-head"><div><h1>Equipo</h1><p>${isSuper ? `${rows.length} miembros \u00b7 cada rol con sus columnas y acciones` : `${gestores.length} gestor${gestores.length === 1 ? '' : 'es'} de empresa en tu alcance`}</p></div>
+      ${isSuper ? `<div class="head-actions">
         <button class="btn" id="auSyncClients" title="Crear/actualizar los gestores de empresa como clientes de osTicket">${I.sync} Gestores osTicket</button>
         <button class="btn btn-primary" id="auNew">${I.plus} Nuevo miembro</button>
-      </div></div>
+      </div>` : ''}</div>
 
-    ${suHtml}
+    ${isSuper ? suHtml : ''}
 
-    <div class="role-block">
+    ${isSuper ? `<div class="role-block">
       <div class="role-head">
         <span class="role-title">Administradores</span>
         <span class="role-badge rb-admin">admin</span>
@@ -2923,7 +2931,7 @@ async function viewEquipo(user) {
       <div class="tablebox scroll-x u-compact tbl-cards"><table><thead><tr>
         <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Alcance</th><th>osTicket (agente)</th><th>Estado</th><th style="text-align:right">Acciones</th>
       </tr></thead><tbody>${adminRows}</tbody></table></div>
-    </div>
+    </div>` : ''}
 
     <div class="role-block">
       <div class="role-head">
@@ -2942,7 +2950,7 @@ async function viewEquipo(user) {
       </tr></thead><tbody>${gestorRows}</tbody></table></div>
     </div>
 
-    <div class="role-block">
+    ${isSuper ? `<div class="role-block">
       <div class="role-head">
         <span class="role-title">Editores de personal</span>
         <span class="role-badge rb-editor">editor</span>
@@ -2956,10 +2964,12 @@ async function viewEquipo(user) {
       <div class="tablebox scroll-x u-compact tbl-cards"><table><thead><tr>
         <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Alcance</th><th>Estado</th><th style="text-align:right">Acciones</th>
       </tr></thead><tbody>${editorRows}</tbody></table></div>
-    </div>`;
+    </div>` : ''}`;
 
-  $('#auNew').addEventListener('click', () => auCreateModal(user));
-  $('#auSyncClients').addEventListener('click', () => auSyncClientsAll(user));
+  if (isSuper) {
+    $('#auNew').addEventListener('click', () => auCreateModal(user));
+    $('#auSyncClients').addEventListener('click', () => auSyncClientsAll(user));
+  }
   $('#pnlMain').querySelectorAll('button[data-act]').forEach(b =>
     b.addEventListener('click', () => auAction(b.dataset, user)));
 }

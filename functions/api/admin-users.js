@@ -1,10 +1,10 @@
 /* =====================================================================
    functions/api/admin-users.js  →  /api/admin-users
-   Gestión del Equipo (admins). Solo superadmin. Acciones (POST {action}):
-     - list:   lista admins con su rol
-     - create: crea un admin
-     - reset:  resetea contraseña
-     - toggle: activa/desactiva
+   Gestion del Equipo. superadmin: todo (crear, cambiar rol, ver todos los
+   roles, sync masivo). admin no-super: VE y gestiona (reset/toggle/osTicket)
+   SOLO los gestor_empresa entrelazados con su alcance (gestores_in_admin_scope).
+   Acciones (POST {action}): list, create, reset, toggle, update_role,
+   sync_client, sync_clients_all.
 
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
@@ -54,10 +54,20 @@ async function sb(env, path, opts = {}) {
   return t ? JSON.parse(t) : null;
 }
 
-async function isSuperadmin(env, adminId) {
-  if (!adminId) return false;
-  const r = await sb(env, `admin_users?id=eq.${encodeURIComponent(adminId)}&role=eq.superadmin&is_active=eq.true&select=id`);
-  return r && r.length > 0;
+async function getActiveAdmin(env, adminId) {
+  if (!adminId) return null;
+  const r = await sb(env, `admin_users?id=eq.${encodeURIComponent(adminId)}&is_active=eq.true&select=id,role`);
+  return r && r.length ? r[0] : null;
+}
+
+// Set de ids de gestor_empresa entrelazados con el alcance de un admin (via
+// RPC gestores_in_admin_scope). Para superadmin devuelve null (sin limite).
+async function gestorScopeSet(env, admin) {
+  if (admin.role === 'superadmin') return null;
+  const r = await sb(env, 'rpc/gestores_in_admin_scope', {
+    method: 'POST', body: JSON.stringify({ p_admin_id: admin.id }),
+  });
+  return new Set((r || []).map(x => Number(x)));
 }
 
 /* ---- osTicket (lado CLIENTE/user) ----
@@ -133,13 +143,38 @@ export async function onRequestPost({ request, env }) {
   const { action, adminId } = body;
 
   try {
-    const legacyOk = await isSuperadmin(env, adminId);
-    // SHADOW: gate legacy = superadmin. Code fino por accion (team.*).
+    const me = await getActiveAdmin(env, adminId);
+    if (!me) return json({ ok: false, error: 'No autorizado.' }, 401);
+    const isSuper = me.role === 'superadmin';
+
+    // Acciones SOLO superadmin: crear usuarios, cambiar roles y sincronizacion
+    // masiva de clientes osTicket. Las demas (list/reset/toggle/sync_client)
+    // las puede hacer un admin, pero limitadas a los gestores de su alcance.
+    const SUPER_ONLY = new Set(['create', 'update_role', 'sync_clients_all']);
+    const legacyOk = isSuper || !SUPER_ONLY.has(action);
+    // SHADOW: gate legacy = superadmin para SUPER_ONLY; admin activo para el resto.
     await shadowCan(env, adminId, 'admin-users', action || '?', TEAM_CODE_BY_ACTION[action] || 'team.role', legacyOk);
-    if (!legacyOk) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+    if (SUPER_ONLY.has(action) && !isSuper) {
+      return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+    }
+
+    // Para un admin no-super, set de gestores que puede ver/gestionar (los
+    // entrelazados con su alcance). superadmin -> null (todos).
+    const gestorSet = await gestorScopeSet(env, me);
+    // Valida que un target (por id) sea un gestor dentro del alcance del admin.
+    // superadmin siempre pasa.
+    const canTouchTarget = async (targetId) => {
+      if (isSuper) return true;
+      if (!gestorSet || !gestorSet.has(Number(targetId))) return false;
+      return true;
+    };
 
     if (action === 'list') {
-      const rows = await sb(env, 'admin_users?select=id,username,name,email,role,is_active,osticket_staff_id,osticket_user_id,osticket_user_synced_at,last_login_at&order=role.desc,username');
+      let rows = await sb(env, 'admin_users?select=id,username,name,email,role,is_active,osticket_staff_id,osticket_user_id,osticket_user_synced_at,last_login_at&order=role.desc,username');
+      // admin no-super: solo los gestores entrelazados con su alcance.
+      if (!isSuper) {
+        rows = (rows || []).filter(a => a.role === 'gestor_empresa' && gestorSet.has(Number(a.id)));
+      }
       // Resumen de alcance por admin: conteo de reglas include/exclude por
       // tipo (zone/subzone/company/department). Barato (2 lecturas), suficiente
       // para el resumen de la grilla; el detalle se edita en el editor de scope.
@@ -177,6 +212,9 @@ export async function onRequestPost({ request, env }) {
 
     if (action === 'reset') {
       const { id, password, useTemp } = body;
+      if (!id) return json({ ok: false, error: 'Falta el usuario.' }, 400);
+      // admin no-super: solo puede resetear gestores de su alcance.
+      if (!(await canTouchTarget(id))) return json({ ok: false, error: 'Ese usuario esta fuera de tu alcance.' }, 403);
       const pwd = useTemp ? genTempPassword() : password;
       if (!pwd || pwd.length < 6) return json({ ok: false, error: 'Contraseña inválida (mín. 6).' }, 400);
       const hash = await hashPassword(pwd);
@@ -189,6 +227,9 @@ export async function onRequestPost({ request, env }) {
 
     if (action === 'toggle') {
       const { id, isActive } = body;
+      if (!id) return json({ ok: false, error: 'Falta el usuario.' }, 400);
+      // admin no-super: solo puede activar/desactivar gestores de su alcance.
+      if (!(await canTouchTarget(id))) return json({ ok: false, error: 'Ese usuario esta fuera de tu alcance.' }, 403);
       // No permitir auto-desactivarse.
       if (!isActive && String(id) === String(adminId)) {
         return json({ ok: false, error: 'No puedes desactivar tu propio usuario.' }, 400);
@@ -292,6 +333,8 @@ export async function onRequestPost({ request, env }) {
     if (action === 'sync_client') {
       const { id, username, password } = body;
       if (!id) return json({ ok: false, error: 'Falta el usuario.' }, 400);
+      // admin no-super: solo gestores de su alcance.
+      if (!(await canTouchTarget(id))) return json({ ok: false, error: 'Ese usuario esta fuera de tu alcance.' }, 403);
       const base = await osticketBase(env);
       if (!base || !env.osticket_api_key) return json({ ok: false, error: 'osTicket no esta configurado (URL o clave API).' }, 400);
       const rows = await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}&select=id,username,name,email,role`);
