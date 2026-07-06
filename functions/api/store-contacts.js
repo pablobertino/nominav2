@@ -18,6 +18,8 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -46,6 +48,13 @@ export async function onRequestPost({ request, env }) {
 
   const action = body.action;
   try {
+    // SHADOW: este endpoint HOY no valida sesion (agujero real). El shadow
+    // solo REGISTRA si el actor (body.user) tendria el permiso
+    // company.responsables; legacyAllowed=true porque el comportamiento actual
+    // permite todo. En la pasada FINAL hay que AGREGAR el gate real aqui
+    // (validar sesion: tienda su propia empresa, admin con alcance, superadmin).
+    await shadowCan(env, body.user || null, 'store-contacts', action || '?', 'company.responsables', true);
+
     if (action === 'list') {
       const cc = (body.company_code || '').trim();
       if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);

@@ -15,18 +15,18 @@ async function api(payload) {
   return res.json();
 }
 
-export async function contactsList(companyCode) {
-  return api({ action: 'list', company_code: companyCode });
+export async function contactsList(companyCode, user) {
+  return api({ action: 'list', company_code: companyCode, user });
 }
 
-export async function contactsAdd(companyCode, fullName, role, idNumber) {
-  return api({ action: 'add', company_code: companyCode, full_name: fullName, role, id_number: idNumber });
+export async function contactsAdd(companyCode, fullName, role, idNumber, user) {
+  return api({ action: 'add', company_code: companyCode, full_name: fullName, role, id_number: idNumber, user });
 }
 
-export async function contactsUpdate(id, fields) {
-  return api({ action: 'update', id, ...fields });
+export async function contactsUpdate(id, fields, user) {
+  return api({ action: 'update', id, ...fields, user });
 }
 
-export async function contactsRemove(id) {
-  return api({ action: 'remove', id });
+export async function contactsRemove(id, user) {
+  return api({ action: 'remove', id, user });
 }

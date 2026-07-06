@@ -449,7 +449,7 @@ export function launchWizard(user, reportDef, onExit) {
 
   /* ---------- PASO 2: responsable ---------- */
   async function loadResponsables() {
-    const r = await Resp.contactsList(companyCode);
+    const r = await Resp.contactsList(companyCode, user);
     if (r.ok) S.responsables = r.contacts || [];
     // Opcion 2 (red de seguridad): si no hay responsables sembrados pero el
     // roster ya trae gerentes/subgerentes detectados (manager_role), se
@@ -480,7 +480,7 @@ export function launchWizard(user, reportDef, onExit) {
     if (S.selResp == null || S.selResp === NO_MANAGER) return null;
     const sel = S.responsables.find(r => r.id === S.selResp);
     if (!sel || !sel._virtual) return null;
-    const res = await Resp.contactsAdd(companyCode, sel.full_name, sel.role, sel.id_number);
+    const res = await Resp.contactsAdd(companyCode, sel.full_name, sel.role, sel.id_number, user);
     if (res && res.ok && res.contact) {
       // refrescar la lista real y reapuntar la seleccion al id persistido
       await loadResponsables();
@@ -620,7 +620,7 @@ export function launchWizard(user, reportDef, onExit) {
         });
       }
       ov.querySelectorAll('[data-del]').forEach(b => b.addEventListener('click', async () => {
-        await Resp.contactsRemove(parseInt(b.dataset.del, 10));
+        await Resp.contactsRemove(parseInt(b.dataset.del, 10), user);
         if (S.selResp === parseInt(b.dataset.del, 10)) S.selResp = null;
         await loadResponsables(); paint();
       }));
@@ -638,7 +638,7 @@ export function launchWizard(user, reportDef, onExit) {
       const w = (S.roster || []).find(x => x.id_number === ced);
       if (!w) { msg.textContent = 'No se encontro el trabajador en la lista.'; return; }
       const cargo = w.cargo_label || w.role || 'Responsable';
-      const r = await Resp.contactsAdd(companyCode, w.full_name, cargo, w.id_number);
+      const r = await Resp.contactsAdd(companyCode, w.full_name, cargo, w.id_number, user);
       if (!r.ok) { msg.textContent = r.error || 'No se pudo agregar.'; return; }
       sel.value = '';
       await loadResponsables(); paint();
@@ -648,7 +648,7 @@ export function launchWizard(user, reportDef, onExit) {
       const name = ov.querySelector('#rmName').value.trim();
       const role = ov.querySelector('#rmRole').value.trim();
       if (!name || !role) { alert('Completa nombre y cargo.'); return; }
-      const r = await Resp.contactsAdd(companyCode, name, role);
+      const r = await Resp.contactsAdd(companyCode, name, role, undefined, user);
       if (!r.ok) { alert(r.error || 'No se pudo agregar.'); return; }
       ov.querySelector('#rmName').value = ''; ov.querySelector('#rmRole').value = '';
       await loadResponsables(); paint();
