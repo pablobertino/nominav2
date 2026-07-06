@@ -73,6 +73,11 @@ function buildRow(body) {
   if (nombre.length > 120) return { error: 'El nombre es demasiado largo.' };
   let ejec = body.fecha_ejecucion == null || body.fecha_ejecucion === '' ? null : String(body.fecha_ejecucion).trim();
   if (ejec && !ISO_RE.test(ejec)) return { error: 'Fecha de ejecucion invalida.' };
+  // Icono del feriado: codigo corto (ej. 'flag', 'cross'). El catalogo de
+  // codigos validos lo define el frontend; aqui solo se valida que sea un
+  // slug corto (letras/numeros/guion) o null. No es obligatorio.
+  let icono = body.icono == null || body.icono === '' ? null : String(body.icono).trim().toLowerCase();
+  if (icono && !/^[a-z0-9-]{1,24}$/.test(icono)) return { error: 'Icono invalido.' };
   // 'anio' es una columna GENERATED ALWAYS (EXTRACT(year FROM fecha)); NO se
   // envia en el insert/update (Postgres la calcula sola). Se devuelve aparte
   // solo para saber que anio recalcular en el Plazo Reclamo.
@@ -86,6 +91,7 @@ function buildRow(body) {
       es_nacional: !!body.es_nacional,
       es_bancario: !!body.es_bancario,
       movil: !!body.movil,
+      icono,
     },
   };
 }

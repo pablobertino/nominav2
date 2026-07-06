@@ -164,8 +164,8 @@ export async function onRequestPost({ request, env }) {
         const axisEnd = period.pay_date;
         try {
           const fer = await sb(env,
-            `feriado?es_nacional=eq.true&fecha=gte.${axisStart}&fecha=lte.${axisEnd}&order=fecha&select=fecha,nombre`);
-          holidays = (fer || []).map(f => ({ fecha: f.fecha, nombre: f.nombre }));
+            `feriado?es_nacional=eq.true&fecha=gte.${axisStart}&fecha=lte.${axisEnd}&order=fecha&select=fecha,nombre,icono`);
+          holidays = (fer || []).map(f => ({ fecha: f.fecha, nombre: f.nombre, icono: f.icono || null }));
         } catch { holidays = []; }
       }
       return json({ ok: true, today, period, prev, holidays });

@@ -19,6 +19,22 @@ const TL_ICON = {
 const TL_MES = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
 const TL_DIA = ['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa'];
 
+// Iconos de FERIADO (trazo neutro). Se pintan arriba del puntito (o abajo si
+// el feriado cae HOY, para no pisar el bubble). El codigo viene en f.icono
+// desde la BD; mismo catalogo que la vista de Feriados.
+const TL_FER_ICON = {
+  flag:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22V4a1 1 0 0 1 1-1h13l-2.5 4L20 11H6"/></svg>',
+  cross:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M8 7h8"/></svg>',
+  crown:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l3.5 3L12 5l5.5 6L21 8l-2 10H5L3 8z"/><path d="M5 18h14"/></svg>',
+  pray:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v7"/><path d="M9 10c0-2 1.3-3 3-3s3 1 3 3v4a5 5 0 0 1-5 5H8l-3-3 3.5-3.5"/><path d="M9 10l-3.5 3.5"/></svg>',
+  mask:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5s2 8 9 8 9-8 9-8c0 0-1 12-9 12S3 5 3 5z"/><circle cx="8.5" cy="8" r="1"/><circle cx="15.5" cy="8" r="1"/></svg>',
+  tools:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0 5 5l-1.7 1.7 4 4a1.5 1.5 0 0 1-2 2l-4-4-1.7 1.7a4 4 0 0 0-5-5l1.7-1.7-4-4a1.5 1.5 0 0 1 2-2l4 4z"/></svg>',
+  star:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6L20 9.3l-4 4 1 6-5-2.8L7 19.3l1-6-4-4 5.4-.7z"/></svg>',
+  tree:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l5 6h-3l4 5h-4l3 4H7l3-4H6l4-5H7l5-6z"/><path d="M12 18v3"/></svg>',
+  sparkles: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"/><path d="M18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8L18 14z"/></svg>',
+};
+function tlFerIcon(code) { return (code && TL_FER_ICON[code]) ? TL_FER_ICON[code] : ''; }
+
 function tlD(iso) { const [y, m, dd] = iso.split('-').map(Number); return new Date(Date.UTC(y, m - 1, dd)); }
 function tlDM(iso) { const x = tlD(iso); return x.getUTCDate() + ' ' + TL_MES[x.getUTCMonth()]; }
 function tlDiaDM(iso) { const x = tlD(iso); return TL_DIA[x.getUTCDay()] + ' ' + x.getUTCDate() + ' ' + TL_MES[x.getUTCMonth()]; }
@@ -88,6 +104,16 @@ function tlEnsureStyles() {
   .tl-fer .tl-fer-tip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);
     border:5px solid transparent;border-top-color:#0f172a}
   .tl-fer:hover .tl-fer-tip{opacity:1}
+  /* Icono del feriado: por defecto ARRIBA del puntito (no toca el puntito ni
+     su tooltip). Neutro, hereda color oscuro. */
+  .tl-fer-ico{position:absolute;bottom:calc(100% + 7px);left:50%;transform:translateX(-50%);
+    width:19px;height:19px;color:#1e293b;pointer-events:none;z-index:6}
+  .tl-fer-ico svg{width:19px;height:19px;display:block}
+  /* Si el feriado cae HOY: el icono baja (para no pisar el bubble HOY) y el
+     tooltip tambien baja con el pico invertido (apuntando hacia arriba). */
+  .tl-fer.today .tl-fer-ico{bottom:auto;top:calc(100% + 7px)}
+  .tl-fer.today .tl-fer-tip{bottom:auto;top:calc(100% + 30px)}
+  .tl-fer.today .tl-fer-tip::after{top:auto;bottom:100%;border-top-color:transparent;border-bottom-color:#0f172a}
   .tl-mk.act .tl-ic{transform:scale(1.12)}
   .tl-mk.act.calc .tl-ic{border-color:#b45309;background:#f59e0b;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 7px #fde68a}
   .tl-mk.act.cut  .tl-ic{border-color:#1e40af;background:#3b82f6;color:#fff;box-shadow:0 0 0 4px var(--surface),0 0 0 7px #bfdbfe}
@@ -192,7 +218,11 @@ function tlHtml(period, todayISO, prev, holidays) {
     .filter(f => f.fecha && tlBetween(startISO, f.fecha) >= 0 && tlBetween(f.fecha, endISO) >= 0)
     .map(f => {
       const p = tlPos(f.fecha, startISO, endISO) * 100;
-      return `<div class="tl-fer" style="left:${p}%">
+      const isToday = f.fecha === todayISO;
+      const ic = tlFerIcon(f.icono);
+      const icoHtml = ic ? `<div class="tl-fer-ico">${ic}</div>` : '';
+      return `<div class="tl-fer${isToday ? ' today' : ''}" style="left:${p}%">
+        ${icoHtml}
         <div class="tl-fer-tip">${tlDiaDM(f.fecha)} : ${f.nombre}</div>
       </div>`;
     }).join('');

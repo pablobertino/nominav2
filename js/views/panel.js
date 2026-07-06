@@ -312,7 +312,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.93</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.94</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4420,6 +4420,51 @@ async function viewPeriods(user) {
 let HOL_YEAR = null;
 let HOL_FILTER = 'all';
 
+/* ---- Catalogo de ICONOS de feriado ----
+   Cada icono es un SVG de trazo (neutro, hereda color). Se guarda en la BD el
+   CODIGO corto (flag, cross, ...) y aqui se mapea a su SVG. Reutilizable por
+   la tabla de Feriados, el selector del modal y la linea de tiempo. */
+const HOL_ICONS = {
+  flag:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22V4a1 1 0 0 1 1-1h13l-2.5 4L20 11H6"/></svg>',
+  cross:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M8 7h8"/></svg>',
+  crown:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l3.5 3L12 5l5.5 6L21 8l-2 10H5L3 8z"/><path d="M5 18h14"/></svg>',
+  pray:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v7"/><path d="M9 10c0-2 1.3-3 3-3s3 1 3 3v4a5 5 0 0 1-5 5H8l-3-3 3.5-3.5"/><path d="M9 10l-3.5 3.5"/></svg>',
+  mask:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 5s2 8 9 8 9-8 9-8c0 0-1 12-9 12S3 5 3 5z"/><circle cx="8.5" cy="8" r="1"/><circle cx="15.5" cy="8" r="1"/></svg>',
+  tools:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a4 4 0 0 0 5 5l-1.7 1.7 4 4a1.5 1.5 0 0 1-2 2l-4-4-1.7 1.7a4 4 0 0 0-5-5l1.7-1.7-4-4a1.5 1.5 0 0 1 2-2l4 4z"/></svg>',
+  star:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l2.6 5.6L20 9.3l-4 4 1 6-5-2.8L7 19.3l1-6-4-4 5.4-.7z"/></svg>',
+  tree:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l5 6h-3l4 5h-4l3 4H7l3-4H6l4-5H7l5-6z"/><path d="M12 18v3"/></svg>',
+  sparkles: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l1.6 4.4L18 9l-4.4 1.6L12 15l-1.6-4.4L6 9l4.4-1.6L12 3z"/><path d="M18 14l.8 2.2L21 17l-2.2.8L18 20l-.8-2.2L15 17l2.2-.8L18 14z"/></svg>',
+};
+// Etiqueta legible de cada icono (para el selector del modal).
+const HOL_ICON_LABEL = {
+  flag: 'Bandera (patrio)', cross: 'Cruz (Semana Santa)', crown: 'Corona (virgen)',
+  pray: 'Manos (santo)', mask: 'Mascara (carnaval)', tools: 'Trabajo',
+  star: 'Estrella (Reyes)', tree: 'Navidad', sparkles: 'Ano nuevo',
+};
+const HOL_ICON_ORDER = ['flag', 'cross', 'crown', 'pray', 'mask', 'tools', 'star', 'tree', 'sparkles'];
+
+// SVG de un codigo de icono (o '' si no hay / no existe).
+function holIconSvg(code) { return (code && HOL_ICONS[code]) ? HOL_ICONS[code] : ''; }
+
+// Icono por DEFECTO segun el nombre del feriado. Se usa al "Sugerir feriados"
+// y al generar un anio nuevo, para que cada feriado nazca con su icono (y asi
+// "se lleve" el icono al anio siguiente sin copiar filas). Mismo mapeo que el
+// backfill de la BD.
+function holIconFor(nombre) {
+  const s = String(nombre || '').toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  if (s.includes('independencia') || s.includes('carabobo') || s.includes('libertador') || s.includes('resistencia indigena')) return 'flag';
+  if (s.includes('jueves santo') || s.includes('viernes santo') || s.includes('corpus')) return 'cross';
+  if (s.includes('divina pastora') || s.includes('coromoto') || s.includes('chiquinquira') || s.includes('inmaculada')) return 'crown';
+  if (s.includes('san jose gregorio') || s.includes('san jose') || s.includes('san pedro')) return 'pray';
+  if (s.includes('reyes')) return 'star';
+  if (s.includes('carnaval')) return 'mask';
+  if (s.includes('trabajador')) return 'tools';
+  if (s.includes('navidad') || s.includes('nochebuena')) return 'tree';
+  if (s.includes('ano nuevo') || s.includes('fin de ano')) return 'sparkles';
+  return null;
+}
+
 async function holidaysApi(payload) {
   try {
     const r = await fetch('/api/holidays', {
@@ -4469,7 +4514,7 @@ const HOL_FIJOS = [
 // Devuelve objetos {fecha, nombre, es_nacional, es_bancario, movil}.
 function holGenerar(anio) {
   const out = HOL_FIJOS.map(([md, nombre, nac, ban]) =>
-    ({ fecha: anio + '-' + md, nombre, es_nacional: nac, es_bancario: ban, movil: false }));
+    ({ fecha: anio + '-' + md, nombre, es_nacional: nac, es_bancario: ban, movil: false, icono: holIconFor(nombre) }));
   const p = holEaster(anio);
   [
     [holAddDays(p, -48), 'Lunes de Carnaval', true, true],
@@ -4478,7 +4523,7 @@ function holGenerar(anio) {
     [holAddDays(p, -2), 'Viernes Santo', true, true],
     [holAddDays(p, 60), 'Corpus Christi', false, true],
   ].forEach(([f, nombre, nac, ban]) =>
-    out.push({ fecha: holIso(f), nombre, es_nacional: nac, es_bancario: ban, movil: true }));
+    out.push({ fecha: holIso(f), nombre, es_nacional: nac, es_bancario: ban, movil: true, icono: holIconFor(nombre) }));
   out.sort((a, b) => a.fecha < b.fecha ? -1 : 1);
   return out;
 }
@@ -4525,7 +4570,7 @@ async function viewHolidays(user) {
     </div>
     <div class="tablebox scroll-x tbl-cards"><table><thead><tr>
       <th>Fecha</th><th>Nombre</th><th>Nacional</th><th>Bancario</th>
-      <th>Ejecución bancaria</th><th>Móvil</th>${isSuper ? '<th style="text-align:right">Acciones</th>' : ''}
+      <th>Ejecución bancaria</th><th>Móvil</th><th>Icono</th>${isSuper ? '<th style="text-align:right">Acciones</th>' : ''}
     </tr></thead><tbody id="hBody"></tbody></table></div>`;
 
   $('#hBack').addEventListener('click', () => viewPeriods(user));
@@ -4540,7 +4585,7 @@ async function viewHolidays(user) {
   loadHol();
 
   async function loadHol() {
-    const NC = isSuper ? 7 : 6;
+    const NC = isSuper ? 8 : 7;
     $('#hBody').innerHTML = `<tr><td colspan="${NC}" class="pnl-loading">Cargando…</td></tr>`;
     const d = await holidaysApi({ action: 'list', year: HOL_YEAR, filter: HOL_FILTER });
     if (!d.ok) { $('#hBody').innerHTML = `<tr><td colspan="${NC}" class="empty">Error: ${d.error}</td></tr>`; return; }
@@ -4560,6 +4605,7 @@ async function viewHolidays(user) {
       <td data-label="Bancario">${f.es_bancario ? '<span class="pill" style="background:#f1f5f9;color:#475569">Bancario</span>' : '<span class="muted">—</span>'}</td>
       <td data-label="Ejecución bancaria">${f.fecha_ejecucion ? `<span class="muted">${holFmt(f.fecha_ejecucion)}</span>` : '<span class="muted">—</span>'}</td>
       <td data-label="Móvil">${f.movil ? '<span class="pill" style="background:#f3e8ff;color:#7c3aed">Móvil</span>' : '<span class="muted">—</span>'}</td>
+      <td data-label="Icono">${f.icono && HOL_ICONS[f.icono] ? `<span title="${HOL_ICON_LABEL[f.icono] || f.icono}" style="display:inline-flex;width:20px;height:20px;color:var(--ink,#1e293b)">${HOL_ICONS[f.icono]}</span>` : '<span class="muted">—</span>'}</td>
       ${isSuper ? `<td data-label="Acciones" style="text-align:right;white-space:nowrap">
         <button class="btn btn-mini" data-hedit="${f.id}">Editar</button>
         <button class="btn btn-mini" data-hdel="${f.id}" data-hnom="${(f.nombre || '').replace(/"/g, '&quot;')}" data-hnac="${f.es_nacional ? 1 : 0}" data-hfec="${f.fecha}">Eliminar</button>
@@ -4594,6 +4640,11 @@ function holEditModal(user, f) {
       <label class="flabel" style="display:flex;align-items:center;gap:7px;margin:0"><input type="checkbox" id="hBan" ${isEdit && f.es_bancario ? 'checked' : ''}> Bancario</label>
       <label class="flabel" style="display:flex;align-items:center;gap:7px;margin:0"><input type="checkbox" id="hMov" ${isEdit && f.movil ? 'checked' : ''}> Móvil</label>
     </div>
+    <label class="flabel" style="margin-top:14px">Icono <span class="muted">(para el calendario y la línea de tiempo)</span></label>
+    <div id="hIconPick" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:4px">
+      <button type="button" class="hicon" data-ic="" title="Sin icono" style="width:38px;height:38px;border:1px solid var(--border);border-radius:9px;background:var(--surface);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted,#94a3b8);font-size:11px">—</button>
+      ${HOL_ICON_ORDER.map(code => `<button type="button" class="hicon" data-ic="${code}" title="${HOL_ICON_LABEL[code]}" style="width:38px;height:38px;border:1px solid var(--border);border-radius:9px;background:var(--surface);display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--ink,#1e293b)"><span style="width:20px;height:20px;display:inline-flex">${HOL_ICONS[code]}</span></button>`).join('')}
+    </div>
     <div class="modal-actions">
       <span id="hErr" style="flex:1;color:var(--danger,#dc2626);font-size:12.5px;line-height:1.4;text-align:left"></span>
       <button class="btn" id="mCancel">Cancelar</button>
@@ -4601,12 +4652,39 @@ function holEditModal(user, f) {
     </div>`);
   $('#mX').addEventListener('click', closeModal);
   $('#mCancel').addEventListener('click', closeModal);
+  // Selector de icono: estado + resaltado. En edicion preselecciona el icono
+  // guardado; en alta arranca vacio y auto-sugiere segun el nombre (sin pisar
+  // una eleccion manual del usuario).
+  let selectedIcon = isEdit ? (f.icono || '') : '';
+  let iconTouched = false;
+  const paintIconPick = () => {
+    const wrap = $('#hIconPick'); if (!wrap) return;
+    wrap.querySelectorAll('.hicon').forEach(b => {
+      const on = (b.dataset.ic || '') === (selectedIcon || '');
+      b.style.borderColor = on ? 'var(--brand,#2563eb)' : 'var(--border)';
+      b.style.boxShadow = on ? '0 0 0 2px rgba(37,99,235,.18)' : 'none';
+      b.style.background = on ? 'var(--brand-bg,#eff6ff)' : 'var(--surface)';
+    });
+  };
+  const iconWrap = $('#hIconPick');
+  if (iconWrap) iconWrap.querySelectorAll('.hicon').forEach(b =>
+    b.addEventListener('click', () => { selectedIcon = b.dataset.ic || ''; iconTouched = true; paintIconPick(); }));
+  // Auto-sugerencia por nombre (solo si el usuario no eligio icono a mano).
+  const nomEl = $('#hNombre');
+  if (nomEl) nomEl.addEventListener('input', () => {
+    if (iconTouched) return;
+    const sug = holIconFor(nomEl.value);
+    selectedIcon = sug || '';
+    paintIconPick();
+  });
+  paintIconPick();
   $('#mOk').addEventListener('click', async () => {
     const payload = {
       action: isEdit ? 'update' : 'create', adminId: user.id,
       fecha: $('#hFecha').value, fecha_ejecucion: $('#hEjec').value || null,
       nombre: $('#hNombre').value, es_nacional: $('#hNac').checked,
       es_bancario: $('#hBan').checked, movil: $('#hMov').checked,
+      icono: selectedIcon || null,
     };
     if (isEdit) payload.id = f.id;
     const err = $('#hErr');
