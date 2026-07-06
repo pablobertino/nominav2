@@ -1845,6 +1845,36 @@ input.needfill:focus, select.needfill:focus {
   .tbl-cards tbody td[data-label="Acciones"] { flex-wrap:wrap; }
   .tbl-cards tbody td[data-label="Acciones"] .btn-mini { margin-left:6px; }
 
+  /* --- EQUIPO (grillas por rol) dentro de tbl-cards ---
+     La celda de acciones no lleva data-label (usa .cell-actcell): se comporta
+     como pie de tarjeta con los botones a lo ancho, envolviendose. Ademas, las
+     celdas ricas (Alcance/osTicket) traen contenido apilado que no debe
+     comprimirse contra la etiqueta: se permite que el valor caiga a la derecha
+     con salto. Las StatsCards (sum-cards) se apilan de a 2. */
+  .tbl-cards tbody td.cell-actcell { display:block; text-align:left; padding:9px 0 4px; }
+  .tbl-cards tbody td.cell-actcell::before { display:none; }
+  .tbl-cards tbody td.cell-actcell .cell-actions { display:flex; flex-wrap:wrap; gap:7px;
+    justify-content:flex-start; }
+  .tbl-cards tbody td.cell-actcell .cell-actions .btn-mini { flex:1 1 auto; justify-content:center;
+    margin-left:0; }
+  /* Celdas Alcance / osTicket: el valor (bloque .scope-cell / .ost-*) puede ser
+     alto; se alinea a la derecha pero puede ocupar su propio ancho. */
+  .tbl-cards tbody td[data-label="Alcance"],
+  .tbl-cards tbody td[data-label="osTicket"] { align-items:flex-start; }
+  .tbl-cards tbody td[data-label="Alcance"] .scope-cell,
+  .tbl-cards tbody td[data-label="osTicket"] > * { text-align:right; }
+  /* El correo puede ser largo: que rompa en vez de desbordar. */
+  .tbl-cards tbody td.cell-mail { word-break:break-all; }
+  /* Las tarjetas de resumen por rol (sum-cards c3/c4) se apilan de a 2. */
+  .sum-cards.c3, .sum-cards.c4 { grid-template-columns:repeat(2,1fr); }
+  /* Fila superadmin: que el boton Resetear baje si no cabe, y el bloque de
+     rol respire (titulo + badge + descripcion pueden envolver). */
+  .su-card { flex-wrap:wrap; gap:12px 14px; }
+  .su-info { flex:1 1 60%; }
+  .su-acts { flex:1 1 100%; }
+  .su-acts .btn { flex:1 1 auto; justify-content:center; }
+  .role-head { gap:7px; }
+
   /* Config de Sincronizacion: los grid de 3 columnas se apilan. */
   .cfg-grid3 { grid-template-columns:1fr; }
 

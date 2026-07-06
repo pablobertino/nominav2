@@ -312,7 +312,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.82</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v3.83</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2781,8 +2781,8 @@ async function viewEquipo(user) {
   const editores = rows.filter(a => a.role === 'editor_personal');
 
   const emailCell = (a) => a.email
-    ? `<td class="cell-mail">${a.email}</td>`
-    : '<td class="cell-mail"><span class="muted">\u2014</span></td>';
+    ? `<td class="cell-mail" data-label="Correo">${a.email}</td>`
+    : '<td class="cell-mail" data-label="Correo"><span class="muted">\u2014</span></td>';
 
   // ---- Fila superadmin (destacada, fuera de las grillas) ----
   const suHtml = supers.map(a => {
@@ -2812,13 +2812,13 @@ async function viewEquipo(user) {
     const self = String(a.id) === String(user.id);
     const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self);
     return `<tr>
-      <td class="code">${a.username}</td>
-      <td class="cell-name">${a.name || '\u2014'}</td>
+      <td class="code" data-label="Usuario">${a.username}</td>
+      <td class="cell-name" data-label="Nombre">${a.name || '\u2014'}</td>
       ${emailCell(a)}
-      <td>${scopeCellBoth(a)}</td>
-      <td>${ostAgentCell(a)}</td>
-      <td>${estadoPill(a)}</td>
-      <td style="text-align:right"><div class="cell-actions">
+      <td data-label="Alcance">${scopeCellBoth(a)}</td>
+      <td data-label="osTicket">${ostAgentCell(a)}</td>
+      <td data-label="Estado">${estadoPill(a)}</td>
+      <td class="cell-actcell" style="text-align:right"><div class="cell-actions">
         <button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas">${I.sliders} Tiendas</button>
         <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>
         ${roleBtn}
@@ -2840,13 +2840,13 @@ async function viewEquipo(user) {
     const self = String(a.id) === String(user.id);
     const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self);
     return `<tr>
-      <td class="code">${a.username}</td>
-      <td class="cell-name">${a.name || '\u2014'}</td>
+      <td class="code" data-label="Usuario">${a.username}</td>
+      <td class="cell-name" data-label="Nombre">${a.name || '\u2014'}</td>
       ${emailCell(a)}
-      <td>${scopeCellEnt(a)}</td>
-      <td>${ostClientCell(a)}</td>
-      <td>${estadoPill(a)}</td>
-      <td style="text-align:right"><div class="cell-actions">
+      <td data-label="Alcance">${scopeCellEnt(a)}</td>
+      <td data-label="osTicket">${ostClientCell(a)}</td>
+      <td data-label="Estado">${estadoPill(a)}</td>
+      <td class="cell-actcell" style="text-align:right"><div class="cell-actions">
         <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>
         ${roleBtn}
         <button class="btn btn-mini" data-act="osticket" data-id="${a.id}" data-u="${a.username}" title="Crear/actualizar como cliente de osTicket">osTicket</button>
@@ -2866,12 +2866,12 @@ async function viewEquipo(user) {
     const self = String(a.id) === String(user.id);
     const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self);
     return `<tr>
-      <td class="code">${a.username}</td>
-      <td class="cell-name">${a.name || '\u2014'}</td>
+      <td class="code" data-label="Usuario">${a.username}</td>
+      <td class="cell-name" data-label="Nombre">${a.name || '\u2014'}</td>
       ${emailCell(a)}
-      <td>${scopeCellBoth(a)}</td>
-      <td>${estadoPill(a)}</td>
-      <td style="text-align:right"><div class="cell-actions">
+      <td data-label="Alcance">${scopeCellBoth(a)}</td>
+      <td data-label="Estado">${estadoPill(a)}</td>
+      <td class="cell-actcell" style="text-align:right"><div class="cell-actions">
         <button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas">${I.sliders} Tiendas</button>
         <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>
         ${roleBtn}
@@ -2902,7 +2902,7 @@ async function viewEquipo(user) {
         ${statCard('none', adminStats.noAgent, 'Sin agente')}
         ${statCard('off', adminStats.off, 'Inactivos')}
       </div>
-      <div class="tablebox scroll-x u-compact"><table><thead><tr>
+      <div class="tablebox scroll-x u-compact tbl-cards"><table><thead><tr>
         <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Alcance</th><th>osTicket (agente)</th><th>Estado</th><th style="text-align:right">Acciones</th>
       </tr></thead><tbody>${adminRows}</tbody></table></div>
     </div>
@@ -2919,7 +2919,7 @@ async function viewEquipo(user) {
         ${statCard('none', gestorStats.noClient, 'Sin cliente')}
         ${statCard('off', gestorStats.off, 'Inactivos')}
       </div>
-      <div class="tablebox scroll-x u-compact"><table><thead><tr>
+      <div class="tablebox scroll-x u-compact tbl-cards"><table><thead><tr>
         <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Alcance (empresas)</th><th>osTicket (cliente)</th><th>Estado</th><th style="text-align:right">Acciones</th>
       </tr></thead><tbody>${gestorRows}</tbody></table></div>
     </div>
@@ -2935,7 +2935,7 @@ async function viewEquipo(user) {
         ${statCard('ok', editorStats.on, 'Activos')}
         ${statCard('off', editorStats.off, 'Inactivos')}
       </div>
-      <div class="tablebox scroll-x u-compact"><table><thead><tr>
+      <div class="tablebox scroll-x u-compact tbl-cards"><table><thead><tr>
         <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Alcance</th><th>Estado</th><th style="text-align:right">Acciones</th>
       </tr></thead><tbody>${editorRows}</tbody></table></div>
     </div>`;
