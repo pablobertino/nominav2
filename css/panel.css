@@ -809,10 +809,16 @@
 
 @media (max-width:760px) {
   .cfg-layout { flex-direction:column; }
-  .cfg-side { position:static; flex-direction:row; flex-wrap:nowrap; overflow-x:auto; width:100%;
-    box-sizing:border-box; gap:4px; }
+  /* CLAVE: la regla base trae flex:0 0 224px. En un layout que ahora es
+     COLUMNA, ese flex-basis se interpreta como ALTURA -> la barra quedaba de
+     224px de alto con los items perdidos en el centro. Se resetea a auto y se
+     fuerza altura automatica + items centrados para que sea una barra fina
+     scrollable en horizontal. */
+  .cfg-side { position:static; flex:0 0 auto; height:auto; align-items:center;
+    flex-direction:row; flex-wrap:nowrap; overflow-x:auto; overflow-y:hidden; width:100%;
+    box-sizing:border-box; gap:4px; -webkit-overflow-scrolling:touch; }
   .cfg-side-group { display:none; }
-  .cfg-side-item { white-space:nowrap; flex:0 0 auto; }
+  .cfg-side-item { white-space:nowrap; flex:0 0 auto; width:auto; }
 }
 
 /* ===================== WIZARD MODIFICACION (paso 4) =====================
@@ -1877,6 +1883,14 @@ input.needfill:focus, select.needfill:focus {
 
   /* Config de Sincronizacion: los grid de 3 columnas se apilan. */
   .cfg-grid3 { grid-template-columns:1fr; }
+  /* Los grid de 2 columnas de los modales de Config (tipos de ausencia,
+     causas de marcaje, etc.) tambien se apilan: en movil los pares
+     Nombre+CodigoAX / Codigo+Estado / Documento+Exigencia se salian por la
+     derecha. Y el modal en si se acota al viewport. */
+  .cfg-grid2 { grid-template-columns:1fr; }
+  .modal-ov { padding:14px; }
+  .modal-box { max-width:100%; width:100%; box-sizing:border-box; }
+  .modal-box input, .modal-box select, .modal-box textarea { max-width:100%; box-sizing:border-box; }
 
   /* ---------------------------------------------------------------
      BLOQUE 6 — VISTA PERSONAL: barra de acciones a SOLO-ICONO.
