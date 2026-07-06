@@ -16,6 +16,8 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -61,6 +63,10 @@ export async function onRequestPost({ request, env }) {
   try {
     const admin = await getAdmin(env, adminId);
     if (!admin) return json({ ok: false, error: 'No autorizado.' }, 403);
+
+    // SHADOW: gate legacy = admin/editor/super activo (getAdmin). Code de vista.
+    await shadowCan(env, adminId, 'roster-runs', action || '?', 'view.rostersync', !!admin);
+
     const allowed = await allowedCompanies(env, admin);
 
     if (action === 'get') {

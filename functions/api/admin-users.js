@@ -9,7 +9,22 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 const SALT = 'nm_salt_2025';
+
+// Mapa accion -> code de permiso (para el shadow). Todas las acciones de este
+// endpoint estan bajo el gate superadmin legacy; el code fino permite que en
+// la pasada final un rol no-super pueda tener solo parte (ej. team.role).
+const TEAM_CODE_BY_ACTION = {
+  list: 'view.equipo',
+  create: 'team.create',
+  reset: 'team.reset',
+  toggle: 'team.toggle',
+  update_role: 'team.role',
+  sync_client: 'team.osticket',
+  sync_clients_all: 'team.osticket',
+};
 
 function json(b, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } }); }
 
@@ -118,7 +133,10 @@ export async function onRequestPost({ request, env }) {
   const { action, adminId } = body;
 
   try {
-    if (!(await isSuperadmin(env, adminId))) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+    const legacyOk = await isSuperadmin(env, adminId);
+    // SHADOW: gate legacy = superadmin. Code fino por accion (team.*).
+    await shadowCan(env, adminId, 'admin-users', action || '?', TEAM_CODE_BY_ACTION[action] || 'team.role', legacyOk);
+    if (!legacyOk) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
 
     if (action === 'list') {
       const rows = await sb(env, 'admin_users?select=id,username,name,email,role,is_active,osticket_staff_id,osticket_user_id,osticket_user_synced_at,last_login_at&order=role.desc,username');

@@ -13,6 +13,18 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
+// Mapa accion -> code. save/get/resolve son gestion de alcance (team.scope);
+// las acciones de agente osTicket usan team.osticket.
+const SCOPE_CODE_BY_ACTION = {
+  get: 'team.scope',
+  save: 'team.scope',
+  resolve: 'team.scope',
+  push_to_osticket: 'team.osticket',
+  reset_agent: 'team.osticket',
+};
+
 function json(b, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } }); }
 
 async function sb(env, path, opts = {}) {
@@ -82,7 +94,10 @@ export async function onRequestPost({ request, env }) {
   const { action, adminId, targetId } = body;
 
   try {
-    if (!(await isSuperadmin(env, adminId))) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+    const legacyOk = await isSuperadmin(env, adminId);
+    // SHADOW: gate legacy = superadmin. Code team.scope / team.osticket segun accion.
+    await shadowCan(env, adminId, 'admin-scope', action || '?', SCOPE_CODE_BY_ACTION[action] || 'team.scope', legacyOk);
+    if (!legacyOk) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
     if (!targetId) return json({ ok: false, error: 'Falta el admin objetivo.' }, 400);
 
     if (action === 'get') {

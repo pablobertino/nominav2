@@ -13,7 +13,20 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 const SALT = 'nm_salt_2025';
+
+// Mapa accion -> code. list es vista de Usuarios; el resto son acciones
+// compuser.*. El alcance por empresa (canTouch) es aparte del shadow (vive en
+// get_admin_companies, no en _auth): aqui el gate binario es "es admin activo".
+const CU_CODE_BY_ACTION = {
+  list: 'view.usuarios',
+  create: 'compuser.create',
+  reset: 'compuser.reset',
+  update_email: 'compuser.email',
+  toggle: 'compuser.toggle',
+};
 
 function json(b, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } }); }
 
@@ -70,6 +83,11 @@ export async function onRequestPost({ request, env }) {
   try {
     const admin = await getAdmin(env, adminId);
     if (!admin) return json({ ok: false, error: 'No autorizado.' }, 401);
+
+    // SHADOW: gate legacy binario = admin activo (getAdmin). El alcance por
+    // empresa (canTouch) no lo evalua el shadow. Code fino por accion.
+    await shadowCan(env, adminId, 'company-users', action || '?', CU_CODE_BY_ACTION[action] || 'view.usuarios', !!admin);
+
     const allowed = await allowedCompanies(env, admin);
     const canTouch = (code) => allowed === null || allowed.has(code);
 

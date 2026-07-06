@@ -14,6 +14,8 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 const BUCKET = 'worker-photos';
 const SIGNED_TTL = 60 * 60;   // 1h
 
@@ -75,6 +77,9 @@ export async function onRequestPost({ request, env }) {
     const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role,name,username`);
     if (!a || !a.length) return json({ ok: false, error: 'Sesion no valida.' }, 403);
     const role = a[0].role;
+
+    // SHADOW: el gate legacy es "admin activo" (cualquier rol admin ve su panel).
+    await shadowCan(env, { kind: 'admin', id: user.id }, 'dashboard', 'get', 'view.dashboard', true);
 
     // Alcance: superadmin = todo (null); admin/editor = sus empresas.
     let codes = null;

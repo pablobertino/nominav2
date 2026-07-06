@@ -16,6 +16,8 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -57,6 +59,9 @@ export async function onRequestPost({ request, env }) {
     const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
     if (!a || !a.length) return json({ ok: false, error: 'Sesion no valida.' }, 403);
     const role = a[0].role;
+
+    // SHADOW: el gate legacy es "admin activo" (cualquier rol admin ve las estadisticas).
+    await shadowCan(env, { kind: 'admin', id: user.id }, 'report-stats', body.action || 'stats', 'view.estadisticas', true);
 
     // Lista de quincenas (periodos de pago) para el filtro. No depende del
     // alcance: son los mismos periodos para todos. Se piden aparte (lazy).
