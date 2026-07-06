@@ -33,10 +33,25 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 const BUCKET = 'worker-photos';          // privado: full (y thumb viejas)
 const PUBLIC_BUCKET = 'worker-thumbs';   // publico: miniaturas nuevas
 const SIGNED_TTL = 60 * 60;          // 1h
 const MAX_FULL_BYTES = 400 * 1024;   // tope server-side de la version grande
+
+// Mapa accion -> code. directory/sign son lectura (view.fotos); save/remove/
+// set_department son gestion de foto (photo.manage); save_profile edita la
+// ficha (ficha.edit). migrate_thumbs se valida como superadmin dentro de su
+// handler (no lleva code fino aqui).
+const WP_CODE_BY_ACTION = {
+  directory: 'view.fotos',
+  sign: 'view.fotos',
+  save: 'photo.manage',
+  remove: 'photo.manage',
+  set_department: 'photo.manage',
+  save_profile: 'ficha.edit',
+};
 
 // URL publica fija de un objeto del bucket publico (sin firmar, cacheable).
 function publicUrl(env, bucket, path) {
@@ -234,6 +249,10 @@ export async function onRequestPost({ request, env }) {
 
     if (!cc) return json({ ok: false, error: 'Falta la empresa.' }, 400);
     if (!(await userCanAccess(env, user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
+
+    // SHADOW: gate legacy binario = acceso a la empresa (userCanAccess). El
+    // alcance por departamento (deptScope) se evalua aparte. Code por accion.
+    await shadowCan(env, user, 'worker-photo', action || '?', WP_CODE_BY_ACTION[action] || 'view.fotos', true);
 
     const table = await rosterTable(env, cc);
     // Alcance por departamento del que llama (null = sin restriccion).

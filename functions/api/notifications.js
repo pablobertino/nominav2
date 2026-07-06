@@ -12,6 +12,8 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -67,13 +69,20 @@ export async function onRequestPost({ request, env }) {
     // es SOLO LECTURA (no marca leido); el badge de la campanita del admin lo
     // siguen manejando get/seen.
     if (action === 'list_changes') {
-      if (!(await isValidSession(env, body.user || null))) return json({ ok: false, error: 'No autorizado.' }, 403);
+      const legacyOk = await isValidSession(env, body.user || null);
+      // SHADOW: gate legacy = sesion valida (admin o company). Lectura global
+      // de novedades; se mapea a view.avisos como code de lectura.
+      await shadowCan(env, body.user || null, 'notifications', 'list_changes', 'view.avisos', legacyOk);
+      if (!legacyOk) return json({ ok: false, error: 'No autorizado.' }, 403);
       const items = await sb(env,
         'company_change?select=id,company_code,business_name,change_type,old_value,new_value,detected_at&order=id.desc&limit=30') || [];
       return json({ ok: true, items });
     }
 
-    if (!(await isActiveAdmin(env, adminId))) return json({ ok: false, error: 'No autorizado.' }, 403);
+    const legacyAdmin = await isActiveAdmin(env, adminId);
+    // SHADOW: gate legacy = admin activo (get/seen). Lectura de la campanita.
+    await shadowCan(env, adminId, 'notifications', action || '?', 'view.avisos', legacyAdmin);
+    if (!legacyAdmin) return json({ ok: false, error: 'No autorizado.' }, 403);
 
     if (action === 'get') {
       const stateRows = await sb(env, `notif_state?admin_id=eq.${encodeURIComponent(adminId)}&select=last_seen_change_id`);

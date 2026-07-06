@@ -25,6 +25,17 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
+// Mapa accion -> code. facets/list son la vista Analisis de empresas (admin);
+// detail/rotation es Mis estadisticas (admin con alcance o company su codigo).
+const CR_CODE_BY_ACTION = {
+  facets: 'view.reportempresas',
+  list: 'view.reportempresas',
+  detail: 'view.misstats',
+  rotation: 'view.misstats',
+};
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -95,6 +106,11 @@ export async function onRequestPost({ request, env }) {
     if (!scope.kind) return json({ ok: false, error: 'Sesion no valida.' }, 403);
 
     const isCompany = scope.kind === 'company';
+
+    // SHADOW: gate legacy = sesion valida (scope.kind). facets/list ademas
+    // estan vetados a company (se refleja abajo con el 403 propio). El code
+    // fino va por accion; el alcance por empresa se evalua aparte.
+    await shadowCan(env, body.user || null, 'company-reports', body.action || '?', CR_CODE_BY_ACTION[body.action] || 'view.reportempresas', !!scope.kind);
 
     // ---- facets / list : solo admin ----
     if (body.action === 'facets') {

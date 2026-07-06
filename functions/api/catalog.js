@@ -11,6 +11,8 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status, headers: { 'Content-Type': 'application/json' },
@@ -179,6 +181,11 @@ export async function onRequestPost({ request, env }) {
     }
 
     const allowed = await allowedSet(env, user); // null=todas | Set
+
+    // SHADOW: el listado general de empresas es la vista Empresas. El gate
+    // legacy es "sesion valida" (superadmin=null; admin/company con su Set,
+    // que puede estar vacio). Se registra contra view.empresas.
+    await shadowCan(env, user, 'catalog', 'list', 'view.empresas', true);
 
     const [companies, zones, subzones, concepts, users,
            storeMeta, entMeta, staffCounts, depts] = await Promise.all([

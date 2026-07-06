@@ -23,6 +23,8 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -349,6 +351,8 @@ export async function onRequestPost({ request, env }) {
       const cc = (body.company_code || '').trim();
       if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);
       if (!(await userCanAccess(env, body.user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
+      // SHADOW: gate legacy = acceso a la empresa (userCanAccess). Code roster.upload.
+      await shadowCan(env, body.user, 'roster', 'replace', 'roster.upload', true);
       const rawRows = Array.isArray(body.rows) ? body.rows : [];
       if (!rawRows.length) return json({ ok: false, error: 'El Reporte 10 no trae filas.' }, 400);
 
@@ -538,6 +542,8 @@ export async function onRequestPost({ request, env }) {
       const cc = (body.company_code || '').trim();
       if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);
       if (!(await userCanAccess(env, body.user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
+      // SHADOW: gate legacy = acceso a la empresa (userCanAccess). Code roster.clear.
+      await shadowCan(env, body.user, 'roster', 'clear', 'roster.clear', true);
       // Borra la lista y sus metadatos. mark_report_lines NO se toca:
       // los reportes ya enviados conservan su detalle historico.
       await sb(env, `store_workers?company_code=eq.${encodeURIComponent(cc)}`, { method: 'DELETE' });
@@ -559,6 +565,8 @@ export async function onRequestPost({ request, env }) {
       const cc = (body.company_code || '').trim();
       if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);
       if (!(await userCanAccess(env, body.user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
+      // SHADOW: gate legacy = acceso a la empresa (userCanAccess). Code roster.manual.
+      await shadowCan(env, body.user, 'roster', 'add_manual', 'roster.manual', true);
 
       const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
       if (!ced || ced.length < 6 || ced.length > 8) {
@@ -645,6 +653,8 @@ export async function onRequestPost({ request, env }) {
       if (allowed !== null && !allowed.has(cc)) {
         return json({ ok: false, error: 'No tienes alcance sobre esa tienda.' }, 403);
       }
+      // SHADOW: gate legacy = admin activo con alcance (getAdmin). Code roster.upload_ax.
+      await shadowCan(env, body.adminId, 'roster', 'replace_ax', 'roster.upload_ax', !!admin);
 
       const rawRows = Array.isArray(body.rows) ? body.rows : [];
       if (!rawRows.length) return json({ ok: false, error: 'El Reporte AX no trae filas.' }, 400);

@@ -22,6 +22,16 @@
    Settings: osticket_url
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
+// Mapa accion -> code. list es lectura de la vista Usuarios; sync/grant_access
+// tocan la integracion osTicket (config.osticket).
+const OU_CODE_BY_ACTION = {
+  list: 'view.usuarios',
+  sync: 'config.osticket',
+  grant_access: 'config.osticket',
+};
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -85,7 +95,10 @@ export async function onRequestPost({ request, env }) {
   const { action, adminId } = body;
 
   try {
-    if (!(await requireSuper(env, adminId))) {
+    const legacyOk = await requireSuper(env, adminId);
+    // SHADOW: gate legacy = superadmin. Code por accion (view.usuarios/config.osticket).
+    await shadowCan(env, adminId, 'osticket-users', action || '?', OU_CODE_BY_ACTION[action] || 'view.usuarios', legacyOk);
+    if (!legacyOk) {
       return json({ ok: false, error: 'Requiere superadmin.' }, 403);
     }
 
