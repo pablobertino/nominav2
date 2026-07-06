@@ -108,6 +108,33 @@ function ensureStyles() {
   .csg-toast .csg-ico{display:inline-flex;width:20px;height:20px;border-radius:999px;align-items:center;justify-content:center;font-size:12px;flex:none}
   .csg-toast-ok .csg-ico{background:#16a34a;color:#fff}
   .csg-toast-info .csg-ico{background:#2563eb;color:#fff}
+
+  /* MOVIL (<=768px): el modal "Nuevo firmante" se salia por la derecha (su
+     max-width 520px + contenido no acotado). Se fuerza a ocupar el ancho
+     disponible del viewport y se apila la grilla en tarjetas. */
+  @media (max-width:768px){
+    .csg-ov{padding:12px}
+    .csg-modal{max-width:100%;width:100%;box-sizing:border-box}
+    .csg-modal input[type=text]{box-sizing:border-box;max-width:100%}
+    .csg-pv-doc .csg-pv-sig img{max-width:100%}
+    .csg-pv-doc .csg-pv-line{width:100%;max-width:240px}
+    /* Grilla de firmantes -> tarjetas */
+    .csg-table{display:block}
+    .csg-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+    .csg-table tbody{display:flex;flex-direction:column;gap:11px}
+    .csg-table tbody tr{display:block;border:1px solid var(--border);border-radius:12px;
+      background:var(--surface);box-shadow:0 1px 3px rgba(15,23,42,.05);padding:6px 14px}
+    .csg-table tbody tr:hover td{background:none}
+    .csg-table tbody td{display:flex;align-items:center;justify-content:space-between;gap:14px;
+      padding:9px 0;border:0;border-bottom:1px solid var(--border);text-align:right;white-space:normal}
+    .csg-table tbody td:last-child{border-bottom:0}
+    .csg-table tbody td::before{content:attr(data-label);flex-shrink:0;text-align:left;
+      color:var(--muted);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+    .csg-table tbody td.csg-actcell{justify-content:flex-end}
+    .csg-table tbody td.csg-actcell::before{display:none}
+    .csg-sigcell{width:auto}
+    .csg-acts{justify-content:flex-end;width:100%}
+  }
   `;
   document.head.appendChild(st);
 }
@@ -284,12 +311,12 @@ function rowHtml(r) {
     : '<span class="csg-pill csg-off">Inactivo</span>';
   const toggleLabel = r.is_active ? 'Desactivar' : 'Activar';
   return `<tr>
-    <td><span class="csg-name">${esc(r.full_name)}</span>
+    <td data-label="Firmante"><span class="csg-name">${esc(r.full_name)}</span>
       ${r.created_at ? `<span class="csg-when">desde ${esc(fmtWhen(r.created_at))}</span>` : ''}</td>
-    <td><span class="csg-title">${esc(r.title || DEFAULT_TITLE)}</span></td>
-    <td class="csg-sigcell">${sig}</td>
-    <td>${pill}</td>
-    <td><div class="csg-acts">
+    <td data-label="Cargo"><span class="csg-title">${esc(r.title || DEFAULT_TITLE)}</span></td>
+    <td data-label="Firma" class="csg-sigcell">${sig}</td>
+    <td data-label="Estado">${pill}</td>
+    <td class="csg-actcell"><div class="csg-acts">
       <button class="csg-b csg-b-mini" data-edit="${r.id}">${pencilIco()} Editar</button>
       <button class="csg-b csg-b-mini" data-toggle="${r.id}">${toggleLabel}</button>
     </div></td>

@@ -223,6 +223,35 @@ function ensureStyles() {
   .cr-toast.show{opacity:1;transform:translateY(0)}
   .cr-toast .cr-ico{display:inline-flex;width:20px;height:20px;border-radius:999px;align-items:center;justify-content:center;font-size:12px;flex:none}
   .cr-toast-ok .cr-ico{background:#16a34a}.cr-toast-info .cr-ico{background:#2563eb}.cr-toast-err .cr-ico{background:#dc2626}
+
+  /* MOVIL (<=768px): la tabla de solicitudes (bandeja / mis solicitudes) se
+     aplana en TARJETAS: se oculta el thead y cada <tr> se apila con pares
+     etiqueta->valor (la etiqueta sale de data-label en cada <td>). Antes se
+     cortaba a la derecha (columnas Origen/Fecha/Estado/acciones). Tambien se
+     apilan filtros y el formulario de crear/revisar. */
+  @media (max-width:768px){
+    .cr-filters{flex-direction:column}
+    .cr-filters select{width:100%}
+    /* Tabla -> tarjetas */
+    .cr-table{display:block}
+    .cr-table thead{position:absolute;width:1px;height:1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap}
+    .cr-table tbody{display:flex;flex-direction:column;gap:11px}
+    .cr-table tbody tr{display:block;border:1px solid var(--border);border-radius:12px;
+      background:var(--surface);box-shadow:0 1px 3px rgba(15,23,42,.05);padding:6px 14px}
+    .cr-table tbody tr:hover td{background:none}
+    .cr-table tbody td{display:flex;align-items:baseline;justify-content:space-between;gap:14px;
+      padding:8px 0;border:0;border-bottom:1px solid var(--border);text-align:right;white-space:normal}
+    .cr-table tbody td:last-child{border-bottom:0}
+    .cr-table tbody td::before{content:attr(data-label);flex-shrink:0;text-align:left;
+      color:var(--muted);font-size:11.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+    /* La celda de acciones ocupa toda la fila, botones alineados a la derecha. */
+    .cr-table tbody td.cr-actcell{justify-content:flex-end}
+    .cr-table tbody td.cr-actcell::before{display:none}
+    .cr-acts{justify-content:flex-end;width:100%}
+    /* Formularios de crear/revisar: grids a una columna, preview debajo. */
+    .cr-grid2,.cr-grid3{grid-template-columns:1fr}
+    .cr-rev{grid-template-columns:1fr}
+  }
   `;
   document.head.appendChild(st);
 }
@@ -470,13 +499,13 @@ function inboxRow({ req, line }) {
     ? '<span class="cr-pill cr-gen">Iniciada por admin</span>'
     : '<span class="cr-pill cr-sol">Pedida por la tienda</span>';
   return `<tr>
-    <td><span class="cr-strong">#${req.id}</span></td>
-    <td>${esc(companyName(req.company_code))}<div class="cr-sub">${esc(req.company_code)}</div></td>
-    <td><span class="cr-strong">${esc(line.worker_full_name)}</span><div class="cr-sub">${esc(fmtCedula(line.worker_id_number))}</div></td>
-    <td>${origen}</td>
-    <td>${esc(fmtDateTime(req.requested_at))}</td>
-    <td>${statusPill(line.status)}${genSub}</td>
-    <td><div class="cr-acts">${acts}</div></td>
+    <td data-label="Solicitud"><span class="cr-strong">#${req.id}</span></td>
+    <td data-label="Empresa">${esc(companyName(req.company_code))}<div class="cr-sub">${esc(req.company_code)}</div></td>
+    <td data-label="Empleado"><span class="cr-strong">${esc(line.worker_full_name)}</span><div class="cr-sub">${esc(fmtCedula(line.worker_id_number))}</div></td>
+    <td data-label="Origen">${origen}</td>
+    <td data-label="Fecha">${esc(fmtDateTime(req.requested_at))}</td>
+    <td data-label="Estado">${statusPill(line.status)}${genSub}</td>
+    <td class="cr-actcell"><div class="cr-acts">${acts}</div></td>
   </tr>`;
 }
 
@@ -539,13 +568,13 @@ function mineRow({ req, line }) {
     genSub = `<div class="cr-sub">lista ${esc(fmtDate(line.generated_at))}</div>`;
   }
   return `<tr>
-    <td><span class="cr-strong">#${req.id}</span></td>
-    ${IS_ADMIN ? `<td>${esc(companyName(req.company_code))}<div class="cr-sub">${esc(req.company_code)}</div></td>` : ''}
-    <td><span class="cr-strong">${esc(line.worker_full_name)}</span><div class="cr-sub">${esc(fmtCedula(line.worker_id_number))}</div></td>
-    <td>${esc(line.recipient || req.recipient || DEFAULT_RECIPIENT)}</td>
-    <td>${esc(fmtDate(req.requested_at))}</td>
-    <td>${statusPill(line.status)}${genSub}</td>
-    <td><div class="cr-acts">${acts}</div></td>
+    <td data-label="Solicitud"><span class="cr-strong">#${req.id}</span></td>
+    ${IS_ADMIN ? `<td data-label="Empresa">${esc(companyName(req.company_code))}<div class="cr-sub">${esc(req.company_code)}</div></td>` : ''}
+    <td data-label="Empleado"><span class="cr-strong">${esc(line.worker_full_name)}</span><div class="cr-sub">${esc(fmtCedula(line.worker_id_number))}</div></td>
+    <td data-label="Destinatario">${esc(line.recipient || req.recipient || DEFAULT_RECIPIENT)}</td>
+    <td data-label="Fecha">${esc(fmtDate(req.requested_at))}</td>
+    <td data-label="Estado">${statusPill(line.status)}${genSub}</td>
+    <td class="cr-actcell"><div class="cr-acts">${acts}</div></td>
   </tr>`;
 }
 function dlIco() {

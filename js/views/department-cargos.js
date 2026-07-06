@@ -62,9 +62,9 @@ export async function renderDepartmentCargos(user, host) {
          <button class="btn btn-mini" data-toggle="${c.id}" data-active="${c.is_active}">${c.is_active ? 'Desactivar' : 'Activar'}</button>`
       : '<span class="muted" style="font-size:12px">—</span>';
     return `<tr>
-      <td><b>${esc(c.label)}</b><br><span class="muted" style="font-size:11px;font-family:ui-monospace,Menlo,monospace">${esc(c.code)}</span></td>
-      <td><span class="muted">${c.people_count || 0}</span></td>
-      <td>${estado}</td>
+      <td data-label="Cargo"><b>${esc(c.label)}</b><br><span class="muted" style="font-size:11px;font-family:ui-monospace,Menlo,monospace">${esc(c.code)}</span></td>
+      <td data-label="Personas"><span class="muted">${c.people_count || 0}</span></td>
+      <td data-label="Estado">${estado}</td>
       <td style="text-align:right;white-space:nowrap">${actions}</td>
     </tr>`;
   }).join('') || '<tr><td colspan="4" class="empty">Sin cargos.</td></tr>';
@@ -80,7 +80,7 @@ export async function renderDepartmentCargos(user, host) {
         Son independientes de los cargos de tienda. Se ordenan alfabéticamente.
         ${isSuper ? '' : '<br>Solo el superadmin puede crear o modificar cargos.'}
       </p>
-      <table class="cfg-cat-table"><thead><tr>
+      <table class="cfg-cat-table tbl-cards"><thead><tr>
         <th>Cargo</th><th>Personas con este cargo</th><th>Estado</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>
     </div>

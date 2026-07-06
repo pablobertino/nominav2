@@ -120,9 +120,9 @@ async function load() {
       : '<span class="muted" style="color:var(--faint)">— sin usuario —</span>';
     const delDisabled = dep.users_count > 0;
     return `<tr>
-      <td><b>${esc(dep.name)}</b></td>
-      <td>${userCell}</td>
-      <td>${estado}</td>
+      <td data-label="Departamento"><b>${esc(dep.name)}</b></td>
+      <td data-label="Usuario de empresa">${userCell}</td>
+      <td data-label="Estado">${estado}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn btn-mini" data-rename="${dep.id}" data-name="${esc(dep.name)}">${PENCIL} Renombrar</button>
         <button class="btn btn-mini" data-toggle="${dep.id}" data-active="${dep.is_active}">${dep.is_active ? 'Desactivar' : 'Activar'}</button>
@@ -132,7 +132,7 @@ async function load() {
   }).join('');
 
   body.innerHTML = `
-    <div class="tablebox"><table><thead><tr>
+    <div class="tablebox tbl-cards"><table><thead><tr>
       <th>Departamento</th><th>Usuario de empresa</th><th>Estado</th><th style="text-align:right">Acciones</th>
     </tr></thead><tbody>${rows}</tbody></table></div>`;
 

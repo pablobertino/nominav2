@@ -159,6 +159,31 @@ function ensureStyles() {
   .pi-iconbtn:hover{background:var(--brand-bg,#eff6ff);border-color:var(--brand,#2563eb);color:var(--brand,#2563eb)}
   .pi-iconbtn:disabled{opacity:.45;cursor:default;background:var(--bg-soft,#f1f5f9);color:var(--faint,#94a3b8);border-color:var(--border)}
   .pi-iconbtn:disabled:hover{background:var(--bg-soft,#f1f5f9);border-color:var(--border);color:var(--faint,#94a3b8)}
+
+  /* MOVIL (<=768px): la fila de resultado se vuelve TARJETA apilada, para que
+     el NOMBRE se lea completo (en escritorio .pi-main va limitado al 34% y en
+     pantalla chica el nombre se recortaba a las iniciales). */
+  @media (max-width:768px){
+    .pi-bar{gap:9px}
+    .pi-fields-wrap,.pi-go,.pi-clear,.pi-export-wrap{flex:1 1 auto}
+    .pi-fields-btn{width:100%;justify-content:space-between}
+    .pi-export-wrap{margin-left:0}
+    .pi-filters{flex:1 1 100%;gap:9px}
+    .pi-filters .fg{flex:1 1 100%;justify-content:space-between}
+    .pi-filters .fg select{flex:1 1 auto;min-width:0}
+    .pi-search{max-width:none}
+    /* Tarjeta de resultado: avatar + nombre a lo ancho arriba; empresa debajo. */
+    .pi-row{flex-wrap:wrap;align-items:flex-start;gap:11px;padding:13px 14px}
+    .pi-ava{order:1;width:46px;height:46px}
+    .pi-main{flex:1 1 0;min-width:0;max-width:none;order:2}
+    .pi-name{white-space:normal;font-size:15px;line-height:1.25}
+    .pi-sub{white-space:normal}
+    .pi-actions{order:3;flex:none}
+    .pi-right{order:4;flex:1 1 100%;max-width:none;align-items:flex-start;text-align:left;
+      margin-left:0;padding-top:10px;border-top:1px solid var(--border-soft,#eef1f5);gap:3px}
+    .pi-empn{max-width:none;white-space:normal}
+    .pi-miss{justify-content:flex-start}
+  }
   `;
   document.head.appendChild(st);
 }

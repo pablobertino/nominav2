@@ -99,7 +99,7 @@ export async function renderPayGrid(user) {
         <option value="Pago calculado">Pago calculado</option>
       </select>
     </div>
-    <div class="tablebox">
+    <div class="tablebox tbl-cards">
       <table><thead><tr>
         <th>Empresa</th><th>Tipo / Estatus</th><th>Periodo n\u00f3mina</th><th>Periodo de pago</th><th>Estado de pago <span class="pay-help-q" id="pgPayHelp" title="Ver que significa cada estado de pago" role="button" tabindex="0">?</span></th>
       </tr></thead><tbody id="pgBody"><tr><td colspan="5" class="pnl-loading">Cargando estado de pago\u2026</td></tr></tbody></table>
@@ -161,11 +161,11 @@ function renderRows() {
       <div class="meta">${r.taxId ? `RIF ${esc(r.taxId)}` : ''}${r.taxId && ubic ? '<br>' : ''}${ubic ? esc(ubic) : ''}</div>
     </div>`;
     return `<tr>
-      <td>${emp}</td>
-      <td>${compStatusPill(r.companyStatus)}${r.type ? `<div class="pg-type">${esc(r.type)}</div>` : ''}</td>
-      <td><div class="pg-per"><div class="top">${esc(r.periodoNomina || '\u2014')}</div><div class="sub">${esc(fmtRango(r.nominaDesde, r.nominaHasta))}</div></div></td>
-      <td><div class="pg-per"><div class="top">${esc(r.periodoPago || '\u2014')}</div><div class="sub">${esc(fmtRango(r.pagoDesde, r.pagoHasta))}</div></div></td>
-      <td><span class="pst ${st.cls}">${esc(st.txt)}</span></td>
+      <td data-label="Empresa">${emp}</td>
+      <td data-label="Tipo / Estatus">${compStatusPill(r.companyStatus)}${r.type ? `<div class="pg-type">${esc(r.type)}</div>` : ''}</td>
+      <td data-label="Periodo n\u00f3mina"><div class="pg-per"><div class="top">${esc(r.periodoNomina || '\u2014')}</div><div class="sub">${esc(fmtRango(r.nominaDesde, r.nominaHasta))}</div></div></td>
+      <td data-label="Periodo de pago"><div class="pg-per"><div class="top">${esc(r.periodoPago || '\u2014')}</div><div class="sub">${esc(fmtRango(r.pagoDesde, r.pagoHasta))}</div></div></td>
+      <td data-label="Estado de pago"><span class="pst ${st.cls}">${esc(st.txt)}</span></td>
     </tr>`;
   }).join('') || `<tr><td colspan="5" class="empty">Sin resultados.</td></tr>`;
 }
