@@ -24,8 +24,26 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 const SALT = 'nm_salt_2025';
 const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
+
+// Mapa accion -> code. ABM de usuarios-empresa (entuser.*); scope_add/remove
+// son gestion de alcance (entuser.scope). list/get/companies/departments son
+// lectura de apoyo (sin code fino -> view.empresas como lectura generica).
+const EU_CODE_BY_ACTION = {
+  list: 'view.empresas',
+  get: 'view.empresas',
+  companies: 'view.empresas',
+  departments: 'view.empresas',
+  create: 'entuser.create',
+  update: 'entuser.update',
+  reset: 'entuser.reset',
+  toggle: 'entuser.toggle',
+  scope_add: 'entuser.scope',
+  scope_remove: 'entuser.scope',
+};
 
 function json(b, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } }); }
 
@@ -79,6 +97,11 @@ export async function onRequestPost({ request, env }) {
   try {
     const admin = await getAdmin(env, adminId);
     if (!admin) return json({ ok: false, error: 'No autorizado.' }, 401);
+
+    // SHADOW: gate legacy binario = admin activo (getAdmin). El alcance por
+    // empresa (canTouchCompany) se evalua aparte. Code fino por accion.
+    await shadowCan(env, adminId, 'enterprise-users', action || '?', EU_CODE_BY_ACTION[action] || 'view.empresas', !!admin);
+
     const allowed = await allowedCompanies(env, admin);
     const canTouchCompany = code => allowed === null || allowed.has(code);
 

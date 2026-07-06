@@ -17,6 +17,8 @@
    Secrets: canaima_apikey, supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 const AX_EMPLEADOS_API = 'https://api2.grupocanaima.com/empleados/datos/v1';
 
 // Tipos de empresa que NO son tienda (van a enterprise_workers).
@@ -268,6 +270,11 @@ export async function onRequestPost({ request, env }) {
   // Auth: solo admin/superadmin con alcance.
   const admin = await getAdmin(env, body.adminId);
   if (!admin) return json({ ok: false, error: 'La carga desde AX solo la hace un administrador.' }, 401);
+
+  // SHADOW: gate legacy binario = admin activo (getAdmin). El alcance por
+  // empresa (allowed) se evalua aparte, no en el shadow. Code roster.upload_api.
+  await shadowCan(env, body.adminId, 'ax-roster', 'pull', 'roster.upload_api', !!admin);
+
   const allowed = await allowedCompanies(env, admin);
   if (allowed !== null && !allowed.has(cc)) {
     return json({ ok: false, error: 'No tienes alcance sobre esa empresa.' }, 403);

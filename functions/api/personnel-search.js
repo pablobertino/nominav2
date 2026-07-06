@@ -11,6 +11,16 @@
    (get_admin_companies). Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
+// Mapa accion -> code. search/facets pertenecen a la vista Buscar;
+// incomplete a la vista Datos incompletos.
+const PS_CODE_BY_ACTION = {
+  search: 'view.buscar',
+  facets: 'view.buscar',
+  incomplete: 'view.datosincompletos',
+};
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -63,6 +73,9 @@ export async function onRequestPost({ request, env }) {
   try {
     const admin = await resolveAdmin(env, adminId);
     if (!admin) return json({ ok: false, error: 'Requiere un administrador valido.' }, 403);
+
+    // SHADOW: gate legacy = admin valido (resolveAdmin). Code por vista.
+    await shadowCan(env, adminId, 'personnel-search', action || '?', PS_CODE_BY_ACTION[action] || 'view.buscar', !!admin);
 
     if (action === 'facets') {
       const EMPTY = { zones: [], subzones: [], concepts: [], statuses: [], types: [], companies: [] };

@@ -30,7 +30,16 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
+
+// Mapa accion -> code. get = lectura (sin code fino); replace/clear son acciones.
+const ER_CODE_BY_ACTION = {
+  get: 'view.empresas',
+  replace: 'roster.upload_ax',
+  clear: 'roster.clear',
+};
 
 function json(b, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } }); }
 
@@ -143,6 +152,11 @@ export async function onRequestPost({ request, env }) {
   try {
     const admin = await getAdmin(env, body.adminId);
     if (!admin) return json({ ok: false, error: 'Requiere un administrador.' }, 401);
+
+    // SHADOW: gate legacy binario = admin activo (getAdmin). El alcance por
+    // empresa (checkCompany) se evalua aparte. Code fino por accion.
+    await shadowCan(env, body.adminId, 'enterprise-roster', action || '?', ER_CODE_BY_ACTION[action] || 'view.empresas', !!admin);
+
     const allowed = await allowedCompanies(env, admin);
 
     if (action === 'get') {

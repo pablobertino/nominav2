@@ -18,6 +18,8 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+import { shadowCan } from './_auth.js';
+
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status, headers: { 'Content-Type': 'application/json' },
@@ -103,6 +105,11 @@ export async function onRequestPost({ request, env }) {
   if (action === 'grid') {
     const admin = await getAdmin(env, body.adminId);
     if (!admin) return json({ ok: false, error: 'Solo un administrador puede ver la grilla.' }, 401);
+
+    // SHADOW: gate legacy = admin activo (getAdmin). Solo el grid lleva gate;
+    // la tarjeta 'card' de la tienda no (la ve la propia empresa).
+    await shadowCan(env, body.adminId, 'period-pay', 'grid', 'view.estadopago', !!admin);
+
     let allowed;
     try { allowed = await allowedCompanies(env, admin); }
     catch (e) { return json({ ok: false, error: 'Error resolviendo el alcance: ' + e.message }, 500); }
