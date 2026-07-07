@@ -107,14 +107,22 @@ function accountDigits(v) {
 
 /* Mapea un objeto empleado de la API a nuestra fila normalizada.
    ficha = cedula (id_number); dataArea = data_id; idCargo = role;
-   segundoApellido = apellidos completos (last_names); primerApellido se
+   `apellidos` = APELLIDOS COMPLETOS (last_names); primerApellido se
    guarda en first_lastname para el nombre corto. */
 function mapApiEmployee(e) {
   const id_number = String(e.ficha ?? '').replace(/[^0-9]/g, '');
   const first_name = (e.primerNombre || '').toString().trim().toUpperCase() || null;
   const second_name = (e.segundoNombre || '').toString().trim().toUpperCase() || null;
-  // "Apellidos" completos vienen en segundoApellido; fallback a primerApellido.
-  const last_names = ((e.segundoApellido || e.primerApellido || '').toString().trim().toUpperCase()) || null;
+  // FIX v4.14: los apellidos COMPLETOS vienen en `apellidos` (ej. "GUERRA
+  // AREVALO"); primerApellido/segundoApellido son cada uno por separado.
+  // Antes se usaba segundoApellido (solo "AREVALO") -> las cargas por API
+  // truncaban last_names y al editar/publicar se podia perder un apellido.
+  // Mismo criterio que erpToComparable (ax-review, FIX A v4.09): `apellidos`
+  // con fallback a concatenar primer+segundo si viniera vacio.
+  const apellidosFull = (e.apellidos && String(e.apellidos).trim() && String(e.apellidos).trim() !== '-')
+    ? String(e.apellidos)
+    : [e.primerApellido, e.segundoApellido].filter(x => x && String(x).trim() && String(x).trim() !== '-').join(' ');
+  const last_names = (apellidosFull.trim().toUpperCase()) || null;
   const first_lastname = (e.primerApellido || '').toString().trim().toUpperCase() || null;
   const full_name = (e.nombreCompleto || [first_name, second_name, last_names].filter(Boolean).join(' ')).toString().trim().toUpperCase();
   const account_number = accountDigits(e.cuentaBancaria);
