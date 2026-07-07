@@ -1435,10 +1435,18 @@ function wireFicha(host, w) {
     saveB.disabled = false; saveB.textContent = 'Guardar cambios';
     if (!r.ok) { alert(r.error || 'No se pudo guardar.'); return; }
 
-    // Aplicar en memoria y refrescar.
+    // Aplicar en memoria y refrescar. Se copia tambien el estado de pendiente
+    // que devuelve el backend (ax_pending / ax_pending_fields): asi el badge de
+    // la ficha, el lapiz por campo y el boton Publicar (N) de la barra
+    // aparecen de inmediato sin tener que recargar la lista.
     const depName = department_id == null ? null : ((STATE.departments.find(d => d.id === department_id) || {}).name || null);
-    Object.assign(w, profile, { department_id, department_name: depName, updated_at: new Date().toISOString() });
+    Object.assign(w, profile, {
+      department_id, department_name: depName, updated_at: new Date().toISOString(),
+      ax_pending: !!r.ax_pending,
+      ax_pending_fields: (r.ax_pending_fields && typeof r.ax_pending_fields === 'object') ? r.ax_pending_fields : {},
+    });
     openFicha(w.id_number);   // reabre en modo ver con datos frescos
+    refreshPublishBtn();      // muestra/actualiza el boton Publicar (N) de la barra
     paintGrid();
   }
 
