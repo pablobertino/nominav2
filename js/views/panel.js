@@ -312,7 +312,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.00</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.01</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2695,22 +2695,28 @@ async function cuApi(payload) {
    Las acciones (data-act) las maneja auAction, sin cambios. */
 
 /* Resumen de alcance -> texto corto. `sc` = {inc:{type:n}, exc:{type:n}}.
-   kind: 'store' cuenta zone/subzone/company(tienda); 'ent' cuenta
-   company(empresa)/department. Como el backend no distingue tienda vs empresa
-   por code aqui, mostramos el conteo de reglas por tipo (zona/empresa/depto),
-   que es lo que el editor de alcance administra. */
-function scopeSummaryHtml(sc, kind) {
+   kind: 'store' muestra zonas/subzonas (reglas) + total real de tiendas;
+   'ent' muestra total real de empresas no-tienda + deptos. Los totales
+   reales vienen de counts (RPC admin_scope_counts): alcance resuelto
+   (include - exclude) separado por tipo. Asi no se cuentan mal las empresas
+   que entran por zona/subzona/departamento. */
+function scopeSummaryHtml(sc, kind, counts) {
   const inc = (sc && sc.inc) || {};
   const exc = (sc && sc.exc) || {};
+  const cnt = counts || {};
   const parts = [];
   if (kind === 'store') {
-    const z = inc.zone || 0, s = inc.subzone || 0, c = inc.company || 0;
+    // Detalle de reglas por zona/subzona (lo que administra el editor).
+    const z = inc.zone || 0, s = inc.subzone || 0;
     if (z) parts.push(`${z} zona${z === 1 ? '' : 's'}`);
     if (s) parts.push(`${s} subzona${s === 1 ? '' : 's'}`);
-    if (c) parts.push(`${c} por c\u00f3digo`);
+    // Total REAL de tiendas resueltas (tipo Tienda), no el conteo de reglas.
+    const t = cnt.tiendas || 0;
+    if (t) parts.push(`${t} tienda${t === 1 ? '' : 's'}`);
   } else {
-    const c = inc.company || 0, d = inc.department || 0;
-    if (c) parts.push(`${c} empresa${c === 1 ? '' : 's'}`);
+    // Total REAL de empresas no-tienda resueltas + detalle de deptos.
+    const e = cnt.empresas || 0, d = inc.department || 0;
+    if (e) parts.push(`${e} empresa${e === 1 ? '' : 's'}`);
     if (d) parts.push(`${d} depto${d === 1 ? '' : 's'}`);
   }
   const exN = kind === 'store'
@@ -2725,14 +2731,14 @@ function scopeSummaryHtml(sc, kind) {
 /* Celda de alcance para admin/editor: dos lineas (Tiendas / Empresas). */
 function scopeCellBoth(a) {
   return `<div class="scope-cell">`
-    + `<span class="sc-chip"><span class="k">Tiendas</span> ${scopeSummaryHtml(a.scope, 'store')}</span>`
-    + `<span class="sc-chip"><span class="k">Empresas</span> ${scopeSummaryHtml(a.scope, 'ent')}</span>`
+    + `<span class="sc-chip"><span class="k">Tiendas</span> ${scopeSummaryHtml(a.scope, 'store', a.scope_counts)}</span>`
+    + `<span class="sc-chip"><span class="k">Empresas</span> ${scopeSummaryHtml(a.scope, 'ent', a.scope_counts)}</span>`
     + `</div>`;
 }
 /* Celda de alcance para gestor: SOLO empresas/deptos. */
 function scopeCellEnt(a) {
   return `<div class="scope-cell">`
-    + `<span class="sc-chip"><span class="k">Empresas</span> ${scopeSummaryHtml(a.scope, 'ent')}</span>`
+    + `<span class="sc-chip"><span class="k">Empresas</span> ${scopeSummaryHtml(a.scope, 'ent', a.scope_counts)}</span>`
     + `</div>`;
 }
 

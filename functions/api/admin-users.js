@@ -175,20 +175,34 @@ export async function onRequestPost({ request, env }) {
       if (!isSuper) {
         rows = (rows || []).filter(a => a.role === 'gestor_empresa' && gestorSet.has(Number(a.id)));
       }
-      // Resumen de alcance por admin: conteo de reglas include/exclude por
-      // tipo (zone/subzone/company/department). Barato (2 lecturas), suficiente
-      // para el resumen de la grilla; el detalle se edita en el editor de scope.
-      const inc = await sb(env, 'admin_scope_include?select=admin_id,scope_type') || [];
-      const exc = await sb(env, 'admin_scope_exclude?select=admin_id,scope_type') || [];
+      // Resumen de alcance por admin. Se cuenta el alcance REALMENTE resuelto
+      // (include - exclude), separado en tiendas vs empresas no-tienda, via la
+      // RPC admin_scope_counts (una sola llamada). Esto corrige el conteo
+      // anterior por "reglas", que ignoraba las empresas que entran por
+      // zona/subzona/departamento (mostraba menos empresas de las reales).
+      // Ademas se conservan las reglas include/exclude por tipo para el detalle
+      // por zona/subzona/depto que muestra la celda (scopeSummaryHtml).
+      const [inc, exc, counts] = await Promise.all([
+        sb(env, 'admin_scope_include?select=admin_id,scope_type'),
+        sb(env, 'admin_scope_exclude?select=admin_id,scope_type'),
+        sb(env, 'rpc/admin_scope_counts', { method: 'POST', body: '{}' }),
+      ]);
+      const incA = inc || [], excA = exc || [];
       const scopeMap = {};   // admin_id -> { inc:{type:n}, exc:{type:n} }
       const bump = (bucket, r) => {
         const k = r.admin_id;
         if (!scopeMap[k]) scopeMap[k] = { inc: {}, exc: {} };
         scopeMap[k][bucket][r.scope_type] = (scopeMap[k][bucket][r.scope_type] || 0) + 1;
       };
-      inc.forEach(r => bump('inc', r));
-      exc.forEach(r => bump('exc', r));
-      (rows || []).forEach(a => { a.scope = scopeMap[a.id] || { inc: {}, exc: {} }; });
+      incA.forEach(r => bump('inc', r));
+      excA.forEach(r => bump('exc', r));
+      // Mapa de conteos reales por admin (tiendas / empresas no-tienda).
+      const countMap = {};
+      (counts || []).forEach(c => { countMap[c.admin_id] = { tiendas: c.tiendas || 0, empresas: c.empresas || 0 }; });
+      (rows || []).forEach(a => {
+        a.scope = scopeMap[a.id] || { inc: {}, exc: {} };
+        a.scope_counts = countMap[a.id] || { tiendas: 0, empresas: 0 };
+      });
       return json({ ok: true, rows });
     }
 
