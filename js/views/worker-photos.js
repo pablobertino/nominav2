@@ -249,7 +249,12 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   // kind==='admin' (por eso isAdmin es true para el), pero NO debe poder
   // crear departamentos: eso queda reservado al superadmin.
   const isSuper = !!(user && user.kind === 'admin' && user.role === 'superadmin');
-  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, isSuper, departments: [], selMode: false, selected: new Set(),
+  // v4.18: el DEPARTAMENTO solo se edita en empresas NO-tienda y nunca por un
+  // gestor_empresa. En tiendas es fijo (Retail): la ficha lo muestra bloqueado
+  // y solo queda el atajo "Asignar Retail" para quien no lo tiene.
+  const isGestor = !!(user && user.kind === 'admin' && user.role === 'gestor_empresa');
+  const canEditDept = mode === 'enterprise' && !isGestor;
+  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, isSuper, isGestor, canEditDept, departments: [], selMode: false, selected: new Set(),
     sortKey: 'name_az', fPhoto: 'all', fGender: 'all', fCargo: 'ALL', fDept: 'ALL', fStatus: 'all' };
 
   const back = onExit
@@ -706,7 +711,7 @@ function paintGrid() {
     let deptBar = '';
     if (w.department_name) {
       deptBar = `<div class="wp-deptbar"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span>${esc(w.department_name)}</span></div>`;
-    } else if (STATE.isAdmin) {
+    } else if (STATE.isAdmin && !STATE.isGestor) {
       const label = STATE.mode === 'enterprise' ? 'Asignar departamento' : 'Asignar Retail';
       deptBar = `<div class="wp-deptbar assign" data-assigndept="${w.id_number}"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg><span>${label}</span></div>`;
     }
@@ -1245,7 +1250,9 @@ function fichaHtml(w, c) {
           <div class="ff-row"><span class="ff-lbl">Cargo <span class="src excel"><span class="dot"></span></span></span><span class="ff-val" data-v="role"></span></div>
           <div class="ff-row"><span class="ff-lbl">Departamento <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="department"></span></div>
           <div class="ff-field ff-role-locked"><label>Cargo</label><div class="ff-locked" data-v="role_locked" style="padding:9px 11px;border:1px dashed var(--border);border-radius:8px;background:var(--bg-soft,#f8fafc);color:var(--text);min-height:20px"></div><div class="ff-hint">El cargo se actualiza solo por la sincronización de personal desde AX.</div></div>
-          <div class="ff-field"><label>Departamento</label><select id="e_department"><option value="">— Sin departamento —</option>${(STATE.departments || []).map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></div>
+          ${STATE.canEditDept
+            ? `<div class="ff-field"><label>Departamento</label><select id="e_department"><option value="">— Sin departamento —</option>${(STATE.departments || []).map(d => `<option value="${d.id}">${esc(d.name)}</option>`).join('')}</select></div>`
+            : `<div class="ff-field"><label>Departamento</label><div class="ff-locked" data-v="department_locked" style="padding:9px 11px;border:1px dashed var(--border);border-radius:8px;background:var(--bg-soft,#f8fafc);color:var(--text);min-height:20px"></div><div class="ff-hint">${STATE.mode === 'enterprise' ? 'El departamento lo gestiona un administrador.' : 'En las tiendas el departamento es fijo y no se edita desde la ficha.'}</div></div>`}
         </div>
 
         <div class="ff-sec">Datos bancarios</div>
@@ -1389,6 +1396,13 @@ function wireFicha(host, w) {
       roleLocked.classList.toggle('empty', empty);
     }
     if (q('#e_department')) q('#e_department').value = w.department_id || '';
+    // Departamento bloqueado (tiendas / gestor): mostrar el valor actual.
+    const depLocked = host.querySelector('[data-v="department_locked"]');
+    if (depLocked) {
+      const emptyDep = !w.department_name;
+      depLocked.textContent = emptyDep ? 'Sin departamento' : w.department_name;
+      depLocked.classList.toggle('empty', emptyDep);
+    }
     q('#e_email').value = w.email || ''; q('#e_address').value = w.address || '';
     runValidations();
     window.scrollTo(0, 0);
@@ -1426,15 +1440,23 @@ function wireFicha(host, w) {
     // cambia por la sincronizacion de personal desde AX (afecta el salario).
     // El backend ademas ignora 'role' aunque llegara.
 
-    const deptVal = q('#e_department') ? (q('#e_department').value || '') : '';
-    const department_id = deptVal === '' ? null : parseInt(deptVal, 10);
+    // Departamento: SOLO viaja cuando esta ficha puede editarlo (empresa
+    // no-tienda y no-gestor). Si no, NO se incluye en el payload y el backend
+    // no lo toca (regla v4.18: tiendas fijas + gestores sin permiso).
+    const payload = {
+      action: 'save_profile', company_code: STATE.cc, user: sessionUserPayload(STATE.user),
+      id_number: w.id_number, profile,
+    };
+    let department_id = w.department_id != null ? w.department_id : null;
+    if (STATE.canEditDept) {
+      const deptVal = q('#e_department') ? (q('#e_department').value || '') : '';
+      department_id = deptVal === '' ? null : parseInt(deptVal, 10);
+      payload.department_id = department_id;
+    }
 
     const saveB = host.querySelector('#ffSave');
     saveB.disabled = true; saveB.textContent = 'Guardando…';
-    const r = await api({
-      action: 'save_profile', company_code: STATE.cc, user: sessionUserPayload(STATE.user),
-      id_number: w.id_number, profile, department_id,
-    });
+    const r = await api(payload);
     saveB.disabled = false; saveB.textContent = 'Guardar cambios';
     if (!r.ok) { alert(r.error || 'No se pudo guardar.'); return; }
 
@@ -1442,7 +1464,8 @@ function wireFicha(host, w) {
     // que devuelve el backend (ax_pending / ax_pending_fields): asi el badge de
     // la ficha, el lapiz por campo y el boton Publicar (N) de la barra
     // aparecen de inmediato sin tener que recargar la lista.
-    const depName = department_id == null ? null : ((STATE.departments.find(d => d.id === department_id) || {}).name || null);
+    const depName = department_id == null ? null
+      : (((STATE.departments || []).find(d => d.id === department_id) || {}).name || w.department_name || null);
     Object.assign(w, profile, {
       department_id, department_name: depName, updated_at: new Date().toISOString(),
       ax_pending: !!r.ax_pending,

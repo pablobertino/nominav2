@@ -258,6 +258,15 @@ function deptOk(deptScope, depId) {
   return depId != null && deptScope.includes(Number(depId));
 }
 
+/* true si quien llama es un admin con rol gestor_empresa (v4.18): los
+   gestores NO pueden cambiar el departamento de nadie (en ningun tipo de
+   empresa). Se consulta solo cuando hace falta (1 subrequest). */
+async function isGestorUser(env, user) {
+  if (!user || user.kind !== 'admin' || !user.id) return false;
+  const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
+  return !!(a && a.length && a[0].role === 'gestor_empresa');
+}
+
 /* Resuelve la TABLA de roster segun el tipo de empresa: las no-tienda usan
    enterprise_workers; las tiendas (o cualquier otra) usan store_workers.
    Asi el mismo endpoint (foto/ficha sobre workers_master por cedula) sirve
@@ -790,19 +799,34 @@ async function saveProfile(env, cc, body, table, deptScope) {
   // Departamento: vive en el ROSTER de la empresa (store_workers /
   // enterprise_workers), no en workers_master. Solo se toca si el cliente lo
   // envia explicitamente (department_id presente; null = quitarlo).
+  // REGLA v4.18: en TIENDAS el departamento NO se edita desde la ficha
+  // (nadie), y los GESTORES de empresa tampoco pueden cambiarlo (en ninguna
+  // empresa). Como el front siempre envia department_id al guardar, un valor
+  // IGUAL al actual se ignora en silencio; solo se rechaza el CAMBIO.
   if (Object.prototype.hasOwnProperty.call(body, 'department_id')) {
     const depId = (body.department_id === null || body.department_id === '') ? null : parseInt(body.department_id, 10);
-    if (depId != null) {
-      const d = await sb(env, `departments?id=eq.${depId}&company_code=eq.${encodeURIComponent(cc)}&select=id`);
-      if (!d || !d.length) return json({ ok: false, error: 'Ese departamento no pertenece a esta empresa.' }, 400);
+    const curDep = (inStore[0].department_id === null || inStore[0].department_id === undefined)
+      ? null : Number(inStore[0].department_id);
+    const changed = (depId === null ? curDep !== null : Number(depId) !== curDep);
+    if (changed) {
+      if (table === 'store_workers') {
+        return json({ ok: false, error: 'En las tiendas el departamento no se edita desde la ficha.' }, 403);
+      }
+      if (await isGestorUser(env, body.user)) {
+        return json({ ok: false, error: 'Los gestores de empresa no pueden cambiar el departamento.' }, 403);
+      }
+      if (depId != null) {
+        const d = await sb(env, `departments?id=eq.${depId}&company_code=eq.${encodeURIComponent(cc)}&select=id`);
+        if (!d || !d.length) return json({ ok: false, error: 'Ese departamento no pertenece a esta empresa.' }, 400);
+      }
+      if (Array.isArray(deptScope) && !deptOk(deptScope, depId)) {
+        return json({ ok: false, error: 'No puedes asignar a un departamento fuera de tu alcance.' }, 403);
+      }
+      await sb(env, `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ department_id: depId }),
+      });
     }
-    if (Array.isArray(deptScope) && !deptOk(deptScope, depId)) {
-      return json({ ok: false, error: 'No puedes asignar a un departamento fuera de tu alcance.' }, 403);
-    }
-    await sb(env, `${table}?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}`, {
-      method: 'PATCH', headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ department_id: depId }),
-    });
   }
   return json({ ok: true, id_number: ced, ax_pending: !!patch.ax_pending, ax_pending_fields: patch.ax_pending_fields || null });
 }
@@ -819,9 +843,26 @@ async function setDepartment(env, cc, body, table, deptScope) {
   if (!ids.length) return json({ ok: false, error: 'No hay trabajadores seleccionados.' }, 400);
   const depId = (body.department_id === null || body.department_id === '' || body.department_id === undefined)
     ? null : parseInt(body.department_id, 10);
+  // REGLA v4.18: los gestores de empresa NO cambian departamentos (nunca).
+  if (await isGestorUser(env, body.user)) {
+    return json({ ok: false, error: 'Los gestores de empresa no pueden cambiar el departamento.' }, 403);
+  }
+  let depRow = null;
   if (depId != null) {
-    const d = await sb(env, `departments?id=eq.${depId}&company_code=eq.${encodeURIComponent(cc)}&select=id`);
+    const d = await sb(env, `departments?id=eq.${depId}&company_code=eq.${encodeURIComponent(cc)}&select=id,name`);
     if (!d || !d.length) return json({ ok: false, error: 'Ese departamento no pertenece a esta empresa.' }, 400);
+    depRow = d[0];
+  }
+  // REGLA v4.18: en TIENDAS el departamento no se edita; la UNICA operacion
+  // permitida es la asignacion del departamento sembrado (Retail) del flujo
+  // "Asignar Retail" de la tarjeta. Quitar o cambiar a otro: bloqueado.
+  if (table === 'store_workers') {
+    if (depId == null) {
+      return json({ ok: false, error: 'En las tiendas el departamento no se quita.' }, 403);
+    }
+    if (!depRow || !/^retail$/i.test(String(depRow.name || '').trim())) {
+      return json({ ok: false, error: 'En las tiendas solo se asigna el departamento Retail.' }, 403);
+    }
   }
   // Alcance por departamento: solo se asigna a un departamento propio y solo
   // sobre trabajadores que ya esten en el alcance del admin.

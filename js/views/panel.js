@@ -321,7 +321,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.17</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.18</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2416,7 +2416,9 @@ function ouGrantAccess(user, code, btn) {
       <div style="margin-top:12px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--bg-soft,#f7f7f9)">
         ${copyFieldHtml('Usuario', uname, 'ogrUser')}
         ${copyFieldHtml('Clave', pass, 'ogrPass')}
-        <button class="btn" data-copy-all type="button" style="width:100%;margin-top:2px">Copiar usuario y clave</button>
+        ${d.portal_url ? copyFieldHtml('Portal de clientes (URL)', d.portal_url, 'ogrUrl') : ''}
+        <button class="btn" data-copy-all type="button" style="width:100%;margin-top:2px">Copiar todo (portal + usuario + clave)</button>
+        ${d.portal_url ? `<a class="btn" href="${d.portal_url.replace(/"/g, '&quot;')}" target="_blank" rel="noopener" style="display:block;text-align:center;margin-top:8px;text-decoration:none">Abrir el portal de clientes \u2197</a>` : ''}
         <p class="muted" style="font-size:11.5px;margin:10px 0 0;line-height:1.5">Entra al portal de clientes de osTicket con ese usuario y clave.</p>
       </div>
       <div class="modal-actions"><button class="btn btn-primary" id="mClose">Listo</button></div>`);
@@ -2427,8 +2429,12 @@ function ouGrantAccess(user, code, btn) {
       x.addEventListener('click', () => { const el = document.getElementById(x.dataset.copy); if (el) { el.select(); copyToClipboard(el.value, x); } }));
     const all = document.querySelector('[data-copy-all]');
     if (all) all.addEventListener('click', () => {
-      const us = document.getElementById('ogrUser'), pw = document.getElementById('ogrPass');
-      copyToClipboard(`Usuario: ${us ? us.value : ''}\nClave: ${pw ? pw.value : ''}`, all);
+      const us = document.getElementById('ogrUser'), pw = document.getElementById('ogrPass'), ur = document.getElementById('ogrUrl');
+      const lines = [];
+      if (ur) lines.push(`Portal: ${ur.value}`);
+      lines.push(`Usuario: ${us ? us.value : ''}`);
+      lines.push(`Clave: ${pw ? pw.value : ''}`);
+      copyToClipboard(lines.join('\n'), all);
     });
   });
 }

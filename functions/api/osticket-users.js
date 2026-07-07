@@ -316,5 +316,8 @@ async function grantAccess(env, body, allowed) {
     username,
     account_created: r.account_created,
     account_updated: r.account_updated,
+    // URL del portal de CLIENTES de osTicket (v4.18): sale de la config
+    // (app_settings.osticket_url) para que el modal la muestre copiable.
+    portal_url: `${base}/index.php`,
   });
 }
