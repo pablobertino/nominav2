@@ -37,11 +37,13 @@
    ===================================================================== */
 
 import { resolveActor, can, AuthError } from './_auth.js';
+import { hcmRosterRaw, fullHcmPayload } from './_hcm.js';
 
 const HCM_API = 'https://api2.grupocanaima.com/empleados/datos/v1';
 
-// Traduccion codigo interno -> TEXTO que la API HCM espera (mismos valores que
-// worker-photo.js; verificados contra la respuesta real de AX).
+// Textos en ESPANOL solo para MOSTRAR en la UI (displayVal). Para ENVIAR al
+// sistema se usan los textos en ingles de _hcm.js (la API cambio de idioma
+// el 2026-07-07: Single/Married/... y Male/Female).
 const AX_GENDER = { M: 'Masculino', F: 'Femenino' };
 const AX_MARITAL = {
   S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a',
@@ -807,17 +809,24 @@ async function publish(env, actor, user, body) {
   const masterByCed = {};
   master.forEach(m => { masterByCed[String(m.id_number)] = m; });
 
-  const toAxValue = (field, raw) => {
-    const v = (raw == null) ? '' : String(raw).trim();
-    if (v === '') return null;
-    if (field === 'gender') return AX_GENDER[v] || null;
-    if (field === 'marital_status') return AX_MARITAL[v] || null;
-    if (field === 'phone') return v.startsWith('+58') ? '0' + v.slice(3) : v;
-    if (field === 'birth_date') return String(v).slice(0, 10);
-    return v;
-  };
+  // ECO: leer la ficha ACTUAL del sistema (1 GET por empresa) para armar
+  // SIEMPRE el payload completo (los 9 campos): pendientes con el valor del
+  // portal (traducido, en ingles los enums) y el resto devolviendo lo que el
+  // sistema ya tiene. Sin eco NO se envia (mejor rechazar que ir a medias).
+  const byCompany = {};
+  targets.forEach(t => {
+    const cc = t.company_code;
+    (byCompany[cc] = byCompany[cc] || []).push(t);
+  });
+  const erpByCed = {};
+  const erpFailed = new Set();
+  for (const cc of Object.keys(byCompany)) {
+    const m = await hcmRosterRaw(env, cc);
+    if (m === null) { erpFailed.add(cc); continue; }
+    Object.assign(erpByCed, m);
+  }
 
-  const clean = [];         // payloads AX
+  const clean = [];         // payloads AX (completos, con eco)
   const okCeds = [];        // cedulas que se enviaran
   const okSetIds = [];      // change_set.id correspondientes
   const rejected = [];      // { id_number, reason }
@@ -828,20 +837,22 @@ async function publish(env, actor, user, body) {
       rejected.push({ id_number: ced, reason: 'Sin cambios pendientes en el maestro.' });
       continue;
     }
-    const fields = (m.ax_pending_fields && typeof m.ax_pending_fields === 'object') ? m.ax_pending_fields : {};
-    const out = { ficha: ced };
-    for (const field of Object.keys(fields)) {
-      const axKey = AX_FIELD_MAP[field];
-      if (!axKey) continue;                 // address u otros no viajan
-      const val = toAxValue(field, m[field]);
-      if (val == null || val === '') continue;   // RED ANTI-BORRADO: se omite
-      out[axKey] = val;
+    if (erpFailed.has(t.company_code)) {
+      rejected.push({ id_number: ced, reason: 'No se pudo leer la ficha actual del sistema (eco); no se envia sin eso.' });
+      continue;
     }
-    if (Object.keys(out).length <= 1) {
+    const erpRaw = erpByCed[ced];
+    if (!erpRaw) {
+      rejected.push({ id_number: ced, reason: 'El sistema no devolvio esta ficha (respuesta parcial); no se envia sin el eco.' });
+      continue;
+    }
+    const fields = (m.ax_pending_fields && typeof m.ax_pending_fields === 'object') ? m.ax_pending_fields : {};
+    const { payload, changed } = fullHcmPayload(m, fields, erpRaw);
+    if (!changed) {
       rejected.push({ id_number: ced, reason: 'Sin campos validos para enviar (todo quedo vacio).' });
       continue;
     }
-    clean.push(out);
+    clean.push(payload);
     okCeds.push(ced);
     okSetIds.push(t.id);
   }

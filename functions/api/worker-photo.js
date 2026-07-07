@@ -34,6 +34,7 @@
    ===================================================================== */
 
 import { shadowCan } from './_auth.js';
+import { hcmRosterRaw, fullHcmPayload } from './_hcm.js';
 
 const BUCKET = 'worker-photos';          // privado: full (y thumb viejas)
 const PUBLIC_BUCKET = 'worker-thumbs';   // publico: miniaturas nuevas
@@ -45,12 +46,10 @@ const MAX_FULL_BYTES = 400 * 1024;   // tope server-side de la version grande
 // esta vive en api2. Clave en el Secret env.canaima_apikey (nunca al navegador).
 const HCM_API = 'https://api2.grupocanaima.com/empleados/datos/v1';
 
-// Traduccion de los codigos cortos del portal al TEXTO que la API HCM espera.
-// IMPORTANTE: la API recibe/devuelve el estado civil como TEXTO EN ESPANOL
-// (ella traduce a los enums de AX internamente). Estos strings deben calcar
-// EXACTO con los que la API maneja (verificado contra la respuesta real de
-// AA01): Soltero/a, Casado/a, Divorciado/a, Viudo/a, Conviviente y
-// "Union Registrada" (con tilde en Union). Un texto que no calce se rechaza.
+// Textos en ESPANOL solo para MOSTRAR (si algun render los usa). Para ENVIAR
+// al sistema se usan los textos en ingles de _hcm.js: la API cambio de idioma
+// el 2026-07-07 (Single/Married/Divorced/... y Male/Female) y la escritura la
+// arma fullHcmPayload (payload completo con eco).
 const AX_GENDER = { M: 'Masculino', F: 'Femenino' };
 const AX_MARITAL = {
   S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a',
@@ -951,48 +950,33 @@ async function pushToAx(env, cc, body, table, deptScope, user) {
     return json({ ok: true, sent: 0, synced: [], rejected: [], message: 'No hay cambios pendientes de enviar a AX.' });
   }
 
-  // --- Construir el payload por trabajador (solo campos pendientes) ---
-  // Formatea el valor de un campo interno al texto que AX espera. Devuelve
-  // null si el valor no es apto para enviar (vacio, o traduccion sin match).
-  const toAxValue = (field, raw) => {
-    const v = (raw == null) ? '' : String(raw).trim();
-    if (v === '') return null;
-    if (field === 'gender') return AX_GENDER[v] || null;
-    if (field === 'marital_status') return AX_MARITAL[v] || null;
-    if (field === 'phone') {
-      // AX espera el numero nacional (04XX...). En el master se guarda +58...
-      return v.startsWith('+58') ? '0' + v.slice(3) : v;
-    }
-    if (field === 'birth_date') return String(v).slice(0, 10);   // YYYY-MM-DD
-    return v;
-  };
+  // --- ECO: leer la ficha ACTUAL del sistema para esta empresa ---
+  // El payload SIEMPRE viaja completo (los 9 campos): los pendientes con el
+  // valor del portal (traducido; enums en ingles) y el resto devolviendo lo
+  // que el sistema ya tiene. Sin eco NO se envia (mejor rechazar que ir a
+  // medias y arriesgar borrados/reseteos por campos omitidos).
+  const erpByCed = await hcmRosterRaw(env, cc);
+  if (erpByCed === null) {
+    return json({ ok: false, error: 'No se pudo leer el estado actual del sistema para esta empresa; intenta de nuevo.' }, 502);
+  }
 
-  const clean = [];         // payloads listos para AX
+  const clean = [];         // payloads listos para AX (completos, con eco)
   const cleanCeds = [];     // cedulas que se enviaran (para limpiar pendiente)
   const rejected = [];      // { id_number, reason }
   for (const m of rows) {
     const ced = String(m.id_number);
-    const fields = (m.ax_pending_fields && typeof m.ax_pending_fields === 'object') ? m.ax_pending_fields : {};
-    const out = { ficha: ced };
-    for (const field of Object.keys(fields)) {
-      // Solo campos conocidos por AX (address no viaja).
-      const axKey = AX_FIELD_MAP[field];
-      if (!axKey) continue;
-      const val = toAxValue(field, m[field]);
-      if (val == null || val === '') {
-        // RED ANTI-BORRADO: destructivo vacio -> se OMITE (nunca se manda "").
-        // No-destructivo vacio -> tambien se omite (AX lo ignoraria, pero
-        // evitamos ruido). En ambos casos el dato en AX queda intacto.
-        continue;
-      }
-      out[axKey] = val;
+    const erpRaw = erpByCed[ced];
+    if (!erpRaw) {
+      rejected.push({ id_number: ced, reason: 'El sistema no devolvio esta ficha (respuesta parcial); no se envia sin el eco.' });
+      continue;
     }
-    // Si tras el saneo no quedo ningun campo real (solo la ficha), no se envia.
-    if (Object.keys(out).length <= 1) {
+    const fields = (m.ax_pending_fields && typeof m.ax_pending_fields === 'object') ? m.ax_pending_fields : {};
+    const { payload, changed } = fullHcmPayload(m, fields, erpRaw);
+    if (!changed) {
       rejected.push({ id_number: ced, reason: 'Sin campos validos para enviar (todo quedo vacio).' });
       continue;
     }
-    clean.push(out);
+    clean.push(payload);
     cleanCeds.push(ced);
   }
 
