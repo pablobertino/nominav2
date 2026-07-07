@@ -27,6 +27,9 @@ const SELECTED = new Set();  // ids de change_set seleccionados
 const OPEN = new Set();       // ids expandidos
 // Criterios de filtro (encadenados).
 let C = { type: '', company: '', zone: '', subzone: '', concept: '' };
+// Estado del flujo de comparacion.
+let CMP_ROWS = [];        // diferencias detectadas (del dry-run)
+let CMP_SCOPE = null;      // { company_code } | { all:true }
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -145,6 +148,34 @@ function ensureStyles() {
   .axr-modal .res.ok{background:var(--success-bg,#f0fdf4);border:1px solid #bbf7d0;color:var(--success,#15803d);display:block}
   .axr-modal .res.err{background:var(--danger-bg,#fef2f2);border:1px solid #f3c2c2;color:var(--danger,#b91c1c);display:block}
   .axr-modal .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
+  /* Boton Comparar */
+  .axr-btn-cmp{background:var(--brand-bg,#eff6ff);border-color:#bfdbfe;color:var(--brand,#2563eb)}
+  .axr-btn-cmp:hover:not(:disabled){background:#dbeafe}
+  .axr-btn-adopt{background:#f5f3ff;border-color:#ddd6fe;color:#6d28d9}
+  .axr-btn-adopt:hover:not(:disabled){background:#ede9fe}
+  /* Panel de comparacion (modal grande) */
+  .axr-cmp{background:var(--card,#fff);border-radius:16px;max-width:860px;width:100%;box-shadow:0 20px 60px rgba(15,23,42,.3);max-height:88vh;display:flex;flex-direction:column;overflow:hidden}
+  .axr-cmp-head{padding:18px 22px 12px;border-bottom:1px solid var(--border)}
+  .axr-cmp-head h3{margin:0;font-size:18px}
+  .axr-cmp-head p{margin:3px 0 0;color:var(--muted);font-size:12.5px}
+  .axr-cmp-body{padding:14px 22px;overflow:auto;flex:1}
+  .axr-cmp-foot{padding:12px 22px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+  .axr-cmp-lot{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+  .axr-drow{border:1px solid var(--border);border-radius:12px;margin-bottom:8px;overflow:hidden}
+  .axr-drow.done{opacity:.55}
+  .axr-dhead{display:flex;align-items:center;gap:12px;padding:11px 14px;background:var(--bg-soft,#f8fafc)}
+  .axr-dhead .nm{font-weight:600;font-size:13.5px}
+  .axr-dhead .sub{color:var(--muted);font-size:11.5px}
+  .axr-dtag{margin-left:auto;font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px}
+  .axr-dtag.pend{background:var(--warn-bg,#fff7ed);color:var(--warn,#c2410c);border:1px solid var(--warn-bd,#fed7aa)}
+  .axr-dtag.ok{background:var(--success-bg,#f0fdf4);color:var(--success,#15803d);border:1px solid #bbf7d0}
+  .axr-dtbl{width:100%;border-collapse:collapse;font-size:12.5px}
+  .axr-dtbl th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:700;padding:7px 14px;background:#fff;border-bottom:1px solid var(--border)}
+  .axr-dtbl td{padding:7px 14px;border-bottom:1px solid var(--border-soft,#eef1f5);vertical-align:top}
+  .axr-dtbl .fld{font-weight:600;width:120px}
+  .axr-vsys{color:#6d28d9;font-weight:600}
+  .axr-vpor{color:var(--brand,#2563eb);font-weight:600}
+  .axr-dacts{display:flex;gap:8px;justify-content:flex-end;padding:10px 14px;background:var(--bg-soft,#f8fafc)}
   `;
   document.head.appendChild(st);
 }
@@ -205,6 +236,7 @@ export async function renderAxReview(user) {
       <button class="axr-clear" id="axrClear">Limpiar</button>
     </div>
     <div class="axr-toolbar">
+      <button class="axr-btn axr-btn-cmp" id="axrCompare"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg> Comparar</button>
       <span class="axr-spacer"></span>
       <button class="axr-btn axr-btn-pub" id="axrPubAll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar todo <span class="axr-count" id="axrPubAllN">0</span></button>
       <button class="axr-btn axr-btn-dis" id="axrDisAll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular todo</button>
@@ -231,6 +263,7 @@ export async function renderAxReview(user) {
   $('#axrDisSel').addEventListener('click', () => confirmAction('discard', 'sel'));
   $('#axrPubAll').addEventListener('click', () => confirmAction('publish', 'all'));
   $('#axrDisAll').addEventListener('click', () => confirmAction('discard', 'all'));
+  $('#axrCompare').addEventListener('click', () => openCompareScope());
 
   await load();
 }
@@ -418,5 +451,224 @@ function confirmAction(verb, scope, id) {
     // Cancelar pasa a "Cerrar" tambien.
     const cancelBtn = wrap.querySelector('#axrCancel');
     if (cancelBtn) cancelBtn.textContent = 'Cerrar';
+  });
+}
+
+/* ===================== FLUJO COMPARAR (portal vs sistema) =====================
+   Comparar detecta diferencias reales (ambos lados con valor distinto) entre
+   el portal y el sistema, y permite resolver cada una: Publicar (portal ->
+   sistema) o Adoptar (sistema -> portal). Todo en su propio panel; la lista
+   principal de Sincronizar no se toca hasta resolver. */
+
+/* Paso 1: elegir alcance (esta empresa / todas). */
+function openCompareScope() {
+  const wrap = document.createElement('div');
+  wrap.className = 'axr-modal-vp';
+  // Si hay un filtro de empresa activo, se ofrece como "esta empresa".
+  const oneCode = C.company || '';
+  const oneName = oneCode
+    ? ((FACETS.companies || []).find(c => c.code === oneCode) || {}).name || ''
+    : '';
+  wrap.innerHTML = `
+    <div class="axr-modal">
+      <h3>Comparar con el sistema</h3>
+      <p class="who">Busca diferencias entre los datos del portal y los del sistema, para decidir cuál vale en cada caso.</p>
+      <div class="box" style="background:var(--brand-bg,#eff6ff);border:1px solid #bfdbfe;color:#1e40af">
+        Solo se listan las diferencias reales: campos con un valor en el portal y otro distinto en el sistema. Los datos que faltan de un lado no aparecen aquí.
+      </div>
+      <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
+        ${oneCode ? `<button class="axr-btn" id="cmpOne" style="justify-content:flex-start">Solo <b style="margin:0 4px">${esc(oneCode)}</b> ${esc(oneName)}</button>` : ''}
+        <button class="axr-btn" id="cmpAll" style="justify-content:flex-start">Todas mis empresas${oneCode ? ' (ignora el filtro)' : ''}</button>
+      </div>
+      <div class="foot">
+        <button class="axr-btn" id="cmpCancel">Cancelar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const close = () => { document.removeEventListener('keydown', onKey); wrap.remove(); };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  wrap.querySelector('#cmpCancel').addEventListener('click', close);
+  const oneBtn = wrap.querySelector('#cmpOne');
+  if (oneBtn) oneBtn.addEventListener('click', () => { close(); runCompare({ company_code: oneCode }); });
+  wrap.querySelector('#cmpAll').addEventListener('click', () => { close(); runCompare({ all: true }); });
+}
+
+/* Paso 2: correr el dry-run y abrir el panel de diferencias. */
+async function runCompare(scope) {
+  CMP_SCOPE = scope;
+  // Panel con estado de carga.
+  const wrap = document.createElement('div');
+  wrap.className = 'axr-modal-vp';
+  wrap.id = 'axrCmpPanel';
+  wrap.innerHTML = `
+    <div class="axr-cmp">
+      <div class="axr-cmp-head">
+        <h3>Comparación con el sistema</h3>
+        <p id="cmpSub">Consultando el sistema y comparando…</p>
+      </div>
+      <div class="axr-cmp-body" id="cmpBody"><div class="axr-loading">Comparando…</div></div>
+      <div class="axr-cmp-foot">
+        <span id="cmpFootInfo" style="color:var(--muted);font-size:12.5px"></span>
+        <span class="axr-spacer"></span>
+        <button class="axr-btn" id="cmpClose">Cerrar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const close = () => { document.removeEventListener('keydown', onKey); wrap.remove(); load(); };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  wrap.querySelector('#cmpClose').addEventListener('click', close);
+
+  let r;
+  try { r = await api({ action: 'detect', user: sessionUserPayload(USER), ...scope }); }
+  catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+
+  const body = wrap.querySelector('#cmpBody');
+  const sub = wrap.querySelector('#cmpSub');
+  const footInfo = wrap.querySelector('#cmpFootInfo');
+  if (!r || !r.ok) {
+    body.innerHTML = `<div class="axr-empty">No se pudo comparar${r && r.error ? ': ' + esc(r.error) : ''}.</div>`;
+    if (sub) sub.textContent = '';
+    return;
+  }
+  CMP_ROWS = r.rows || [];
+  const failed = r.companies_failed || [];
+  if (sub) sub.textContent = `${r.scanned || 0} ficha(s) revisada(s) · ${CMP_ROWS.length} con diferencias`
+    + (failed.length ? ` · ${failed.length} empresa(s) sin respuesta` : '');
+  if (footInfo && failed.length) footInfo.textContent = `Sin respuesta: ${failed.slice(0, 6).join(', ')}${failed.length > 6 ? '…' : ''}`;
+  paintCompare();
+}
+
+/* Pinta la lista de diferencias dentro del panel. Cada ficha con sus campos
+   (Sistema vs Portal) y dos acciones: Publicar / Adoptar. */
+function paintCompare() {
+  const body = $('#cmpBody');
+  if (!body) return;
+  if (!CMP_ROWS.length) {
+    body.innerHTML = `<div class="axr-empty"><div class="big">✓</div><div>No hay diferencias entre el portal y el sistema.</div></div>`;
+    return;
+  }
+  // Barra de lote arriba.
+  const pend = CMP_ROWS.filter(r => !r._done);
+  const lot = pend.length > 1
+    ? `<div class="axr-cmp-lot">
+         <button class="axr-btn axr-btn-pub" id="cmpPubAll">Publicar todas (${pend.length})</button>
+         <button class="axr-btn axr-btn-adopt" id="cmpAdoptAll">Adoptar todas (${pend.length})</button>
+       </div>` : '';
+
+  body.innerHTML = lot + CMP_ROWS.map((r, i) => {
+    const tag = r._done
+      ? `<span class="axr-dtag ok">${r._done === 'publish' ? 'Publicado' : 'Adoptado'}</span>`
+      : `<span class="axr-dtag pend">${r.field_count} dif.</span>`;
+    const trs = (r.fields || []).map(f => `<tr>
+      <td class="fld">${esc(f.label)}</td>
+      <td><span class="axr-vsys">${f.erp == null ? '(vacío)' : esc(f.erp)}</span></td>
+      <td><span class="axr-vpor">${f.portal == null ? '(vacío)' : esc(f.portal)}</span></td>
+    </tr>`).join('');
+    const acts = r._done ? '' : `<div class="axr-dacts">
+        <button class="axr-btn axr-btn-adopt" data-adopt="${i}">Adoptar (sistema)</button>
+        <button class="axr-btn axr-btn-pub" data-pub="${i}">Publicar (portal)</button>
+      </div>`;
+    return `<div class="axr-drow ${r._done ? 'done' : ''}">
+      <div class="axr-dhead">
+        <div><div class="nm">${esc(r.full_name || '(sin nombre)')}</div>
+          <div class="sub">${esc(r.ced_kind || '')}-${esc(r.id_number)} · ${esc(r.company_code)}</div></div>
+        ${tag}
+      </div>
+      <table class="axr-dtbl"><thead><tr><th>Campo</th><th>Sistema</th><th>Portal</th></tr></thead><tbody>${trs}</tbody></table>
+      ${acts}
+    </div>`;
+  }).join('');
+
+  body.querySelectorAll('[data-pub]').forEach(el =>
+    el.addEventListener('click', () => confirmCompare('publish', [CMP_ROWS[+el.dataset.pub]])));
+  body.querySelectorAll('[data-adopt]').forEach(el =>
+    el.addEventListener('click', () => confirmCompare('adopt', [CMP_ROWS[+el.dataset.adopt]])));
+  const pa = $('#cmpPubAll'); if (pa) pa.addEventListener('click', () => confirmCompare('publish', pend));
+  const aa = $('#cmpAdoptAll'); if (aa) aa.addEventListener('click', () => confirmCompare('adopt', pend));
+}
+
+/* Confirmacion de una accion de comparacion (publish/adopt) sobre 1..N filas.
+   verb: 'publish' (portal->sistema) | 'adopt' (sistema->portal). */
+function confirmCompare(verb, rows) {
+  rows = (rows || []).filter(r => r && !r._done);
+  if (!rows.length) return;
+  const isPub = verb === 'publish';
+  const n = rows.length;
+  const ids = rows.map(r => r.id_number);
+
+  const wrap = document.createElement('div');
+  wrap.className = 'axr-modal-vp';
+  const listHtml = rows.slice(0, 10).map(r =>
+    `<div class="it"><span>${esc(r.full_name || r.id_number)} <span style="color:var(--muted)">${esc(r.ced_kind || '')}-${esc(r.id_number)}</span></span><span style="color:var(--muted)">${r.field_count} campo(s)</span></div>`).join('');
+  const more = n > 10 ? `<div style="color:var(--muted);font-size:12px;margin-top:6px">… y ${n - 10} más</div>` : '';
+  wrap.innerHTML = `
+    <div class="axr-modal">
+      <h3>${isPub ? 'Publicar al sistema' : 'Adoptar del sistema'}</h3>
+      <p class="who">${n} ficha${n === 1 ? '' : 's'}</p>
+      <div class="box" style="${isPub
+        ? 'background:var(--warn-bg,#fff7ed);border:1px solid var(--warn-bd,#fed7aa);color:#b45309'
+        : 'background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9'}">
+        ${isPub
+          ? `Se enviará al sistema el valor del <b>portal</b> en los campos que difieren. El sistema quedará igual al portal en esas fichas.`
+          : `Se escribirá en el <b>portal</b> el valor del <b>sistema</b> en los campos que difieren. El dato actual del portal se reemplaza. Esta acción no se puede deshacer desde aquí.`}
+      </div>
+      <div class="lst">${listHtml}${more}</div>
+      <div class="res" id="cmpRes"></div>
+      <div class="foot">
+        <button class="axr-btn" id="cmpCxl">Cancelar</button>
+        <button class="axr-btn ${isPub ? 'axr-btn-pub' : 'axr-btn-adopt'}" id="cmpGo">${isPub ? 'Publicar' : 'Adoptar'}</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const close = () => { document.removeEventListener('keydown', onKey); wrap.remove(); };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  wrap.querySelector('#cmpCxl').addEventListener('click', close);
+
+  const goB = wrap.querySelector('#cmpGo');
+  goB.addEventListener('click', async () => {
+    goB.disabled = true; goB.textContent = isPub ? 'Publicando…' : 'Adoptando…';
+    const res = wrap.querySelector('#cmpRes');
+    res.className = 'res'; res.textContent = '';
+    // El backend re-detecta; le pasamos el alcance de la comparacion + las
+    // cedulas objetivo. publish usa la accion 'detect_commit' (marca pendiente
+    // y publica en un solo paso? No: detect_commit solo MARCA). Para publicar
+    // directo del panel, usamos 'publish' con id_numbers despues de marcar.
+    // Simplificacion: publish del panel = detect_commit (marca) + publish.
+    let r;
+    try {
+      if (isPub) {
+        // 1) marcar como pendientes (origin erp_detect) las detectadas.
+        const mark = await api({ action: 'detect_commit', user: sessionUserPayload(USER), ...CMP_SCOPE, id_numbers: ids });
+        if (!mark || !mark.ok) { r = mark; }
+        else {
+          // 2) publicar esas fichas.
+          r = await api({ action: 'publish', user: sessionUserPayload(USER), id_numbers: ids });
+        }
+      } else {
+        r = await api({ action: 'adopt', user: sessionUserPayload(USER), ...CMP_SCOPE, id_numbers: ids });
+      }
+    } catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+
+    if (!r || !r.ok) {
+      res.className = 'res err';
+      res.textContent = '⚠ ' + ((r && r.error) || 'No se pudo completar la acción.');
+      goB.disabled = false; goB.textContent = 'Reintentar';
+      return;
+    }
+    const done = isPub ? (r.published || []).length : (r.adopted || []).length;
+    res.className = 'res ok';
+    res.innerHTML = isPub
+      ? `✓ <b>${done}</b> ficha(s) publicada(s) al sistema.`
+      : `✓ <b>${done}</b> ficha(s) actualizada(s) con el valor del sistema.`;
+    // Marcar las filas como resueltas en el panel.
+    const doneSet = new Set(ids.map(String));
+    CMP_ROWS.forEach(row => { if (doneSet.has(String(row.id_number))) row._done = verb; });
+    goB.textContent = 'Listo';
+    goB.disabled = false;
+    goB.onclick = () => { close(); paintCompare(); };
+    const cxl = wrap.querySelector('#cmpCxl'); if (cxl) cxl.textContent = 'Cerrar';
   });
 }

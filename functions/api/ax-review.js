@@ -79,6 +79,414 @@ function displayVal(field, raw) {
   return v;
 }
 
+/* ===================== DETECCION CONTRA EL ERP =====================
+   Campos COMPARABLES: los que el ERP devuelve por la API de empleados. El ERP
+   SI trae correo y telefono (ademas de nombres, apellidos, nacimiento, genero,
+   estado civil y cuenta). 'address' NO viaja (la API no lo maneja) -> no se
+   compara.
+
+   Se comparan en CODIGO INTERNO normalizado (S/C/D/V/O/R, M/F, YYYY-MM-DD,
+   20 digitos, telefono nacional 0XXXXXXXXXX, correo en minusculas) para no
+   generar falsos positivos por formato.
+
+   OJO con el ERP: los vacios llegan como "-" (guion) tanto en correo como en
+   telefono; se tratan como null. El correo a veces viene mal formado (sin @ o
+   sin punto) -> se compara tal cual normalizado a minusculas (no validamos,
+   solo comparamos texto). El telefono llega con o sin el 0 inicial. */
+const DETECT_FIELDS = ['first_name', 'second_name', 'last_names',
+  'birth_date', 'gender', 'marital_status', 'account_number', 'phone', 'email'];
+
+// --- Normalizadores (mismos criterios que ax-roster.js) ---
+function dGenderCode(raw) {
+  const s = String(raw || '').trim().toUpperCase();
+  if (s.startsWith('MASC') || s === 'M') return 'M';
+  if (s.startsWith('FEM') || s === 'F') return 'F';
+  return null;
+}
+function dMaritalCode(raw) {
+  const s = String(raw || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+  if (s.startsWith('SOLTER')) return 'S';
+  if (s.startsWith('CASAD')) return 'C';
+  if (s.startsWith('DIVORCIAD')) return 'D';
+  if (s.startsWith('VIUD')) return 'V';
+  if (s.startsWith('COHABIT') || s.startsWith('CONVIV') || s.startsWith('UNION LIBRE')) return 'O';
+  if (s.startsWith('ASOCIAC') || s.startsWith('UNION REGISTRAD') || s.startsWith('SOCIEDAD REGISTRAD')) return 'R';
+  return null;
+}
+function dDateOrNull(v) {
+  if (!v) return null;
+  const s = String(v).slice(0, 10);
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+}
+function dAccountDigits(v) {
+  const d = String(v || '').replace(/[^0-9]/g, '');
+  return d.length === 20 ? d : null;
+}
+function dUpper(v) {
+  const s = String(v == null ? '' : v).trim().toUpperCase();
+  return (!s || s === '-') ? null : s;
+}
+// Telefono a formato NACIONAL comparable: 0 + 10 digitos (04121234567). El ERP
+// lo trae con o sin 0 inicial ("04227182280" o "4128974034") y "-" si vacio. El
+// maestro guarda "+58XXXXXXXXXX". Ambos se reducen a 11 digitos 0XXXXXXXXXX.
+function dPhoneNat(v) {
+  let s = String(v == null ? '' : v).trim();
+  if (!s || s === '-') return null;
+  if (s.startsWith('+58')) s = '0' + s.slice(3);
+  const d = s.replace(/[^0-9]/g, '');
+  let nat = d;
+  if (nat.length === 10) nat = '0' + nat;         // sin el 0 inicial
+  if (nat.length === 12 && nat.startsWith('58')) nat = '0' + nat.slice(2);
+  return /^0\d{10}$/.test(nat) ? nat : (d || null);
+}
+// Correo comparable: minusculas, sin espacios, "-" -> null. NO se valida (el ERP
+// a veces trae correos sin @ o sin punto); solo se compara como texto.
+function dEmail(v) {
+  const s = String(v == null ? '' : v).trim().toLowerCase();
+  return (!s || s === '-') ? null : s;
+}
+
+/* Mapea un empleado crudo del ERP a los campos internos COMPARABLES, ya
+   normalizados (mismo criterio que el maestro). "Apellidos" completos vienen
+   en segundoApellido con fallback a primerApellido. */
+function erpToComparable(e) {
+  const id_number = String(e.ficha ?? '').replace(/[^0-9]/g, '');
+  const account = dAccountDigits(e.cuentaBancaria);
+  return {
+    id_number,
+    first_name: dUpper(e.primerNombre),
+    second_name: dUpper(e.segundoNombre),
+    last_names: dUpper(e.segundoApellido || e.primerApellido),
+    birth_date: dDateOrNull(e.fechaNacimiento),
+    gender: dGenderCode(e.genero),
+    marital_status: dMaritalCode(e.estadoCivil),
+    account_number: account,
+    phone: dPhoneNat(e.telefono),
+    email: dEmail(e.correo),
+  };
+}
+
+/* Normaliza el valor del MAESTRO al mismo formato comparable. */
+function masterComparableVal(field, raw) {
+  if (field === 'birth_date') return dDateOrNull(raw);
+  if (field === 'account_number') return dAccountDigits(raw);
+  if (field === 'gender') { const v = dUpper(raw); return (v === 'M' || v === 'F') ? v : null; }
+  if (field === 'marital_status') { const v = dUpper(raw); return ['S', 'C', 'D', 'V', 'O', 'R'].includes(v) ? v : null; }
+  if (field === 'phone') return dPhoneNat(raw);
+  if (field === 'email') return dEmail(raw);
+  return dUpper(raw);   // nombres/apellidos
+}
+
+/* Lee el padron del ERP para una empresa (por alias = company_code). Devuelve
+   un mapa cedula -> objeto comparable, o null si la API fallo. */
+async function erpRosterFor(env, cc) {
+  try {
+    const url = `${HCM_API}?alias=${encodeURIComponent(cc)}`;
+    const res = await fetch(url, { headers: { Accept: 'application/json', 'X-API-Key': env.canaima_apikey } });
+    if (!res.ok) return null;
+    let data = await res.json();
+    if (!Array.isArray(data)) data = data.empleados || data.data || data.items || [];
+    const map = {};
+    for (const raw of data) {
+      const c = erpToComparable(raw);
+      if (c.id_number && c.id_number.length >= 6 && c.id_number.length <= 8) map[c.id_number] = c;
+    }
+    return map;
+  } catch (e) {
+    return null;
+  }
+}
+
+/* Empresas objetivo de la deteccion segun el alcance del actor y el body:
+     { company_code }  -> esa empresa (si esta en el alcance)
+     { all:true }      -> todas las del alcance (superadmin = todas las que
+                          tengan roster en workers_master via last_source_company)
+   Devuelve lista de company_code. */
+async function detectTargetCompanies(env, actor, user, body) {
+  const allowed = await allowedCompanies(env, actor, user);
+  const one = (body.company_code || '').trim();
+  if (one) {
+    if (allowed !== null && !allowed.has(one)) return [];
+    return [one];
+  }
+  if (body.all === true) {
+    if (allowed !== null) return [...allowed];
+    // superadmin: todas las empresas activas del catalogo (con alias = code).
+    const comps = await sb(env, `companies?select=company_code&order=company_code`) || [];
+    return comps.map(c => c.company_code);
+  }
+  return [];
+}
+
+/* Compara el maestro del portal contra el ERP para las empresas dadas y arma
+   la lista de diferencias por ficha. NO marca nada (dry-run).
+   Para cada empresa: lee su roster del portal (store_workers/enterprise_workers
+   segun tipo) para saber QUE cedulas pertenecen a esa empresa, cruza con el
+   maestro (datos personales) y con el ERP (verdad remota), y reporta los campos
+   que difieren. */
+async function detectDiffs(env, actor, user, body) {
+  if (!env.canaima_apikey) {
+    return json({ ok: false, error: 'La clave del ERP no esta configurada en el servidor.' }, 500);
+  }
+  const companies = await detectTargetCompanies(env, actor, user, body);
+  if (!companies.length) {
+    return json({ ok: true, rows: [], scanned: 0, companies_ok: 0, companies_failed: [], message: 'No hay empresas en el alcance indicado.' });
+  }
+
+  const NON_STORE = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en l\u00ednea']);
+  const diffs = [];            // filas de diferencias (una por ficha)
+  const failed = [];           // empresas cuyo ERP no respondio
+  let scanned = 0, okCount = 0;
+
+  for (const cc of companies) {
+    // Tipo de empresa -> tabla de roster.
+    const compRows = await sb(env, `companies?company_code=eq.${encodeURIComponent(cc)}&select=company_type`);
+    const ctype = compRows && compRows[0] ? compRows[0].company_type : null;
+    const table = NON_STORE.has(ctype) ? 'enterprise_workers' : 'store_workers';
+
+    // Cedulas que pertenecen a esta empresa (roster local).
+    const roster = await sb(env, `${table}?company_code=eq.${encodeURIComponent(cc)}&select=id_number`) || [];
+    const ceds = [...new Set(roster.map(r => String(r.id_number)).filter(Boolean))];
+    if (!ceds.length) { okCount++; continue; }
+
+    // ERP de esta empresa.
+    const erpMap = await erpRosterFor(env, cc);
+    if (erpMap === null) { failed.push(cc); continue; }
+    okCount++;
+
+    // Maestro de esas cedulas (datos personales del portal).
+    const inList = ceds.map(c => `"${c}"`).join(',');
+    const masterSel = ['id_number', 'ced_kind', 'full_name', 'ax_pending', ...DETECT_FIELDS].join(',');
+    const master = await sb(env, `workers_master?id_number=in.(${inList})&select=${masterSel}`) || [];
+
+    for (const m of master) {
+      const ced = String(m.id_number);
+      const erp = erpMap[ced];
+      if (!erp) continue;   // el ERP no lo trae -> no se compara
+      scanned++;
+      const fields = [];
+      for (const f of DETECT_FIELDS) {
+        const mv = masterComparableVal(f, m[f]);
+        const ev = erp[f] != null ? String(erp[f]) : null;
+        // REGLA: solo se reporta una diferencia cuando AMBOS lados tienen valor
+        // y difieren. Los casos "uno vacio, el otro con dato" NO se listan aqui
+        // (esos se resuelven con el Actualizar normal, no en esta deteccion).
+        // Asi la lista queda limpia: solo discrepancias reales de dato.
+        if (mv == null || ev == null) continue;   // alguno vacio -> no aplica
+        if (String(mv) === String(ev)) continue;   // iguales -> no aplica
+        fields.push({
+          field: f,
+          label: FIELD_LABEL[f] || f,
+          erp: displayVal(f, ev),        // valor del ERP
+          portal: displayVal(f, mv),     // valor del portal
+          erp_raw: ev,                    // valor interno ERP (para 'traer')
+          portal_raw: mv,                 // valor interno portal (para 'publicar')
+        });
+      }
+      if (fields.length) {
+        diffs.push({
+          id_number: ced,
+          ced_kind: m.ced_kind || null,
+          full_name: m.full_name || null,
+          company_code: cc,
+          already_pending: !!m.ax_pending,
+          fields,
+          field_count: fields.length,
+        });
+      }
+    }
+  }
+
+  return json({
+    ok: true,
+    rows: diffs,
+    scanned,
+    companies_ok: okCount,
+    companies_failed: failed,
+    diff_count: diffs.length,
+  });
+}
+
+/* Marca como PENDIENTES (origin='erp_detect') las fichas confirmadas tras el
+   dry-run. Recibe body.items = [{ id_number, company_code, fields:[{field,
+   portal_raw?}] }] o, mas simple, body.id_numbers + body.company_code y se
+   vuelve a comparar en el server (mas seguro: no confia en el valor del front).
+   Implementacion segura: re-detecta y marca solo lo que sigue difiriendo.
+
+   Al marcar: setea ax_pending=true + ax_pending_fields (union con lo previo) en
+   el maestro, y hace UPSERT en ax_change_set con origin='erp_detect' y
+   changes={campo:{old:valorERP, new:valorPortal}}. */
+async function detectCommit(env, actor, user, body) {
+  // Re-detectar para no confiar en el front (fuente de verdad: server).
+  const asked = Array.isArray(body.id_numbers)
+    ? new Set(body.id_numbers.map(x => String(x).replace(/[^0-9]/g, '')).filter(Boolean))
+    : null;
+  // Reusar detectDiffs para el alcance, luego filtrar por las cedulas pedidas.
+  const detectRes = await detectDiffs(env, actor, user, body);
+  const detectJson = await detectRes.json();
+  if (!detectJson.ok) return json(detectJson, 200);
+  let rows = detectJson.rows || [];
+  if (asked && asked.size) rows = rows.filter(r => asked.has(String(r.id_number)));
+  if (!rows.length) {
+    return json({ ok: true, marked: [], count: 0, message: 'No hay diferencias vigentes para marcar.' });
+  }
+
+  const rid = await actorAdminId(env, user);
+  const nowIso = new Date().toISOString();
+  const marked = [];
+
+  for (const r of rows) {
+    const ced = String(r.id_number);
+    const cc = r.company_code;
+    // Campos que difieren (nombres internos) + deltas old(ERP)->new(portal).
+    // OJO: en detectDiffs 'erp' y 'portal' quedaron ya como texto legible; para
+    // el change_set guardamos el VALOR INTERNO del portal en new (lo que se
+    // publicara), y el del ERP en old (referencia). Releemos el maestro para
+    // tomar el valor interno exacto.
+    const fieldNames = r.fields.map(f => f.field);
+    const inSel = ['id_number', 'ax_pending', 'ax_pending_fields', ...fieldNames].join(',');
+    const mRows = await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=${inSel}`);
+    const m = mRows && mRows[0] ? mRows[0] : null;
+    if (!m) continue;
+
+    // ERP de nuevo (valor interno) para el old. Lo tomamos del texto ya
+    // calculado en r.fields (erp es texto legible); para old guardamos el texto
+    // del ERP tal cual (la pagina lo muestra; no se publica el old).
+    const deltas = {};
+    const pendFields = (m.ax_pending_fields && typeof m.ax_pending_fields === 'object') ? { ...m.ax_pending_fields } : {};
+    for (const f of r.fields) {
+      deltas[f.field] = { old: f.erp ?? null, new: m[f.field] != null && m[f.field] !== '' ? m[f.field] : null };
+      pendFields[f.field] = true;
+    }
+
+    // Marcar el maestro como pendiente (union de campos).
+    await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
+      method: 'PATCH', headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ ax_pending: true, ax_pending_fields: pendFields, ax_pending_at: nowIso }),
+    });
+
+    // UPSERT en ax_change_set (origin erp_detect). Si ya hay uno pending para
+    // (ficha,empresa), acumular; si no, crear.
+    const existing = await sb(env,
+      `ax_change_set?id_number=eq.${encodeURIComponent(ced)}&company_code=eq.${encodeURIComponent(cc)}&status=eq.pending&select=id,changes&limit=1`);
+    if (existing && existing.length) {
+      const prev = (existing[0].changes && typeof existing[0].changes === 'object') ? existing[0].changes : {};
+      const merged = { ...prev };
+      for (const k of Object.keys(deltas)) {
+        merged[k] = (merged[k] && Object.prototype.hasOwnProperty.call(merged[k], 'old'))
+          ? { old: merged[k].old, new: deltas[k].new } : deltas[k];
+      }
+      await sb(env, `ax_change_set?id=eq.${encodeURIComponent(existing[0].id)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ changes: merged, changed_by: rid, changed_at: nowIso, origin: 'erp_detect' }),
+      });
+    } else {
+      await sb(env, 'ax_change_set', {
+        method: 'POST', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          id_number: ced, company_code: cc, changes: deltas, status: 'pending',
+          changed_by: rid, changed_at: nowIso, origin: 'erp_detect',
+        }),
+      });
+    }
+    marked.push(ced);
+  }
+
+  return json({ ok: true, marked, count: marked.length });
+}
+
+/* ---------- ADOPT: traer el valor del SISTEMA al portal (sistema -> portal) ----------
+   Para las fichas indicadas, re-detecta las diferencias y ESCRIBE en el maestro
+   el valor del sistema (erp_raw) en cada campo que difiere. Es la direccion
+   inversa de publish: el portal ADOPTA el dato del sistema.
+
+   Efectos:
+   - workers_master: se pisan los campos detectados con el valor del sistema
+     (ya normalizado a codigo interno). El telefono se guarda en formato +58
+     (como lo guarda el portal); el resto en su codigo.
+   - ax_pending: los campos adoptados se QUITAN de ax_pending_fields (ya no hay
+     nada que publicar de ellos; el portal quedo igual al sistema). Si no queda
+     ningun campo pendiente, ax_pending pasa a false.
+   - ax_change_set: si habia un pending para esa ficha, se marca 'discarded'
+     (se resolvio adoptando; historial permanente).
+
+   Modo: body.id_numbers (+ company_code/all para el alcance de la deteccion).
+   Re-detecta en el server (no confia en el front). */
+async function adopt(env, actor, user, body) {
+  const asked = Array.isArray(body.id_numbers)
+    ? new Set(body.id_numbers.map(x => String(x).replace(/[^0-9]/g, '')).filter(Boolean))
+    : null;
+  const detectRes = await detectDiffs(env, actor, user, body);
+  const detectJson = await detectRes.json();
+  if (!detectJson.ok) return json(detectJson, 200);
+  let rows = detectJson.rows || [];
+  if (asked && asked.size) rows = rows.filter(r => asked.has(String(r.id_number)));
+  if (!rows.length) {
+    return json({ ok: true, adopted: [], count: 0, message: 'No hay diferencias vigentes para adoptar.' });
+  }
+
+  const rid = await actorAdminId(env, user);
+  const nowIso = new Date().toISOString();
+  const adopted = [];
+
+  for (const r of rows) {
+    const ced = String(r.id_number);
+    const cc = r.company_code;
+
+    // Valor del sistema por campo -> como lo guarda el portal. El erp_raw ya
+    // viene normalizado a codigo interno (S/C/D/V/O/R, M/F, YYYY-MM-DD, 20
+    // digitos, correo minusculas, telefono 0XXXXXXXXXX). El telefono el maestro
+    // lo guarda en +58; el resto igual.
+    const patch = {};
+    const adoptedFields = [];
+    for (const f of r.fields) {
+      let val = f.erp_raw;
+      if (val == null || val === '') continue;
+      if (f.field === 'phone') {
+        // 0XXXXXXXXXX -> +58XXXXXXXXXX (formato del maestro).
+        const nat = String(val).replace(/[^0-9]/g, '');
+        val = /^0\d{10}$/.test(nat) ? '+58' + nat.slice(1) : String(val);
+      }
+      if (f.field === 'account_number') {
+        patch.bank_code = String(val).slice(0, 4);
+      }
+      patch[f.field] = val;
+      adoptedFields.push(f.field);
+    }
+    if (!adoptedFields.length) continue;
+
+    // Leer el pendiente actual para quitar los campos adoptados.
+    const mRows = await sb(env,
+      `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=ax_pending_fields`);
+    const prevPend = (mRows && mRows[0] && mRows[0].ax_pending_fields && typeof mRows[0].ax_pending_fields === 'object')
+      ? { ...mRows[0].ax_pending_fields } : {};
+    for (const f of adoptedFields) delete prevPend[f];
+    const stillPending = Object.keys(prevPend).length > 0;
+    patch.ax_pending = stillPending;
+    patch.ax_pending_fields = prevPend;
+    if (!stillPending) patch.ax_pending_at = null;
+
+    await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
+      method: 'PATCH', headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify(patch),
+    });
+
+    // Si habia un change_set pendiente para esta ficha, marcarlo discarded
+    // (se resolvio adoptando el valor del sistema).
+    const existing = await sb(env,
+      `ax_change_set?id_number=eq.${encodeURIComponent(ced)}&company_code=eq.${encodeURIComponent(cc)}&status=eq.pending&select=id&limit=1`);
+    if (existing && existing.length) {
+      await sb(env, `ax_change_set?id=eq.${encodeURIComponent(existing[0].id)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ status: 'discarded', resolved_by: rid, resolved_at: nowIso }),
+      });
+    }
+    adopted.push(ced);
+  }
+
+  return json({ ok: true, adopted, count: adopted.length });
+}
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -121,11 +529,11 @@ async function listPending(env, actor, user) {
   const allowed = await allowedCompanies(env, actor, user);
 
   // Traer los pendientes (filtrando por empresa si hay alcance acotado).
-  let path = `ax_change_set?status=eq.pending&select=id,id_number,company_code,changes,changed_by,changed_at&order=changed_at.desc`;
+  let path = `ax_change_set?status=eq.pending&select=id,id_number,company_code,changes,changed_by,changed_at,origin&order=changed_at.desc`;
   if (allowed !== null) {
     if (!allowed.size) return json({ ok: true, rows: [], companies: [] });
     const inList = [...allowed].map(c => `"${c}"`).join(',');
-    path = `ax_change_set?status=eq.pending&company_code=in.(${inList})&select=id,id_number,company_code,changes,changed_by,changed_at&order=changed_at.desc`;
+    path = `ax_change_set?status=eq.pending&company_code=in.(${inList})&select=id,id_number,company_code,changes,changed_by,changed_at,origin&order=changed_at.desc`;
   }
   const sets = await sb(env, path) || [];
   if (!sets.length) return json({ ok: true, rows: [], companies: [] });
@@ -214,6 +622,7 @@ async function listPending(env, actor, user) {
       concepto: cm.concept || null,
       changed_by: s.changed_by != null ? (editorById[s.changed_by] || ('admin#' + s.changed_by)) : null,
       changed_at: s.changed_at,
+      origin: s.origin || 'edit',
       fields,
       field_count: fields.length,
     };
@@ -432,6 +841,9 @@ export async function onRequestPost({ request, env }) {
     if (action === 'list') return await listPending(env, actor, user);
     if (action === 'publish') return await publish(env, actor, user, body);
     if (action === 'discard') return await discard(env, actor, user, body);
+    if (action === 'detect') return await detectDiffs(env, actor, user, body);
+    if (action === 'detect_commit') return await detectCommit(env, actor, user, body);
+    if (action === 'adopt') return await adopt(env, actor, user, body);
 
     return json({ ok: false, error: 'Accion no reconocida.' }, 400);
   } catch (e) {
