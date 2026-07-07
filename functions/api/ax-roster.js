@@ -491,6 +491,21 @@ export async function onRequestPost({ request, env }) {
     try { masterSynced = await upsertWorkersMaster(env, cc, valid); }
     catch (e) { warnings.push('Directorio (workers_master) no sincronizado: ' + String(e.message || e)); }
 
+    // FIX v4.15: el pull limpia ax_pending en el maestro (el ultimo reporte
+    // manda), asi que los change_set pendientes de estas fichas quedan
+    // obsoletos. Cerrarlos como 'discarded' para que no queden fantasmas en
+    // la pagina Sincronizar (alli aparecian como pendientes imposibles de
+    // publicar). Historial permanente: solo cambia el status.
+    try {
+      const cedList = valid.map(r => `"${r.id_number}"`).join(',');
+      if (cedList) {
+        await sb(env, `ax_change_set?id_number=in.(${cedList})&status=eq.pending`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ status: 'discarded', resolved_at: new Date().toISOString() }),
+        });
+      }
+    } catch (e) { warnings.push('Bitacora de sincronizacion no cerrada: ' + String(e.message || e)); }
+
     // Metadatos del snapshot (tabla segun tipo).
     const metaTable = isStore ? 'store_roster_meta' : 'enterprise_roster_meta';
     const metaRow = isStore

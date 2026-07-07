@@ -1016,6 +1016,21 @@ async function pushToAx(env, cc, body, table, deptScope, user) {
         ax_synced_at: nowIso,
       }),
     });
+    // FIX v4.15: cerrar tambien la BITACORA de Sincronizar. Sin esto, el
+    // ax_change_set de estas fichas quedaba 'pending' y seguian apareciendo
+    // como pendientes en la pagina Sincronizar aunque ya se publicaron desde
+    // la ficha (y alli ni se podian publicar: el maestro ya estaba limpio).
+    try {
+      await sb(env, `ax_change_set?id_number=in.(${okList})&status=eq.pending`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          status: 'published', resolved_by: user.id, resolved_at: nowIso,
+          ax_response: axRes.data ?? { text: axRes.text ?? null },
+        }),
+      });
+    } catch (e) {
+      rejected.push({ id_number: '(bitacora)', reason: 'Publicado, pero no se pudo cerrar la bitacora de Sincronizar: ' + String(e.message || e) });
+    }
   }
 
   return json({
