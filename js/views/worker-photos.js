@@ -181,6 +181,67 @@ function miniRowHtml(w) {
   if (!items.length) return '';
   return `<div class="wp-mini" style="grid-template-columns:repeat(${items.length},1fr)">${items.join('')}</div>`;
 }
+/* ===================== v4.21: franja "Actualizó" (semáforo) =====================
+   Pie de TODAS las tarjetas de la grilla (espejo de la barra de departamento):
+   punto verde (≤7 dias) / ambar (≤30) / gris (>30) + quien edito la ficha de
+   ultimo (nombre corto + rol) + fecha ('hoy' o dd/mm/aa Caracas). Sin
+   ediciones: punto hueco + 'Sin ediciones' + '—' (la franja PERMANECE para
+   que todas las tarjetas midan igual). Tooltip con el texto completo. */
+function ensureFootStyles() {
+  if (document.getElementById('wpFootStyles')) return;
+  const st = document.createElement('style');
+  st.id = 'wpFootStyles';
+  st.textContent = `
+  .wp-footbar{display:flex;align-items:center;gap:6px;padding:6px 10px;font-size:10.5px;color:var(--ink-soft,#475569);background:var(--bg-soft,#f1f5f9);border-top:1px solid var(--border-soft,#eef1f5);margin-top:auto;min-height:16px}
+  .wp-footbar .who{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;flex:1 1 auto;min-width:0}
+  .wp-footbar .dt{color:var(--faint,#94a3b8);flex:none;font-variant-numeric:tabular-nums}
+  .wp-footbar.none{color:var(--faint,#94a3b8)}
+  .wp-footbar.none .who{font-weight:500;font-style:italic}
+  .wp-footdot{width:7px;height:7px;border-radius:50%;flex:none}
+  .wp-footdot.ok{background:#22c55e}
+  .wp-footdot.mid{background:#f59e0b}
+  .wp-footdot.old{background:#cbd5e1}
+  .wp-footdot.none{width:6px;height:6px;background:transparent;border:1.5px solid #d3dae4}
+  @media (max-width:768px){ .wp-footbar{padding:5px 8px;font-size:9.5px;gap:5px} }
+  `;
+  document.head.appendChild(st);
+}
+/* Fecha (Date) -> 'YYYY-MM-DD' en hora Caracas, para comparar 'hoy'. */
+function caracasYMD(d) {
+  const c = new Date(d.getTime() - 4 * 3600 * 1000);
+  const z = n => String(n).padStart(2, '0');
+  return `${c.getUTCFullYear()}-${z(c.getUTCMonth() + 1)}-${z(c.getUTCDate())}`;
+}
+function updFootbarHtml(w) {
+  if (!w.profile_updated_by) {
+    return `<div class="wp-footbar none" title="Esta ficha aún no tiene ediciones registradas"><span class="wp-footdot none"></span><span class="who">Sin ediciones</span><span class="dt">—</span></div>`;
+  }
+  const by = String(w.profile_updated_by);
+  // Nombre corto: primer nombre + inicial del apellido + rol. Etiquetas de un
+  // solo token ('BA05 (tienda)') quedan igual.
+  let who = by;
+  const m = by.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+  if (m) {
+    const parts = m[1].trim().split(/\s+/).filter(Boolean);
+    const nm = parts.length >= 2 ? `${parts[0]} ${parts[1].charAt(0).toUpperCase()}.` : (parts[0] || m[1]);
+    who = `${nm} (${m[2]})`;
+  }
+  let dotCls = 'old', dt = '—';
+  const d = w.profile_updated_at ? new Date(w.profile_updated_at) : null;
+  if (d && !isNaN(d)) {
+    const days = (Date.now() - d.getTime()) / 86400000;
+    dotCls = days <= 7 ? 'ok' : (days <= 30 ? 'mid' : 'old');
+    if (caracasYMD(d) === caracasYMD(new Date())) dt = 'hoy';
+    else {
+      const c = new Date(d.getTime() - 4 * 3600 * 1000);
+      const z = n => String(n).padStart(2, '0');
+      dt = `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${String(c.getUTCFullYear()).slice(2)}`;
+    }
+  }
+  const tip = `Ficha actualizada por ${by}${w.profile_updated_at ? ' · ' + fmtDateTime(w.profile_updated_at) : ''}`;
+  return `<div class="wp-footbar" title="${esc(tip)}"><span class="wp-footdot ${dotCls}"></span><span class="who">${esc(who)}</span><span class="dt">${dt}</span></div>`;
+}
+
 /* Confeti para el detalle de cumpleanos sobre la foto. */
 function confettiHtml() {
   const D = [['8%', '16%', '#ec4899'], ['24%', '54%', '#f59e0b'], ['44%', '10%', '#2563eb'], ['60%', '60%', '#10b981'], ['80%', '20%', '#db2777'], ['90%', '52%', '#6366f1'], ['16%', '78%', '#10b981'], ['70%', '82%', '#ec4899']];
@@ -675,6 +736,7 @@ function fillFilterOptions() {
 function paintGrid() {
   const grid = $('#wpGrid');
   if (!grid) return;
+  ensureFootStyles();
   const list = sortWorkers(currentFiltered());
   const shown = $('#wpShown');
   if (shown) {
@@ -740,6 +802,7 @@ function paintGrid() {
         <div class="wp-spacer"></div>
         ${miniRowHtml(w)}
       </div>
+      ${updFootbarHtml(w)}
     </div>`;
   }).join('') || '<div class="card"><p class="muted" style="margin:0">Sin coincidencias.</p></div>';
 
