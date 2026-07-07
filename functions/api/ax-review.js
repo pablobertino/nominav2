@@ -147,16 +147,23 @@ function dEmail(v) {
 }
 
 /* Mapea un empleado crudo del ERP a los campos internos COMPARABLES, ya
-   normalizados (mismo criterio que el maestro). "Apellidos" completos vienen
-   en segundoApellido con fallback a primerApellido. */
+   normalizados (mismo criterio que el maestro). "Apellidos" COMPLETOS vienen
+   en el campo `apellidos` del ERP (ej. "HERRERA SALAZAR"); primerApellido y
+   segundoApellido son cada uno por separado. El portal guarda los apellidos
+   completos en last_names, asi que se compara contra `apellidos` (con
+   fallback a la concatenacion de primer+segundo por si `apellidos` viniera
+   vacio). */
 function erpToComparable(e) {
   const id_number = String(e.ficha ?? '').replace(/[^0-9]/g, '');
   const account = dAccountDigits(e.cuentaBancaria);
+  const apellidosFull = (e.apellidos && String(e.apellidos).trim() && String(e.apellidos).trim() !== '-')
+    ? e.apellidos
+    : [e.primerApellido, e.segundoApellido].filter(x => x && String(x).trim() && String(x).trim() !== '-').join(' ');
   return {
     id_number,
     first_name: dUpper(e.primerNombre),
     second_name: dUpper(e.segundoNombre),
-    last_names: dUpper(e.segundoApellido || e.primerApellido),
+    last_names: dUpper(apellidosFull),
     birth_date: dDateOrNull(e.fechaNacimiento),
     gender: dGenderCode(e.genero),
     marital_status: dMaritalCode(e.estadoCivil),
