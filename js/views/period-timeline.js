@@ -23,7 +23,11 @@ const TL_DIA = ['Do', 'Lu', 'Ma', 'Mi', 'Ju', 'Vi', 'Sa'];
 // el feriado cae HOY, para no pisar el bubble). El codigo viene en f.icono
 // desde la BD; mismo catalogo que la vista de Feriados.
 const TL_FER_ICON = {
-  flag:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M5 22V4a1 1 0 0 1 1-1h13l-2.5 4L20 11H6"/></svg>',
+  // flag: el asta del trazo original arranca en x=5 (borde izquierdo del
+  // viewBox), por lo que el dibujo se veia corrido a la izquierda respecto
+  // del puntito ancla. Se desplaza el trazo 2.5 unidades a la derecha para
+  // centrarlo opticamente (v4.19). Los demas iconos son simetricos.
+  flag:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><g transform="translate(2.5 0)"><path d="M5 22V4a1 1 0 0 1 1-1h13l-2.5 4L20 11H6"/></g></svg>',
   cross:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18M8 7h8"/></svg>',
   crown:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8l3.5 3L12 5l5.5 6L21 8l-2 10H5L3 8z"/><path d="M5 18h14"/></svg>',
   pray:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v7"/><path d="M9 10c0-2 1.3-3 3-3s3 1 3 3v4a5 5 0 0 1-5 5H8l-3-3 3.5-3.5"/><path d="M9 10l-3.5 3.5"/></svg>',
