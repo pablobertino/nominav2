@@ -12,6 +12,8 @@
 
 const $ = (s, r = document) => r.querySelector(s);
 
+import { attachRefresh } from '../core/refresh.js';
+
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -234,12 +236,13 @@ function paint() {
 
   $('#pnlMain').innerHTML = `
     <div class="egr-head"><div><h1>Ratificar egresos</h1>
-      <p>Revisa el motivo que indicó la tienda en cada egreso. Puedes ratificarlo, rectificarlo o reabrirlo.</p></div></div>
+      <p>Revisa el motivo que indicó la tienda en cada egreso. Puedes ratificarlo, rectificarlo o reabrirlo.</p></div><span id="egrRefresh"></span></div>
     <div class="egr-chips" id="egrChips">${chips}</div>
     <div class="card" style="padding:6px 8px"><div id="egrBody"></div></div>`;
 
   $('#egrChips').querySelectorAll('[data-status]').forEach(b =>
     b.addEventListener('click', () => { CUR_STATUS = b.dataset.status; paint(); }));
+  attachRefresh('#egrRefresh', reloadAndRepaint, 'egresos');
 
   renderTable();
 }

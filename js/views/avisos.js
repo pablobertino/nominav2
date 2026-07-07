@@ -18,6 +18,8 @@
 
 const $ = (s, r = document) => r.querySelector(s);
 
+import { attachRefresh } from '../core/refresh.js';
+
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -125,13 +127,17 @@ export async function renderAvisos(user, opts = {}) {
         <p>${isConfig
           ? 'Configura los avisos del per\u00edodo (plantillas) y crea comunicados para tiendas, empresas, administradores o editores.'
           : 'Novedades de empresas, recordatorios del per\u00edodo de n\u00f3mina y comunicados de la administraci\u00f3n.'}</p></div>
-      ${isConfig ? `<button class="av-btn av-btn-primary" id="avNew">+ Nuevo aviso</button>` : ''}
+      <div style="display:flex;gap:10px;align-items:center">
+        <span id="avRefresh"></span>
+        ${isConfig ? `<button class="av-btn av-btn-primary" id="avNew">+ Nuevo aviso</button>` : ''}
+      </div>
     </div>
     <div id="avBody"><div class="av-empty">Cargando\u2026</div></div>
     <div id="avModals"></div>`;
 
   if (isConfig) $('#avNew').addEventListener('click', () => openManualModal(null));
   await loadAndRender();
+  attachRefresh('#avRefresh', loadAndRender, 'avisos-' + AV_MODE);
   if (opts.focusId) setTimeout(() => gotoAviso(opts.focusId), 300);
 }
 

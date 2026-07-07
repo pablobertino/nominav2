@@ -19,6 +19,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { attachRefresh } from '../core/refresh.js';
 
 let USER = null;
 let ROWS = [];             // filas pendientes (del backend)
@@ -74,6 +75,7 @@ function ensureStyles() {
   const st = document.createElement('style');
   st.id = 'axrStyles';
   st.textContent = `
+  .axr-head{display:flex;justify-content:space-between;align-items:flex-start;gap:14px;flex-wrap:wrap}
   .axr-head h1{margin:0;font-size:21px;font-weight:700;color:var(--ink)}
   .axr-head p{margin:3px 0 0;color:var(--muted);font-size:13px}
   .axr-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0 6px}
@@ -224,7 +226,7 @@ export async function renderAxReview(user) {
     <div class="axr-head"><div>
       <h1>Sincronizar</h1>
       <p>Revisa los cambios de fichas pendientes y decide qué se <b>publica</b> y qué se <b>anula</b>. Al final, usa <b>Actualizar</b> en Personal para revertir lo anulado.</p>
-    </div></div>
+    </div><span id="axrRefresh"></span></div>
     <div class="axr-stats">
       <div class="axr-stat pend"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> Fichas pendientes</div><div class="v" id="axrSPend">—</div></div>
       <div class="axr-stat flds"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg> Campos a publicar</div><div class="v" id="axrSFlds">—</div></div>
@@ -269,6 +271,7 @@ export async function renderAxReview(user) {
   $('#axrCompare').addEventListener('click', () => openCompareScope());
 
   await load();
+  attachRefresh('#axrRefresh', load, 'sincronizar');
 }
 
 async function load() {

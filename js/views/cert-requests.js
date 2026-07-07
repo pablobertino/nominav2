@@ -32,6 +32,8 @@
 
 const $ = (s, r = document) => r.querySelector(s);
 
+import { attachRefresh } from '../core/refresh.js';
+
 const DEFAULT_RECIPIENT = 'A quien pueda interesar';
 const DEFAULT_SIGNER_TITLE = 'ANALISTA DE CAPITAL HUMANO';
 
@@ -406,15 +408,27 @@ function paint() {
     <div class="cr-head">
       <div><h1>Constancias de trabajo</h1>
         <p>${IS_ADMIN ? 'Revisa y genera las constancias de tu alcance. Tambien puedes iniciar una solicitud para una empresa (quedara en su lista).' : 'Solicita constancias para tu personal y descárgalas cuando estén listas.'}</p></div>
-      <button class="cr-b cr-b-primary" id="crNew">${plusIco()} Nueva solicitud</button>
+      <div style="display:flex;gap:10px;align-items:center">
+        <span id="crRefresh"></span>
+        <button class="cr-b cr-b-primary" id="crNew">${plusIco()} Nueva solicitud</button>
+      </div>
     </div>
     <div id="crBody"></div>`;
 
   const nb = $('#crNew');
   if (nb) nb.addEventListener('click', () => openCreate());
+  attachRefresh('#crRefresh', crReload, 'constancias');
 
   if (IS_ADMIN) renderInbox();
   else renderMine();
+}
+
+/* Recarga de la vista (boton Recargar): re-consulta los datos del rol activo
+   conservando tabs y filtros (estado del modulo) y repinta. */
+async function crReload() {
+  if (IS_ADMIN) await loadInbox();
+  else await loadMine();
+  paint();
 }
 
 function plusIco() {

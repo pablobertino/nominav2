@@ -6,6 +6,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { attachRefresh } from '../core/refresh.js';
 import { showReportDetail } from './report-detail.js';
 import { openResendModal } from './shared/resend-modal.js';
 import {
@@ -117,6 +118,7 @@ export function renderHistory(user) {
     <div class="pnl-head"><div><h1>Historial de reportes</h1>
       <p>${isCompany ? 'Tus reportes enviados a Capital Humano.' : isSuper ? 'Todos los reportes del grupo.' : 'Reportes de las tiendas dentro de tu alcance.'}</p></div>
       <div class="head-actions">
+        <span id="hRefresh"></span>
         <a class="btn" id="hOsticket" href="${OSTICKET_BASE}" target="_blank" rel="noopener" title="Abrir el Sistema de Tickets (osTicket) en una pestaña nueva"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v1a2 2 0 0 0 0 4v1a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-1a2 2 0 0 0 0-4V9z"/><path d="M13 5v2M13 11v2M13 17v2"/></svg> Sistema de Tickets</a>
         ${canManage ? `<button class="btn" id="hSyncPending" title="Reenviar a osTicket el estado de los reportes pendientes o con error de sincronizacion">\u21BB Sincronizar pendientes</button>` : ''}
       </div>
@@ -668,4 +670,5 @@ export function renderHistory(user) {
   // arranque
   loadCompanies();
   load();
+  attachRefresh('#hRefresh', load, 'historial');
 }
