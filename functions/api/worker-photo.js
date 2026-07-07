@@ -608,6 +608,58 @@ async function savePhoto(env, cc, body, table, deptScope) {
   return json({ ok: true, id_number: ced, photo_key: key, thumb_url: thumbUrl, full_url: fullUrl, bytes: fullBytes.length });
 }
 
+/* ---------- CHANGE_SET (auditoria de cambios pendientes de publicar) ----------
+   Registra/acumula en nomina_v2.ax_change_set los campos que el usuario cambio
+   en una edicion de ficha, para la pagina de revision "Sincronizar". Un
+   registro por (ficha, empresa) mientras status='pending': si ya existe uno
+   pendiente, se ACUMULA el nuevo cambio sobre su JSON (el 'old' de cada campo
+   se conserva del primer cambio; el 'new' se actualiza al ultimo valor). Si no
+   existe, se crea. Los published/discarded no se tocan (historial permanente).
+
+   deltas: { campo: { old, new } } SOLO de los campos que cambiaron en esta
+   edicion (ya calculados en saveProfile). changedBy = admin_users.id (o null).
+
+   No es critico para el guardado: si algo falla aqui, se registra y sigue (el
+   dato ya quedo en workers_master; la auditoria es adicional). */
+async function upsertChangeSet(env, cc, ced, deltas, changedBy) {
+  const keys = Object.keys(deltas || {});
+  if (!keys.length) return;   // nada que registrar
+  const nowIso = new Date().toISOString();
+  // Buscar un change_set PENDIENTE existente para esta ficha+empresa.
+  const existing = await sb(env,
+    `ax_change_set?id_number=eq.${encodeURIComponent(ced)}`
+    + `&company_code=eq.${encodeURIComponent(cc)}&status=eq.pending`
+    + `&select=id,changes&limit=1`);
+  if (existing && existing.length) {
+    // Acumular: conservar el 'old' original de cada campo ya presente; agregar
+    // los campos nuevos; actualizar el 'new' al ultimo valor.
+    const prev = (existing[0].changes && typeof existing[0].changes === 'object') ? existing[0].changes : {};
+    const merged = { ...prev };
+    for (const k of keys) {
+      if (merged[k] && Object.prototype.hasOwnProperty.call(merged[k], 'old')) {
+        // Ya habia un cambio en este campo: mantener el 'old' original, refrescar 'new'.
+        merged[k] = { old: merged[k].old, new: deltas[k].new };
+      } else {
+        merged[k] = { old: deltas[k].old, new: deltas[k].new };
+      }
+    }
+    await sb(env, `ax_change_set?id=eq.${encodeURIComponent(existing[0].id)}`, {
+      method: 'PATCH', headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({ changes: merged, changed_by: changedBy ?? null, changed_at: nowIso }),
+    });
+  } else {
+    // Nuevo change_set pendiente para esta ficha.
+    await sb(env, 'ax_change_set', {
+      method: 'POST', headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        id_number: ced, company_code: cc,
+        changes: deltas, status: 'pending',
+        changed_by: changedBy ?? null, changed_at: nowIso,
+      }),
+    });
+  }
+}
+
 /* ---------- SAVE_PROFILE (datos de la persona) ---------- */
 async function saveProfile(env, cc, body, table, deptScope) {
   table = table || 'store_workers';
@@ -710,6 +762,30 @@ async function saveProfile(env, cc, body, table, deptScope) {
       method: 'POST',
       body: JSON.stringify(born),
     });
+  }
+
+  // ----- Auditoria de cambios para la pagina de revision ("Sincronizar") -----
+  // Registrar/acumular en ax_change_set los campos que cambiaron en esta
+  // edicion, con su valor viejo->nuevo y quien lo hizo. Se usan los valores
+  // internos (codigos S/C/D/V/O/R, M/F, +58..., YYYY-MM-DD) tal como estan en
+  // el master; la pagina los traduce a texto legible. Solo campos de AX que
+  // realmente cambiaron (el mismo 'changed' que marca ax_pending). No es
+  // critico: si falla, el guardado ya quedo hecho.
+  try {
+    const changedByRaw = body.user && body.user.kind === 'admin' ? body.user.id : null;
+    const changedBy = (changedByRaw != null && Number.isFinite(Number(changedByRaw))) ? Number(changedByRaw) : null;
+    const deltas = {};
+    for (const f of AX_FIELDS) {
+      if (changed[f]) {
+        deltas[f] = {
+          old: (prevM && prevM[f] != null && prevM[f] !== '') ? prevM[f] : null,
+          new: (patch[f] != null && patch[f] !== '') ? patch[f] : null,
+        };
+      }
+    }
+    await upsertChangeSet(env, cc, ced, deltas, changedBy);
+  } catch (e) {
+    // La auditoria no debe tumbar el guardado; el dato ya esta en el master.
   }
 
   // Departamento: vive en el ROSTER de la empresa (store_workers /

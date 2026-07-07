@@ -27,6 +27,7 @@ import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { renderCertSigners } from './cert-signers.js';
 import { renderCertRequests } from './cert-requests.js';
+import { renderAxReview } from './ax-review.js';
 import { injectPeriodTimeline } from './period-timeline.js';
 import { renderPayGrid } from './pay-grid.js';
 import { renderDepartments } from './departments.js';
@@ -133,10 +134,13 @@ const NAV_GROUPS = [
     ['constancias', I.docs, 'Constancias'],
     ['firmantes', I.pencil, 'Firmantes', 'superonly'],
   ] },
+  { title: 'Sincronización', items: [
+    ['syncreview', I.sync, 'Sincronizar', 'superonly'],
+    ['sync', I.cog, 'Configurar', 'superonly'],
+  ] },
   { title: 'Administración', items: [
     ['equipo', I.team, 'Equipo'],
     ['permisos', I.shield, 'Permisos', 'superonly'],
-    ['sync', I.sync, 'Sincronización', 'superonly'],
     ['config', I.cog, 'Configuración', 'superonly'],
   ] },
 ];
@@ -312,7 +316,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.05</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.06</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5749,6 +5753,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'firmantes') renderCertSigners(user);
   else if (view === 'constancias') renderCertRequests(user);
   else if (view === 'sync') viewSync(user);
+  else if (view === 'syncreview') renderAxReview(user);
   else if (view === 'rostersync') viewRosterSync(user);
   else if (view === 'config') viewConfig(user);
   else if (view === 'historial') renderHistory(user);
