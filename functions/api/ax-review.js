@@ -199,11 +199,17 @@ async function erpRosterFor(env, cc) {
 
 /* Empresas objetivo de la deteccion segun el alcance del actor y el body:
      { company_code }  -> esa empresa (si esta en el alcance)
-     { all:true }      -> todas las del alcance (superadmin = todas las que
-                          tengan roster en workers_master via last_source_company)
+     { all:true }      -> todas las del alcance (respaldo; el flujo normal
+                          llama empresa-por-empresa, ver detect_scope)
    Devuelve lista de company_code. */
 async function detectTargetCompanies(env, actor, user, body) {
   const allowed = await allowedCompanies(env, actor, user);
+  // Lista explicita de empresas (usada por detect_commit/adopt desde el panel
+  // de comparacion: solo las empresas de las fichas a resolver).
+  if (Array.isArray(body.company_codes) && body.company_codes.length) {
+    const asked = body.company_codes.map(c => String(c).trim()).filter(Boolean);
+    return allowed !== null ? asked.filter(c => allowed.has(c)) : asked;
+  }
   const one = (body.company_code || '').trim();
   if (one) {
     if (allowed !== null && !allowed.has(one)) return [];
@@ -211,11 +217,91 @@ async function detectTargetCompanies(env, actor, user, body) {
   }
   if (body.all === true) {
     if (allowed !== null) return [...allowed];
-    // superadmin: todas las empresas activas del catalogo (con alias = code).
     const comps = await sb(env, `companies?select=company_code&order=company_code`) || [];
     return comps.map(c => c.company_code);
   }
   return [];
+}
+
+/* ---------- DETECT_SCOPE: lista de empresas de un alcance (liviano) ----------
+   Dado un filtro (tipo/zona/subzona/concepto/empresa), devuelve SOLO los
+   company_code que caen en ese alcance, dentro del alcance del actor. Es una
+   sola consulta a companies: el front usa esta lista para comparar empresa por
+   empresa en bucle (evita el limite de 50 subrequests por invocacion).
+   Tambien devuelve el catalogo de facetas (tipos/empresas/zonas/subzonas/
+   conceptos) del universo permitido, para poblar los combos del modal con
+   TODAS las empresas (no solo las que tienen pendientes). */
+async function detectScope(env, actor, user, body) {
+  const allowed = await allowedCompanies(env, actor, user);
+
+  // Catalogo base: todas las empresas del alcance del actor.
+  let path = `companies?select=company_code,business_name,company_type,zone_id,subzone_id,concept_id&order=company_code`;
+  if (allowed !== null) {
+    if (!allowed.size) return json({ ok: true, companies: [], facets: emptyFacets(), codes: [] });
+    const inList = [...allowed].map(c => `"${c}"`).join(',');
+    path += `&company_code=in.(${inList})`;
+  }
+  const comps = await sb(env, path) || [];
+
+  // Resolver nombres de zona/subzona/concepto (para las facetas del modal).
+  const zoneIds = [...new Set(comps.map(c => c.zone_id).filter(x => x != null))];
+  const subIds = [...new Set(comps.map(c => c.subzone_id).filter(x => x != null))];
+  const conIds = [...new Set(comps.map(c => c.concept_id).filter(x => x != null))];
+  const nameMap = async (tbl, ids) => {
+    if (!ids.length) return {};
+    const q = ids.map(i => `"${i}"`).join(',');
+    const rows = await sb(env, `${tbl}?id=in.(${q})&select=id,name`) || [];
+    const m = {};
+    rows.forEach(r => { m[String(r.id)] = r.name; });
+    return m;
+  };
+  const [zoneN, subN, conN] = await Promise.all([
+    nameMap('zones', zoneIds), nameMap('subzones', subIds), nameMap('concepts', conIds),
+  ]);
+
+  // Normalizar filas con ids en texto + nombres.
+  const rows = comps.map(c => ({
+    code: c.company_code,
+    name: c.business_name || null,
+    type: c.company_type || null,
+    zone_id: c.zone_id != null ? String(c.zone_id) : null,
+    subzone_id: c.subzone_id != null ? String(c.subzone_id) : null,
+    concept_id: c.concept_id != null ? String(c.concept_id) : null,
+    zona: c.zone_id != null ? (zoneN[String(c.zone_id)] || null) : null,
+    subzona: c.subzone_id != null ? (subN[String(c.subzone_id)] || null) : null,
+    concepto: c.concept_id != null ? (conN[String(c.concept_id)] || null) : null,
+  }));
+
+  // Facetas encadenables (todo el universo permitido).
+  const uniq = (arr) => [...new Map(arr.filter(x => x && x.id != null).map(x => [String(x.id), x])).values()];
+  const facets = {
+    types: [...new Set(rows.map(r => r.type).filter(Boolean))].sort(),
+    companies: rows.map(r => ({ code: r.code, name: r.name, type: r.type,
+      zone_id: r.zone_id, subzone_id: r.subzone_id, concept_id: r.concept_id }))
+      .sort((a, b) => String(a.code).localeCompare(String(b.code))),
+    zones: uniq(rows.map(r => r.zone_id != null ? { id: r.zone_id, name: r.zona } : null))
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))),
+    subzones: uniq(rows.map(r => r.subzone_id != null ? { id: r.subzone_id, name: r.subzona, zone_id: r.zone_id } : null))
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))),
+    concepts: uniq(rows.map(r => r.concept_id != null ? { id: r.concept_id, name: r.concepto } : null))
+      .sort((a, b) => String(a.name || '').localeCompare(String(b.name || ''))),
+  };
+
+  // Aplicar el filtro pedido para devolver los codes objetivo.
+  const F = body.filter || {};
+  const codes = rows.filter(r =>
+    (!F.type || r.type === F.type) &&
+    (!F.company || r.code === F.company) &&
+    (!F.zone || String(r.zone_id) === String(F.zone)) &&
+    (!F.subzone || String(r.subzone_id) === String(F.subzone)) &&
+    (!F.concept || String(r.concept_id) === String(F.concept))
+  ).map(r => r.code);
+
+  return json({ ok: true, facets, codes, total: codes.length });
+}
+
+function emptyFacets() {
+  return { types: [], companies: [], zones: [], subzones: [], concepts: [] };
 }
 
 /* Compara el maestro del portal contra el ERP para las empresas dadas y arma
@@ -842,6 +928,7 @@ export async function onRequestPost({ request, env }) {
     if (action === 'publish') return await publish(env, actor, user, body);
     if (action === 'discard') return await discard(env, actor, user, body);
     if (action === 'detect') return await detectDiffs(env, actor, user, body);
+    if (action === 'detect_scope') return await detectScope(env, actor, user, body);
     if (action === 'detect_commit') return await detectCommit(env, actor, user, body);
     if (action === 'adopt') return await adopt(env, actor, user, body);
 

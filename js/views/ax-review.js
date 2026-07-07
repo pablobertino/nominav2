@@ -29,7 +29,9 @@ const OPEN = new Set();       // ids expandidos
 let C = { type: '', company: '', zone: '', subzone: '', concept: '' };
 // Estado del flujo de comparacion.
 let CMP_ROWS = [];        // diferencias detectadas (del dry-run)
-let CMP_SCOPE = null;      // { company_code } | { all:true }
+let CMP_SCOPE = null;      // filtro usado en la comparacion (para re-detectar por empresa)
+let CMP_FACETS = null;     // catalogo completo para los combos del modal Comparar
+let CMP_FILTER = { type: '', company: '', zone: '', subzone: '', concept: '' };
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -460,28 +462,26 @@ function confirmAction(verb, scope, id) {
    sistema) o Adoptar (sistema -> portal). Todo en su propio panel; la lista
    principal de Sincronizar no se toca hasta resolver. */
 
-/* Paso 1: elegir alcance (esta empresa / todas). */
-function openCompareScope() {
+/* Paso 1: modal con combos propios (Tipo, Empresa, Zona->Subzona, Concepto).
+   Carga el catalogo COMPLETO del alcance del actor via detect_scope (no solo
+   las empresas con pendientes). Al confirmar, dispara la comparacion por
+   empresa en bucle con progreso. */
+async function openCompareScope() {
+  CMP_FILTER = { type: '', company: '', zone: '', subzone: '', concept: '' };
   const wrap = document.createElement('div');
   wrap.className = 'axr-modal-vp';
-  // Si hay un filtro de empresa activo, se ofrece como "esta empresa".
-  const oneCode = C.company || '';
-  const oneName = oneCode
-    ? ((FACETS.companies || []).find(c => c.code === oneCode) || {}).name || ''
-    : '';
   wrap.innerHTML = `
     <div class="axr-modal">
       <h3>Comparar con el sistema</h3>
-      <p class="who">Busca diferencias entre los datos del portal y los del sistema, para decidir cuál vale en cada caso.</p>
-      <div class="box" style="background:var(--brand-bg,#eff6ff);border:1px solid #bfdbfe;color:#1e40af">
-        Solo se listan las diferencias reales: campos con un valor en el portal y otro distinto en el sistema. Los datos que faltan de un lado no aparecen aquí.
+      <p class="who">Elige el alcance. Se compara empresa por empresa; puedes acotar por tipo, empresa, zona o concepto.</p>
+      <div class="box" style="background:var(--brand-bg,#eff6ff);border:1px solid #bfdbfe;color:#1e40af;margin-bottom:14px">
+        Solo se listan diferencias reales: un valor en el portal y otro distinto en el sistema. Los datos que faltan de un lado no aparecen.
       </div>
-      <div style="display:flex;flex-direction:column;gap:8px;margin-top:14px">
-        ${oneCode ? `<button class="axr-btn" id="cmpOne" style="justify-content:flex-start">Solo <b style="margin:0 4px">${esc(oneCode)}</b> ${esc(oneName)}</button>` : ''}
-        <button class="axr-btn" id="cmpAll" style="justify-content:flex-start">Todas mis empresas${oneCode ? ' (ignora el filtro)' : ''}</button>
-      </div>
+      <div id="cmpScopeBody"><div class="axr-loading">Cargando empresas…</div></div>
+      <div class="res" id="cmpScopeRes" style="margin-top:12px"></div>
       <div class="foot">
         <button class="axr-btn" id="cmpCancel">Cancelar</button>
+        <button class="axr-btn axr-btn-cmp" id="cmpStart" disabled>Comparar</button>
       </div>
     </div>`;
   document.body.appendChild(wrap);
@@ -489,15 +489,88 @@ function openCompareScope() {
   const onKey = ev => { if (ev.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
   wrap.querySelector('#cmpCancel').addEventListener('click', close);
-  const oneBtn = wrap.querySelector('#cmpOne');
-  if (oneBtn) oneBtn.addEventListener('click', () => { close(); runCompare({ company_code: oneCode }); });
-  wrap.querySelector('#cmpAll').addEventListener('click', () => { close(); runCompare({ all: true }); });
+
+  // Cargar catalogo completo (facetas) via detect_scope sin filtro.
+  let sc;
+  try { sc = await api({ action: 'detect_scope', user: sessionUserPayload(USER), filter: {} }); }
+  catch (e) { sc = { ok: false, error: String(e && e.message || e) }; }
+  const scopeBody = wrap.querySelector('#cmpScopeBody');
+  if (!sc || !sc.ok) {
+    scopeBody.innerHTML = `<div class="axr-empty">No se pudo cargar el catálogo${sc && sc.error ? ': ' + esc(sc.error) : ''}.</div>`;
+    return;
+  }
+  CMP_FACETS = sc.facets || emptyFacetsCli();
+
+  // Render combos.
+  scopeBody.innerHTML = `
+    <div class="axr-filters" style="margin:0">
+      <span class="fg">Tipo <select id="cmpType"></select></span>
+      <span class="fg">Empresa <select id="cmpEmp"></select></span>
+      <span class="fg">Zona <select id="cmpZone"></select></span>
+      <span class="fg">Subzona <select id="cmpSub"></select></span>
+      <span class="fg">Concepto <select id="cmpCon"></select></span>
+      <button class="axr-clear" id="cmpFClear">Limpiar</button>
+    </div>
+    <div id="cmpScopeCount" style="margin-top:10px;font-size:12.5px;color:var(--muted)"></div>`;
+
+  const startBtn = wrap.querySelector('#cmpStart');
+  const countEl = wrap.querySelector('#cmpScopeCount');
+
+  // Poblar combos (encadenados con el catalogo completo).
+  const cmpCompaniesFor = (type) => (CMP_FACETS.companies || []).filter(c => !type || c.type === type);
+  const cmpSubsFor = (zoneId) => (CMP_FACETS.subzones || []).filter(s => !zoneId || String(s.zone_id) === String(zoneId));
+  const buildCmp = () => {
+    fillSelect(wrap.querySelector('#cmpType'), (CMP_FACETS.types || []).map(t => ({ id: t, name: t })), CMP_FILTER.type, 'Todos', x => x.id, x => x.name);
+    fillSelect(wrap.querySelector('#cmpEmp'), cmpCompaniesFor(CMP_FILTER.type), CMP_FILTER.company, 'Todas', x => x.code, x => `${x.code} · ${x.name || ''}`);
+    fillSelect(wrap.querySelector('#cmpZone'), (CMP_FACETS.zones || []), CMP_FILTER.zone, 'Todas', x => x.id, x => x.name);
+    fillSelect(wrap.querySelector('#cmpSub'), cmpSubsFor(CMP_FILTER.zone), CMP_FILTER.subzone, 'Todas', x => x.id, x => x.name);
+    fillSelect(wrap.querySelector('#cmpCon'), (CMP_FACETS.concepts || []), CMP_FILTER.concept, 'Todos', x => x.id, x => x.name);
+  };
+  // Calcula cuantas empresas caen en el filtro actual (cliente, sobre el catalogo).
+  const codesForFilter = () => (CMP_FACETS.companies || []).filter(c =>
+    (!CMP_FILTER.type || c.type === CMP_FILTER.type) &&
+    (!CMP_FILTER.company || c.code === CMP_FILTER.company) &&
+    (!CMP_FILTER.zone || String(c.zone_id) === String(CMP_FILTER.zone)) &&
+    (!CMP_FILTER.subzone || String(c.subzone_id) === String(CMP_FILTER.subzone)) &&
+    (!CMP_FILTER.concept || String(c.concept_id) === String(CMP_FILTER.concept))
+  ).map(c => c.code);
+  const refreshCount = () => {
+    const codes = codesForFilter();
+    countEl.textContent = codes.length
+      ? `${codes.length} empresa${codes.length === 1 ? '' : 's'} en el alcance. Se compararan una por una.`
+      : 'Ninguna empresa en el alcance.';
+    startBtn.disabled = codes.length === 0;
+    startBtn.textContent = codes.length ? `Comparar (${codes.length})` : 'Comparar';
+  };
+
+  buildCmp(); refreshCount();
+  wrap.querySelector('#cmpType').addEventListener('change', e => { CMP_FILTER.type = e.target.value; CMP_FILTER.company = ''; buildCmp(); refreshCount(); });
+  wrap.querySelector('#cmpEmp').addEventListener('change', e => { CMP_FILTER.company = e.target.value; refreshCount(); });
+  wrap.querySelector('#cmpZone').addEventListener('change', e => { CMP_FILTER.zone = e.target.value; CMP_FILTER.subzone = ''; buildCmp(); refreshCount(); });
+  wrap.querySelector('#cmpSub').addEventListener('change', e => { CMP_FILTER.subzone = e.target.value; refreshCount(); });
+  wrap.querySelector('#cmpCon').addEventListener('change', e => { CMP_FILTER.concept = e.target.value; refreshCount(); });
+  wrap.querySelector('#cmpFClear').addEventListener('click', () => { CMP_FILTER = { type: '', company: '', zone: '', subzone: '', concept: '' }; buildCmp(); refreshCount(); });
+
+  startBtn.addEventListener('click', () => {
+    const codes = codesForFilter();
+    if (!codes.length) return;
+    close();
+    runCompare({ ...CMP_FILTER }, codes);
+  });
 }
 
-/* Paso 2: correr el dry-run y abrir el panel de diferencias. */
-async function runCompare(scope) {
-  CMP_SCOPE = scope;
-  // Panel con estado de carga.
+function emptyFacetsCli() {
+  return { types: [], companies: [], zones: [], subzones: [], concepts: [] };
+}
+
+/* Paso 2: comparar EMPRESA POR EMPRESA en bucle con progreso, acumulando
+   diferencias. Cada empresa = 1 llamada 'detect' con company_code (liviana,
+   ~4 subrequests, nunca revienta el limite de Cloudflare). */
+async function runCompare(filter, codes) {
+  CMP_SCOPE = filter;         // se guarda para re-detectar por empresa al resolver
+  CMP_ROWS = [];
+  const total = codes.length;
+
   const wrap = document.createElement('div');
   wrap.className = 'axr-modal-vp';
   wrap.id = 'axrCmpPanel';
@@ -505,9 +578,16 @@ async function runCompare(scope) {
     <div class="axr-cmp">
       <div class="axr-cmp-head">
         <h3>Comparación con el sistema</h3>
-        <p id="cmpSub">Consultando el sistema y comparando…</p>
+        <p id="cmpSub">Comparando 0 de ${total}…</p>
       </div>
-      <div class="axr-cmp-body" id="cmpBody"><div class="axr-loading">Comparando…</div></div>
+      <div class="axr-cmp-body" id="cmpBody">
+        <div class="axr-loading">
+          <div style="margin-bottom:12px">Comparando empresa por empresa…</div>
+          <div style="height:8px;border-radius:999px;background:var(--border-soft,#eef1f5);overflow:hidden;max-width:360px;margin:0 auto">
+            <div id="cmpBar" style="height:100%;width:0;background:var(--brand,#2563eb);transition:width .2s"></div>
+          </div>
+        </div>
+      </div>
       <div class="axr-cmp-foot">
         <span id="cmpFootInfo" style="color:var(--muted);font-size:12.5px"></span>
         <span class="axr-spacer"></span>
@@ -515,26 +595,44 @@ async function runCompare(scope) {
       </div>
     </div>`;
   document.body.appendChild(wrap);
-  const close = () => { document.removeEventListener('keydown', onKey); wrap.remove(); load(); };
+  let cancelled = false;
+  const close = () => { cancelled = true; document.removeEventListener('keydown', onKey); wrap.remove(); load(); };
   const onKey = ev => { if (ev.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
   wrap.querySelector('#cmpClose').addEventListener('click', close);
 
-  let r;
-  try { r = await api({ action: 'detect', user: sessionUserPayload(USER), ...scope }); }
-  catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
-
-  const body = wrap.querySelector('#cmpBody');
   const sub = wrap.querySelector('#cmpSub');
+  const bar = wrap.querySelector('#cmpBar');
   const footInfo = wrap.querySelector('#cmpFootInfo');
-  if (!r || !r.ok) {
-    body.innerHTML = `<div class="axr-empty">No se pudo comparar${r && r.error ? ': ' + esc(r.error) : ''}.</div>`;
-    if (sub) sub.textContent = '';
-    return;
+
+  let scanned = 0, okCount = 0;
+  const failed = [];
+
+  // Bucle secuencial: una empresa por llamada.
+  for (let i = 0; i < codes.length; i++) {
+    if (cancelled) return;
+    const cc = codes[i];
+    if (sub) sub.textContent = `Comparando ${i + 1} de ${total}… (${cc})`;
+    if (bar) bar.style.width = `${Math.round(((i) / total) * 100)}%`;
+
+    let r;
+    try { r = await api({ action: 'detect', user: sessionUserPayload(USER), company_code: cc }); }
+    catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+    if (cancelled) return;
+
+    if (!r || !r.ok) { failed.push(cc); continue; }
+    scanned += (r.scanned || 0);
+    okCount += (r.companies_ok || 0);
+    (r.companies_failed || []).forEach(f => failed.push(f));
+    // Acumular diferencias de esta empresa.
+    (r.rows || []).forEach(row => CMP_ROWS.push(row));
+    // Repintar incremental (para ver avanzar los resultados).
+    if (CMP_ROWS.length) paintCompare();
   }
-  CMP_ROWS = r.rows || [];
-  const failed = r.companies_failed || [];
-  if (sub) sub.textContent = `${r.scanned || 0} ficha(s) revisada(s) · ${CMP_ROWS.length} con diferencias`
+
+  if (cancelled) return;
+  if (bar) bar.style.width = '100%';
+  if (sub) sub.textContent = `${scanned} ficha(s) revisada(s) · ${CMP_ROWS.length} con diferencias`
     + (failed.length ? ` · ${failed.length} empresa(s) sin respuesta` : '');
   if (footInfo && failed.length) footInfo.textContent = `Sin respuesta: ${failed.slice(0, 6).join(', ')}${failed.length > 6 ? '…' : ''}`;
   paintCompare();
@@ -632,23 +730,22 @@ function confirmCompare(verb, rows) {
     goB.disabled = true; goB.textContent = isPub ? 'Publicando…' : 'Adoptando…';
     const res = wrap.querySelector('#cmpRes');
     res.className = 'res'; res.textContent = '';
-    // El backend re-detecta; le pasamos el alcance de la comparacion + las
-    // cedulas objetivo. publish usa la accion 'detect_commit' (marca pendiente
-    // y publica en un solo paso? No: detect_commit solo MARCA). Para publicar
-    // directo del panel, usamos 'publish' con id_numbers despues de marcar.
-    // Simplificacion: publish del panel = detect_commit (marca) + publish.
+    // Empresas involucradas en las fichas a resolver (para que el backend
+    // re-detecte SOLO esas empresas, no todo el alcance -> evita el limite de
+    // subrequests y es preciso).
+    const codes = [...new Set(rows.map(r => r.company_code).filter(Boolean))];
     let r;
     try {
       if (isPub) {
         // 1) marcar como pendientes (origin erp_detect) las detectadas.
-        const mark = await api({ action: 'detect_commit', user: sessionUserPayload(USER), ...CMP_SCOPE, id_numbers: ids });
+        const mark = await api({ action: 'detect_commit', user: sessionUserPayload(USER), company_codes: codes, id_numbers: ids });
         if (!mark || !mark.ok) { r = mark; }
         else {
           // 2) publicar esas fichas.
           r = await api({ action: 'publish', user: sessionUserPayload(USER), id_numbers: ids });
         }
       } else {
-        r = await api({ action: 'adopt', user: sessionUserPayload(USER), ...CMP_SCOPE, id_numbers: ids });
+        r = await api({ action: 'adopt', user: sessionUserPayload(USER), company_codes: codes, id_numbers: ids });
       }
     } catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
 
