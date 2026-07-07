@@ -265,9 +265,8 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
         <div class="head-actions">
           <a class="btn wp-guia-link" id="wpGuiaFoto" href="/guias/foto-carnet.html" target="_blank" rel="noopener" title="Guia: como tomar la foto del carnet"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg> ¿Como tomar la foto?</a>
           <button class="btn" id="wpReload" title="Recargar la lista"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Recargar</button>
-          <button class="btn" id="wpReporte" title="${mode === 'enterprise' ? 'Cargar Reporte AX (Excel)' : 'Cargar Reporte 10'}" aria-label="${mode === 'enterprise' ? 'Cargar Reporte AX (Excel)' : 'Cargar Reporte 10'}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> ${mode === 'enterprise' ? 'Reporte AX (Excel)' : 'Reporte 10'}</button>
           ${isAdmin ? `<button class="btn btn-primary" id="wpAxApi" title="Actualizar: trae lo ultimo de AX (pisa cambios locales)" aria-label="Actualizar desde AX"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg> Actualizar</button>` : ''}
-          ${isAdmin ? `<button class="btn" id="wpPublish" title="Publicar: envia a AX los cambios hechos aqui" aria-label="Publicar cambios en AX" style="display:none"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar <span id="wpPublishN" class="wp-pubcount">0</span></button>` : ''}
+          ${isAdmin ? `<button class="btn" id="wpPublish" title="Publicar: envia a AX los cambios hechos aqui" aria-label="Publicar cambios en AX" disabled><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar <span id="wpPublishN" class="wp-pubcount">0</span></button>` : ''}
           ${(isSuper && mode === 'enterprise') ? `<button class="btn" id="wpNewDept" title="Nuevo departamento" aria-label="Nuevo departamento"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Nuevo departamento</button>` : ''}
           <button class="btn wp-btn-danger" id="wpClear" title="Limpiar lista de personal" aria-label="Limpiar lista de personal"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Limpiar lista</button>
         </div>
@@ -335,7 +334,8 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
     const el = $(id); if (el) el.addEventListener('change', onFilterChange);
   });
   $('#wpSort').addEventListener('change', e => { STATE.sortKey = e.target.value; paintGrid(); });
-  $('#wpReporte').addEventListener('click', STATE.mode === 'enterprise' ? openReporteAXModal : openReporteModal);
+  const reporteBtn = $('#wpReporte');
+  if (reporteBtn) reporteBtn.addEventListener('click', STATE.mode === 'enterprise' ? openReporteAXModal : openReporteModal);
   const axApiBtn = $('#wpAxApi');
   if (axApiBtn) axApiBtn.addEventListener('click', () => {
     // Si hay cambios sin publicar, avisar que Actualizar los descartara.
@@ -403,7 +403,10 @@ function refreshPublishBtn() {
   const n = pendingWorkers().length;
   const nEl = $('#wpPublishN');
   if (nEl) nEl.textContent = n;
-  btn.style.display = n > 0 ? '' : 'none';
+  // El boton queda SIEMPRE visible: grisado (disabled) cuando no hay
+  // pendientes, activo cuando hay al menos uno. Asi el usuario ve que la
+  // accion existe aunque ahora no haya nada que publicar.
+  btn.disabled = n === 0;
 }
 
 /* Barra de estado del roster: cuando se cargo el Reporte 10, cuantos del
