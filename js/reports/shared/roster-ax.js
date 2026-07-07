@@ -38,7 +38,7 @@ function genderCode(raw) {
   return null;
 }
 
-/* Estado civil AX -> 'S'|'C'|'D'|'V'|null. "Ninguno" => null. */
+/* Estado civil AX -> 'S'|'C'|'D'|'V'|'O'|'R'|null. "Ninguno" => null. */
 function maritalCode(raw) {
   if (raw == null) return null;
   const s = String(raw).trim().toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
@@ -47,7 +47,9 @@ function maritalCode(raw) {
   if (/CASAD/.test(s)) return 'C';
   if (/VIUD/.test(s)) return 'V';
   if (/DIVORCIAD/.test(s)) return 'D';
-  if (s === 'S' || s === 'C' || s === 'V' || s === 'D') return s;
+  if (/COHABIT/.test(s) || /CONVIV/.test(s) || /UNION LIBRE/.test(s)) return 'O';
+  if (/ASOCIAC/.test(s) || /UNION REGISTRAD/.test(s) || /SOCIEDAD REGISTRAD/.test(s)) return 'R';
+  if (s === 'S' || s === 'C' || s === 'V' || s === 'D' || s === 'O' || s === 'R') return s;
   // "NINGUNO", "NO DEFINIDO", "OTROS"... -> sin codigo.
   return null;
 }

@@ -1944,3 +1944,44 @@ input.needfill:focus, select.needfill:focus {
   .pd-catadd input { flex:1 1 100%; }
   .pd-catadd .btn { flex:1 1 100%; justify-content:center; }
 }
+
+/* ===================================================================
+   WRITE-BACK A AX ("cambios sin publicar") — Personal / ficha
+   Contador del boton Publicar, badge de pendiente, boton Publicar y el
+   lapiz que marca los campos con cambios sin enviar a AX. Naranja =
+   pendiente (usa el token warn); el boton Publicar usa el color de marca.
+   =================================================================== */
+
+/* Contador (N) dentro del boton "Publicar" de la barra de acciones. */
+.wp-pubcount {
+  display:inline-flex; align-items:center; justify-content:center;
+  min-width:18px; height:18px; padding:0 5px; margin-left:2px;
+  border-radius:9px; background:var(--brand); color:#fff;
+  font-size:11px; font-weight:700; line-height:1;
+}
+
+/* Boton "Publicar" (barra y ficha): contorno en color de marca para que
+   destaque como accion positiva sin robarle protagonismo a "Actualizar". */
+.wp-btn-publish {
+  border-color:var(--brand) !important;
+  color:var(--brand) !important;
+}
+.wp-btn-publish:hover { background:var(--brand); color:#fff !important; }
+
+/* Badge "Cambios sin publicar" en la cabecera de la ficha. Pill naranja
+   suave (token warn), en linea con el pill del cargo. */
+.wp-pill-pending {
+  display:inline-flex; align-items:center;
+  background:var(--warn-bg, #fff7ed);
+  color:var(--warn, #b45309);
+  border:1px solid var(--warn-bd, #fed7aa);
+  font-weight:600;
+}
+
+/* Lapiz naranja junto a un valor de la ficha con cambio sin publicar. */
+.ff-pend-ico {
+  display:inline-flex; align-items:center;
+  color:var(--warn, #b45309);
+  margin-left:4px;
+}
+

@@ -190,7 +190,7 @@ function confettiHtml() {
 function phoneNat(e164) { if (!e164) return ''; let s = String(e164).replace(/[^\d+]/g, ''); if (s.startsWith('+58')) s = '0' + s.slice(3); return s; }
 function phoneDisplay(e164) { const s = phoneNat(e164); return /^\d{11}$/.test(s) ? s.slice(0, 4) + '-' + s.slice(4) : (e164 || ''); }
 const GEN = { M: 'Masculino', F: 'Femenino' };
-const CIV = { S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a' };
+const CIV = { S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a', O: 'Cohabitando', R: 'Asociación registrada' };
 
 /* Iniciales para el avatar "sin foto": primera letra del primer nombre y
    primera del primer apellido. Si solo hay una palabra, usa sus dos primeras
@@ -266,8 +266,8 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
           <a class="btn wp-guia-link" id="wpGuiaFoto" href="/guias/foto-carnet.html" target="_blank" rel="noopener" title="Guia: como tomar la foto del carnet"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg> ¿Como tomar la foto?</a>
           <button class="btn" id="wpReload" title="Recargar la lista"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Recargar</button>
           <button class="btn" id="wpReporte" title="${mode === 'enterprise' ? 'Cargar Reporte AX (Excel)' : 'Cargar Reporte 10'}" aria-label="${mode === 'enterprise' ? 'Cargar Reporte AX (Excel)' : 'Cargar Reporte 10'}"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> ${mode === 'enterprise' ? 'Reporte AX (Excel)' : 'Reporte 10'}</button>
-          ${(mode === 'store' && isAdmin) ? `<button class="btn" id="wpReporteAX" title="Cargar Reporte AX (Excel)" aria-label="Cargar Reporte AX (Excel)"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg> Reporte AX (Excel)</button>` : ''}
-          ${isAdmin ? `<button class="btn btn-primary" id="wpAxApi" title="Sincronizar personal desde AX" aria-label="Sincronizar personal desde AX"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-9-9c2.5 0 4.8 1 6.4 2.6"/><polyline points="21 3 21 9 15 9"/></svg> Sincronizar</button>` : ''}
+          ${isAdmin ? `<button class="btn btn-primary" id="wpAxApi" title="Actualizar: trae lo ultimo de AX (pisa cambios locales)" aria-label="Actualizar desde AX"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg> Actualizar</button>` : ''}
+          ${isAdmin ? `<button class="btn" id="wpPublish" title="Publicar: envia a AX los cambios hechos aqui" aria-label="Publicar cambios en AX" style="display:none"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar <span id="wpPublishN" class="wp-pubcount">0</span></button>` : ''}
           ${(isSuper && mode === 'enterprise') ? `<button class="btn" id="wpNewDept" title="Nuevo departamento" aria-label="Nuevo departamento"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Nuevo departamento</button>` : ''}
           <button class="btn wp-btn-danger" id="wpClear" title="Limpiar lista de personal" aria-label="Limpiar lista de personal"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Limpiar lista</button>
         </div>
@@ -336,10 +336,15 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   });
   $('#wpSort').addEventListener('change', e => { STATE.sortKey = e.target.value; paintGrid(); });
   $('#wpReporte').addEventListener('click', STATE.mode === 'enterprise' ? openReporteAXModal : openReporteModal);
-  const axBtn = $('#wpReporteAX');
-  if (axBtn) axBtn.addEventListener('click', openReporteAXModalStore);
   const axApiBtn = $('#wpAxApi');
-  if (axApiBtn) axApiBtn.addEventListener('click', openAxApiModal);
+  if (axApiBtn) axApiBtn.addEventListener('click', () => {
+    // Si hay cambios sin publicar, avisar que Actualizar los descartara.
+    const n = pendingWorkers().length;
+    if (n > 0) openDiscardConfirmModal(n);
+    else openAxApiModal();
+  });
+  const publishBtn = $('#wpPublish');
+  if (publishBtn) publishBtn.addEventListener('click', () => openPublishModal(null));
   $('#wpClear').addEventListener('click', openClearModal);
   const newDeptBtn = $('#wpNewDept');
   if (newDeptBtn) newDeptBtn.addEventListener('click', openNewDeptModal);
@@ -382,7 +387,23 @@ async function load() {
   paintRosterBar();
   paintDemo();
   fillFilterOptions();
+  refreshPublishBtn();
   paintGrid();
+}
+
+/* Cuenta los trabajadores con cambios sin publicar (ax_pending) en la lista
+   actual y actualiza el boton "Publicar (N)" de la barra: se muestra solo si
+   hay pendientes. Solo aplica a admin (el boton solo existe para admin). */
+function pendingWorkers() {
+  return (STATE.workers || []).filter(w => w.ax_pending);
+}
+function refreshPublishBtn() {
+  const btn = $('#wpPublish');
+  if (!btn) return;
+  const n = pendingWorkers().length;
+  const nEl = $('#wpPublishN');
+  if (nEl) nEl.textContent = n;
+  btn.style.display = n > 0 ? '' : 'none';
 }
 
 /* Barra de estado del roster: cuando se cargo el Reporte 10, cuantos del
@@ -473,7 +494,7 @@ function demoStatsHtml(workers, mode) {
     ? `<div class="wpd-bars">${demoBars(ageBuckets, '#4f46e5')}</div>`
     : '<div class="wpd-empty">Sin fechas de nacimiento</div>';
   // Estado civil
-  const civDefs = [['Soltero', 'S'], ['Casado', 'C'], ['Divorc.', 'D'], ['Viudo', 'V']];
+  const civDefs = [['Soltero', 'S'], ['Casado', 'C'], ['Divorc.', 'D'], ['Viudo', 'V'], ['Cohab.', 'O'], ['Asoc. reg.', 'R']];
   const civBuckets = civDefs.map(([lbl, code]) => [lbl, workers.filter(w => w.marital_status === code).length]);
   const civWith = civBuckets.reduce((a, x) => a + x[1], 0);
   const civBody = civWith
@@ -1179,10 +1200,11 @@ function fichaHtml(w, c) {
         <div class="ff-id">
           <h2>${esc(w.full_name || '—')}</h2>
           <div class="ced">${w.ced_kind || ''}-${w.id_number}</div>
-          <div class="meta"><span class="pill">${esc(w.role || 'Sin cargo')}</span></div>
+          <div class="meta"><span class="pill">${esc(w.role || 'Sin cargo')}</span>${w.ax_pending ? '<span class="pill wp-pill-pending" id="ffPendBadge" title="Hay cambios en esta ficha que aun no se publican en AX"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Cambios sin publicar</span>' : ''}</div>
         </div>
         <div class="ff-actions">
           <button class="btn btn-ghost-danger" id="ffDel" style="display:none">Quitar foto</button>
+          ${(STATE.isAdmin && w.ax_pending) ? `<button class="btn wp-btn-publish" id="ffPublish" title="Publicar en AX los cambios de esta ficha"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar</button>` : ''}
           <button class="btn" id="ffEdit">Editar</button>
           <button class="btn" id="ffCancel" style="display:none">Cancelar</button>
           <button class="btn btn-primary" id="ffSave" style="display:none">Guardar cambios</button>
@@ -1212,7 +1234,7 @@ function fichaHtml(w, c) {
           <div class="ff-row"><span class="ff-lbl">Género <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="gender"></span></div>
           <div class="ff-row"><span class="ff-lbl">Estado civil <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="marital_status"></span></div>
           <div class="ff-field"><label>Género</label><select id="e_gender"><option value="">— Seleccionar —</option><option value="M">M – Masculino</option><option value="F">F – Femenino</option></select></div>
-          <div class="ff-field"><label>Estado civil</label><select id="e_marital"><option value="">— Seleccionar —</option><option value="S">S – Soltero/a</option><option value="C">C – Casado/a</option><option value="D">D – Divorciado/a</option><option value="V">V – Viudo/a</option></select></div>
+          <div class="ff-field"><label>Estado civil</label><select id="e_marital"><option value="">— Seleccionar —</option><option value="S">S – Soltero/a</option><option value="C">C – Casado/a</option><option value="D">D – Divorciado/a</option><option value="V">V – Viudo/a</option><option value="O">O – Cohabitando</option><option value="R">R – Asociación registrada</option></select></div>
         </div>
 
         <div class="ff-sec">Cargo y departamento</div>
@@ -1278,6 +1300,40 @@ function paintFichaValues(host, w) {
     note.style.display = 'flex';
     host.querySelector('#ffNoteTxt').textContent = `Faltan datos por completar: ${missing.join(', ')}. Tocá Editar para cargarlos.`;
   } else note.style.display = 'none';
+
+  // Lapiz naranja en los campos con cambios sin publicar (ax_pending_fields).
+  // Los campos de nombre (first/second/last) marcan la fila "Nombre completo".
+  markPendingFields(host, w);
+}
+
+/* Pinta un lapiz junto a los valores (modo lectura) de los campos que tienen
+   cambios sin publicar en AX. Lee w.ax_pending_fields (nombres internos) y los
+   mapea a las filas [data-v] de la ficha. Se limpia primero para no duplicar
+   al reabrir. No aplica en tiendas sin cambios (ax_pending_fields vacio). */
+function markPendingFields(host, w) {
+  // Limpiar marcas previas.
+  host.querySelectorAll('.ff-pend-ico').forEach(el => el.remove());
+  const pf = (w.ax_pending && w.ax_pending_fields && typeof w.ax_pending_fields === 'object')
+    ? w.ax_pending_fields : null;
+  if (!pf) return;
+  const keys = Object.keys(pf);
+  if (!keys.length) return;
+  // Mapa campo interno -> data-v de la fila de valor a marcar.
+  const nameKeys = ['first_name', 'second_name', 'last_names'];
+  const toRow = {
+    birth_date: 'birth_date', gender: 'gender', marital_status: 'marital_status',
+    account_number: 'account_number', phone: 'phone', email: 'email',
+  };
+  const rows = new Set();
+  keys.forEach(k => {
+    if (nameKeys.includes(k)) rows.add('full_name');
+    else if (toRow[k]) rows.add(toRow[k]);
+  });
+  const icoHtml = ' <span class="ff-pend-ico" title="Cambio sin publicar en AX"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4 12.5-12.5z"/></svg></span>';
+  rows.forEach(dv => {
+    const el = host.querySelector(`[data-v="${dv}"]`);
+    if (el) el.insertAdjacentHTML('beforeend', icoHtml);
+  });
 }
 
 function wireFicha(host, w) {
@@ -1392,6 +1448,8 @@ function wireFicha(host, w) {
   q('#ffSave').addEventListener('click', save);
   q('#ffPhEdit').addEventListener('click', () => openPhotoModal(w.id_number));
   q('#ffDel').addEventListener('click', () => openPhotoModal(w.id_number));
+  const pubBtn = q('#ffPublish');
+  if (pubBtn) pubBtn.addEventListener('click', () => openPublishModal(String(w.id_number)));
 }
 
 function backToGrid() {
@@ -1826,12 +1884,12 @@ function openReporteAXModal() {
   });
 }
 
-/* ---- TERCERA VIA: Sincronizar personal desde AX (API) ----
+/* ---- ACTUALIZAR: traer personal desde AX (API) ----
    Llama a /api/ax-roster con el alias. No pide archivo. Escribe en la tabla
    que corresponda segun el tipo de empresa (lo decide el backend). La API
    trae el cargo, asi que es la via mas completa. Solo admin/superadmin.
-   Se llama "Sincronizar" para usar la misma terminologia que la sync de
-   empresas. */
+   "Actualizar" = traer lo ultimo de AX (pisa cambios locales). Si habia
+   cambios sin publicar, el descarte ya se confirmo antes de llegar aqui. */
 function openAxApiModal() {
   const host = wpModalHost();
   const entidad = STATE.mode === 'enterprise' ? 'la empresa' : 'la tienda';
@@ -1839,7 +1897,7 @@ function openAxApiModal() {
     <div class="wp-modal-vp">
       <div class="wp-modal">
         <button class="wp-x" id="apX" title="Cerrar">✕</button>
-        <h3>Sincronizar personal desde AX</h3>
+        <h3>Actualizar personal desde AX</h3>
         <p class="wp-who">${esc(STATE.cc)} · Trae el personal vigente directo de AX, sin Excel.</p>
 
         <div class="wp-okbox">
@@ -1852,13 +1910,13 @@ function openAxApiModal() {
         <div class="wp-foot">
           <span style="flex:1"></span>
           <button class="btn" id="apCancel">Cancelar</button>
-          <button class="btn btn-primary" id="apGo">Sincronizar</button>
+          <button class="btn btn-primary" id="apGo">Actualizar</button>
         </div>
       </div>
     </div>`;
 
   const q = s => host.querySelector(s);
-  // done=true cuando la sincronizacion termino OK: al cerrar, recargamos.
+  // done=true cuando la actualizacion termino OK: al cerrar, recargamos.
   // El modal NUNCA se cierra solo; solo a peticion (X / Cerrar / fondo / Esc).
   let done = false;
   const close = () => {
@@ -1872,7 +1930,7 @@ function openAxApiModal() {
   q('#apCancel').addEventListener('click', close);
 
   q('#apGo').addEventListener('click', async () => {
-    const goB = q('#apGo'); goB.disabled = true; goB.textContent = 'Sincronizando…';
+    const goB = q('#apGo'); goB.disabled = true; goB.textContent = 'Actualizando…';
     const res = q('#apResult'); res.style.display = 'block'; res.className = 'wp-prev'; res.textContent = 'Conectando con AX y trayendo el personal…';
     const uploadedBy = STATE.user.name || STATE.user.username || 'admin';
     let r;
@@ -1888,18 +1946,180 @@ function openAxApiModal() {
       res.className = 'wp-prev warn';
       const msg = (r && r.error === 'cooldown')
         ? rosterCooldownMessage(r)
-        : ((r && r.error) || 'No se pudo sincronizar con AX.');
+        : ((r && r.error) || 'No se pudo actualizar desde AX.');
       res.innerHTML = `⚠ ${esc(msg)}`;
       goB.disabled = false; goB.textContent = 'Reintentar';
       return;
     }
     const s = r.summary || {};
     res.className = 'wp-prev ok';
-    res.innerHTML = `✓ <b>${s.total} trabajadores</b> sincronizados (${s.active} vigentes · ${s.terminated} egresados)`
+    res.innerHTML = `✓ <b>${s.total} trabajadores</b> actualizados (${s.active} vigentes · ${s.terminated} egresados)`
       + ` · ${s.with_role} con cargo · ${s.with_account} con cuenta`
       + (s.warnings && s.warnings.length ? `<div style="margin-top:6px;font-size:11.5px;color:var(--warn)">${s.warnings.join(' ')}</div>` : '');
     // Termino bien: marcamos done y dejamos el modal abierto. El boton pasa a
     // "Cerrar" (que recarga la lista al salir). NO se cierra solo.
+    done = true;
+    goB.disabled = false;
+    goB.textContent = 'Cerrar';
+    goB.onclick = close;
+  });
+}
+
+/* ---- Confirmar descarte al ACTUALIZAR con cambios sin publicar ----
+   Si hay pendientes, Actualizar los descartara (trae lo de AX y pisa lo
+   local). Este modal avisa y, si el usuario acepta, sigue a openAxApiModal.
+   Modal propio (sin nativos; cierra solo con sus botones). */
+function openDiscardConfirmModal(n) {
+  const host = wpModalHost();
+  host.innerHTML = `
+    <div class="wp-modal-vp">
+      <div class="wp-modal">
+        <button class="wp-x" id="dcX" title="Cerrar">✕</button>
+        <h3>Tienes ${n} cambio${n === 1 ? '' : 's'} sin publicar</h3>
+        <p class="wp-who">${esc(STATE.cc)}</p>
+        <div class="wp-dangerbox">
+          Al <b>Actualizar</b> traes lo último de AX y se <b>descartan</b> ${n === 1 ? 'ese cambio que hiciste' : `esos ${n} cambios que hiciste`} aquí y no publicaste. Esta acción no se puede deshacer.
+        </div>
+        <p class="wp-help">Si quieres conservarlos, <b>Cancela</b> y usa <b>Publicar</b> primero para enviarlos a AX.</p>
+        <div class="wp-foot">
+          <span style="flex:1"></span>
+          <button class="btn" id="dcCancel">Cancelar</button>
+          <button class="btn wp-btn-danger" id="dcOk">Sí, actualizar</button>
+        </div>
+      </div>
+    </div>`;
+  const q = s => host.querySelector(s);
+  const close = () => { document.removeEventListener('keydown', onKey); host.innerHTML = ''; };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  q('#dcX').addEventListener('click', close);
+  q('#dcCancel').addEventListener('click', close);
+  q('#dcOk').addEventListener('click', () => {
+    // Cerrar este y abrir el de Actualizar (no recarga; solo cambia de modal).
+    document.removeEventListener('keydown', onKey);
+    host.innerHTML = '';
+    openAxApiModal();
+  });
+}
+
+/* ---- PUBLICAR: enviar a AX los cambios hechos en el portal ----
+   ced=null  -> masivo: publica TODOS los pendientes de la empresa/alcance.
+   ced=cedula-> individual: publica solo esa ficha.
+   Llama a /api/worker-photo accion push_to_ax. Al exito, limpia el pendiente
+   en memoria de los enviados, refresca el boton y repinta. Modal propio
+   (cierra solo con sus botones). Solo superadmin (el backend lo re-valida). */
+function openPublishModal(ced) {
+  const host = wpModalHost();
+  const pend = ced
+    ? STATE.workers.filter(w => String(w.id_number) === String(ced) && w.ax_pending)
+    : pendingWorkers();
+  const n = pend.length;
+
+  // Nombre de campo -> etiqueta corta para el resumen de que se publicara.
+  const FIELD_LABEL = {
+    first_name: 'Primer nombre', second_name: 'Segundo nombre', last_names: 'Apellidos',
+    birth_date: 'Nacimiento', gender: 'Género', marital_status: 'Estado civil',
+    account_number: 'Cuenta', phone: 'Teléfono', email: 'Correo',
+  };
+  const fieldsList = (w) => {
+    const f = (w.ax_pending_fields && typeof w.ax_pending_fields === 'object') ? Object.keys(w.ax_pending_fields) : [];
+    return f.map(k => FIELD_LABEL[k] || k).join(', ');
+  };
+
+  let body;
+  if (!n) {
+    body = `<div class="wp-prev" style="display:block">No hay cambios sin publicar.</div>`;
+  } else if (ced) {
+    const w = pend[0];
+    body = `
+      <div class="wp-okbox">
+        Se publicará en AX la ficha de <b>${esc(w.full_name)}</b> (${w.ced_kind || ''}-${w.id_number}).
+      </div>
+      <p class="wp-help">Campos a publicar: <b>${esc(fieldsList(w) || '—')}</b>. Solo se envía lo que cambiaste aquí; los demás datos en AX quedan intactos.</p>`;
+  } else {
+    // Masivo: lista breve (hasta 8) + conteo.
+    const rows = pend.slice(0, 8).map(w =>
+      `<div style="display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:3px 0;border-bottom:1px solid var(--border)"><span>${esc(w.full_name)} <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}</span></span><span class="muted" style="text-align:right">${esc(fieldsList(w) || '—')}</span></div>`
+    ).join('');
+    const more = n > 8 ? `<div class="muted" style="font-size:12px;margin-top:6px">… y ${n - 8} más</div>` : '';
+    body = `
+      <div class="wp-okbox">
+        Se publicarán en AX <b>${n} ficha${n === 1 ? '' : 's'}</b> con cambios hechos aquí.
+      </div>
+      <div style="margin-top:10px">${rows}${more}</div>
+      <p class="wp-help">Solo se envía lo que cambiaste en cada ficha; los demás datos en AX quedan intactos.</p>`;
+  }
+
+  host.innerHTML = `
+    <div class="wp-modal-vp">
+      <div class="wp-modal">
+        <button class="wp-x" id="pubX" title="Cerrar">✕</button>
+        <h3>Publicar cambios en AX</h3>
+        <p class="wp-who">${esc(STATE.cc)}</p>
+        ${body}
+        <div id="pubResult" class="wp-prev" style="display:none"></div>
+        <div class="wp-foot">
+          <span style="flex:1"></span>
+          <button class="btn" id="pubCancel">Cancelar</button>
+          ${n ? '<button class="btn btn-primary" id="pubGo">Publicar</button>' : ''}
+        </div>
+      </div>
+    </div>`;
+
+  const q = s => host.querySelector(s);
+  // done=true cuando publico OK: al cerrar, recargamos para traer ax_synced_at.
+  let done = false;
+  const close = () => {
+    document.removeEventListener('keydown', onKey);
+    host.innerHTML = '';
+    if (done) load();
+  };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  q('#pubX').addEventListener('click', close);
+  q('#pubCancel').addEventListener('click', close);
+
+  const goB = q('#pubGo');
+  if (goB) goB.addEventListener('click', async () => {
+    goB.disabled = true; goB.textContent = 'Publicando…';
+    const res = q('#pubResult'); res.style.display = 'block'; res.className = 'wp-prev'; res.textContent = 'Enviando los cambios a AX…';
+    const payload = {
+      action: 'push_to_ax', company_code: STATE.cc, user: sessionUserPayload(STATE.user),
+    };
+    // Individual: pasa la cedula. Masivo: sin id_numbers (todos los pendientes).
+    if (ced) payload.id_numbers = [String(ced)];
+    let r;
+    try {
+      r = await api(payload);
+    } catch (err) {
+      res.className = 'wp-prev warn';
+      res.innerHTML = `⚠ Error de conexion: ${esc(String(err && err.message || err))}`;
+      goB.disabled = false; goB.textContent = 'Reintentar';
+      return;
+    }
+    if (!r || !r.ok) {
+      res.className = 'wp-prev warn';
+      res.innerHTML = `⚠ ${esc((r && r.error) || 'No se pudo publicar en AX.')}`;
+      goB.disabled = false; goB.textContent = 'Reintentar';
+      return;
+    }
+    // Exito: limpiar el pendiente en memoria de los enviados.
+    const sent = new Set((r.synced || []).map(String));
+    STATE.workers.forEach(w => {
+      if (sent.has(String(w.id_number))) {
+        w.ax_pending = false;
+        w.ax_pending_fields = {};
+        w.ax_synced_at = new Date().toISOString();
+      }
+    });
+    const rej = r.rejected_count || 0;
+    res.className = 'wp-prev ok';
+    res.innerHTML = `✓ <b>${r.sent} ficha${r.sent === 1 ? '' : 's'}</b> publicada${r.sent === 1 ? '' : 's'} en AX`
+      + (rej ? `<div style="margin-top:6px;font-size:11.5px;color:var(--warn)">${rej} no se pudo enviar (sin campos válidos).</div>` : '');
+    refreshPublishBtn();
+    paintGrid();
+    // Si estamos viendo la ficha de alguien que se publico, refrescarla.
+    if (CUR && sent.has(String(CUR.id_number))) openFicha(String(CUR.id_number));
     done = true;
     goB.disabled = false;
     goB.textContent = 'Cerrar';

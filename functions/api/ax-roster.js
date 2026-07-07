@@ -75,6 +75,8 @@ function maritalCode(raw) {
   if (s.startsWith('CASAD')) return 'C';
   if (s.startsWith('DIVORCIAD')) return 'D';
   if (s.startsWith('VIUD')) return 'V';
+  if (s.startsWith('COHABIT') || s.startsWith('CONVIV') || s.startsWith('UNION LIBRE')) return 'O';
+  if (s.startsWith('ASOCIAC') || s.startsWith('UNION REGISTRAD') || s.startsWith('SOCIEDAD REGISTRAD')) return 'R';
   return null;
 }
 // API: todoTicket viene "Y" / "N".
@@ -142,6 +144,8 @@ async function upsertWorkersMaster(env, cc, rows) {
   // vez de agregarlas condicionalmente. Como la regla es "el ultimo reporte
   // manda" y la API trae todos estos campos, pisar con null es lo correcto.
   // phone/email/address y photo_* NO se incluyen nunca -> se preservan.
+  // ax_pending se LIMPIA: al traer datos nuevos de AX, cualquier cambio local
+  // pendiente de enviar queda obsoleto (la regla es "el ultimo reporte manda").
   const payload = rows.map(r => ({
     id_number: r.id_number,
     ced_kind: (/^\d+$/.test(r.id_number) && Number(r.id_number) >= 80000000) ? 'E' : 'V',
@@ -159,6 +163,10 @@ async function upsertWorkersMaster(env, cc, rows) {
     todo_ticket: r.todo_ticket || null,
     data_id: r.data_id || null,
     last_source_company: cc,
+    // Traer de AX limpia el pendiente de envio (datos nuevos):
+    ax_pending: false,
+    ax_pending_fields: {},
+    ax_pending_at: null,
   }));
   const res = await fetch(`${env.supabase_url}/rest/v1/workers_master?on_conflict=id_number`, {
     method: 'POST',
