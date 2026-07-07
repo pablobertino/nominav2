@@ -45,12 +45,16 @@ const MAX_FULL_BYTES = 400 * 1024;   // tope server-side de la version grande
 // esta vive en api2. Clave en el Secret env.canaima_apikey (nunca al navegador).
 const HCM_API = 'https://api2.grupocanaima.com/empleados/datos/v1';
 
-// Traduccion de los codigos cortos del portal al TEXTO que AX espera.
-// (En el portal se guarda M/F y S/C/D/V/O/R; AX quiere el texto en espanol.)
+// Traduccion de los codigos cortos del portal al TEXTO que la API HCM espera.
+// IMPORTANTE: la API recibe/devuelve el estado civil como TEXTO EN ESPANOL
+// (ella traduce a los enums de AX internamente). Estos strings deben calcar
+// EXACTO con los que la API maneja (verificado contra la respuesta real de
+// AA01): Soltero/a, Casado/a, Divorciado/a, Viudo/a, Conviviente y
+// "Union Registrada" (con tilde en Union). Un texto que no calce se rechaza.
 const AX_GENDER = { M: 'Masculino', F: 'Femenino' };
 const AX_MARITAL = {
   S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a',
-  O: 'Cohabitando', R: 'Asociaci\u00f3n registrada',
+  O: 'Conviviente', R: 'Uni\u00f3n Registrada',
 };
 
 // Mapa campo interno (workers_master) -> campo del payload de la API de AX.

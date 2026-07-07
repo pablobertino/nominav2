@@ -190,7 +190,7 @@ function confettiHtml() {
 function phoneNat(e164) { if (!e164) return ''; let s = String(e164).replace(/[^\d+]/g, ''); if (s.startsWith('+58')) s = '0' + s.slice(3); return s; }
 function phoneDisplay(e164) { const s = phoneNat(e164); return /^\d{11}$/.test(s) ? s.slice(0, 4) + '-' + s.slice(4) : (e164 || ''); }
 const GEN = { M: 'Masculino', F: 'Femenino' };
-const CIV = { S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a', O: 'Cohabitando', R: 'Asociación registrada' };
+const CIV = { S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a', O: 'Conviviente', R: 'Unión Registrada' };
 
 /* Iniciales para el avatar "sin foto": primera letra del primer nombre y
    primera del primer apellido. Si solo hay una palabra, usa sus dos primeras
@@ -497,7 +497,7 @@ function demoStatsHtml(workers, mode) {
     ? `<div class="wpd-bars">${demoBars(ageBuckets, '#4f46e5')}</div>`
     : '<div class="wpd-empty">Sin fechas de nacimiento</div>';
   // Estado civil
-  const civDefs = [['Soltero', 'S'], ['Casado', 'C'], ['Divorc.', 'D'], ['Viudo', 'V'], ['Cohab.', 'O'], ['Asoc. reg.', 'R']];
+  const civDefs = [['Soltero', 'S'], ['Casado', 'C'], ['Divorc.', 'D'], ['Viudo', 'V'], ['Conviv.', 'O'], ['Un. reg.', 'R']];
   const civBuckets = civDefs.map(([lbl, code]) => [lbl, workers.filter(w => w.marital_status === code).length]);
   const civWith = civBuckets.reduce((a, x) => a + x[1], 0);
   const civBody = civWith
@@ -1237,7 +1237,7 @@ function fichaHtml(w, c) {
           <div class="ff-row"><span class="ff-lbl">Género <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="gender"></span></div>
           <div class="ff-row"><span class="ff-lbl">Estado civil <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="marital_status"></span></div>
           <div class="ff-field"><label>Género</label><select id="e_gender"><option value="">— Seleccionar —</option><option value="M">M – Masculino</option><option value="F">F – Femenino</option></select></div>
-          <div class="ff-field"><label>Estado civil</label><select id="e_marital"><option value="">— Seleccionar —</option><option value="S">S – Soltero/a</option><option value="C">C – Casado/a</option><option value="D">D – Divorciado/a</option><option value="V">V – Viudo/a</option><option value="O">O – Cohabitando</option><option value="R">R – Asociación registrada</option></select></div>
+          <div class="ff-field"><label>Estado civil</label><select id="e_marital"><option value="">— Seleccionar —</option><option value="S">S – Soltero/a</option><option value="C">C – Casado/a</option><option value="D">D – Divorciado/a</option><option value="V">V – Viudo/a</option><option value="O">O – Conviviente</option><option value="R">R – Unión Registrada</option></select></div>
         </div>
 
         <div class="ff-sec">Cargo y departamento</div>
