@@ -329,7 +329,9 @@ async function detectDiffs(env, actor, user, body) {
   const NON_STORE = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en l\u00ednea']);
   const diffs = [];            // filas de diferencias (una por ficha)
   const failed = [];           // empresas cuyo ERP no respondio
+  const partial = [];          // empresas con respuesta sospechosamente parcial
   let scanned = 0, okCount = 0;
+  let rosterTotal = 0, erpMatched = 0;   // cobertura del cruce
 
   for (const cc of companies) {
     // Tipo de empresa -> tabla de roster.
@@ -346,6 +348,19 @@ async function detectDiffs(env, actor, user, body) {
     const erpMap = await erpRosterFor(env, cc);
     if (erpMap === null) { failed.push(cc); continue; }
     okCount++;
+
+    // Cobertura: cuantas cedulas del roster local aparecen en el ERP. Si el ERP
+    // devolvio muchas menos de las esperadas, la respuesta es PARCIAL (comun
+    // cuando el sistema esta inestable) y comparar daria un "0 diferencias"
+    // enganoso. Se marca como parcial para avisar y NO dar por confiable.
+    const erpCount = Object.keys(erpMap).length;
+    const matched = ceds.filter(c => erpMap[c]).length;
+    rosterTotal += ceds.length;
+    erpMatched += matched;
+    // Umbral: si el ERP trajo menos del 60% del roster local, es sospechoso.
+    if (ceds.length >= 3 && matched < Math.ceil(ceds.length * 0.6)) {
+      partial.push({ company_code: cc, roster: ceds.length, erp: erpCount, matched });
+    }
 
     // Maestro de esas cedulas (datos personales del portal).
     const inList = ceds.map(c => `"${c}"`).join(',');
@@ -396,6 +411,9 @@ async function detectDiffs(env, actor, user, body) {
     scanned,
     companies_ok: okCount,
     companies_failed: failed,
+    companies_partial: partial,
+    roster_total: rosterTotal,
+    erp_matched: erpMatched,
     diff_count: diffs.length,
   });
 }

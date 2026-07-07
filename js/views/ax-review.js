@@ -32,6 +32,7 @@ let CMP_ROWS = [];        // diferencias detectadas (del dry-run)
 let CMP_SCOPE = null;      // filtro usado en la comparacion (para re-detectar por empresa)
 let CMP_FACETS = null;     // catalogo completo para los combos del modal Comparar
 let CMP_FILTER = { type: '', company: '', zone: '', subzone: '', concept: '' };
+let CMP_PARTIAL = [];      // empresas con respuesta parcial del sistema (aviso)
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -569,6 +570,7 @@ function emptyFacetsCli() {
 async function runCompare(filter, codes) {
   CMP_SCOPE = filter;         // se guarda para re-detectar por empresa al resolver
   CMP_ROWS = [];
+  CMP_PARTIAL = [];
   const total = codes.length;
 
   const wrap = document.createElement('div');
@@ -607,6 +609,7 @@ async function runCompare(filter, codes) {
 
   let scanned = 0, okCount = 0;
   const failed = [];
+  const partial = [];
 
   // Bucle secuencial: una empresa por llamada.
   for (let i = 0; i < codes.length; i++) {
@@ -624,6 +627,7 @@ async function runCompare(filter, codes) {
     scanned += (r.scanned || 0);
     okCount += (r.companies_ok || 0);
     (r.companies_failed || []).forEach(f => failed.push(f));
+    (r.companies_partial || []).forEach(p => partial.push(p));
     // Acumular diferencias de esta empresa.
     (r.rows || []).forEach(row => CMP_ROWS.push(row));
     // Repintar incremental (para ver avanzar los resultados).
@@ -632,9 +636,22 @@ async function runCompare(filter, codes) {
 
   if (cancelled) return;
   if (bar) bar.style.width = '100%';
+  CMP_PARTIAL = partial;
   if (sub) sub.textContent = `${scanned} ficha(s) revisada(s) · ${CMP_ROWS.length} con diferencias`
-    + (failed.length ? ` · ${failed.length} empresa(s) sin respuesta` : '');
-  if (footInfo && failed.length) footInfo.textContent = `Sin respuesta: ${failed.slice(0, 6).join(', ')}${failed.length > 6 ? '…' : ''}`;
+    + (failed.length ? ` · ${failed.length} empresa(s) sin respuesta` : '')
+    + (partial.length ? ` · ${partial.length} con datos incompletos` : '');
+  // Aviso de cobertura: si el sistema respondio parcial en alguna empresa, el
+  // resultado NO es confiable (puede ocultar diferencias). Se avisa claramente.
+  const notes = [];
+  if (partial.length) {
+    const ej = partial.slice(0, 4).map(p => `${p.company_code} (${p.matched}/${p.roster})`).join(', ');
+    notes.push(`⚠ El sistema respondió incompleto en ${partial.length} empresa(s): ${ej}${partial.length > 4 ? '…' : ''}. Vuelve a comparar esas empresas más tarde; el resultado puede estar ocultando diferencias.`);
+  }
+  if (failed.length) {
+    notes.push(`Sin respuesta: ${failed.slice(0, 6).join(', ')}${failed.length > 6 ? '…' : ''}.`);
+  }
+  if (footInfo) footInfo.innerHTML = notes.length
+    ? `<span style="color:var(--warn,#c2410c)">${esc(notes.join(' '))}</span>` : '';
   paintCompare();
 }
 
@@ -644,6 +661,17 @@ function paintCompare() {
   const body = $('#cmpBody');
   if (!body) return;
   if (!CMP_ROWS.length) {
+    // Si el sistema respondio incompleto en alguna empresa, NO mostramos el
+    // "todo bien" tranquilizador: avisamos que el resultado no es confiable.
+    if (CMP_PARTIAL && CMP_PARTIAL.length) {
+      const ej = CMP_PARTIAL.slice(0, 6).map(p => `${p.company_code} (${p.matched}/${p.roster})`).join(', ');
+      body.innerHTML = `<div class="axr-empty">
+        <div class="big" style="color:var(--warn,#c2410c)">⚠</div>
+        <div><b>No se pudo comparar completo.</b></div>
+        <div style="margin-top:6px;max-width:520px;margin-left:auto;margin-right:auto">El sistema respondió con datos incompletos en ${CMP_PARTIAL.length} empresa(s): ${esc(ej)}${CMP_PARTIAL.length > 6 ? '…' : ''}. No se encontraron diferencias en lo que sí respondió, pero podrían estar ocultándose. Vuelve a comparar esas empresas más tarde.</div>
+      </div>`;
+      return;
+    }
     body.innerHTML = `<div class="axr-empty"><div class="big">✓</div><div>No hay diferencias entre el portal y el sistema.</div></div>`;
     return;
   }
