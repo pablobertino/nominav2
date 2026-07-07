@@ -97,20 +97,23 @@ const DETECT_FIELDS = ['first_name', 'second_name', 'last_names',
   'birth_date', 'gender', 'marital_status', 'account_number', 'phone', 'email'];
 
 // --- Normalizadores (mismos criterios que ax-roster.js) ---
+// BILINGUE: el sistema puede responder en espanol o en ingles (cambio
+// detectado 2026-07-07: Single/Married/Divorced/Widowed/Cohabiting/
+// RegisteredPartnership, Male/Female). Se aceptan ambos idiomas.
 function dGenderCode(raw) {
   const s = String(raw || '').trim().toUpperCase();
-  if (s.startsWith('MASC') || s === 'M') return 'M';
+  if (s.startsWith('MASC') || s === 'M' || s === 'MALE') return 'M';
   if (s.startsWith('FEM') || s === 'F') return 'F';
   return null;
 }
 function dMaritalCode(raw) {
   const s = String(raw || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
-  if (s.startsWith('SOLTER')) return 'S';
-  if (s.startsWith('CASAD')) return 'C';
-  if (s.startsWith('DIVORCIAD')) return 'D';
-  if (s.startsWith('VIUD')) return 'V';
+  if (s.startsWith('SOLTER') || s.startsWith('SINGLE')) return 'S';
+  if (s.startsWith('CASAD') || s.startsWith('MARRIED')) return 'C';
+  if (s.startsWith('DIVORC')) return 'D';
+  if (s.startsWith('VIUD') || s.startsWith('WIDOW')) return 'V';
   if (s.startsWith('COHABIT') || s.startsWith('CONVIV') || s.startsWith('UNION LIBRE')) return 'O';
-  if (s.startsWith('ASOCIAC') || s.startsWith('UNION REGISTRAD') || s.startsWith('SOCIEDAD REGISTRAD')) return 'R';
+  if (s.startsWith('ASOCIAC') || s.startsWith('UNION REGISTRAD') || s.startsWith('SOCIEDAD REGISTRAD') || s.startsWith('REGISTERED')) return 'R';
   return null;
 }
 function dDateOrNull(v) {
