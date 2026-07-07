@@ -44,6 +44,14 @@ function avatarColor(seed) {
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h % AVATAR_BG.length;
 }
+/* Fecha ISO -> 'dd/mm/aa hh:mm' hora Caracas (para "Actualizó: X · fecha"). */
+function fmtDT(iso) {
+  if (!iso) return '';
+  const d = new Date(iso); if (isNaN(d)) return '';
+  const c = new Date(d.getTime() - 4 * 3600 * 1000);
+  const z = n => String(n).padStart(2, '0');
+  return `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${String(c.getUTCFullYear()).slice(2)} ${z(c.getUTCHours())}:${z(c.getUTCMinutes())}`;
+}
 function avatarCell(w) {
   // Miniatura si hay foto (URL publica directa, esquema por photo_key). Si no,
   // iniciales de color. onerror quita la img si la URL fallara.
@@ -478,6 +486,10 @@ function paint() {
     if (w.age != null) subParts.push(`${w.age} años`);
     // Empresa: zona · subzona · concepto (solo lo que exista).
     const empMeta = [w.zona, w.subzona, w.concepto].filter(Boolean).map(esc).join(' · ');
+    // v4.20: quien actualizo la ficha de ultimo (tienda/admin/gestor) y cuando.
+    const updLine = w.profile_updated_by
+      ? `<span class="ps-empmeta" title="Última edición de la ficha">Actualizó: ${esc(w.profile_updated_by)}${w.profile_updated_at ? ' · ' + fmtDT(w.profile_updated_at) : ''}</span>`
+      : '';
     const hasPhoto = !!w.thumb_url;
     const acts = `<div class="ps-actions">
         <button type="button" class="ps-iconbtn" data-photo="${start + i}" title="${hasPhoto ? 'Ver foto' : 'Sin foto'}" ${hasPhoto ? '' : 'disabled'}>${icoPhoto()}</button>
@@ -494,6 +506,7 @@ function paint() {
         <span class="ps-emp">${esc(w.company_code)}${w.data_area ? ` · <span class="da">${esc(w.data_area)}</span>` : ''}</span>
         <span class="ps-empn">${esc(w.company_name || '')}</span>
         ${empMeta ? `<span class="ps-empmeta">${empMeta}</span>` : ''}
+        ${updLine}
         <div class="ps-tags">${estado}<span class="ps-pill ps-type">${esc(tipo)}</span>${cst}</div>
       </div>
     </div>`;
@@ -592,6 +605,8 @@ function exportRows() {
     'Subzona': w.subzona || '',
     'Concepto': w.concepto || '',
     'Estado empresa': w.company_status || '',
+    'Ficha actualizada por': w.profile_updated_by || '',
+    'Ficha actualizada el': w.profile_updated_at ? fmtDT(w.profile_updated_at) : '',
   }));
 }
 function downloadBlob(content, filename, mime) {

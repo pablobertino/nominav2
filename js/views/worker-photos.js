@@ -1273,6 +1273,7 @@ function fichaHtml(w, c) {
 
         <div class="ff-sec">Registro</div>
         <div class="ff-grid">
+          <div class="ff-row"><span class="ff-lbl">Ficha actualizada por</span><span class="ff-val" data-v="profile_updated_by"></span></div>
           <div class="ff-row"><span class="ff-lbl">Foto cargada por</span><span class="ff-val" data-v="photo_uploaded_by"></span></div>
           <div class="ff-row"><span class="ff-lbl">Última actualización</span><span class="ff-val" data-v="updated_at"></span></div>
         </div>
@@ -1298,6 +1299,10 @@ function paintFichaValues(host, w) {
   setVal(host, 'address', w.address);
   setVal(host, 'photo_uploaded_by', w.photo_uploaded_by);
   setVal(host, 'updated_at', fmtDateTime(w.updated_at));
+  // v4.20: quien edito la ficha de ultimo (tienda/admin/gestor) y cuando.
+  setVal(host, 'profile_updated_by', w.profile_updated_by
+    ? `${w.profile_updated_by}${w.profile_updated_at ? ' · ' + fmtDateTime(w.profile_updated_at) : ''}`
+    : '');
 
   const missing = [];
   if (!w.birth_date) missing.push('nacimiento');
@@ -1466,8 +1471,16 @@ function wireFicha(host, w) {
     // aparecen de inmediato sin tener que recargar la lista.
     const depName = department_id == null ? null
       : (((STATE.departments || []).find(d => d.id === department_id) || {}).name || w.department_name || null);
+    // v4.20: etiqueta local de quien guardo (el backend guarda la oficial).
+    const u = STATE.user || {};
+    const ROLE_ES = { superadmin: 'superadmin', admin: 'admin', gestor_empresa: 'gestor de empresa', editor_personal: 'editor de personal' };
+    const meLabel = u.kind === 'company'
+      ? `${STATE.cc} (tienda)`
+      : `${(u.name || u.username || 'admin')} (${ROLE_ES[u.role] || u.role || 'admin'})`;
     Object.assign(w, profile, {
       department_id, department_name: depName, updated_at: new Date().toISOString(),
+      profile_updated_by: meLabel,
+      profile_updated_at: new Date().toISOString(),
       ax_pending: !!r.ax_pending,
       ax_pending_fields: (r.ax_pending_fields && typeof r.ax_pending_fields === 'object') ? r.ax_pending_fields : {},
     });

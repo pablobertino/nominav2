@@ -267,6 +267,29 @@ async function isGestorUser(env, user) {
   return !!(a && a.length && a[0].role === 'gestor_empresa');
 }
 
+/* Etiqueta legible de QUIEN edita la ficha (v4.20): se guarda pre-armada en
+   workers_master.profile_updated_by para mostrar "quien actualizo de ultimo"
+   en Buscar, Datos incompletos y la ficha. Formatos:
+     tienda -> 'AA01 (tienda)'  |  admin -> 'Nombre (admin|superadmin|
+     gestor de empresa|editor de personal)'. 1 subrequest solo para admins. */
+const ACTOR_ROLE_ES = {
+  superadmin: 'superadmin', admin: 'admin',
+  gestor_empresa: 'gestor de empresa', editor_personal: 'editor de personal',
+};
+async function actorLabel(env, user, cc) {
+  if (!user) return null;
+  if (user.kind === 'company') return `${cc} (tienda)`;
+  if (user.kind === 'admin' && user.id) {
+    const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&select=id,username,full_name,role`);
+    if (a && a.length) {
+      const nm = (a[0].full_name || a[0].username || 'admin').trim();
+      return `${nm} (${ACTOR_ROLE_ES[a[0].role] || a[0].role || 'admin'})`;
+    }
+    return 'admin';
+  }
+  return null;
+}
+
 /* Resuelve la TABLA de roster segun el tipo de empresa: las no-tienda usan
    enterprise_workers; las tiendas (o cualquier otra) usan store_workers.
    Asi el mismo endpoint (foto/ficha sobre workers_master por cedula) sirve
@@ -409,7 +432,8 @@ async function directory(env, cc, table, deptScope) {
       + `&select=id_number,first_name,second_name,last_names,full_name,role,birth_date,gender,marital_status,`
       + `account_number,bank_code,phone,email,address,data_id,`
       + `ax_pending,ax_pending_fields,ax_synced_at,`
-      + `photo_key,photo_thumb_path,photo_full_path,photo_uploaded_by,photo_uploaded_at,updated_at`);
+      + `photo_key,photo_thumb_path,photo_full_path,photo_uploaded_by,photo_uploaded_at,updated_at,`
+      + `profile_updated_by,profile_updated_at`);
     (master || []).forEach(m => { masterByCed[m.id_number] = m; });
   }
 
@@ -459,6 +483,9 @@ async function directory(env, cc, table, deptScope) {
       full_url: null,          // la full se firma on-demand al abrir el visor
       photo_uploaded_by: m.photo_uploaded_by || null,
       updated_at: m.updated_at || null,
+      // v4.20: quien edito la ficha de ultimo (etiqueta) y cuando.
+      profile_updated_by: m.profile_updated_by || null,
+      profile_updated_at: m.profile_updated_at || null,
       // Estado de envio a AX: si tiene cambios locales sin enviar y cuales.
       ax_pending: !!m.ax_pending,
       ax_pending_fields: (m.ax_pending_fields && typeof m.ax_pending_fields === 'object') ? m.ax_pending_fields : {},
@@ -714,6 +741,9 @@ async function saveProfile(env, cc, body, table, deptScope) {
     email: p.email || null,
     address: p.address || null,
     last_source_company: cc,
+    // v4.20: sello de QUIEN edito la ficha y CUANDO (etiqueta pre-armada).
+    profile_updated_by: await actorLabel(env, body.user, cc),
+    profile_updated_at: new Date().toISOString(),
   };
   // El CARGO (role) NUNCA se edita desde la ficha: es dato maestro que llega
   // solo por la sincronizacion de personal desde AX (la API). El cargo afecta

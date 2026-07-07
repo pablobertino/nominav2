@@ -52,7 +52,14 @@ function avatarColor(seed) {
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h % AVATAR_BG.length;
 }
-
+/* Fecha ISO -> 'dd/mm/aa hh:mm' hora Caracas (para "Actualizó: X · fecha"). */
+function fmtDT(iso) {
+  if (!iso) return '';
+  const d = new Date(iso); if (isNaN(d)) return '';
+  const c = new Date(d.getTime() - 4 * 3600 * 1000);
+  const z = n => String(n).padStart(2, '0');
+  return `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${String(c.getUTCFullYear()).slice(2)} ${z(c.getUTCHours())}:${z(c.getUTCMinutes())}`;
+}
 /* Iconos de accion por fila (trazo del portal). Foto = camara; ficha =
    tarjeta de persona con lineas. */
 function icoPhoto() {
@@ -454,6 +461,10 @@ function paint() {
     if (w.department_name) sub.push(esc(w.department_name));
     const empn = [w.company_name, w.zona, w.concepto].filter(Boolean).map(esc).join(' · ');
     const tags = (w.missing || []).map(m => `<span class="pi-tag">falta ${esc(FIELD_LABEL[m] || m)}</span>`).join('');
+    // v4.20: quien actualizo la ficha de ultimo (tienda/admin/gestor) y cuando.
+    const updLine = w.profile_updated_by
+      ? `<span class="pi-empn" title="Última edición de la ficha">Actualizó: ${esc(w.profile_updated_by)}${w.profile_updated_at ? ' · ' + fmtDT(w.profile_updated_at) : ''}</span>`
+      : '';
     const hasPhoto = !!w.thumb_url;
     const acts = `<div class="pi-actions">
         <button type="button" class="pi-iconbtn" data-photo="${start + i}" title="${hasPhoto ? 'Ver foto' : 'Sin foto'}" ${hasPhoto ? '' : 'disabled'}>${icoPhoto()}</button>
@@ -469,6 +480,7 @@ function paint() {
       <div class="pi-right">
         <span class="pi-emp">${esc(w.company_code)}${w.data_area ? ` · <span style="color:var(--muted);font-weight:600">${esc(w.data_area)}</span>` : ''}</span>
         ${empn ? `<span class="pi-empn">${empn}</span>` : ''}
+        ${updLine}
         <div class="pi-miss">${tags}</div>
       </div>
     </div>`;
@@ -565,6 +577,8 @@ function exportRows() {
     'Subzona': w.subzona || '',
     'Concepto': w.concepto || '',
     'Datos faltantes': (w.missing || []).map(m => FIELD_LABEL[m] || m).join(', '),
+    'Ficha actualizada por': w.profile_updated_by || '',
+    'Ficha actualizada el': w.profile_updated_at ? fmtDT(w.profile_updated_at) : '',
   }));
 }
 function downloadBlob(content, filename, mime) {
