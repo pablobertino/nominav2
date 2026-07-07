@@ -223,8 +223,49 @@ export async function onRequestPost({ request, env }) {
       });
       const list = rows || [];
       const withUser = list.filter(r => Number(r.osticket_user_id) > 0);
-      const userIds = withUser.map(r => r.osticket_user_id);
-      const codes = withUser.map(r => r.company_code);
+      // Mapa user_id -> company_code (para la traza que acompana a sync_scope).
+      const userToCode = new Map();
+      for (const r of withUser) {
+        const uid = Number(r.osticket_user_id);
+        if (!userToCode.has(uid)) userToCode.set(uid, r.company_code);
+      }
+
+      // 2b) GESTORES ENTRELAZADOS. Las empresas NO-tienda no generan tickets a
+      //     nombre de la empresa: el portal los crea a nombre del GESTOR
+      //     (gestor_empresa) que la maneja. Por eso el alcance de osTicket
+      //     debe incluir tambien el osticket_user_id de los gestores
+      //     entrelazados con el alcance de este admin. Asi el agente ve en su
+      //     bandeja los tickets que esos gestores generan (que son los de sus
+      //     empresas no-tienda). La empresa concreta solo consta en el cuerpo
+      //     del ticket, no en el remitente; por diseno el agente ve TODO lo de
+      //     sus gestores (aceptado: un admin que toma a un gestor ve todas las
+      //     empresas de ese gestor).
+      const gestorRows = await sb(env, `rpc/gestores_in_admin_scope`, {
+        method: 'POST',
+        body: JSON.stringify({ p_admin_id: Number(targetId) }),
+      });
+      const gestorIds = (gestorRows || [])
+        .map(g => Number(g.gestores_in_admin_scope ?? g))
+        .filter(n => Number.isInteger(n) && n > 0);
+      let gestorUserCount = 0;
+      if (gestorIds.length) {
+        const gestores = await sb(env,
+          `admin_users?id=in.(${gestorIds.join(',')})&select=id,username,osticket_user_id`);
+        for (const g of (gestores || [])) {
+          const uid = Number(g.osticket_user_id);
+          if (uid > 0 && !userToCode.has(uid)) {
+            // company_code de traza: marcamos con el username del gestor para
+            // distinguirlo (no es una empresa; gc_agent_scope lo acepta como texto).
+            userToCode.set(uid, `gestor:${g.username}`);
+            gestorUserCount++;
+          }
+        }
+      }
+
+      // Lista final de user_ids (empresas del alcance + gestores entrelazados),
+      // deduplicada por el Map.
+      const userIds = [...userToCode.keys()];
+      const codes = userIds.map(uid => userToCode.get(uid));
 
       // 3) sync_scope.
       const sc = await gcAgent(env, base, {
@@ -247,6 +288,7 @@ export async function onRequestPost({ request, env }) {
         scope_count: sc.count,
         scope_total: list.length,
         scope_pending_user: list.length - withUser.length,
+        gestor_user_count: gestorUserCount,   // gestores entrelazados sumados al alcance osTicket
         // La clave se devuelve cuando se creo o se reseteo el agente ahora.
         temp_password: usedPwd,
         agent_username: agentBody.username,
