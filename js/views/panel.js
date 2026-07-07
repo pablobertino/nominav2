@@ -29,6 +29,7 @@ import { renderCertSigners } from './cert-signers.js';
 import { renderCertRequests } from './cert-requests.js';
 import { renderAxReview } from './ax-review.js';
 import { renderErpQuery } from './erp-query.js';
+import { renderResetData } from './reset-data.js';
 import { injectPeriodTimeline } from './period-timeline.js';
 import { renderPayGrid } from './pay-grid.js';
 import { renderDepartments } from './departments.js';
@@ -91,6 +92,7 @@ const I = {
   megaphone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 13v-2z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>',
   wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
   pin: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
+  trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
 };
 
 /* ---------- NAVEGACION (admin / superadmin) ----------
@@ -144,6 +146,7 @@ const NAV_GROUPS = [
     ['equipo', I.team, 'Equipo'],
     ['permisos', I.shield, 'Permisos', 'superonly'],
     ['config', I.cog, 'Configuración', 'superonly'],
+    ['resetdata', I.trash, 'Reiniciar datos', 'superonly'],
   ] },
 ];
 
@@ -318,7 +321,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.15</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.16</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5757,6 +5760,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'sync') viewSync(user);
   else if (view === 'syncreview') renderAxReview(user);
   else if (view === 'erpquery') renderErpQuery(user);
+  else if (view === 'resetdata') renderResetData(user);
   else if (view === 'rostersync') viewRosterSync(user);
   else if (view === 'config') viewConfig(user);
   else if (view === 'historial') renderHistory(user);
