@@ -27,6 +27,18 @@
    ===================================================================== */
 
 import { buildReportText, buildAxWorkbookBase64 } from './_ax-template.js';
+// Shadow de permisos (Fase 3): solo compara y logea; no cambia el flujo.
+import { shadowCan } from './_auth.js';
+
+// Mapa accion -> code de permiso (uno por tipo de reporte). 'window' no
+// lleva code: es informacion de ventana reportable, sin permiso especial.
+const RPT_CODE_BY_ACTION = {
+  submit_marcaje: 'report.marcaje',
+  submit_ausencia: 'report.ausencia',
+  submit_egreso: 'report.egreso',
+  submit_ingreso: 'report.ingreso',
+  submit_modificacion: 'report.modificacion',
+};
 
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -199,6 +211,16 @@ export async function onRequestPost({ request, env }) {
   try { body = await request.json(); } catch { return json({ ok: false, error: 'JSON invalido' }, 400); }
 
   try {
+    // SHADOW por tipo de reporte. OJO: este endpoint HOY no exige sesion
+    // (gate legacy abierto = true; cerrarlo es parte de la pasada final de
+    // permisos). Identidad best-effort para el shadow: body.user si viene;
+    // si no, el admin de origen (source_admin_id) o la tienda (company_code).
+    if (RPT_CODE_BY_ACTION[body.action]) {
+      const su = body.user
+        || (body.source_kind === 'admin' && body.source_admin_id ? { kind: 'admin', id: body.source_admin_id } : null)
+        || (body.company_code ? { kind: 'company', companyCode: String(body.company_code).trim() } : null);
+      await shadowCan(env, su, 'reports', body.action, RPT_CODE_BY_ACTION[body.action], true);
+    }
     if (body.action === 'submit_marcaje') {
       return await submitMarcaje(env, body);
     }

@@ -109,6 +109,8 @@ export async function onRequestPost({ request, env }) {
 
     // ---------- LECTURA (company o admin) ----------
     if (body.action === 'feed') {
+      // Shadow: gate legacy = sesion valida (resolveUser). Code view.avisos.
+      await shadowCan(env, body.user, 'announcements', 'feed', 'view.avisos', true);
       const feed = await sb(env, 'rpc/announcements_feed', {
         method: 'POST', body: JSON.stringify({ p_kind: u.kind, p_subtype: u.subtype }),
       });
@@ -119,6 +121,8 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (body.action === 'seen') {
+      // Shadow: gate legacy = sesion valida (resolveUser). Code view.avisos.
+      await shadowCan(env, body.user, 'announcements', 'seen', 'view.avisos', true);
       await sb(env, 'announcement_seen', {
         method: 'POST',
         headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
@@ -133,6 +137,9 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (body.action === 'tpl_get') {
+      // Shadow: gate legacy = admin/super no-editor (chequeo de arriba).
+      // Code view.avisosconfig (pantalla de configuracion de avisos).
+      await shadowCan(env, body.user, 'announcements', 'tpl_get', 'view.avisosconfig', true);
       const rows = await sb(env, "app_settings?key=in.(aviso_tpl_calc,aviso_tpl_cut,aviso_tpl_pay,corte_hora_limite_general,corte_hora_limite,aviso_dias_previos)&select=key,value");
       const map = {}; (rows || []).forEach(r => { map[r.key] = r.value; });
       const parse = k => { try { return JSON.parse(map[k] || '{}'); } catch { return {}; } };
@@ -185,6 +192,8 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (body.action === 'list_manual') {
+      // Shadow: gate legacy = admin/super no-editor. Code view.avisosconfig.
+      await shadowCan(env, body.user, 'announcements', 'list_manual', 'view.avisosconfig', true);
       // admin: solo los suyos; superadmin: todos.
       const filter = u.isSuper ? '' : `&created_by=eq.${encodeURIComponent(u.key)}`;
       const rows = await sb(env, `announcements?select=*${filter}&order=created_at.desc`) || [];

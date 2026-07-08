@@ -25,6 +25,9 @@ function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
 
+// Shadow de permisos (Fase 3): solo compara y logea; no cambia el flujo.
+import { shadowCan } from './_auth.js';
+
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
     ...opts,
@@ -152,7 +155,13 @@ export async function onRequestPost({ request, env }) {
       allowed = req.company_code === act.companyCode
         || (req.requester_kind === 'company' && req.requester_id === act.companyCode);
     }
-    if (!allowed) return json({ ok: false, error: 'Sin acceso a esta constancia.' }, 403);
+    if (!allowed) {
+      await shadowCan(env, body.actor, 'cert-download', 'url', 'view.solicitudes', false);
+      return json({ ok: false, error: 'Sin acceso a esta constancia.' }, 403);
+    }
+    // Shadow: gate legacy = sesion + derecho sobre la linea (alcance o
+    // solicitante). Code view.solicitudes.
+    await shadowCan(env, body.actor, 'cert-download', 'url', 'view.solicitudes', true);
 
     const url = await storageSignedUrl(env, line.pdf_key);
     if (!url) return json({ ok: false, error: 'No se pudo generar el enlace de descarga. Reintenta.' }, 502);

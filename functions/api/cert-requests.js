@@ -43,6 +43,9 @@ function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
 
+// Shadow de permisos (Fase 3): solo compara y logea; no cambia el flujo.
+import { shadowCan } from './_auth.js';
+
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
     ...opts,
@@ -229,6 +232,8 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------- combo de empresas ---------- */
     if (action === 'companies') {
+      // Shadow: gate legacy = sesion valida (resolveActor). Code view.solicitudes.
+      await shadowCan(env, body.actor, 'cert-requests', 'companies', 'view.solicitudes', true);
       const companies = await listCompanies(env, act);
       return json({ ok: true, companies });
     }
@@ -238,6 +243,8 @@ export async function onRequestPost({ request, env }) {
       const cc = String(body.company_code || '').trim();
       if (!cc) return json({ ok: false, error: 'Falta la empresa.' }, 400);
       if (!actorCanCompany(act, cc)) return json({ ok: false, error: 'Sin acceso a esa empresa.' }, 403);
+      // Shadow: gate legacy = sesion + alcance sobre la empresa. Code view.solicitudes.
+      await shadowCan(env, body.actor, 'cert-requests', 'departments', 'view.solicitudes', true);
       const deps = await sb(env,
         `departments?company_code=eq.${encodeURIComponent(cc)}&select=id,name&order=name.asc`);
       return json({ ok: true, departments: deps || [] });
@@ -248,6 +255,8 @@ export async function onRequestPost({ request, env }) {
       const cc = String(body.company_code || '').trim();
       if (!cc) return json({ ok: false, error: 'Falta la empresa.' }, 400);
       if (!actorCanCompany(act, cc)) return json({ ok: false, error: 'Sin acceso a esa empresa.' }, 403);
+      // Shadow: gate legacy = sesion + alcance sobre la empresa. Code view.solicitudes.
+      await shadowCan(env, body.actor, 'cert-requests', 'roster', 'view.solicitudes', true);
       const workers = await companyRoster(env, cc, {
         department: body.department != null ? body.department : null,
         q: body.q || '',
@@ -260,6 +269,8 @@ export async function onRequestPost({ request, env }) {
       const cc = String(body.company_code || '').trim();
       if (!cc) return json({ ok: false, error: 'Falta la empresa.' }, 400);
       if (!actorCanCompany(act, cc)) return json({ ok: false, error: 'Sin acceso a esa empresa.' }, 403);
+      // Shadow: gate legacy = sesion + alcance (crear solicitud). Code cert.request.
+      await shadowCan(env, body.actor, 'cert-requests', 'create', 'cert.request', true);
 
       // Cedulas elegidas: admite workers:[ced...] o lines:[{id_number}].
       let ceds = [];
@@ -348,6 +359,8 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------- mis solicitudes ---------- */
     if (action === 'mine') {
+      // Shadow: gate legacy = sesion valida. Code view.solicitudes.
+      await shadowCan(env, body.actor, 'cert-requests', 'mine', 'view.solicitudes', true);
       // Cabeceras visibles para el actor: company ve las suyas por
       // requester_id; admin ve las que EL creo (requester_id = su id).
       // (La bandeja del admin para REVISAR pendientes de otros vive en
@@ -379,6 +392,8 @@ export async function onRequestPost({ request, env }) {
       // superadmin. Tienda y gestor ya no anulan (esperan la gestion del
       // admin, que ademas puede Rechazar por linea en la Bandeja).
       const isPowerAdmin = act.kind === 'admin' && (act.role === 'admin' || act.role === 'superadmin');
+      // Shadow: gate legacy = admin/superadmin (isPowerAdmin). Code cert.cancel.
+      await shadowCan(env, body.actor, 'cert-requests', 'cancel', 'cert.cancel', isPowerAdmin);
       if (!isPowerAdmin) return json({ ok: false, error: 'Solo un administrador puede anular la solicitud.' }, 403);
 
       const reqId = parseInt(body.request_id, 10);
@@ -428,6 +443,8 @@ export async function onRequestPost({ request, env }) {
        las lineas 'disponible' con generated_at posterior al ultimo "visto"
        (cert_bell_seen). Devuelve { unread, items }. */
     if (action === 'bell') {
+      // Shadow: gate legacy = sesion valida. Code view.solicitudes.
+      await shadowCan(env, body.actor, 'cert-requests', 'bell', 'view.solicitudes', true);
       // Determinar el conjunto de empresas y la clave de "visto".
       let scopeCodes = null;   // null = no aplica; array = empresas a mirar
       let seenKey = null;
@@ -472,6 +489,8 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------- campanita: marcar visto (company o gestor) ---------- */
     if (action === 'bell_seen') {
+      // Shadow: gate legacy = sesion valida. Code view.solicitudes.
+      await shadowCan(env, body.actor, 'cert-requests', 'bell_seen', 'view.solicitudes', true);
       let seenKey = null;
       if (act.kind === 'company') seenKey = act.companyCode;
       else if (act.kind === 'admin' && act.role === 'gestor_empresa') seenKey = 'admin:' + act.id;

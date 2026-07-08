@@ -182,6 +182,9 @@ export async function onRequestPost({ request, env }) {
     /* ---------- LECTURA (admin/superadmin) ---------- */
     if (action === 'list') {
       if (!(await isAdmin(env, adminId))) return json({ ok: false, error: 'Sesion no valida.' }, 403);
+      // Shadow: gate legacy = admin activo (isAdmin). El combo de firmantes se
+      // usa al revisar solicitudes -> code view.solicitudes.
+      await shadowCan(env, adminId, 'cert-signers', 'list', 'view.solicitudes', true);
       const onlyActive = !!body.only_active;
       let path = 'cert_signers?select=*&order=is_active.desc,full_name.asc';
       if (onlyActive) path = 'cert_signers?is_active=eq.true&select=*&order=full_name.asc';
@@ -209,6 +212,8 @@ export async function onRequestPost({ request, env }) {
 
     if (action === 'sign') {
       if (!(await isAdmin(env, adminId))) return json({ ok: false, error: 'Sesion no valida.' }, 403);
+      // Shadow: gate legacy = admin activo (isAdmin). Code view.solicitudes.
+      await shadowCan(env, adminId, 'cert-signers', 'sign', 'view.solicitudes', true);
       const ids = Array.isArray(body.ids)
         ? [...new Set(body.ids.map(x => parseInt(x, 10)).filter(Boolean))].slice(0, 50)
         : [];

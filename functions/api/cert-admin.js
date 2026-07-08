@@ -234,6 +234,8 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------- bandeja del admin ---------- */
     if (action === 'inbox') {
+      // Shadow: gate legacy = admin del alcance (resolveAdmin). Code view.solicitudes.
+      await shadowCan(env, body.user, 'cert-admin', 'inbox', 'view.solicitudes', true);
       // Solicitudes de las empresas del alcance (todas, sin importar quien las
       // creo). superadmin ve todas.
       let path = 'cert_requests?select=*';
@@ -264,6 +266,8 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------- detalle de una solicitud (para revisar) ---------- */
     if (action === 'detail') {
+      // Shadow: gate legacy = admin del alcance (resolveAdmin). Code view.solicitudes.
+      await shadowCan(env, body.user, 'cert-admin', 'detail', 'view.solicitudes', true);
       const reqId = parseInt(body.request_id, 10);
       if (!reqId) return json({ ok: false, error: 'Falta la solicitud.' }, 400);
       const rs = await sb(env, `cert_requests?id=eq.${reqId}&select=*`);
