@@ -52,6 +52,38 @@ function fmtDT(iso) {
   const z = n => String(n).padStart(2, '0');
   return `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${String(c.getUTCFullYear()).slice(2)} ${z(c.getUTCHours())}:${z(c.getUTCMinutes())}`;
 }
+/* v4.22: linea "Actualizó" con SEMAFORO, SIEMPRE visible (mismo criterio que
+   las tarjetas de Personal): punto verde (edicion <=7 dias) / ambar (<=30) /
+   gris (>30) + nombre corto (primer nombre + inicial de apellido + rol) +
+   fecha ('hoy' o dd/mm/aa Caracas). Sin ediciones: punto hueco + 'Sin
+   ediciones' + '—'. Tooltip con el texto completo. */
+function caracasYMD(d) {
+  const c = new Date(d.getTime() - 4 * 3600 * 1000);
+  const z = n => String(n).padStart(2, '0');
+  return `${c.getUTCFullYear()}-${z(c.getUTCMonth() + 1)}-${z(c.getUTCDate())}`;
+}
+function updLineHtml(w) {
+  if (!w.profile_updated_by) {
+    return `<span class="ps-upd none" title="Esta ficha aún no tiene ediciones registradas"><i class="ps-upddot none"></i><span class="uw">Sin ediciones</span><span class="ud">—</span></span>`;
+  }
+  const by = String(w.profile_updated_by);
+  let who = by;
+  const m = by.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+  if (m) {
+    const parts = m[1].trim().split(/\s+/).filter(Boolean);
+    const nm = parts.length >= 2 ? `${parts[0]} ${parts[1].charAt(0).toUpperCase()}.` : (parts[0] || m[1]);
+    who = `${nm} (${m[2]})`;
+  }
+  let dot = 'old', dt = '—';
+  const d = w.profile_updated_at ? new Date(w.profile_updated_at) : null;
+  if (d && !isNaN(d)) {
+    const days = (Date.now() - d.getTime()) / 86400000;
+    dot = days <= 7 ? 'ok' : (days <= 30 ? 'mid' : 'old');
+    dt = caracasYMD(d) === caracasYMD(new Date()) ? 'hoy' : fmtDT(w.profile_updated_at).slice(0, 8);
+  }
+  const tip = `Ficha actualizada por ${by}${w.profile_updated_at ? ' · ' + fmtDT(w.profile_updated_at) : ''}`;
+  return `<span class="ps-upd" title="${esc(tip)}"><i class="ps-upddot ${dot}"></i><span class="uw">Actualizó: ${esc(who)}</span><span class="ud">${dt}</span></span>`;
+}
 function avatarCell(w) {
   // Miniatura si hay foto (URL publica directa, esquema por photo_key). Si no,
   // iniciales de color. onerror quita la img si la URL fallara.
@@ -153,6 +185,16 @@ function ensureStyles() {
   .ps-emp .da{color:var(--muted);font-weight:600}
   .ps-empn{font-size:12px;color:var(--ink);font-weight:600;max-width:230px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ps-empmeta{font-size:11px;color:var(--muted);max-width:230px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ps-upd{font-size:11px;color:var(--ink-soft,#475569);display:inline-flex;align-items:center;gap:5px;max-width:100%}
+  .ps-upd .uw{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0}
+  .ps-upd .ud{color:var(--faint,#94a3b8);flex:none;font-variant-numeric:tabular-nums}
+  .ps-upd.none{color:var(--faint,#94a3b8)}
+  .ps-upd.none .uw{font-weight:500;font-style:italic}
+  .ps-upddot{width:7px;height:7px;border-radius:50%;flex:none}
+  .ps-upddot.ok{background:#22c55e}
+  .ps-upddot.mid{background:#f59e0b}
+  .ps-upddot.old{background:#cbd5e1}
+  .ps-upddot.none{width:6px;height:6px;background:transparent;border:1.5px solid #d3dae4}
   .ps-tags{display:flex;gap:5px;margin-top:3px;flex-wrap:wrap;justify-content:flex-end}
   .ps-pill{display:inline-block;font-size:10.5px;font-weight:600;padding:2px 8px;border-radius:999px;white-space:nowrap}
   .ps-act{background:#dcfce7;color:#166534}
@@ -486,10 +528,9 @@ function paint() {
     if (w.age != null) subParts.push(`${w.age} años`);
     // Empresa: zona · subzona · concepto (solo lo que exista).
     const empMeta = [w.zona, w.subzona, w.concepto].filter(Boolean).map(esc).join(' · ');
-    // v4.20: quien actualizo la ficha de ultimo (tienda/admin/gestor) y cuando.
-    const updLine = w.profile_updated_by
-      ? `<span class="ps-empmeta" title="Última edición de la ficha">Actualizó: ${esc(w.profile_updated_by)}${w.profile_updated_at ? ' · ' + fmtDT(w.profile_updated_at) : ''}</span>`
-      : '';
+    // v4.22: quien actualizo la ficha de ultimo, con semaforo y SIEMPRE
+    // visible (sin dato: 'Sin ediciones'). Mismo criterio que Personal.
+    const updLine = updLineHtml(w);
     const hasPhoto = !!w.thumb_url;
     const acts = `<div class="ps-actions">
         <button type="button" class="ps-iconbtn" data-photo="${start + i}" title="${hasPhoto ? 'Ver foto' : 'Sin foto'}" ${hasPhoto ? '' : 'disabled'}>${icoPhoto()}</button>
