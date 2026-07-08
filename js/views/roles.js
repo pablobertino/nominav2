@@ -257,7 +257,7 @@ function permRowHtml(p, checked) {
   const lockNow = isImpliedView && ST.work.has(IMPLIED_BY[p.code]);
   const help = p.help ? `<span class="rl-qh" data-qh>?<span class="tip">${esc(p.help)}</span></span>` : '';
   return `<div class="rl-perm${lockNow ? ' implied' : ''}" data-code="${esc(p.code)}">
-    <span class="rl-sw${lockNow ? ' impliedlock' : ''}"><input type="checkbox" data-perm="${esc(p.code)}"${checked ? ' checked' : ''}${lockNow ? ' disabled' : ''}><span class="track"></span><span class="knob"></span></span>
+    <label class="rl-sw${lockNow ? ' impliedlock' : ''}"><input type="checkbox" data-perm="${esc(p.code)}"${checked ? ' checked' : ''}${lockNow ? ' disabled' : ''}><span class="track"></span><span class="knob"></span></label>
     <span class="txt" data-txt><span class="plabel">${esc(p.label || p.code)}</span>${help}<div class="pcode">${esc(p.code)}</div></span>
   </div>`;
 }
