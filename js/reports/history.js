@@ -74,9 +74,13 @@ function otPill(r, osticketUrl, isAgent) {
   }
   return `<span class="pill pill-set">#${r.osticket_id}</span>`;
 }
+function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function originPill(r) {
+  // Origen: para envios de la central se muestra el ROL guardado con el
+  // reporte (position: Administrador, Gestor de empresa, Editor...). Los
+  // reportes viejos ya traen su etiqueta correcta tras la migracion de datos.
   return r.source_kind === 'admin'
-    ? '<span class="pill pill-origin-admin">Administrador</span>'
+    ? `<span class="pill pill-origin-admin">${esc(r.position || 'Administrador')}</span>`
     : '<span class="pill pill-origin-company">Empresa</span>';
 }
 

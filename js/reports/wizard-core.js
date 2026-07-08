@@ -883,7 +883,11 @@ export function launchWizard(user, reportDef, onExit) {
     // "Sin gerente asignado" si la tienda no tiene gerente y eligio esa opcion.
     let respName, respRole;
     if (isAdmin) {
-      respName = user.name || user.username; respRole = 'Administrador';
+      // Rol REAL del que envia (antes decia siempre 'Administrador', aunque
+      // fuera gestor o editor — hallazgo de Pablo en el Historial). Las
+      // etiquetas espejan roles.label de la BD; un rol nuevo cae a su code.
+      const ROLE_TITLE = { superadmin: 'Superadmin', admin: 'Administrador', gestor_empresa: 'Gestor de empresa', editor_personal: 'Editor de personal', auditor: 'Auditor' };
+      respName = user.name || user.username; respRole = ROLE_TITLE[user.role] || user.role || 'Administrador';
     } else if (S.selResp === NO_MANAGER) {
       respName = 'Sin gerente asignado'; respRole = '';
     } else {
