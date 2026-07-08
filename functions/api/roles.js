@@ -133,6 +133,25 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, role_code: roleCode, granted: grants.length });
     }
 
+    /* ---------- restablecer al estandar (snapshot role_permissions_default) ---------- */
+    if (action === 'reset_default') {
+      const roleCode = String(body.role_code || '').trim();
+      if (!roleCode) return json({ ok: false, error: 'Falta el rol.' }, 400);
+      if (roleCode === 'superadmin') return json({ ok: false, error: 'El superadmin no usa la matriz.' }, 400);
+      const def = await sb(env,
+        `role_permissions_default?role_code=eq.${encodeURIComponent(roleCode)}&select=permission_code`);
+      if (!def || !def.length) {
+        return json({ ok: false, error: 'Este rol no tiene un estandar definido (fue creado despues del snapshot).' }, 404);
+      }
+      await sb(env, `role_permissions?role_code=eq.${encodeURIComponent(roleCode)}`, { method: 'DELETE' });
+      await sb(env, 'role_permissions', {
+        method: 'POST', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify(def.map(d => ({ role_code: roleCode, permission_code: d.permission_code }))),
+      });
+      invalidatePermCache(roleCode);
+      return json({ ok: true, role_code: roleCode, restored: def.length });
+    }
+
     if (action === 'rename') {
       const roleCode = String(body.role_code || '').trim();
       const label = String(body.label || '').trim();

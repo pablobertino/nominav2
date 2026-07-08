@@ -305,6 +305,7 @@ function openDetail(code) {
           <p id="rlSub"><b id="rlOnCount">${isSuperRole ? 'Todos los' : ST.work.size}</b> permisos activos · ${r.user_count} usuario${r.user_count === 1 ? '' : 's'} lo tiene${r.user_count === 1 ? '' : 'n'} asignado.</p></div>
         <div class="head-actions" id="rlViewActs">${isSuperRole ? '' : `<button class="btn btn-primary" id="rlEdit"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4z"/></svg> Editar</button>`}</div>
         <div class="head-actions" id="rlEditActs" style="display:none">
+          <button class="btn" id="rlReset" title="Vuelve a los permisos estándar de este rol">Restablecer</button>
           <button class="btn" id="rlCancel">Cancelar</button>
           <button class="btn btn-primary" id="rlSave">Guardar cambios</button>
         </div>
@@ -406,6 +407,7 @@ function wireDetail(r, isSuperRole) {
 
   q('#rlEdit').addEventListener('click', toEdit);
   q('#rlCancel').addEventListener('click', () => openDetail(r.code));   // descarta cambios
+  q('#rlReset').addEventListener('click', () => openResetModal(r));
 
   // --- contadores ---
   const refreshCounts = () => {
@@ -601,6 +603,39 @@ function openRenameModal(code) {
     closeModal(host, onKey);
     await reload();
     paintList();
+  });
+}
+
+/* Restablecer al estandar: repone la matriz del rol desde el snapshot
+   role_permissions_default (la matriz auditada). Confirmacion previa. */
+function openResetModal(r) {
+  const host = baseModal(`
+    <button class="wp-x" id="rsX" title="Cerrar">✕</button>
+    <h3>Restablecer al estándar</h3>
+    <p class="wp-who"><b>${esc(r.label || r.code)}</b> · <span class="wp-ced">${esc(r.code)}</span></p>
+    <div class="wp-dangerbox">Los permisos de este rol volverán al <b>estándar del portal</b> (la matriz auditada). Los cambios manuales hechos después se pierden. Se aplica de inmediato.</div>
+    <div id="rsMsg" class="wp-prev" style="display:none"></div>
+    <div class="wp-foot"><span style="flex:1"></span>
+      <button class="btn" id="rsCancel">Cancelar</button>
+      <button class="btn btn-primary" id="rsGo">Sí, restablecer</button>
+    </div>`);
+  const q = s => host.querySelector(s);
+  const onKey = ev => { if (ev.key === 'Escape') closeModal(host, onKey); };
+  document.addEventListener('keydown', onKey);
+  q('#rsX').addEventListener('click', () => closeModal(host, onKey));
+  q('#rsCancel').addEventListener('click', () => closeModal(host, onKey));
+  q('#rsGo').addEventListener('click', async () => {
+    const goB = q('#rsGo');
+    goB.disabled = true; goB.textContent = 'Restableciendo…';
+    const d = await api({ action: 'reset_default', user: userPayload(ST.user), role_code: r.code });
+    if (!d.ok) {
+      goB.disabled = false; goB.textContent = 'Sí, restablecer';
+      const m = q('#rsMsg'); m.style.display = 'block'; m.className = 'wp-prev warn'; m.textContent = d.error || 'No se pudo restablecer.';
+      return;
+    }
+    closeModal(host, onKey);
+    await reload();
+    openDetail(r.code);
   });
 }
 
