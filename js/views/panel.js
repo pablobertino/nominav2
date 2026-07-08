@@ -30,6 +30,7 @@ import { renderCertRequests } from './cert-requests.js';
 import { renderAxReview } from './ax-review.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderResetData } from './reset-data.js';
+import { renderRoles } from './roles.js';
 import { injectPeriodTimeline } from './period-timeline.js';
 import { renderPayGrid } from './pay-grid.js';
 import { renderDepartments } from './departments.js';
@@ -145,6 +146,7 @@ const NAV_GROUPS = [
   { title: 'Administración', items: [
     ['equipo', I.team, 'Equipo'],
     ['permisos', I.shield, 'Permisos', 'superonly'],
+    ['roles', I.shield, 'Roles', 'superonly'],
     ['config', I.cog, 'Configuración', 'superonly'],
     ['resetdata', I.trash, 'Reiniciar datos', 'superonly'],
   ] },
@@ -321,7 +323,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.25</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.26</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5767,6 +5769,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'syncreview') renderAxReview(user);
   else if (view === 'erpquery') renderErpQuery(user);
   else if (view === 'resetdata') renderResetData(user);
+  else if (view === 'roles') renderRoles(user);
   else if (view === 'rostersync') viewRosterSync(user);
   else if (view === 'config') viewConfig(user);
   else if (view === 'historial') renderHistory(user);
