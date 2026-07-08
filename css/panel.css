@@ -1995,3 +1995,24 @@ input.needfill:focus, select.needfill:focus {
   margin-left:4px;
 }
 
+/* ---------- Columna de acciones PEGAJOSA (v4.33) ----------
+   Para tablas anchas cuyo ultimo TD son botones (ej. Empresas): en
+   pantallas angostas la tabla scrollea horizontal pero la columna de
+   acciones queda SIEMPRE visible, anclada a la derecha, con una sombra
+   que separa del contenido que pasa por debajo. Uso: agregar
+   `tbl-stickyact` al contenedor .tablebox.scroll-x. */
+.tbl-stickyact table { min-width: 100%; }
+.tbl-stickyact th:last-child,
+.tbl-stickyact td:last-child {
+  position: sticky; right: 0;
+  background: var(--card, #fff);
+  z-index: 2;
+  box-shadow: -10px 0 10px -10px rgba(15, 23, 42, .22);
+}
+.tbl-stickyact thead th:last-child {
+  background: var(--thead-bg, #fbfcfe);
+  z-index: 3;
+}
+.tbl-stickyact tbody tr:hover td:last-child { background: var(--row-hover, #fafbfd); }
+
+
