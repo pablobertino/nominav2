@@ -78,7 +78,7 @@ export async function onRequestPost({ request, env }) {
     if (action === 'matrix') {
       const [roles, perms, rps, admins, tiendas] = await Promise.all([
         sb(env, 'roles?select=code,label,is_system,readonly_scope,is_active,sort_order&order=sort_order.asc,code.asc'),
-        sb(env, 'permissions?is_active=eq.true&select=code,label,domain,kind,sort_order&order=sort_order.asc,code.asc'),
+        sb(env, 'permissions?is_active=eq.true&select=code,label,domain,kind,sort_order,help&order=sort_order.asc,code.asc'),
         sb(env, 'role_permissions?select=role_code,permission_code'),
         sb(env, 'admin_users?is_active=eq.true&select=role'),
         sb(env, 'company_users?is_active=eq.true&select=company_code'),

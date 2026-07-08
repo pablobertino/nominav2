@@ -93,8 +93,9 @@ function ensureStyles() {
   .rl-copybar .sp{flex:1}
   .rl-copybar.locked{opacity:.5;pointer-events:none}
   .rl-mini-note{font-size:11.5px;color:var(--faint,#94a3b8)}
-  .rl-dom{border:1px solid var(--border,#e6eaf0);border-radius:10px;margin-bottom:10px;overflow:hidden;background:var(--card,#fff)}
-  .rl-dom-h{display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;user-select:none}
+  .rl-dom{border:1px solid var(--border,#e6eaf0);border-radius:10px;margin-bottom:10px;overflow:visible;background:var(--card,#fff)}
+  .rl-dom-h{display:flex;align-items:center;gap:12px;padding:12px 14px;cursor:pointer;user-select:none;border-radius:9px 9px 0 0}
+  .rl-dom.collapsed .rl-dom-h{border-radius:9px}
   .rl-dom-h:hover{background:var(--border-soft,#f1f4f8)}
   .rl-dom-title{font-weight:650;font-size:13.5px}
   .rl-dom-count{font-size:11.5px;color:var(--muted,#64748b);font-weight:600;font-variant-numeric:tabular-nums}
@@ -110,11 +111,18 @@ function ensureStyles() {
   .rl-dom-body{padding:4px 14px 12px;display:grid;grid-template-columns:1fr 1fr;gap:2px 22px}
   .rl-dom.collapsed .rl-dom-body{display:none}
   @media(max-width:640px){.rl-dom-body{grid-template-columns:1fr}}
-  .rl-perm{display:flex;align-items:center;gap:10px;padding:8px 4px;border-bottom:1px solid var(--border-soft,#f1f4f8)}
-  .rl-perm label{flex:1;cursor:pointer;min-width:0}
+  .rl-perm{display:flex;align-items:flex-start;gap:10px;padding:8px 4px;border-bottom:1px solid var(--border-soft,#f1f4f8);min-width:0}
+  .rl-perm .rl-sw{margin-top:2px}
+  .rl-perm .txt{flex:1;min-width:0;cursor:pointer}
+  .viewmode .rl-perm .txt{cursor:default}
   .rl-perm .plabel{font-size:13px;font-weight:500}
   .rl-perm .pcode{font-size:10.5px;color:var(--faint,#94a3b8);font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
   .rl-perm.implied .plabel::after{content:" · encendido por 'usar'";color:var(--brand,#2563eb);font-weight:600;font-size:10.5px}
+  .rl-qh{position:relative;display:inline-flex;align-items:center;justify-content:center;width:16px;height:16px;border-radius:50%;background:var(--border-soft,#f1f4f8);color:var(--muted,#64748b);font-size:10.5px;font-weight:700;cursor:help;flex:none;user-select:none;vertical-align:2px;margin-left:4px}
+  .rl-qh:hover{background:#eff4ff;color:var(--brand,#2563eb)}
+  .rl-qh .tip{display:none;position:absolute;bottom:calc(100% + 8px);left:50%;transform:translateX(-50%);width:250px;max-width:70vw;background:#0f172a;color:#e5edff;font-size:11.5px;font-weight:400;line-height:1.45;padding:9px 11px;border-radius:8px;z-index:60;box-shadow:0 8px 24px rgba(15,23,42,.28);text-align:left;white-space:normal}
+  .rl-qh .tip::after{content:'';position:absolute;top:100%;left:50%;transform:translateX(-50%);border:5px solid transparent;border-top-color:#0f172a}
+  .rl-qh:hover .tip,.rl-qh.open .tip{display:block}
   .rl-sw{position:relative;width:38px;height:22px;flex-shrink:0;cursor:pointer;display:inline-block}
   .rl-sw input{opacity:0;width:0;height:0;position:absolute}
   .rl-sw .track{position:absolute;inset:0;background:var(--border,#e6eaf0);border-radius:999px;transition:background .15s}
@@ -247,9 +255,10 @@ function buildGroups() {
 function permRowHtml(p, checked) {
   const isImpliedView = !!IMPLIED_BY[p.code];
   const lockNow = isImpliedView && ST.work.has(IMPLIED_BY[p.code]);
+  const help = p.help ? `<span class="rl-qh" data-qh>?<span class="tip">${esc(p.help)}</span></span>` : '';
   return `<div class="rl-perm${lockNow ? ' implied' : ''}" data-code="${esc(p.code)}">
-    <label for="rl_${esc(p.code)}"><div class="plabel">${esc(p.label || p.code)}</div><div class="pcode">${esc(p.code)}</div></label>
-    <span class="rl-sw${lockNow ? ' impliedlock' : ''}"><input type="checkbox" id="rl_${esc(p.code)}" data-perm="${esc(p.code)}"${checked ? ' checked' : ''}${lockNow ? ' disabled' : ''}><span class="track"></span><span class="knob"></span></span>
+    <span class="rl-sw${lockNow ? ' impliedlock' : ''}"><input type="checkbox" data-perm="${esc(p.code)}"${checked ? ' checked' : ''}${lockNow ? ' disabled' : ''}><span class="track"></span><span class="knob"></span></span>
+    <span class="txt" data-txt><span class="plabel">${esc(p.label || p.code)}</span>${help}<div class="pcode">${esc(p.code)}</div></span>
   </div>`;
 }
 
@@ -354,6 +363,24 @@ function wireDetail(r, isSuperRole) {
       root.querySelectorAll('.rl-dom').forEach((dom, i) => { dom.style.display = ''; if (i > 1) dom.classList.add('collapsed'); else dom.classList.remove('collapsed'); });
     }
   });
+
+  // Ayuda "?": hover en escritorio (CSS); en tactil se abre/cierra tocando.
+  root.querySelectorAll('[data-qh]').forEach(qh =>
+    qh.addEventListener('click', (e) => {
+      e.stopPropagation();
+      root.querySelectorAll('[data-qh].open').forEach(o => { if (o !== qh) o.classList.remove('open'); });
+      qh.classList.toggle('open');
+    }));
+  root.addEventListener('click', () => root.querySelectorAll('[data-qh].open').forEach(o => o.classList.remove('open')));
+
+  // El texto de la fila togglea su switch (solo en modo edicion).
+  root.querySelectorAll('[data-txt]').forEach(t =>
+    t.addEventListener('click', (e) => {
+      if (e.target.closest('[data-qh]')) return;
+      if (root.classList.contains('viewmode')) return;
+      const inp = t.parentElement.querySelector('input[data-perm]');
+      if (inp && !inp.disabled) { inp.checked = !inp.checked; inp.dispatchEvent(new Event('change')); }
+    }));
 
   if (isSuperRole) return;   // solo lectura total
 
