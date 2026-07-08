@@ -1271,11 +1271,11 @@ function fichaHtml(w, c) {
         <div class="ff-id">
           <h2>${esc(w.full_name || '—')}</h2>
           <div class="ced">${w.ced_kind || ''}-${w.id_number}</div>
-          <div class="meta"><span class="pill">${esc(w.role || 'Sin cargo')}</span>${w.ax_pending ? '<span class="pill wp-pill-pending" id="ffPendBadge" title="Hay cambios en esta ficha que aun no se publican en AX"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Cambios sin publicar</span>' : ''}</div>
+          <div class="meta"><span class="pill">${esc(w.role || 'Sin cargo')}</span>${w.ax_pending ? '<span class="pill wp-pill-pending" id="ffPendBadge" title="Hay cambios en esta ficha que aun no se publican en el sistema"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Cambios sin publicar</span>' : ''}</div>
         </div>
         <div class="ff-actions">
           <button class="btn btn-ghost-danger" id="ffDel" style="display:none">Quitar foto</button>
-          ${(STATE.isAdmin && w.ax_pending) ? `<button class="btn wp-btn-publish" id="ffPublish" title="Publicar en AX los cambios de esta ficha"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar</button>` : ''}
+          ${(STATE.isSuper && w.ax_pending) ? `<button class="btn wp-btn-publish" id="ffPublish" title="Publicar en el sistema los cambios de esta ficha (solo superadministrador)"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar</button>` : ''}
           <button class="btn" id="ffEdit">Editar</button>
           <button class="btn" id="ffCancel" style="display:none">Cancelar</button>
           <button class="btn btn-primary" id="ffSave" style="display:none">Guardar cambios</button>
