@@ -33,7 +33,7 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
-import { shadowCan } from './_auth.js';
+import { shadowCan, resolveActor, can } from './_auth.js';
 import { hcmRosterRaw, fullHcmPayload } from './_hcm.js';
 
 const BUCKET = 'worker-photos';          // privado: full (y thumb viejas)
@@ -78,7 +78,9 @@ const AX_DESTRUCTIVE = new Set(['first_name', 'second_name', 'last_names', 'acco
 // Mapa accion -> code. directory/sign son lectura (view.fotos); save/remove/
 // set_department son gestion de foto (photo.manage); save_profile edita la
 // ficha (ficha.edit). migrate_thumbs se valida como superadmin dentro de su
-// handler (no lleva code fino aqui).
+// handler (no lleva code fino aqui). push_to_ax NO esta en el mapa: desde
+// v4.23 usa GATE REAL tabla-driven (hcm.publish, igual que Sincronizar) y ya
+// no lleva shadow.
 const WP_CODE_BY_ACTION = {
   directory: 'view.fotos',
   sign: 'view.fotos',
@@ -86,7 +88,6 @@ const WP_CODE_BY_ACTION = {
   remove: 'photo.manage',
   set_department: 'photo.manage',
   save_profile: 'ficha.edit',
-  push_to_ax: 'hcm.sync',
 };
 
 // URL publica fija de un objeto del bucket publico (sin firmar, cacheable).
@@ -320,7 +321,11 @@ export async function onRequestPost({ request, env }) {
 
     // SHADOW: gate legacy binario = acceso a la empresa (userCanAccess). El
     // alcance por departamento (deptScope) se evalua aparte. Code por accion.
-    await shadowCan(env, user, 'worker-photo', action || '?', WP_CODE_BY_ACTION[action] || 'view.fotos', true);
+    // push_to_ax NO pasa por shadow: desde v4.23 su gate es REAL (hcm.publish
+    // dentro de pushToAx), asi que compararlo aqui solo generaria ruido.
+    if (action !== 'push_to_ax') {
+      await shadowCan(env, user, 'worker-photo', action || '?', WP_CODE_BY_ACTION[action] || 'view.fotos', true);
+    }
 
     const table = await rosterTable(env, cc);
     // Alcance por departamento del que llama (null = sin restriccion).
@@ -974,13 +979,18 @@ async function removePhoto(env, cc, body, table, deptScope) {
 async function pushToAx(env, cc, body, table, deptScope, user) {
   table = table || 'store_workers';
 
-  // --- Gate: solo superadmin por ahora ---
-  if (!user || user.kind !== 'admin' || !user.id) {
-    return json({ ok: false, error: 'Solo un administrador puede enviar datos a AX.' }, 403);
-  }
-  const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
-  if (!a || !a.length || a[0].role !== 'superadmin') {
-    return json({ ok: false, error: 'Esta accion esta reservada al superadministrador.' }, 403);
+  // --- Gate REAL tabla-driven (v4.23): hcm.publish ---
+  // Publicar desde la ficha hace EXACTAMENTE lo mismo que el publish de la
+  // pagina Sincronizar (v4.15: eco + enums ingles + cierra bitacora), asi que
+  // ambos comparten el MISMO permiso: hcm.publish. superadmin pasa siempre
+  // (bypass por rol en can()); a los demas roles se les concede desde la
+  // matriz de permisos (hoy: nadie => comportamiento identico al gate viejo
+  // solo-superadmin). El code hcm.sync quedo retirado (era el shadow de esta
+  // rama).
+  const actor = await resolveActor(env, user);
+  if (!actor) return json({ ok: false, error: 'Sesion no valida.' }, 403);
+  if (!can(actor, 'hcm.publish')) {
+    return json({ ok: false, error: 'No tienes permiso para publicar cambios en el sistema.' }, 403);
   }
   if (!env.canaima_apikey) {
     return json({ ok: false, error: 'La clave de AX no esta configurada en el servidor.' }, 500);
@@ -1095,7 +1105,7 @@ async function pushToAx(env, cc, body, table, deptScope, user) {
       await sb(env, `ax_change_set?id_number=in.(${okList})&status=eq.pending`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({
-          status: 'published', resolved_by: user.id, resolved_at: nowIso,
+          status: 'published', resolved_by: (user && user.id) || null, resolved_at: nowIso,
           ax_response: axRes.data ?? { text: axRes.text ?? null },
         }),
       });
