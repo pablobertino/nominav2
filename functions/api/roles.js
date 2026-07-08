@@ -98,6 +98,13 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, roles: out, permissions: perms || [], grants, me: { role: actor.role } });
     }
 
+    /* ---------- registro del shadow (discrepancias persistidas) ---------- */
+    if (action === 'shadow_log') {
+      const rows = await sb(env,
+        'perm_shadow_log?select=id,at,endpoint,action,code,role_code,actor,legacy,nuevo&order=at.desc&limit=200');
+      return json({ ok: true, rows: rows || [] });
+    }
+
     /* ---------- escritura: SOLO superadmin ---------- */
     if (!isSuperadmin(actor)) {
       return json({ ok: false, error: 'La gestion de roles esta reservada al superadministrador.' }, 403);

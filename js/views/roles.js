@@ -191,6 +191,7 @@ function paintList() {
     <div class="pnl-head">
       <div><h1>Roles</h1><p>Toca un rol para ver o editar sus permisos. El alcance por empresa se configura aparte, en Permisos.</p></div>
       <div class="head-actions">
+        <button class="btn" id="rlShadow">Registro shadow</button>
         <button class="btn btn-primary" id="rlNew"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Nuevo rol</button>
       </div>
     </div>
@@ -213,6 +214,8 @@ function paintList() {
     b.addEventListener('click', (e) => { e.stopPropagation(); openToggleModal(String(b.dataset.tog), b.dataset.to === 'on'); }));
   const nw = $('#rlNew');
   if (nw) nw.addEventListener('click', openNewRoleModal);
+  const sh = $('#rlShadow');
+  if (sh) sh.addEventListener('click', openShadowLogModal);
 }
 
 /* ===================== PANTALLA 2: DETALLE ===================== */
@@ -524,6 +527,65 @@ function openMsgModal(title, msg) {
   const onKey = ev => { if (ev.key === 'Escape') closeModal(host, onKey); };
   document.addEventListener('keydown', onKey);
   host.querySelector('#rmOk').addEventListener('click', () => closeModal(host, onKey));
+}
+
+/* Registro del shadow: discrepancias gate-legacy vs matriz, persistidas por
+   shadowCan en nomina_v2.perm_shadow_log (v4.30). Solo lectura. */
+async function openShadowLogModal() {
+  const host = baseModal(`
+    <button class="wp-x" id="slX" title="Cerrar">✕</button>
+    <h3>Registro del shadow</h3>
+    <p class="wp-help" style="margin-top:2px">Cada fila es una llamada real donde el gate vigente y la matriz <b>no coincidieron</b> (se respetó el gate vigente). Vacío = matriz alineada con la realidad. Últimas 200.</p>
+    <div id="slBody" style="max-height:52vh;overflow:auto;border:1px solid var(--border,#e6eaf0);border-radius:10px">
+      <div class="pnl-loading" style="padding:26px">Cargando…</div>
+    </div>
+    <div class="wp-foot"><span style="flex:1"></span>
+      <button class="btn" id="slRefresh">Actualizar</button>
+      <button class="btn btn-primary" id="slOk">Cerrar</button>
+    </div>`);
+  const mod = host.querySelector('.wp-modal');
+  if (mod) { mod.style.maxWidth = '860px'; mod.style.width = 'calc(100vw - 40px)'; }
+  const q = s => host.querySelector(s);
+  const onKey = ev => { if (ev.key === 'Escape') closeModal(host, onKey); };
+  document.addEventListener('keydown', onKey);
+  q('#slX').addEventListener('click', () => closeModal(host, onKey));
+  q('#slOk').addEventListener('click', () => closeModal(host, onKey));
+
+  const fmtAt = iso => {
+    try {
+      return new Date(iso).toLocaleString('es-VE', { timeZone: 'America/Caracas', day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+    } catch { return String(iso || '').slice(0, 16); }
+  };
+  const load = async () => {
+    const body = q('#slBody');
+    body.innerHTML = '<div class="pnl-loading" style="padding:26px">Cargando…</div>';
+    const d = await api({ action: 'shadow_log', user: userPayload(ST.user) });
+    if (!d.ok) { body.innerHTML = `<div style="padding:18px;color:var(--danger,#dc2626);font-size:13px">${esc(d.error || 'No se pudo cargar.')}</div>`; return; }
+    const rows = d.rows || [];
+    if (!rows.length) {
+      body.innerHTML = '<div style="padding:26px;text-align:center;color:var(--muted,#64748b);font-size:13px">Sin discrepancias registradas ✔<br><span style="font-size:11.5px">La matriz coincide con lo que los gates vigentes están decidiendo.</span></div>';
+      return;
+    }
+    body.innerHTML = `<table style="width:100%;border-collapse:collapse;font-size:12px">
+      <thead><tr>
+        <th style="text-align:left;padding:8px 10px;background:#fbfcfe;border-bottom:1px solid var(--border,#e6eaf0);white-space:nowrap">Cuándo</th>
+        <th style="text-align:left;padding:8px 10px;background:#fbfcfe;border-bottom:1px solid var(--border,#e6eaf0)">Endpoint · acción</th>
+        <th style="text-align:left;padding:8px 10px;background:#fbfcfe;border-bottom:1px solid var(--border,#e6eaf0)">Permiso</th>
+        <th style="text-align:left;padding:8px 10px;background:#fbfcfe;border-bottom:1px solid var(--border,#e6eaf0)">Quién</th>
+        <th style="text-align:left;padding:8px 10px;background:#fbfcfe;border-bottom:1px solid var(--border,#e6eaf0);white-space:nowrap">Gate → Matriz</th>
+      </tr></thead>
+      <tbody>${rows.map(r => `
+        <tr>
+          <td style="padding:7px 10px;border-bottom:1px solid var(--border-soft,#f1f4f8);white-space:nowrap;font-variant-numeric:tabular-nums">${esc(fmtAt(r.at))}</td>
+          <td style="padding:7px 10px;border-bottom:1px solid var(--border-soft,#f1f4f8)">${esc(r.endpoint || '')}<span style="color:var(--muted,#64748b)"> · ${esc(r.action || '')}</span></td>
+          <td style="padding:7px 10px;border-bottom:1px solid var(--border-soft,#f1f4f8);font-family:ui-monospace,Menlo,monospace;font-size:11px">${esc(r.code || '')}</td>
+          <td style="padding:7px 10px;border-bottom:1px solid var(--border-soft,#f1f4f8)">${esc(r.actor || '—')}<span style="color:var(--muted,#64748b)"> (${esc(r.role_code || '?')})</span></td>
+          <td style="padding:7px 10px;border-bottom:1px solid var(--border-soft,#f1f4f8);white-space:nowrap">${r.legacy ? 'permite' : 'niega'} → <b style="color:${r.nuevo ? 'var(--success,#16a34a)' : 'var(--danger,#dc2626)'}">${r.nuevo ? 'permitiría' : 'negaría'}</b></td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+  };
+  q('#slRefresh').addEventListener('click', load);
+  load();
 }
 
 function openNewRoleModal() {

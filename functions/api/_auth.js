@@ -217,6 +217,19 @@ export async function shadowCan(env, sessionUser, endpoint, action, code, legacy
         `[PERMS-SHADOW] ${endpoint} action=${action} code=${code} `
         + `role=${actor ? actor.role : 'null'} legacy=${!!legacyAllowed} nuevo=${!!newAllowed} `
         + `-> DISCREPANCIA (se respeta el gate legacy)`);
+      // Persistir la discrepancia (v4.30). Best-effort: el log jamas rompe
+      // el flujo del endpoint. Consultable desde la vista Roles.
+      try {
+        await sb(env, 'perm_shadow_log', {
+          method: 'POST', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({
+            endpoint, action: action || null, code: code || null,
+            role_code: actor ? actor.role : null,
+            actor: actor ? String(actor.actor) : null,
+            legacy: !!legacyAllowed, nuevo: !!newAllowed,
+          }),
+        });
+      } catch (_) { /* la bitacora no debe romper el endpoint */ }
     }
   } catch (e) {
     console.warn(`[PERMS-SHADOW] ${endpoint} action=${action} code=${code} error=${String(e.message || e)}`);
