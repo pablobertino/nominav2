@@ -392,13 +392,18 @@ async function listReports(env, body, scope) {
   const cr = res.headers.get('content-range') || '';
   const total = cr.includes('/') ? parseInt(cr.split('/')[1], 10) || rows.length : rows.length;
 
-  // Nombres de tienda (para admin/superadmin) en un solo query
+  // Nombres y TIPO de empresa (para admin/superadmin) en un solo query. El
+  // tipo alimenta la pastilla de origen del Historial: para reportes de la
+  // empresa se muestra su company_type (Tienda, Administrativa, Importadora,
+  // ...) en vez del generico "Empresa", que en el vocabulario del grupo
+  // significa justamente lo-que-no-es-tienda.
   const codes = [...new Set(rows.map(r => r.company_code))];
   let nameByCode = {};
+  let typeByCode = {};
   if (codes.length) {
     const list = codes.map(c => `"${c}"`).join(',');
-    const comps = await sbJson(env, `companies?company_code=in.(${list})&select=company_code,business_name`);
-    (comps || []).forEach(c => { nameByCode[c.company_code] = c.business_name; });
+    const comps = await sbJson(env, `companies?company_code=in.(${list})&select=company_code,business_name,company_type`);
+    (comps || []).forEach(c => { nameByCode[c.company_code] = c.business_name; typeByCode[c.company_code] = c.company_type; });
   }
 
   // Nombres de los admins que cambiaron estados (para mostrar "quien"), en lote.
@@ -415,6 +420,7 @@ async function listReports(env, body, scope) {
     type: r.topic,
     company_code: r.company_code,
     company_name: nameByCode[r.company_code] || null,
+    company_type: typeByCode[r.company_code] || null,
     sent_at: r.sent_at,
     responsible: r.responsible,
     position: r.position,

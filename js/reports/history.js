@@ -77,11 +77,12 @@ function otPill(r, osticketUrl, isAgent) {
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function originPill(r) {
   // Origen: para envios de la central se muestra el ROL guardado con el
-  // reporte (position: Administrador, Gestor de empresa, Editor...). Los
-  // reportes viejos ya traen su etiqueta correcta tras la migracion de datos.
+  // reporte (position). Para envios de la empresa, su TIPO (Tienda,
+  // Administrativa, Importadora...) — "Empresa" a secas confunde porque en
+  // el vocabulario del grupo significa lo-que-no-es-tienda.
   return r.source_kind === 'admin'
     ? `<span class="pill pill-origin-admin">${esc(r.position || 'Administrador')}</span>`
-    : '<span class="pill pill-origin-company">Empresa</span>';
+    : `<span class="pill pill-origin-company">${esc(r.company_type || 'Empresa')}</span>`;
 }
 
 // ¿viewport movil? (mismo umbral que el resto del portal: <=768px). Se
