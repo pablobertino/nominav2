@@ -188,7 +188,7 @@ export async function onRequestPost({ request, env }) {
     await shadowCan(env, user, 'catalog', 'list', 'view.empresas', true);
 
     const [companies, zones, subzones, concepts, users,
-           storeMeta, entMeta, staffCounts, depts] = await Promise.all([
+           storeMeta, entMeta, staffCounts, depts, photoCov] = await Promise.all([
       sb(env, 'companies?select=company_code,business_name,tax_id,data_area,zone_id,subzone_id,concept_id,company_type,status,is_active,email,phone,phone2,address,city,state,municipality&order=company_code'),
       sb(env, 'zones?select=id,name,letter&order=name'),
       sb(env, 'subzones?select=id,name,letter,zone_id&order=name'),
@@ -205,6 +205,10 @@ export async function onRequestPost({ request, env }) {
       // Departamentos por empresa (para el conteo que se muestra en el boton
       // "Departamentos" de la grilla de Empresas). Solo cuenta los ACTIVOS.
       sb(env, 'departments?is_active=eq.true&select=company_code'),
+      // Cobertura de fotos por empresa (chip "% con foto" de la celda
+      // Personal): total del roster vs cuantos tienen photo_key en
+      // workers_master. Una sola llamada agregada (rpc get_photo_coverage).
+      sb(env, 'rpc/get_photo_coverage', { method: 'POST', body: '{}' }),
     ]);
 
     const withAccess = new Set(users.map(u => u.company_code));
@@ -221,6 +225,10 @@ export async function onRequestPost({ request, env }) {
     // "Departamentos" de la grilla. Se muestra en empresas no-tienda.
     const deptCountByCompany = {};
     (depts || []).forEach(d => { deptCountByCompany[d.company_code] = (deptCountByCompany[d.company_code] || 0) + 1; });
+
+    // Cobertura de fotos por empresa: { code: { total, with_photo } }.
+    const photoByCompany = {};
+    (photoCov || []).forEach(p => { photoByCompany[p.company_code] = { total: p.total || 0, withPhoto: p.with_photo || 0 }; });
 
     // Meta (fecha, quien, metodo) por empresa. Cada empresa esta en UNA de las
     // dos tablas segun su tipo, asi que no hay colision.
@@ -264,6 +272,11 @@ export async function onRequestPost({ request, env }) {
         hasAccess: withAccess.has(c.company_code),
         // Personal: cantidad (cuenta real de filas) + meta de la ultima carga.
         staffCount: countByCompany[c.company_code] || 0,
+        // Cobertura de fotos (chip de la celda Personal): cuantos del roster
+        // tienen foto. El total del RPC puede diferir minimamente del
+        // staffCount de la vista; el % se calcula con photoTotal.
+        photoCount: (photoByCompany[c.company_code] || {}).withPhoto || 0,
+        photoTotal: (photoByCompany[c.company_code] || {}).total || 0,
         // Cantidad de departamentos activos (para el boton "Departamentos").
         deptCount: deptCountByCompany[c.company_code] || 0,
         rosterAt: meta ? meta.uploaded_at : null,

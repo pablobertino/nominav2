@@ -353,7 +353,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.35</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.36</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -691,8 +691,19 @@ function rosterFresh(iso) {
 function personalCell(c) {
   if (!c.staffCount) return '<span class="muted">— sin lista —</span>';
   const by = c.rosterBy ? `<br>${String(c.rosterBy).replace(/</g, '&lt;')}` : '';
+  // Chip "% con foto" (opcion C del mockup empresas_personal_foto):
+  // cobertura de fotos del roster (photoCount/photoTotal de /api/catalog).
+  // Semaforo: verde >=90, ambar 50-89, rojo <50. El detalle exacto va en
+  // el title. Si el RPC no trae datos (photoTotal 0), no se muestra nada.
+  let photoChip = '';
+  if (c.photoTotal > 0) {
+    const pct = Math.round((c.photoCount / c.photoTotal) * 100);
+    const cls = pct >= 90 ? 'ph-ok' : pct >= 50 ? 'ph-mid' : 'ph-low';
+    photoChip = `<span class="ph-chip ${cls}" title="${c.photoCount} de ${c.photoTotal} con foto">`
+      + `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>${pct}%</span>`;
+  }
   return `<div class="cell-personal">`
-    + `<div class="l1">${c.staffCount}</div>`
+    + `<div class="l1">${c.staffCount}${photoChip}</div>`
     + `<div class="l2">${methodChip(c.rosterSource)} ${rosterFresh(c.rosterAt)}${by}</div>`
     + `</div>`;
 }
