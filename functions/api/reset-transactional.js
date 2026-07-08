@@ -82,9 +82,9 @@ async function storageRemove(env, names) {
 async function requireSuper(env, user) {
   if (!user || user.kind !== 'admin' || !user.id) return null;
   const a = await sb(env,
-    `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role,full_name,username`);
+    `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role,name,username`);
   if (!a || !a.length || a[0].role !== 'superadmin') return null;
-  return { id: a[0].id, name: a[0].full_name || a[0].username || 'superadmin' };
+  return { id: a[0].id, name: a[0].name || a[0].username || 'superadmin' };
 }
 
 /* Normaliza y valida la lista de empresas del modo selectivo. */

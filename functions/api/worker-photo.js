@@ -281,9 +281,9 @@ async function actorLabel(env, user, cc) {
   if (!user) return null;
   if (user.kind === 'company') return `${cc} (tienda)`;
   if (user.kind === 'admin' && user.id) {
-    const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&select=id,username,full_name,role`);
+    const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&select=id,username,name,role`);
     if (a && a.length) {
-      const nm = (a[0].full_name || a[0].username || 'admin').trim();
+      const nm = (a[0].name || a[0].username || 'admin').trim();
       return `${nm} (${ACTOR_ROLE_ES[a[0].role] || a[0].role || 'admin'})`;
     }
     return 'admin';
