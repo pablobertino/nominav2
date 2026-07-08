@@ -69,6 +69,18 @@ export async function onRequestPost({ request, env }) {
   try {
     const actor = await resolveActor(env, body.user);
     if (!actor) return json({ ok: false, error: 'Sesion no valida.' }, 403);
+
+    /* ---------- catalogo liviano de roles (para combos de otras vistas) ----
+       Devuelve code+label de los roles ACTIVOS asignables a miembros del
+       equipo (excluye 'tienda', que es el login de empresa). No exige
+       view.roles: solo nombres, sin matriz. Lo usa Equipo (crear miembro /
+       cambiar rol). */
+    if (action === 'options') {
+      const rows = await sb(env,
+        'roles?is_active=eq.true&code=neq.tienda&select=code,label,is_system&order=sort_order.asc,code.asc');
+      return json({ ok: true, roles: (rows || []).map(r => ({ code: r.code, label: r.label || r.code, is_system: !!r.is_system })) });
+    }
+
     // Gate REAL de lectura: view.roles (hoy solo superadmin por bypass).
     if (!can(actor, 'view.roles')) {
       return json({ ok: false, error: 'No tienes permiso para gestionar roles.' }, 403);

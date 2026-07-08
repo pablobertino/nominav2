@@ -249,6 +249,36 @@ const NAV_GESTOR_GROUPS = [
 /* Etiquetas legibles de rol para la topbar. */
 const ROLE_LABELS = { superadmin: 'superadmin', admin: 'admin', editor_personal: 'editor_personal', gestor_empresa: 'gestor de empresa' };
 
+/* ---------- Roles del equipo (dinamicos desde la BD) ----------
+   Catalogo de roles asignables a miembros (todos menos 'tienda'), con la
+   etiqueta visible que se edita en la vista Roles. Se carga al entrar a
+   Equipo via /api/roles accion 'options' y alimenta el combo de Nuevo
+   miembro y el de Cambiar rol. Si la carga falla, se usa el fallback
+   historico para no bloquear la pantalla. */
+const ADMIN_ROLES_FALLBACK = [
+  { code: 'admin', label: 'Administrador', is_system: false },
+  { code: 'gestor_empresa', label: 'Gestor de empresa', is_system: false },
+  { code: 'editor_personal', label: 'Editor de personal', is_system: false },
+  { code: 'superadmin', label: 'Superadmin', is_system: true },
+];
+let ADMIN_ROLES = null;
+async function ensureAdminRoles(user) {
+  if (ADMIN_ROLES) return ADMIN_ROLES;
+  try {
+    const d = await fetch('/api/roles', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'options', user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null } }),
+    }).then(r => r.json());
+    if (d && d.ok && Array.isArray(d.roles) && d.roles.length) ADMIN_ROLES = d.roles;
+  } catch (_) { /* fallback abajo */ }
+  return ADMIN_ROLES || ADMIN_ROLES_FALLBACK;
+}
+function escRoleLbl(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+function adminRoleOptionsHtml(selected) {
+  return (ADMIN_ROLES || ADMIN_ROLES_FALLBACK).map(r =>
+    `<option value="${r.code}"${r.code === selected ? ' selected' : ''}>${escRoleLbl(r.label)}</option>`).join('');
+}
+
 /* ---------- shell ---------- */
 function shell(user) {
   const isCompany = user.kind === 'company';
@@ -323,7 +353,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.30</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.31</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3004,7 +3034,7 @@ function auCreateModal(user) {
     <label class="flabel">Nombre</label><input id="auN" placeholder="Nombre completo" style="margin-bottom:12px">
     <label class="flabel">Correo <span class="muted">(opcional)</span></label><input id="auE" placeholder="correo@grupocanaima.com" style="margin-bottom:12px">
     <label class="flabel">Rol</label>
-    <select id="auR" style="margin-bottom:14px;width:100%"><option value="admin">admin</option><option value="gestor_empresa">Gestor de empresa</option><option value="editor_personal">Editor de personal</option><option value="superadmin">superadmin</option></select>
+    <select id="auR" style="margin-bottom:14px;width:100%">${adminRoleOptionsHtml('admin')}</select>
     ${pwdBlockHtml()}
     <div class="modal-actions"><button class="btn" id="mCancel">Cancelar</button><button class="btn btn-primary" id="mOk">Crear</button></div>`);
   wirePwdBlock();
@@ -3171,11 +3201,11 @@ function auAgentInfo(ds, user) {
    (ds.role). El backend rechaza: cambiar el propio rol y quitar el ultimo
    superadmin. El error se muestra dentro del modal (sin alert nativo). */
 function auRoleModal(ds, user) {
-  const ROLE_OPTS = [
-    { v: 'admin', l: 'admin' },
-    { v: 'gestor_empresa', l: 'gestor de empresa' },
-    { v: 'editor_personal', l: 'editor de personal' },
-  ];
+  // Roles desde la BD (cache ADMIN_ROLES, cargado al entrar a Equipo).
+  // superadmin no es elegible aqui (se excluye). Fallback: lista historica.
+  const ROLE_OPTS = (ADMIN_ROLES || ADMIN_ROLES_FALLBACK)
+    .filter(r => r.code !== 'superadmin')
+    .map(r => ({ v: r.code, l: r.label }));
   const cur = ds.role || '';
   const opts = ROLE_OPTS.map(o =>
     `<option value="${o.v}"${o.v === cur ? ' selected' : ''}>${o.l}</option>`).join('');
@@ -5761,7 +5791,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'usuarios') viewUsuarios(user);
   else if (view === 'quincenas') viewPeriods(user);
   else if (view === 'calendario') viewPeriods(user);
-  else if (view === 'equipo') viewEquipo(user);
+  else if (view === 'equipo') { await ensureAdminRoles(user); viewEquipo(user); }
   else if (view === 'permisos') viewPermisos(user);
   else if (view === 'firmantes') renderCertSigners(user);
   else if (view === 'constancias') renderCertRequests(user);
