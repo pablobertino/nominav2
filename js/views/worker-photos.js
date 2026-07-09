@@ -331,6 +331,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
         <div class="head-actions">
           <a class="btn wp-guia-link" id="wpGuiaFoto" href="/guias/foto-carnet.html" target="_blank" rel="noopener" title="Guia: como tomar la foto del carnet"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg> ¿Como tomar la foto?</a>
           <button class="btn" id="wpReload" title="Recargar la lista"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Recargar</button>
+          <button class="btn" id="wpExport" title="Exportar lo que se ve en la lista (respeta los filtros)"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg> Exportar</button>
           ${isAdmin ? `<button class="btn btn-primary" id="wpAxApi" title="Actualizar: trae lo ultimo de AX (pisa cambios locales)" aria-label="Actualizar desde AX"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg> Actualizar</button>` : ''}
           ${isAdmin ? `<button class="btn" id="wpPublish" title="Publicar: envia a AX los cambios hechos aqui" aria-label="Publicar cambios en AX" disabled><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar <span id="wpPublishN" class="wp-pubcount">0</span></button>` : ''}
           ${(isSuper && mode === 'enterprise') ? `<button class="btn" id="wpNewDept" title="Nuevo departamento" aria-label="Nuevo departamento"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Nuevo departamento</button>` : ''}
@@ -380,6 +381,9 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
     <div id="wpModalHost"></div>`;
 
   if (onExit) $('#wpBack').addEventListener('click', onExit);
+  // v4.49: exportar lo visible (xlsx/csv/txt), todos los roles.
+  const expBtn = $('#wpExport');
+  if (expBtn) expBtn.addEventListener('click', () => wpOpenExportMenu(expBtn));
   const reloadBtn = $('#wpReload');
   if (reloadBtn) reloadBtn.addEventListener('click', async () => {
     reloadBtn.disabled = true;
@@ -1673,6 +1677,131 @@ async function copyWorkerData(w, btn) {
     btn.innerHTML = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
     setTimeout(() => { btn.innerHTML = prev; }, 1200);
   }
+}
+
+/* v4.49: EXPORTAR lo visible del grid de Personal (xlsx / csv / txt, mismo
+   patron que Empresas y Buscar personal). Exporta EXACTAMENTE lo que se ve
+   (respeta filtros y orden actuales): se leen las tarjetas pintadas por su
+   data-ced y se mapean contra STATE.workers. Todos los roles. */
+const WP_MARITAL_LBL = { S: 'Soltero(a)', C: 'Casado(a)', D: 'Divorciado(a)', V: 'Viudo(a)', O: 'Conviviente', R: 'Union registrada' };
+function wpExportRows() {
+  const grid = $('#wpGrid');
+  const ceds = grid ? [...grid.querySelectorAll('.wp-card')].map(el => String(el.dataset.ced)) : [];
+  const byCed = {};
+  (STATE.workers || []).forEach(w => { byCed[String(w.id_number)] = w; });
+  return ceds.map(c => byCed[c]).filter(Boolean).map(w => ({
+    'Cédula': w.id_number || '',
+    'Nombre': w.full_name || '',
+    'Cargo': w.role || '',
+    'Departamento': w.department_name || '',
+    'Sexo': w.gender || '',
+    'Edad': w.age != null ? w.age : '',
+    'Estado civil': WP_MARITAL_LBL[w.marital_status] || w.marital_status || '',
+    'Nacimiento': w.birth_date ? String(w.birth_date).slice(0, 10) : '',
+    'Teléfono': w.phone || '',
+    'Correo': w.email || '',
+    'Cuenta banco': w.account_number || '',
+    'Dirección': w.address || '',
+    'Estado': (w.end_date || w.is_active === false) ? 'Egresado' : 'Activo',
+    'Foto': w.thumb_url ? 'Sí' : 'No',
+  }));
+}
+function wpDownloadBlob(content, filename, mime) {
+  const blob = (content instanceof Blob) ? content : new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+}
+function wpTstamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+}
+/* Mini aviso modal (sin alert, regla del portal). */
+function wpExportNotice(msg) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1200;padding:20px';
+  wrap.innerHTML = `<div style="background:var(--card,#fff);border-radius:14px;max-width:380px;width:100%;padding:20px 22px;box-shadow:0 20px 60px rgba(15,23,42,.3)">
+    <div style="font-size:13.5px;color:var(--ink);line-height:1.5">${msg}</div>
+    <div style="display:flex;justify-content:flex-end;margin-top:14px">
+      <button id="enOk" style="font:inherit;font-size:13px;font-weight:600;padding:8px 15px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--ink);cursor:pointer">Entendido</button>
+    </div></div>`;
+  document.body.appendChild(wrap);
+  const close = () => { document.removeEventListener('keydown', onKey); wrap.remove(); };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  wrap.querySelector('#enOk').addEventListener('click', close);
+}
+async function wpDoExport(fmt) {
+  const data = wpExportRows();
+  if (!data.length) { wpExportNotice('No hay personal visible para exportar (revisa los filtros).'); return; }
+  const headers = Object.keys(data[0]);
+  const fname = `personal_${(STATE && STATE.cc) || 'empresa'}_${wpTstamp()}`;
+
+  if (fmt === 'csv') {
+    const escv = (v) => {
+      const s = String(v ?? '');
+      return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+    };
+    const lines = [headers.join(';')].concat(data.map(r => headers.map(h => escv(r[h])).join(';')));
+    wpDownloadBlob('\uFEFF' + lines.join('\r\n'), `${fname}.csv`, 'text/csv;charset=utf-8');
+    return;
+  }
+  if (fmt === 'txt') {
+    const widths = headers.map(h => Math.max(h.length, ...data.map(r => String(r[h] ?? '').length)));
+    const fmtRow = (cells) => cells.map((c, i) => String(c ?? '').padEnd(widths[i])).join('  ');
+    const lines = [fmtRow(headers), widths.map(w => '-'.repeat(w)).join('  ')]
+      .concat(data.map(r => fmtRow(headers.map(h => r[h]))));
+    wpDownloadBlob(lines.join('\r\n'), `${fname}.txt`, 'text/plain;charset=utf-8');
+    return;
+  }
+  if (fmt === 'xlsx') {
+    try {
+      if (!window.XLSX) {
+        await new Promise((resolve, reject) => {
+          const s = document.createElement('script');
+          s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+          s.onload = resolve; s.onerror = () => reject(new Error('No se pudo cargar la librería de Excel.'));
+          document.head.appendChild(s);
+        });
+      }
+      const ws = window.XLSX.utils.json_to_sheet(data, { header: headers });
+      const wb = window.XLSX.utils.book_new();
+      window.XLSX.utils.book_append_sheet(wb, ws, 'Personal');
+      window.XLSX.writeFile(wb, `${fname}.xlsx`);
+    } catch (e) {
+      wpExportNotice(String(e.message || e) + ' Revisa tu conexión e inténtalo de nuevo.');
+    }
+    return;
+  }
+}
+/* Menu flotante de formatos, anclado al boton Exportar. */
+function wpOpenExportMenu(btn) {
+  const old = document.getElementById('wpExpMenu');
+  if (old) { old.remove(); return; }
+  const r = btn.getBoundingClientRect();
+  const m = document.createElement('div');
+  m.id = 'wpExpMenu';
+  m.style.cssText = `position:fixed;top:${r.bottom + 6}px;left:${Math.max(8, r.right - 170)}px;z-index:1100;background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;box-shadow:0 10px 32px rgba(15,23,42,.18);padding:6px;min-width:170px;display:flex;flex-direction:column;gap:2px`;
+  const item = (lbl, fmt) => {
+    const b = document.createElement('button');
+    b.textContent = lbl;
+    b.style.cssText = 'font:inherit;font-size:13px;text-align:left;padding:8px 12px;border:0;border-radius:8px;background:transparent;color:var(--ink);cursor:pointer';
+    b.addEventListener('mouseenter', () => { b.style.background = 'var(--bg-soft,#f1f5f9)'; });
+    b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
+    b.addEventListener('click', () => { m.remove(); wpDoExport(fmt); });
+    return b;
+  };
+  m.appendChild(item('Excel (.xlsx)', 'xlsx'));
+  m.appendChild(item('CSV (.csv)', 'csv'));
+  m.appendChild(item('Texto (.txt)', 'txt'));
+  document.body.appendChild(m);
+  setTimeout(() => {
+    const away = (ev) => { if (!m.contains(ev.target) && ev.target !== btn) { m.remove(); document.removeEventListener('click', away); } };
+    document.addEventListener('click', away);
+  }, 0);
 }
 
 function backToGrid() {
