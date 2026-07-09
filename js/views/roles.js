@@ -261,7 +261,9 @@ function permRowHtml(p, checked) {
   const help = p.help ? `<span class="rl-qh" data-qh>?<span class="tip">${esc(p.help)}</span></span>` : '';
   return `<div class="rl-perm${lockNow ? ' implied' : ''}" data-code="${esc(p.code)}">
     <label class="rl-sw${lockNow ? ' impliedlock' : ''}"><input type="checkbox" data-perm="${esc(p.code)}"${checked ? ' checked' : ''}${lockNow ? ' disabled' : ''}><span class="track"></span><span class="knob"></span></label>
-    <span class="txt" data-txt><span class="plabel">${esc(p.label || p.code)}</span>${help}<div class="pcode">${esc(p.code)}</div></span>
+    <span class="txt" data-txt><span class="plabel">${esc(p.label || p.code)}</span>${p.enforced
+      ? `<span title="Este permiso YA SE APLICA: el servidor lo exige de verdad." style="display:inline-block;margin-left:6px;font-size:9.5px;font-weight:800;letter-spacing:.05em;padding:1px 7px;border-radius:999px;background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;vertical-align:middle">APLICADO</span>`
+      : ''}${help}<div class="pcode">${esc(p.code)}</div></span>
   </div>`;
 }
 

@@ -92,12 +92,12 @@ export async function onRequestPost({ request, env }) {
     const actor = await resolveActor(env, body.user || null);
     if (!actor) return json({ ok: false, error: 'Sesion no valida.' }, 403);
     // Mismo gate que Sincronizar: quien publica al sistema puede consultarlo.
-    if (!can(actor, 'hcm.publish')) {
+    // v4.57: gate REAL relajado a hcm.view (Consultar API es LECTURA pura;
+    // antes exigia hcm.publish). Dominio enforced, ya no shadow.
+    if (!can(actor, 'hcm.view')) {
       return json({ ok: false, error: 'No tienes permiso para consultar las APIs.' }, 403);
     }
-    // v4.54 SHADOW: la consulta manual es LECTURA -> code fino hcm.view
-    // (gate real sigue hcm.publish; el log dira si conviene relajar).
-    try { await shadowCan(env, body.user, 'erp-query', body.action || 'query', 'hcm.view', true); } catch (_) { /* no rompe */ }
+    try { await shadowCan(env, body.user, 'erp-query', body.action || 'query', 'hcm.view', true); } catch (_) { /* bitacora */ }
 
     /* ---------- catalog: APIs activas para el selector ---------- */
     if (body.action === 'catalog') {

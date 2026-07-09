@@ -1079,23 +1079,27 @@ export async function onRequestPost({ request, env }) {
   try {
     const actor = await resolveActor(env, user);
     if (!actor) return json({ ok: false, error: 'Sesion no valida.' }, 403);
-    // Gate unico: hcm.publish (superadmin siempre pasa por can()).
-    if (!can(actor, 'hcm.publish')) {
-      return json({ ok: false, error: 'No tienes permiso para revisar/publicar cambios en AX.' }, 403);
-    }
-    // v4.54 SHADOW por accion (pedido Pablo: acumular log del dominio antes
-    // de cortar a gates finos). El gate REAL sigue siendo hcm.publish; el
-    // shadow registra que permiso FINO corresponderia a cada accion:
-    //   lecturas -> hcm.view · adopciones/escrituras al portal -> hcm.sync
+    // v4.57: GATES REALES POR MATRIZ (dominio Sincronizacion ya NO es shadow;
+    // permissions.enforced=true y la vista Roles lo muestra con badge).
+    //   lecturas -> hcm.view · adopciones al portal -> hcm.sync ·
     //   publicar/anular en el sistema -> hcm.publish
-    // legacy_allowed = true (ya paso el gate real); la discrepancia queda en
-    // perm_shadow_log cuando la matriz fina no otorga el code al rol.
+    // superadmin siempre pasa por can(). El shadowCan queda como BITACORA de
+    // uso (legacy=true tras pasar el gate; jamas rompe la accion).
     const AXR_CODE_BY_ACTION = {
       list: 'hcm.view', history: 'hcm.view', detect: 'hcm.view', detect_scope: 'hcm.view',
       detect_commit: 'hcm.sync', adopt: 'hcm.sync',
       publish: 'hcm.publish', discard: 'hcm.publish',
     };
-    try { await shadowCan(env, user, 'ax-review', action, AXR_CODE_BY_ACTION[action] || 'hcm.publish', true); } catch (_) { /* el shadow nunca rompe la accion */ }
+    const NEED = AXR_CODE_BY_ACTION[action] || 'hcm.publish';
+    if (!can(actor, NEED)) {
+      const MSG = {
+        'hcm.view': 'No tienes permiso para ver la sincronizacion.',
+        'hcm.sync': 'No tienes permiso para adoptar cambios del sistema.',
+        'hcm.publish': 'No tienes permiso para publicar o anular cambios.',
+      };
+      return json({ ok: false, error: MSG[NEED] || 'Sin permiso.' }, 403);
+    }
+    try { await shadowCan(env, user, 'ax-review', action, NEED, true); } catch (_) { /* bitacora, jamas rompe */ }
 
     if (action === 'list') return await listPending(env, actor, user);
     if (action === 'history') return await listHistory(env, actor, user, body);

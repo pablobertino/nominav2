@@ -142,10 +142,10 @@ const NAV_GROUPS = [
     ['firmantes', I.pencil, 'Firmantes', 'superonly'],
   ] },
   { title: 'Sincronización', items: [
-    ['syncreview', I.sync, 'Sincronizar', 'superonly'],
-    ['axcompare', I.compare, 'Comparar', 'superonly'],
-    ['axhistory', I.history, 'Historial', 'superonly'],
-    ['erpquery', I.search, 'Consultar API', 'superonly'],
+    ['syncreview', I.sync, 'Sincronizar', 'adminonly'],
+    ['axcompare', I.compare, 'Comparar', 'adminonly'],
+    ['axhistory', I.history, 'Historial', 'adminonly'],
+    ['erpquery', I.search, 'Consultar API', 'adminonly'],
     ['sync', I.cog, 'Configurar', 'superonly'],
   ] },
   { title: 'Administración', items: [
@@ -321,8 +321,12 @@ function shell(user) {
 
   // HTML del nav: items sueltos en .nav-loose + grupos con encabezado-chevron.
   const chev = '<svg class="nav-ghead-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
-  // Filtro por ITEM: un item con 4o elemento 'superonly' solo lo ve el super.
-  const itemVisible = (it) => !(it[3] === 'superonly') || isSuper;
+  // Filtro por ITEM: 'superonly' solo el super; 'adminonly' cualquier usuario
+  // administrativo (v4.57: los endpoints aplican la matriz de permisos, asi
+  // que el menu abre la puerta y el permiso decide adentro).
+  const itemVisible = (it) => it[3] === 'superonly' ? isSuper
+    : it[3] === 'adminonly' ? user.kind === 'admin'
+    : true;
   const navHtml = `<div class="nav-loose">${navLoose.filter(itemVisible).map(navBtn).join('')}</div>`
     + navGroups.map((g, gi) => {
         const items = g.items.filter(itemVisible);
@@ -358,7 +362,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.56</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.57</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
