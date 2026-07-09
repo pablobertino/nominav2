@@ -123,6 +123,14 @@ function ensureStyles() {
   .axr-emp{font-size:12px;color:var(--brand,#2563eb);font-weight:700;font-family:ui-monospace,Menlo,monospace}
   .axr-emeta{font-size:10.5px;color:var(--muted);max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .axr-nf{font-size:11px;color:var(--warn,#c2410c);background:var(--warn-bg,#fff7ed);border:1px solid var(--warn-bd,#fed7aa);padding:2px 8px;border-radius:999px;font-weight:600}
+  .axr-bank{font-size:11px;color:#b91c1c;background:#fef2f2;border:1px solid #f3c2c2;padding:2px 8px;border-radius:999px;font-weight:700;white-space:nowrap}
+  .axr-row.bank{border-color:#f3c2c2}
+  .axr-row.bank.sel{border-color:var(--brand,#2563eb)}
+  .axr-tbl tr.bankrow td{background:#fef2f2}
+  .axr-tbl tr.bankrow .fld{color:#b91c1c}
+  .axr-btn-bank{background:#fef2f2;border-color:#f3c2c2;color:#b91c1c}
+  .axr-btn-bank:hover:not(:disabled){background:#fee2e2}
+  .axr-count.bankn{background:#b91c1c}
   .axr-chev{width:18px;height:18px;color:var(--faint,#94a3b8);transition:transform .18s;flex:none}
   .axr-row.open .axr-chev{transform:rotate(180deg)}
   .axr-detail{display:none;padding:4px 16px 16px;border-top:1px solid var(--border-soft,#eef1f5);background:var(--bg-soft,#f8fafc)}
@@ -219,6 +227,16 @@ function visibleRows() {
   );
 }
 
+/* La ficha incluye un cambio de CUENTA BANCARIA (dato sensible: se resalta
+   en rojo y se publica por separado del resto). */
+function rowHasBank(r) {
+  return (r.fields || []).some(f =>
+    f.field === 'account_number' || f.label === 'Cuenta' || f.label === 'Cuenta bancaria');
+}
+function isBankField(f) {
+  return f.field === 'account_number' || f.label === 'Cuenta' || f.label === 'Cuenta bancaria';
+}
+
 export async function renderAxReview(user) {
   USER = user;
   ensureStyles();
@@ -243,7 +261,8 @@ export async function renderAxReview(user) {
     <div class="axr-toolbar">
       <button class="axr-btn axr-btn-cmp" id="axrCompare"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg> Comparar</button>
       <span class="axr-spacer"></span>
-      <button class="axr-btn axr-btn-pub" id="axrPubAll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar todo <span class="axr-count" id="axrPubAllN">0</span></button>
+      <button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>
+      <button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar con cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>
       <button class="axr-btn axr-btn-dis" id="axrDisAll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular todo</button>
     </div>
     <div class="axr-selbar" id="axrSelBar" hidden>
@@ -266,7 +285,8 @@ export async function renderAxReview(user) {
   $('#axrSelClear').addEventListener('click', () => { SELECTED.clear(); paint(); });
   $('#axrPubSel').addEventListener('click', () => confirmAction('publish', 'sel'));
   $('#axrDisSel').addEventListener('click', () => confirmAction('discard', 'sel'));
-  $('#axrPubAll').addEventListener('click', () => confirmAction('publish', 'all'));
+  $('#axrPubSafe').addEventListener('click', () => confirmAction('publish', 'nobank'));
+  $('#axrPubBank').addEventListener('click', () => confirmAction('publish', 'bank'));
   $('#axrDisAll').addEventListener('click', () => confirmAction('discard', 'all'));
   $('#axrCompare').addEventListener('click', () => openCompareScope());
 
@@ -309,28 +329,30 @@ function paint() {
 
   list.innerHTML = rows.map(r => {
     const isSel = SELECTED.has(r.id), isOpen = OPEN.has(r.id);
+    const bank = rowHasBank(r);
     const ci = avatarColor(r.id_number);
     const fields = r.fields || [];
-    const chg = fields.map(f => `<tr>
-      <td class="fld">${esc(f.label)}</td>
+    const chg = fields.map(f => `<tr${isBankField(f) ? ' class="bankrow"' : ''}>
+      <td class="fld">${esc(f.label)}${isBankField(f) ? ' ⚠' : ''}</td>
       <td><span class="axr-old ${f.old == null ? 'empty' : ''}">${f.old == null ? '(vacío)' : esc(f.old)}</span></td>
       <td class="axr-arr">→</td>
       <td><span class="axr-new ${f.new == null ? 'empty' : ''}">${f.new == null ? '(vacío)' : esc(f.new)}</span></td>
     </tr>`).join('');
     const emeta = [r.zona, r.subzona, r.concepto].filter(Boolean).map(esc).join(' · ');
     const n = fields.length;
-    return `<div class="axr-row ${isSel ? 'sel' : ''} ${isOpen ? 'open' : ''}" data-id="${r.id}">
+    return `<div class="axr-row ${bank ? 'bank ' : ''}${isSel ? 'sel' : ''} ${isOpen ? 'open' : ''}" data-id="${r.id}">
       <div class="axr-rowhead" data-toggle="${r.id}">
         <div class="axr-chk ${isSel ? 'on' : ''}" data-check="${r.id}">${isSel ? '✓' : ''}</div>
         <div class="axr-ava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(r.full_name))}</div>
         <div class="axr-who">
           <div class="axr-nm">${esc(r.full_name || '(sin nombre)')}</div>
           <div class="axr-sub">${esc(r.ced_kind || '')}-${esc(r.id_number)} · ${esc(r.company_name || r.company_code)}</div>
-          ${r.changed_by ? `<div class="axr-edit">Editado por <b>${esc(r.changed_by)}</b>${r.changed_at ? ' · ' + esc(fmtDateTime(r.changed_at)) : ''}</div>` : ''}
+          ${(r.changed_by || r.changed_at) ? `<div class="axr-edit">Editado${r.changed_by ? ` por <b>${esc(r.changed_by)}</b>` : ''}${r.changed_at ? ' · ' + esc(fmtDateTime(r.changed_at)) : ''}</div>` : ''}
         </div>
         <div class="axr-meta">
           <span class="axr-emp">${esc(r.company_code)}</span>
           ${emeta ? `<span class="axr-emeta">${emeta}</span>` : ''}
+          ${bank ? '<span class="axr-bank">⚠ Cuenta bancaria</span>' : ''}
           <span class="axr-nf">${n} campo${n === 1 ? '' : 's'}</span>
         </div>
         <svg class="axr-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
@@ -368,12 +390,16 @@ function paint() {
 }
 
 function updateBars() {
-  const n = SELECTED.size, total = visibleRows().length;
+  const n = SELECTED.size, vis = visibleRows();
+  const nBank = vis.filter(rowHasBank).length;
+  const nSafe = vis.length - nBank;
   const sb = $('#axrSelBar'); if (sb) sb.hidden = n === 0;
   const sn = $('#axrSelN'); if (sn) sn.textContent = n;
-  const pubN = $('#axrPubAllN'); if (pubN) pubN.textContent = total;
-  const pa = $('#axrPubAll'); if (pa) pa.disabled = total === 0;
-  const da = $('#axrDisAll'); if (da) da.disabled = total === 0;
+  const sfN = $('#axrPubSafeN'); if (sfN) sfN.textContent = nSafe;
+  const bkN = $('#axrPubBankN'); if (bkN) bkN.textContent = nBank;
+  const ps = $('#axrPubSafe'); if (ps) ps.disabled = nSafe === 0;
+  const pb = $('#axrPubBank'); if (pb) pb.disabled = nBank === 0;
+  const da = $('#axrDisAll'); if (da) da.disabled = vis.length === 0;
 }
 
 /* Resuelve las filas objetivo segun el modo: 'one' (un id), 'sel'
@@ -383,6 +409,8 @@ function targetsFor(scope, id) {
   const vis = visibleRows();
   if (scope === 'one') return vis.filter(r => r.id === id);
   if (scope === 'sel') return vis.filter(r => SELECTED.has(r.id));
+  if (scope === 'nobank') return vis.filter(r => !rowHasBank(r));
+  if (scope === 'bank') return vis.filter(r => rowHasBank(r));
   return vis;   // all
 }
 
@@ -394,6 +422,7 @@ function confirmAction(verb, scope, id) {
   const ids = targets.map(t => t.id_number);
   const n = targets.length;
   const totalFields = targets.reduce((a, t) => a + (t.field_count || (t.fields || []).length), 0);
+  const banky = isPub && targets.some(rowHasBank);
 
   const host = document.body;
   const wrap = document.createElement('div');
@@ -409,7 +438,7 @@ function confirmAction(verb, scope, id) {
       <p class="who">${n} ficha${n === 1 ? '' : 's'} · ${totalFields} campo${totalFields === 1 ? '' : 's'}</p>
       <div class="box ${isPub ? 'pub' : 'dis'}">
         ${isPub
-          ? `Se publicarán los cambios de <b>${n} ficha${n === 1 ? '' : 's'}</b>. Solo se envía lo que se editó en cada ficha; el resto de los datos queda intacto.`
+          ? `Se publicarán los cambios de <b>${n} ficha${n === 1 ? '' : 's'}</b>. Solo se envía lo que se editó en cada ficha; el resto de los datos queda intacto.${banky ? '<br><br><b>⚠ Incluye cambio de CUENTA BANCARIA.</b> Verifica los números de cuenta en el detalle antes de publicar: este dato afecta el pago.' : ''}`
           : `Se anularán los cambios de <b>${n} ficha${n === 1 ? '' : 's'}</b>. No se enviarán. El dato en el portal se mantiene hasta que uses <b>Actualizar</b> en Personal, que trae la versión vigente.`}
       </div>
       <div class="lst">${listHtml}${more}</div>

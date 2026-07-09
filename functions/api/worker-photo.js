@@ -815,8 +815,11 @@ async function saveProfile(env, cc, body, table, deptScope) {
   // realmente cambiaron (el mismo 'changed' que marca ax_pending). No es
   // critico: si falla, el guardado ya quedo hecho.
   try {
-    const changedByRaw = body.user && body.user.kind === 'admin' ? body.user.id : null;
-    const changedBy = (changedByRaw != null && Number.isFinite(Number(changedByRaw))) ? Number(changedByRaw) : null;
+    // Quien hizo el cambio, LEGIBLE (v4.37): la misma etiqueta del sello
+    // "Actualizo" de la ficha ("Nombre (rol)" o "AA01 (tienda)"). Antes se
+    // guardaba el id numerico del admin (ilegible) y null para tiendas, y la
+    // bandeja Sincronizar quedaba sin el "quien".
+    const changedBy = await actorLabel(env, body.user, cc);
     const deltas = {};
     for (const f of AX_FIELDS) {
       if (changed[f]) {
