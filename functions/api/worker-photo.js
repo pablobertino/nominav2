@@ -928,6 +928,22 @@ async function setDepartment(env, cc, body, table, deptScope) {
   if (await isGestorUser(env, body.user)) {
     return json({ ok: false, error: 'Los gestores de empresa no pueden cambiar el departamento.' }, 403);
   }
+  // v4.50: en EMPRESAS (no tienda) la asignacion masiva es SOLO para
+  // superadmin y admin (decision de Pablo). Shadow con codigo propio
+  // dept.assign (matriz: superadmin+admin). El flujo Retail de tiendas
+  // (store_workers) conserva su regla v4.18 de mas abajo.
+  if (table === 'enterprise_workers') {
+    await shadowCan(env, body.user, 'worker-photo', 'set_department:enterprise', 'dept.assign', true);
+    const uk = body.user || {};
+    let okRole = false;
+    if (uk.kind === 'admin' && uk.id) {
+      const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(uk.id)}&is_active=eq.true&select=id,role`);
+      okRole = !!(a && a.length && (a[0].role === 'superadmin' || a[0].role === 'admin'));
+    }
+    if (!okRole) {
+      return json({ ok: false, error: 'Solo un administrador puede asignar departamentos en esta empresa.' }, 403);
+    }
+  }
   let depRow = null;
   if (depId != null) {
     const d = await sb(env, `departments?id=eq.${depId}&company_code=eq.${encodeURIComponent(cc)}&select=id,name`);
