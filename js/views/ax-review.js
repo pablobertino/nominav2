@@ -202,6 +202,27 @@ function ensureStyles() {
   .axr-vsys{color:#6d28d9;font-weight:600}
   .axr-vpor{color:var(--brand,#2563eb);font-weight:600}
   .axr-dacts{display:flex;gap:8px;justify-content:flex-end;padding:10px 14px;background:var(--bg-soft,#f8fafc)}
+  /* Historial (v4.44) */
+  .axr-hctrl{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-bottom:12px}
+  .axr-hctrl .fg{display:flex;flex-direction:column;gap:4px;font-size:11.5px;font-weight:600;color:var(--muted)}
+  .axr-hctrl input,.axr-hctrl select{font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--ink)}
+  .axr-hctrl input:focus,.axr-hctrl select:focus{outline:none;border-color:var(--brand,#2563eb)}
+  .axr-hrow{border:1px solid var(--border);border-radius:12px;margin-bottom:8px;padding:11px 14px;display:flex;gap:12px;align-items:flex-start}
+  .axr-hava{width:36px;height:36px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;overflow:hidden}
+  .axr-hava img{width:100%;height:100%;object-fit:cover;display:block}
+  .axr-hmain{flex:1;min-width:0}
+  .axr-hnm{font-weight:600;font-size:13.5px}
+  .axr-hsub{color:var(--muted);font-size:11.5px;margin-top:1px}
+  .axr-hflds{font-size:12px;color:var(--ink-soft,#475569);margin-top:5px;line-height:1.5}
+  .axr-hflds .fl{white-space:nowrap}
+  .axr-hwho{font-size:11px;color:var(--muted);margin-top:4px}
+  .axr-hside{display:flex;flex-direction:column;align-items:flex-end;gap:4px;flex:none}
+  .axr-hst{font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px}
+  .axr-hst.pending{background:var(--warn-bg,#fff7ed);color:var(--warn,#c2410c);border:1px solid var(--warn-bd,#fed7aa)}
+  .axr-hst.published{background:var(--success-bg,#f0fdf4);color:var(--success,#15803d);border:1px solid #bbf7d0}
+  .axr-hst.discarded{background:var(--danger-bg,#fef2f2);color:var(--danger,#b91c1c);border:1px solid #f3c2c2}
+  .axr-hor{font-size:10.5px;color:var(--muted);background:var(--bg-soft,#f8fafc);border:1px solid var(--border);border-radius:999px;padding:2px 8px}
+  .axr-hpager{display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:6px;font-size:12.5px;color:var(--muted)}
   `;
   document.head.appendChild(st);
 }
@@ -320,6 +341,7 @@ export async function renderAxReview(user) {
     </div>
     <div class="axr-toolbar">
       <button class="axr-btn axr-btn-cmp" id="axrCompare"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg> Comparar</button>
+      <button class="axr-btn" id="axrHistory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> Historial</button>
       <span class="axr-spacer"></span>
       <button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>
       <button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar con cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>
@@ -349,6 +371,7 @@ export async function renderAxReview(user) {
   $('#axrPubBank').addEventListener('click', () => confirmAction('publish', 'bank'));
   $('#axrDisAll').addEventListener('click', () => confirmAction('discard', 'all'));
   $('#axrCompare').addEventListener('click', () => openCompareScope());
+  $('#axrHistory').addEventListener('click', () => openHistory());
 
   await load();
   attachRefresh('#axrRefresh', load, 'sincronizar');
@@ -914,4 +937,139 @@ function confirmCompare(verb, rows) {
     goB.onclick = () => { close(); paintCompare(); };
     const cxl = wrap.querySelector('#cmpCxl'); if (cxl) cxl.textContent = 'Cerrar';
   });
+}
+
+/* ===================== HISTORIAL (v4.44) =====================
+   Bitacora completa de Sincronizar (ax_change_set: pendientes, publicados y
+   anulados; historial permanente). Panel grande con busqueda por cedula o
+   nombre, filtros por estado y origen, orden por fecha y paginado SERVER-SIDE
+   (el count exacto lo trae el endpoint 'history'). Solo lectura. */
+let HIST = { page: 1, size: 50, q: '', status: '', origin: '', dir: 'desc', total: 0, rows: [] };
+
+const HIST_STATUS_LBL = { pending: 'Pendiente', published: 'Publicado', discarded: 'Anulado' };
+const HIST_ORIGIN_LBL = { edit: 'Edición', erp_detect: 'Comparación', auto_sync: 'Automático' };
+
+function openHistory() {
+  HIST = { page: 1, size: 50, q: '', status: '', origin: '', dir: 'desc', total: 0, rows: [] };
+  const wrap = document.createElement('div');
+  wrap.className = 'axr-modal-vp';
+  wrap.id = 'axrHistPanel';
+  wrap.innerHTML = `
+    <div class="axr-cmp">
+      <div class="axr-cmp-head">
+        <h3>Historial de sincronización</h3>
+        <p id="hSub">Todo lo que pasó por esta bandeja: pendientes, publicados y anulados.</p>
+      </div>
+      <div class="axr-cmp-body">
+        <div class="axr-hctrl">
+          <span class="fg">Buscar<input id="hQ" type="text" placeholder="Cédula o nombre…" style="width:190px"></span>
+          <span class="fg">Estado<select id="hSt"><option value="">Todos</option><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="discarded">Anulado</option></select></span>
+          <span class="fg">Origen<select id="hOr"><option value="">Todos</option><option value="edit">Edición</option><option value="erp_detect">Comparación</option></select></span>
+          <span class="fg">Orden<select id="hDir"><option value="desc">Más recientes primero</option><option value="asc">Más antiguos primero</option></select></span>
+          <span class="fg">Por página<select id="hSize"><option>25</option><option selected>50</option><option>100</option></select></span>
+          <button class="axr-btn" id="hGo">Aplicar</button>
+        </div>
+        <div id="hList"><div class="axr-loading">Cargando…</div></div>
+        <div class="axr-hpager" id="hPager" hidden>
+          <span id="hRange"></span>
+          <button class="axr-btn" id="hPrev">← Anterior</button>
+          <button class="axr-btn" id="hNext">Siguiente →</button>
+        </div>
+      </div>
+      <div class="axr-cmp-foot">
+        <span style="color:var(--muted);font-size:12.5px">Solo lectura: publicar y anular se hacen en la bandeja.</span>
+        <span class="axr-spacer"></span>
+        <button class="axr-btn" id="hClose">Cerrar</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const close = () => { document.removeEventListener('keydown', onKey); wrap.remove(); };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  wrap.querySelector('#hClose').addEventListener('click', close);
+
+  const apply = () => {
+    HIST.q = wrap.querySelector('#hQ').value.trim();
+    HIST.status = wrap.querySelector('#hSt').value;
+    HIST.origin = wrap.querySelector('#hOr').value;
+    HIST.dir = wrap.querySelector('#hDir').value;
+    HIST.size = +wrap.querySelector('#hSize').value;
+    HIST.page = 1;
+    histLoad(wrap);
+  };
+  wrap.querySelector('#hGo').addEventListener('click', apply);
+  wrap.querySelector('#hQ').addEventListener('keydown', e => { if (e.key === 'Enter') apply(); });
+  ['#hSt', '#hOr', '#hDir', '#hSize'].forEach(sel =>
+    wrap.querySelector(sel).addEventListener('change', apply));
+  wrap.querySelector('#hPrev').addEventListener('click', () => { if (HIST.page > 1) { HIST.page--; histLoad(wrap); } });
+  wrap.querySelector('#hNext').addEventListener('click', () => {
+    if (HIST.page * HIST.size < HIST.total) { HIST.page++; histLoad(wrap); }
+  });
+
+  histLoad(wrap);
+}
+
+async function histLoad(wrap) {
+  const list = wrap.querySelector('#hList');
+  list.innerHTML = '<div class="axr-loading">Cargando…</div>';
+  const r = await api({
+    action: 'history', user: sessionUserPayload(USER),
+    page: HIST.page, page_size: HIST.size, q: HIST.q,
+    status: HIST.status, origin: HIST.origin, dir: HIST.dir,
+  });
+  if (!r || !r.ok) {
+    list.innerHTML = `<div class="axr-empty">No se pudo cargar el historial${r && r.error ? ': ' + esc(r.error) : ''}.</div>`;
+    return;
+  }
+  HIST.total = r.total || 0;
+  HIST.rows = r.rows || [];
+  paintHistory(wrap);
+}
+
+function paintHistory(wrap) {
+  const list = wrap.querySelector('#hList');
+  const sub = wrap.querySelector('#hSub');
+  if (sub) sub.textContent = `${HIST.total} registro${HIST.total === 1 ? '' : 's'} en tu alcance${HIST.q || HIST.status || HIST.origin ? ' con estos filtros' : ''}.`;
+
+  if (!HIST.rows.length) {
+    list.innerHTML = '<div class="axr-empty">Sin registros con estos filtros.</div>';
+    const pg0 = wrap.querySelector('#hPager'); if (pg0) pg0.hidden = true;
+    return;
+  }
+
+  list.innerHTML = HIST.rows.map(r => {
+    const ci = avatarColor(r.id_number);
+    const ava = r.thumb_url
+      ? `<div class="axr-hava"><img src="${esc(r.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`
+      : `<div class="axr-hava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(r.full_name))}</div>`;
+    const flds = (r.fields || []).map(f =>
+      `<span class="fl"><b>${esc(f.label)}:</b> ${f.old == null ? '(vacío)' : esc(f.old)} → ${f.new == null ? '(vacío)' : esc(f.new)}</span>`
+    ).join(' · ');
+    const who = [];
+    if (r.changed_by || r.changed_at) who.push(`Editado${r.changed_by ? ` por <b>${esc(r.changed_by)}</b>` : ''}${r.changed_at ? ' · ' + esc(fmtDateTime(r.changed_at)) : ''}`);
+    if (r.status !== 'pending' && (r.resolved_by || r.resolved_at)) {
+      who.push(`${r.status === 'published' ? 'Publicado' : 'Anulado'}${r.resolved_by ? ` por <b>${esc(r.resolved_by)}</b>` : ''}${r.resolved_at ? ' · ' + esc(fmtDateTime(r.resolved_at)) : ''}`);
+    }
+    return `<div class="axr-hrow">
+      ${ava}
+      <div class="axr-hmain">
+        <div class="axr-hnm">${esc(r.full_name || '(sin nombre)')}</div>
+        <div class="axr-hsub">${esc(r.ced_kind || '')}-${esc(r.id_number)} · ${esc(r.company_code)}${r.company_name ? ' · ' + esc(r.company_name) : ''}</div>
+        <div class="axr-hflds">${flds}</div>
+        ${who.length ? `<div class="axr-hwho">${who.join('  ·  ')}</div>` : ''}
+      </div>
+      <div class="axr-hside">
+        <span class="axr-hst ${esc(r.status)}">${HIST_STATUS_LBL[r.status] || esc(r.status)}</span>
+        <span class="axr-hor">${HIST_ORIGIN_LBL[r.origin] || esc(r.origin)}</span>
+      </div>
+    </div>`;
+  }).join('');
+
+  const pager = wrap.querySelector('#hPager');
+  const from = (HIST.page - 1) * HIST.size + 1;
+  const to = Math.min(HIST.page * HIST.size, HIST.total);
+  pager.hidden = false;
+  wrap.querySelector('#hRange').textContent = `${from}–${to} de ${HIST.total}`;
+  wrap.querySelector('#hPrev').disabled = HIST.page <= 1;
+  wrap.querySelector('#hNext').disabled = to >= HIST.total;
 }

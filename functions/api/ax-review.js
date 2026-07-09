@@ -648,6 +648,121 @@ async function actorAdminId(env, user) {
   return a && a.length ? a[0].id : null;
 }
 
+/* ---------- HISTORY: bitacora completa del alcance (v4.44) ----------
+   Todo lo que paso por Sincronizar: pendientes, publicados y anulados
+   (ax_change_set es historial permanente). Paginado SERVER-SIDE con count
+   exacto, busqueda por cedula o nombre, filtros por estado/origen y orden
+   por fecha. Enriquece nombre/foto (workers_master), razon social
+   (companies) y quien resolvio (admin_users). */
+async function listHistory(env, actor, user, body) {
+  const allowed = await allowedCompanies(env, actor, user);
+  const page = Math.max(1, parseInt(body.page, 10) || 1);
+  const size = [25, 50, 100].includes(+body.page_size) ? +body.page_size : 50;
+  const dir = body.dir === 'asc' ? 'asc' : 'desc';
+  const status = ['pending', 'published', 'discarded'].includes(body.status) ? body.status : '';
+  const origin = ['edit', 'erp_detect', 'auto_sync'].includes(body.origin) ? body.origin : '';
+  const q = String(body.q || '').trim();
+
+  const parts = [];
+  if (status) parts.push(`status=eq.${status}`);
+  if (origin) parts.push(`origin=eq.${origin}`);
+  if (allowed !== null) {
+    if (!allowed.size) return json({ ok: true, rows: [], total: 0, page, page_size: size });
+    parts.push(`company_code=in.(${[...allowed].map(c => `"${c}"`).join(',')})`);
+  }
+  // Busqueda: solo digitos -> cedula (contiene); con letras -> nombre en el
+  // maestro (ilike con comodines entre palabras) y se filtra por esas cedulas.
+  if (q) {
+    const digits = q.replace(/[^0-9]/g, '');
+    if (digits && /^[0-9\s.\-]+$/.test(q)) {
+      parts.push(`id_number=ilike.*${digits}*`);
+    } else {
+      const pat = '*' + q.replace(/\s+/g, '*') + '*';
+      const wm = await sb(env,
+        `workers_master?full_name=ilike.${encodeURIComponent(pat)}&select=id_number&limit=300`) || [];
+      if (!wm.length) return json({ ok: true, rows: [], total: 0, page, page_size: size });
+      parts.push(`id_number=in.(${wm.map(w => `"${w.id_number}"`).join(',')})`);
+    }
+  }
+
+  const offset = (page - 1) * size;
+  const path = `ax_change_set?select=id,id_number,company_code,changes,status,origin,changed_by,changed_at,resolved_by,resolved_at`
+    + (parts.length ? '&' + parts.join('&') : '')
+    + `&order=changed_at.${dir},id.${dir}&limit=${size}&offset=${offset}`;
+
+  // Fetch directo (no sb()) para leer el count exacto del header Content-Range.
+  const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
+    headers: {
+      apikey: env.supabase_service_role,
+      Authorization: `Bearer ${env.supabase_service_role}`,
+      'Accept-Profile': 'nomina_v2',
+      Prefer: 'count=exact',
+    },
+  });
+  if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
+  const range = res.headers.get('content-range') || '';
+  const total = parseInt(range.split('/')[1], 10) || 0;
+  const sets = await res.json() || [];
+  if (!sets.length) return json({ ok: true, rows: [], total, page, page_size: size });
+
+  // Enriquecimientos (solo de la pagina).
+  const ceds = [...new Set(sets.map(s => s.id_number))];
+  const nameByCed = {};
+  if (ceds.length) {
+    const inList = ceds.map(c => `"${c}"`).join(',');
+    const wm = await sb(env,
+      `workers_master?id_number=in.(${inList})&select=id_number,full_name,ced_kind,photo_key`) || [];
+    wm.forEach(w => { nameByCed[w.id_number] = w; });
+  }
+  const codes = [...new Set(sets.map(s => s.company_code))];
+  const compByCode = {};
+  if (codes.length) {
+    const inList = codes.map(c => `"${c}"`).join(',');
+    const comps = await sb(env,
+      `companies?company_code=in.(${inList})&select=company_code,business_name`) || [];
+    comps.forEach(c => { compByCode[c.company_code] = c.business_name || null; });
+  }
+  const resolverIds = [...new Set(sets.map(s => s.resolved_by).filter(x => x != null))];
+  const resolverById = {};
+  if (resolverIds.length) {
+    const admins = await sb(env,
+      `admin_users?id=in.(${resolverIds.join(',')})&select=id,name,username`) || [];
+    admins.forEach(a => { resolverById[a.id] = a.name || a.username || ('admin#' + a.id); });
+  }
+
+  const rows = sets.map(s => {
+    const ch = (s.changes && typeof s.changes === 'object') ? s.changes : {};
+    const fields = Object.keys(ch).map(f => ({
+      field: f,
+      label: FIELD_LABEL[f] || f,
+      old: displayVal(f, ch[f] ? ch[f].old : null),
+      new: displayVal(f, ch[f] ? ch[f].new : null),
+    }));
+    const nm = nameByCed[s.id_number] || {};
+    return {
+      id: s.id,
+      id_number: s.id_number,
+      ced_kind: nm.ced_kind || null,
+      full_name: nm.full_name || null,
+      thumb_url: thumbUrlPub(env, nm.photo_key),
+      company_code: s.company_code,
+      company_name: compByCode[s.company_code] || null,
+      status: s.status,
+      origin: s.origin || 'edit',
+      fields,
+      field_count: fields.length,
+      changed_by: s.changed_by != null
+        ? (/^\d+$/.test(String(s.changed_by)) ? ('admin#' + s.changed_by) : String(s.changed_by))
+        : null,
+      changed_at: s.changed_at,
+      resolved_by: s.resolved_by != null ? (resolverById[s.resolved_by] || ('admin#' + s.resolved_by)) : null,
+      resolved_at: s.resolved_at,
+    };
+  });
+
+  return json({ ok: true, rows, total, page, page_size: size });
+}
+
 /* ---------- LIST: change_set pendientes del alcance ---------- */
 async function listPending(env, actor, user) {
   const allowed = await allowedCompanies(env, actor, user);
@@ -970,6 +1085,7 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (action === 'list') return await listPending(env, actor, user);
+    if (action === 'history') return await listHistory(env, actor, user, body);
     if (action === 'publish') return await publish(env, actor, user, body);
     if (action === 'discard') return await discard(env, actor, user, body);
     if (action === 'detect') return await detectDiffs(env, actor, user, body);
