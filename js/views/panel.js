@@ -363,7 +363,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.63</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.65</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -6185,6 +6185,32 @@ export function renderPanel() {
   CATALOG = null; CU_ROWS = null; SCOPE = null; USERS_USER = null; TIENDAS_FILTERS = null; currentView = 'dashboard';
   mount(shell(user));
   loadAvatar((user.email || '').trim().toLowerCase());
+  // v4.64: menu por permisos (grupo Sincronizacion). Los items adminonly se
+  // pintan y luego se PODAN segun la matriz de Roles del propio usuario
+  // (permisos view.* enforced, consultados via /api/my-perms). Superadmin
+  // no consulta: ve todo. Si la consulta falla, el menu queda como esta y
+  // los endpoints gatean igual (defensa en profundidad).
+  (async function applySyncMenuPerms() {
+    if (!(user.kind === 'admin' && user.role !== 'superadmin')) return;
+    const MAP = { syncreview: 'view.syncreview', axcompare: 'view.axcompare', axhistory: 'view.axhistory', erpquery: 'view.erpquery' };
+    try {
+      const r = await fetch('/api/my-perms', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null }, codes: Object.values(MAP) }),
+      }).then(x => x.json());
+      if (!r || !r.ok || r.super) return;
+      let group = null;
+      Object.entries(MAP).forEach(([view, code]) => {
+        if (r.perms && r.perms[code]) return;
+        const btn = document.querySelector(`#pnlNav [data-view="${view}"]`) || document.querySelector(`.pnl-side [data-view="${view}"]`);
+        if (btn) { btn.style.display = 'none'; group = btn.closest('.nav-group') || group; }
+      });
+      if (group) {
+        const anyVisible = [...group.querySelectorAll('button[data-view]')].some(b => b.style.display !== 'none');
+        if (!anyVisible) group.style.display = 'none';
+      }
+    } catch (_) { /* sin cambios en el menu */ }
+  })();
   $('#logoutBtn').addEventListener('click', () => { clearSession(); go('/login'); });
   document.querySelectorAll('#pnlNav button[data-view]').forEach(b =>
     b.addEventListener('click', () => navigate(b.dataset.view, user)));

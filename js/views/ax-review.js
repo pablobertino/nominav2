@@ -975,7 +975,7 @@ function confirmCompare(verb, rows) {
    anulados; historial permanente). Panel grande con busqueda por cedula o
    nombre, filtros por estado y origen, orden por fecha y paginado SERVER-SIDE
    (el count exacto lo trae el endpoint 'history'). Solo lectura. */
-let HIST = { page: 1, size: 50, q: '', status: '', origin: '', dir: 'desc', total: 0, rows: [] };
+let HIST = { page: 1, size: 50, q: '', status: '', origin: '', dir: 'desc', ftype: '', fcompany: '', fzone: '', fsubzone: '', fconcept: '', total: 0, rows: [] };
 
 const HIST_STATUS_LBL = { pending: 'Pendiente', published: 'Publicado', discarded: 'Anulado' };
 const HIST_ORIGIN_LBL = { edit: 'Edición', erp_detect: 'Comparación', auto_sync: 'Automático' };
@@ -983,7 +983,7 @@ const HIST_ORIGIN_LBL = { edit: 'Edición', erp_detect: 'Comparación', auto_syn
 export async function renderAxHistory(user) {
   USER = user;
   ensureStyles();
-  HIST = { page: 1, size: 50, q: '', status: '', origin: '', dir: 'desc', total: 0, rows: [] };
+  HIST = { page: 1, size: 50, q: '', status: '', origin: '', dir: 'desc', ftype: '', fcompany: '', fzone: '', fsubzone: '', fconcept: '', total: 0, rows: [] };
   $('#pnlMain').innerHTML = `
     <div class="axr-head"><div>
       <h1>Historial</h1>
@@ -996,6 +996,14 @@ export async function renderAxHistory(user) {
       <span class="fg">Orden<select id="hDir"><option value="desc">Más recientes primero</option><option value="asc">Más antiguos primero</option></select></span>
       <span class="fg">Por página<select id="hSize"><option>25</option><option selected>50</option><option>100</option></select></span>
       <button class="axr-btn" id="hGo">Aplicar</button>
+    </div>
+    <div class="axr-hctrl" style="margin-top:8px">
+      <span class="fg">Tipo<select id="hFType"><option value="">Todos</option></select></span>
+      <span class="fg">Empresa<select id="hFEmp"><option value="">Todas</option></select></span>
+      <span class="fg">Zona<select id="hFZone"><option value="">Todas</option></select></span>
+      <span class="fg">Subzona<select id="hFSub"><option value="">Todas</option></select></span>
+      <span class="fg">Concepto<select id="hFCon"><option value="">Todos</option></select></span>
+      <button class="axr-clear" id="hFClear">Limpiar</button>
     </div>
     <div id="hList" style="margin-top:6px"><div class="axr-loading">Cargando…</div></div>
     <div class="axr-hpager" id="hPager" hidden>
@@ -1010,6 +1018,13 @@ export async function renderAxHistory(user) {
     HIST.origin = $('#hOr').value;
     HIST.dir = $('#hDir').value;
     HIST.size = +$('#hSize').value;
+    // v4.65: filtros de alcance (los combos son la fuente; las cascadas
+    // Tipo->Empresa y Zona->Subzona ya dejaron el DOM consistente).
+    HIST.ftype = $('#hFType').value;
+    HIST.fcompany = $('#hFEmp').value;
+    HIST.fzone = $('#hFZone').value;
+    HIST.fsubzone = $('#hFSub').value;
+    HIST.fconcept = $('#hFCon').value;
     HIST.page = 1;
     histLoad(document);
   };
@@ -1020,6 +1035,33 @@ export async function renderAxHistory(user) {
   $('#hPrev').addEventListener('click', () => { if (HIST.page > 1) { HIST.page--; histLoad(document); } });
   $('#hNext').addEventListener('click', () => {
     if (HIST.page * HIST.size < HIST.total) { HIST.page++; histLoad(document); }
+  });
+
+  // v4.65: filtros de alcance con el MISMO catalogo de Comparar
+  // (detect_scope sin filtro). Empresa depende de Tipo; Subzona de Zona.
+  // Si el catalogo no carga, los combos quedan en Todos y no filtran.
+  let HFAC = emptyFacetsCli();
+  const hCompaniesFor = (type) => (HFAC.companies || []).filter(c => !type || c.type === type);
+  const hSubsFor = (zoneId) => (HFAC.subzones || []).filter(s => !zoneId || String(s.zone_id) === String(zoneId));
+  const buildHF = () => {
+    fillSelect($('#hFType'), (HFAC.types || []).map(t => ({ id: t, name: t })), HIST.ftype, 'Todos', x => x.id, x => x.name);
+    fillSelect($('#hFEmp'), hCompaniesFor(HIST.ftype), HIST.fcompany, 'Todas', x => x.code, x => `${x.code} · ${x.name || ''}`);
+    fillSelect($('#hFZone'), (HFAC.zones || []), HIST.fzone, 'Todas', x => x.id, x => x.name);
+    fillSelect($('#hFSub'), hSubsFor(HIST.fzone), HIST.fsubzone, 'Todas', x => x.id, x => x.name);
+    fillSelect($('#hFCon'), (HFAC.concepts || []), HIST.fconcept, 'Todos', x => x.id, x => x.name);
+  };
+  (async () => {
+    try {
+      const sc = await api({ action: 'detect_scope', user: sessionUserPayload(USER), filter: {} });
+      if (sc && sc.ok) { HFAC = sc.facets || emptyFacetsCli(); buildHF(); }
+    } catch (_) { /* combos quedan en Todos */ }
+  })();
+  $('#hFType').addEventListener('change', e => { HIST.ftype = e.target.value; HIST.fcompany = ''; buildHF(); apply(); });
+  $('#hFZone').addEventListener('change', e => { HIST.fzone = e.target.value; HIST.fsubzone = ''; buildHF(); apply(); });
+  ['#hFEmp', '#hFSub', '#hFCon'].forEach(sel => $(sel).addEventListener('change', apply));
+  $('#hFClear').addEventListener('click', () => {
+    HIST.ftype = ''; HIST.fcompany = ''; HIST.fzone = ''; HIST.fsubzone = ''; HIST.fconcept = '';
+    buildHF(); apply();
   });
 
   await histLoad(document);
@@ -1033,6 +1075,8 @@ async function histLoad(wrap) {
     action: 'history', user: sessionUserPayload(USER),
     page: HIST.page, page_size: HIST.size, q: HIST.q,
     status: HIST.status, origin: HIST.origin, dir: HIST.dir,
+    ftype: HIST.ftype, fcompany: HIST.fcompany, fzone: HIST.fzone,
+    fsubzone: HIST.fsubzone, fconcept: HIST.fconcept,
   });
   if (!r || !r.ok) {
     list.innerHTML = `<div class="axr-empty">No se pudo cargar el historial${r && r.error ? ': ' + esc(r.error) : ''}.</div>`;
@@ -1046,7 +1090,7 @@ async function histLoad(wrap) {
 function paintHistory(wrap) {
   const list = wrap.querySelector('#hList');
   const sub = wrap.querySelector('#hSub');
-  if (sub) sub.textContent = `${HIST.total} registro${HIST.total === 1 ? '' : 's'} en tu alcance${HIST.q || HIST.status || HIST.origin ? ' con estos filtros' : ''}.`;
+  if (sub) sub.textContent = `${HIST.total} registro${HIST.total === 1 ? '' : 's'} en tu alcance${HIST.q || HIST.status || HIST.origin || HIST.ftype || HIST.fcompany || HIST.fzone || HIST.fsubzone || HIST.fconcept ? ' con estos filtros' : ''}.`;
 
   if (!HIST.rows.length) {
     list.innerHTML = '<div class="axr-empty">Sin registros con estos filtros.</div>';

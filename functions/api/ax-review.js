@@ -666,6 +666,28 @@ async function listHistory(env, actor, user, body) {
   const parts = [];
   if (status) parts.push(`status=eq.${status}`);
   if (origin) parts.push(`origin=eq.${origin}`);
+  // v4.65: filtros de ALCANCE como en el resto del portal (Tipo, Zona,
+  // Subzona, Concepto, Tienda/Empresa). Se resuelven contra companies a una
+  // lista de codigos y se intersectan con el alcance del actor (AND).
+  const fType = String(body.ftype || '').trim();
+  const fCompany = String(body.fcompany || '').trim();
+  const fZone = String(body.fzone || '').trim();
+  const fSub = String(body.fsubzone || '').trim();
+  const fCon = String(body.fconcept || '').trim();
+  if (fCompany) {
+    parts.push(`company_code=eq.${encodeURIComponent(fCompany)}`);
+  } else if (fType || fZone || fSub || fCon) {
+    const cf = ['select=company_code', 'limit=1000'];
+    if (fType) cf.push(`company_type=eq.${encodeURIComponent(fType)}`);
+    if (fZone) cf.push(`zone_id=eq.${encodeURIComponent(fZone)}`);
+    if (fSub) cf.push(`subzone_id=eq.${encodeURIComponent(fSub)}`);
+    if (fCon) cf.push(`concept_id=eq.${encodeURIComponent(fCon)}`);
+    const comps = await sb(env, `companies?${cf.join('&')}`) || [];
+    let codes = comps.map(c => c.company_code);
+    if (allowed !== null) codes = codes.filter(c => allowed.has(c));
+    if (!codes.length) return json({ ok: true, rows: [], total: 0, page, page_size: size });
+    parts.push(`company_code=in.(${codes.map(c => `"${c}"`).join(',')})`);
+  }
   if (allowed !== null) {
     if (!allowed.size) return json({ ok: true, rows: [], total: 0, page, page_size: size });
     parts.push(`company_code=in.(${[...allowed].map(c => `"${c}"`).join(',')})`);
