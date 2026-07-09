@@ -30,7 +30,7 @@
    api_catalog.secret_key (ej. canaima_apikey)
    ===================================================================== */
 
-import { resolveActor, can, AuthError } from './_auth.js';
+import { resolveActor, can, shadowCan, AuthError } from './_auth.js';
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -95,6 +95,9 @@ export async function onRequestPost({ request, env }) {
     if (!can(actor, 'hcm.publish')) {
       return json({ ok: false, error: 'No tienes permiso para consultar las APIs.' }, 403);
     }
+    // v4.54 SHADOW: la consulta manual es LECTURA -> code fino hcm.view
+    // (gate real sigue hcm.publish; el log dira si conviene relajar).
+    try { await shadowCan(env, body.user, 'erp-query', body.action || 'query', 'hcm.view', true); } catch (_) { /* no rompe */ }
 
     /* ---------- catalog: APIs activas para el selector ---------- */
     if (body.action === 'catalog') {

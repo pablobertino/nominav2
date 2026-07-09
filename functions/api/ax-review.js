@@ -36,7 +36,7 @@
    Secrets: canaima_apikey, supabase_url, supabase_service_role
    ===================================================================== */
 
-import { resolveActor, can, AuthError } from './_auth.js';
+import { resolveActor, can, shadowCan, AuthError } from './_auth.js';
 import { hcmRosterRaw, fullHcmPayload } from './_hcm.js';
 
 const HCM_API = 'https://api2.grupocanaima.com/empleados/datos/v1';
@@ -1083,6 +1083,19 @@ export async function onRequestPost({ request, env }) {
     if (!can(actor, 'hcm.publish')) {
       return json({ ok: false, error: 'No tienes permiso para revisar/publicar cambios en AX.' }, 403);
     }
+    // v4.54 SHADOW por accion (pedido Pablo: acumular log del dominio antes
+    // de cortar a gates finos). El gate REAL sigue siendo hcm.publish; el
+    // shadow registra que permiso FINO corresponderia a cada accion:
+    //   lecturas -> hcm.view · adopciones/escrituras al portal -> hcm.sync
+    //   publicar/anular en el sistema -> hcm.publish
+    // legacy_allowed = true (ya paso el gate real); la discrepancia queda en
+    // perm_shadow_log cuando la matriz fina no otorga el code al rol.
+    const AXR_CODE_BY_ACTION = {
+      list: 'hcm.view', history: 'hcm.view', detect: 'hcm.view', detect_scope: 'hcm.view',
+      detect_commit: 'hcm.sync', adopt: 'hcm.sync',
+      publish: 'hcm.publish', discard: 'hcm.publish',
+    };
+    try { await shadowCan(env, user, 'ax-review', action, AXR_CODE_BY_ACTION[action] || 'hcm.publish', true); } catch (_) { /* el shadow nunca rompe la accion */ }
 
     if (action === 'list') return await listPending(env, actor, user);
     if (action === 'history') return await listHistory(env, actor, user, body);
