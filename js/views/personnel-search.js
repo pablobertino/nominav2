@@ -646,6 +646,7 @@ function workerCopyText(w) {
   if (w.email) L.push(`Correo: ${w.email}`);
   if (w.account_number) L.push(`Cuenta: ${w.account_number}`);
   if (w.address) L.push(`Dirección: ${w.address}`);
+  L.push(`Ficha: ${String(w.id_number).replace(/[^0-9]/g, '')}`);
   return L.join('\n');
 }
 async function copyWorkerData(w, btn) {

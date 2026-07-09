@@ -796,7 +796,7 @@ function paintGrid() {
       <div class="wp-photo${bday ? ' wp-bday' : ''}">${chk}${conf}${photo}${bflag}${ov}</div>
       <div class="wp-body">
         <p class="wp-name">${esc(w.full_name)}</p>
-        <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}</span>
+        <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}<button type="button" data-copyced="${w.id_number}" title="Copiar datos" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:5px;padding:0;border:1px solid var(--border);border-radius:6px;background:var(--surface,#fff);color:var(--ink-soft,#475569);cursor:pointer;vertical-align:middle"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></span>
         ${w.role ? `<div class="wp-role">${esc(w.role)}</div>` : ''}
         ${egr}${manualTag}
         <div class="wp-spacer"></div>
@@ -808,11 +808,20 @@ function paintGrid() {
 
   grid.querySelectorAll('.wp-card').forEach(el =>
     el.addEventListener('click', (ev) => {
+      if (ev.target.closest('[data-copyced]')) return;
       const ced = String(el.dataset.ced);
       if (STATE.selMode) {
         if (STATE.selected.has(ced)) STATE.selected.delete(ced); else STATE.selected.add(ced);
         paintGrid(); paintSelBar();
       } else openFicha(ced);
+    }));
+
+  // v4.48: copiar los datos de la persona desde la tarjeta (todos los roles).
+  grid.querySelectorAll('[data-copyced]').forEach(btn =>
+    btn.addEventListener('click', (ev) => {
+      ev.stopPropagation();
+      const w = STATE.workers.find(x => String(x.id_number) === String(btn.dataset.copyced));
+      if (w) copyWorkerData(w, btn);
     }));
 
   // Boton "Ver foto" del overlay: abre el visor grande sin entrar a la ficha.
@@ -1620,6 +1629,50 @@ function showFieldGuardModal(labels) {
   const onKey = ev => { if (ev.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
   wrap.querySelector('#fgOk').addEventListener('click', close);
+}
+
+/* v4.48: copiar datos de la persona al portapapeles (todos los roles).
+   Mismo formato que Buscar/Datos incompletos/Sincronizar, con una LINEA
+   FINAL extra: la cedula SIN la letra (asi se busca directo en el sistema,
+   que la maneja sin el prefijo V/E). */
+function workerCopyText(w) {
+  const MAR = { S: 'Soltero(a)', C: 'Casado(a)', D: 'Divorciado(a)', V: 'Viudo(a)', O: 'Conviviente', R: 'Union registrada' };
+  const L = [];
+  L.push(w.full_name || '(sin nombre)');
+  L.push(`C.I.: ${(w.ced_kind || 'V')}-${w.id_number}`);
+  const emp = [STATE && STATE.cc, STATE && (STATE.companyName || STATE.company_name || (STATE.company && STATE.company.business_name))].filter(Boolean).join(' · ');
+  if (emp) L.push(`Empresa: ${emp}`);
+  if (w.department_name) L.push(`Departamento: ${w.department_name}`);
+  if (w.role) L.push(`Cargo: ${w.role}`);
+  if (w.gender) L.push(`Sexo: ${w.gender === 'M' ? 'Masculino' : w.gender === 'F' ? 'Femenino' : w.gender}`);
+  if (w.birth_date) L.push(`Nacimiento: ${String(w.birth_date).slice(0, 10)}${w.age != null ? ` (${w.age} años)` : ''}`);
+  else if (w.age != null) L.push(`Edad: ${w.age} años`);
+  if (w.marital_status) L.push(`Estado civil: ${MAR[w.marital_status] || w.marital_status}`);
+  if (w.phone) L.push(`Teléfono: ${String(w.phone).startsWith('+58') ? '0' + String(w.phone).slice(3) : w.phone}`);
+  if (w.email) L.push(`Correo: ${w.email}`);
+  if (w.account_number) L.push(`Cuenta: ${w.account_number}`);
+  if (w.address) L.push(`Dirección: ${w.address}`);
+  L.push(`Ficha: ${String(w.id_number).replace(/[^0-9]/g, '')}`);
+  return L.join('\n');
+}
+async function copyWorkerData(w, btn) {
+  if (!w) return;
+  const text = workerCopyText(w);
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; }
+  catch (_) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      ok = document.execCommand('copy'); ta.remove();
+    } catch (__) { ok = false; }
+  }
+  if (btn && ok) {
+    const prev = btn.innerHTML;
+    btn.innerHTML = '<svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+    setTimeout(() => { btn.innerHTML = prev; }, 1200);
+  }
 }
 
 function backToGrid() {

@@ -294,6 +294,7 @@ function rowCopyText(r) {
   if (r.changed_by || r.changed_at) {
     L.push(`Editado${r.changed_by ? ` por ${r.changed_by}` : ''}${r.changed_at ? ` · ${fmtDateTime(r.changed_at)}` : ''}`);
   }
+  L.push(`Ficha: ${String(r.id_number).replace(/[^0-9]/g, '')}`);
   return L.join('\n');
 }
 
