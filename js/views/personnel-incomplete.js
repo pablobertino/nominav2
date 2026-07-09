@@ -510,6 +510,7 @@ function paint() {
     const acts = `<div class="pi-actions">
         <button type="button" class="pi-iconbtn" data-photo="${start + i}" title="${hasPhoto ? 'Ver foto' : 'Sin foto'}" ${hasPhoto ? '' : 'disabled'}>${icoPhoto()}</button>
         <button type="button" class="pi-iconbtn" data-ficha="${start + i}" title="Ver ficha">${icoFicha()}</button>
+        <button type="button" class="pi-iconbtn" data-copy="${start + i}" title="Copiar datos">${icoCopy()}</button>
       </div>`;
     return `<div class="pi-row">
       ${avatarCell(w)}
@@ -531,6 +532,8 @@ function paint() {
   // fila ya NO abre nada por si sola.
   list.querySelectorAll('[data-ficha]').forEach(b =>
     b.addEventListener('click', () => openWorker(shown[+b.dataset.ficha])));
+  list.querySelectorAll('[data-copy]').forEach(b =>
+    b.addEventListener('click', () => copyWorkerData(shown[+b.dataset.copy], b)));
   list.querySelectorAll('[data-photo]').forEach(b =>
     b.addEventListener('click', () => {
       const w = shown[+b.dataset.photo];
@@ -595,6 +598,51 @@ function openWorker(w) {
   if (!w) return;
   const mode = NON_STORE_TYPES.has(w.company_type) ? 'enterprise' : 'store';
   renderWorkerPhotos(USER, w.company_code, () => renderPersonnelIncomplete(USER), { mode, openCed: w.id_number });
+}
+
+/* ---------- Copiar datos de la ficha al portapapeles (v4.39) ---------- */
+function icoCopy() {
+  return '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+}
+function workerCopyText(w) {
+  const MAR = { S: 'Soltero(a)', C: 'Casado(a)', D: 'Divorciado(a)', V: 'Viudo(a)', O: 'Conviviente', R: 'Union registrada' };
+  const L = [];
+  L.push(w.full_name || '(sin nombre)');
+  L.push(`C.I.: ${(w.ced_kind || 'V')}-${w.id_number}`);
+  const emp = [w.company_code, w.company_name].filter(Boolean).join(' · ');
+  if (emp) L.push(`Empresa: ${emp}`);
+  const ubi = [w.zona, w.subzona, w.concepto].filter(Boolean).join(' · ');
+  if (ubi) L.push(ubi);
+  if (w.department) L.push(`Departamento: ${w.department}`);
+  if (w.role) L.push(`Cargo: ${w.role}`);
+  if (w.gender) L.push(`Sexo: ${w.gender === 'M' ? 'Masculino' : w.gender === 'F' ? 'Femenino' : w.gender}`);
+  if (w.birth_date) L.push(`Nacimiento: ${String(w.birth_date).slice(0, 10)}${w.age != null ? ` (${w.age} años)` : ''}`);
+  else if (w.age != null) L.push(`Edad: ${w.age} años`);
+  if (w.marital_status) L.push(`Estado civil: ${MAR[w.marital_status] || w.marital_status}`);
+  if (w.phone) L.push(`Teléfono: ${String(w.phone).startsWith('+58') ? '0' + String(w.phone).slice(3) : w.phone}`);
+  if (w.email) L.push(`Correo: ${w.email}`);
+  if (w.account_number) L.push(`Cuenta: ${w.account_number}`);
+  if (w.address) L.push(`Dirección: ${w.address}`);
+  return L.join('\n');
+}
+async function copyWorkerData(w, btn) {
+  if (!w) return;
+  const text = workerCopyText(w);
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; }
+  catch (_) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      ok = document.execCommand('copy'); ta.remove();
+    } catch (__) { ok = false; }
+  }
+  if (btn && ok) {
+    const prev = btn.innerHTML;
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="#16a34a" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+    setTimeout(() => { btn.innerHTML = prev; }, 1200);
+  }
 }
 
 /* -------- Exportacion (xlsx / csv / txt), mismo patron que Empresas --------

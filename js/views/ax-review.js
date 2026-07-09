@@ -20,6 +20,11 @@
 
 import { $ } from '../core/dom.js';
 import { attachRefresh } from '../core/refresh.js';
+import { renderWorkerPhotos, openWorkerLightbox } from './worker-photos.js';
+
+/* Tipos de empresa que NO son tienda (mismo criterio que Buscar): definen
+   el modo de la vista Personal al saltar a la ficha. */
+const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
 
 let USER = null;
 let ROWS = [];             // filas pendientes (del backend)
@@ -115,6 +120,13 @@ function ensureStyles() {
   .axr-chk{width:20px;height:20px;border-radius:6px;border:2px solid var(--border);flex:none;display:flex;align-items:center;justify-content:center;color:#fff;font-size:12px;background:var(--surface)}
   .axr-chk.on{background:var(--brand,#2563eb);border-color:var(--brand,#2563eb)}
   .axr-ava{width:40px;height:40px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;overflow:hidden}
+  .axr-ava.haspic{cursor:zoom-in;background:#eef2f7}
+  .axr-ava img{width:100%;height:100%;object-fit:cover;display:block}
+  .axr-rowacts{display:flex;gap:6px;flex:none;align-items:center}
+  .axr-iconbtn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink-soft,#475569);cursor:pointer;padding:0}
+  .axr-iconbtn:hover{background:var(--bg-soft,#f1f5f9)}
+  .axr-iconbtn svg{width:15px;height:15px}
+  .axr-iconbtn.ok{color:var(--success,#16a34a);border-color:#bbf7d0;background:var(--success-bg,#f0fdf4)}
   .axr-who{flex:1;min-width:0}
   .axr-nm{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .axr-sub{color:var(--muted);font-size:12px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -237,6 +249,53 @@ function isBankField(f) {
   return f.field === 'account_number' || f.label === 'Cuenta' || f.label === 'Cuenta bancaria';
 }
 
+/* ---------- Acciones por fila: ficha / copiar (v4.39) ---------- */
+/* Salta a la vista Personal con la ficha de esta persona abierta (mismo
+   patron que Buscar). Al salir de Personal, vuelve a Sincronizar. */
+function gotoFicha(r) {
+  if (!r) return;
+  const mode = NON_STORE_TYPES.has(r.company_type) ? 'enterprise' : 'store';
+  renderWorkerPhotos(USER, r.company_code, () => renderAxReview(USER), { mode, openCed: r.id_number });
+}
+
+/* Texto ordenado del cambio pendiente para el portapapeles. */
+function rowCopyText(r) {
+  const L = [];
+  L.push(r.full_name || '(sin nombre)');
+  L.push(`C.I.: ${(r.ced_kind || 'V')}-${r.id_number}`);
+  L.push(`Empresa: ${[r.company_code, r.company_name].filter(Boolean).join(' · ')}`);
+  const ubi = [r.zona, r.subzona, r.concepto].filter(Boolean).join(' · ');
+  if (ubi) L.push(ubi);
+  const fields = r.fields || [];
+  L.push(`Cambios pendientes (${fields.length}):`);
+  fields.forEach(f => L.push(`- ${f.label}: ${f.old == null ? '(vacio)' : f.old} → ${f.new == null ? '(vacio)' : f.new}`));
+  if (r.changed_by || r.changed_at) {
+    L.push(`Editado${r.changed_by ? ` por ${r.changed_by}` : ''}${r.changed_at ? ` · ${fmtDateTime(r.changed_at)}` : ''}`);
+  }
+  return L.join('\n');
+}
+
+/* Copia al portapapeles con fallback (execCommand) y feedback en el boton. */
+async function copyToClipboard(text, btn) {
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; }
+  catch (_) {
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      ok = document.execCommand('copy'); ta.remove();
+    } catch (__) { ok = false; }
+  }
+  if (btn && ok) {
+    const prev = btn.innerHTML;
+    btn.classList.add('ok');
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+    setTimeout(() => { btn.classList.remove('ok'); btn.innerHTML = prev; }, 1200);
+  }
+  return ok;
+}
+
 export async function renderAxReview(user) {
   USER = user;
   ensureStyles();
@@ -343,7 +402,9 @@ function paint() {
     return `<div class="axr-row ${bank ? 'bank ' : ''}${isSel ? 'sel' : ''} ${isOpen ? 'open' : ''}" data-id="${r.id}">
       <div class="axr-rowhead" data-toggle="${r.id}">
         <div class="axr-chk ${isSel ? 'on' : ''}" data-check="${r.id}">${isSel ? '✓' : ''}</div>
-        <div class="axr-ava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(r.full_name))}</div>
+        ${r.thumb_url
+          ? `<div class="axr-ava haspic" data-pic="${r.id}" title="Ver foto"><img src="${esc(r.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`
+          : `<div class="axr-ava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(r.full_name))}</div>`}
         <div class="axr-who">
           <div class="axr-nm">${esc(r.full_name || '(sin nombre)')}</div>
           <div class="axr-sub">${esc(r.ced_kind || '')}-${esc(r.id_number)} · ${esc(r.company_name || r.company_code)}</div>
@@ -354,6 +415,10 @@ function paint() {
           ${emeta ? `<span class="axr-emeta">${emeta}</span>` : ''}
           ${bank ? '<span class="axr-bank">⚠ Cuenta bancaria</span>' : ''}
           <span class="axr-nf">${n} campo${n === 1 ? '' : 's'}</span>
+        </div>
+        <div class="axr-rowacts">
+          <button type="button" class="axr-iconbtn" data-goficha="${r.id}" title="Ver ficha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M15 8h4M15 12h4M5.5 18c.7-1.8 2.1-2.8 3.5-2.8s2.8 1 3.5 2.8"/></svg></button>
+          <button type="button" class="axr-iconbtn" data-copy="${r.id}" title="Copiar datos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
         </div>
         <svg class="axr-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
       </div>
@@ -369,7 +434,7 @@ function paint() {
 
   list.querySelectorAll('[data-toggle]').forEach(el =>
     el.addEventListener('click', ev => {
-      if (ev.target.closest('[data-check]')) return;
+      if (ev.target.closest('[data-check],[data-pic],[data-goficha],[data-copy]')) return;
       const id = +el.dataset.toggle;
       if (OPEN.has(id)) OPEN.delete(id); else OPEN.add(id);
       paint();
@@ -385,6 +450,25 @@ function paint() {
     el.addEventListener('click', () => confirmAction('publish', 'one', +el.dataset.publish)));
   list.querySelectorAll('[data-discard]').forEach(el =>
     el.addEventListener('click', () => confirmAction('discard', 'one', +el.dataset.discard)));
+  // v4.39: foto (lightbox), ir a la ficha y copiar datos.
+  list.querySelectorAll('[data-pic]').forEach(el =>
+    el.addEventListener('click', ev => {
+      ev.stopPropagation();
+      const r = ROWS.find(x => x.id === +el.dataset.pic);
+      if (!r || !r.thumb_url) return;
+      openWorkerLightbox(r.thumb_url, `${r.full_name || ''} · C.I. ${r.id_number}`, `${r.id_number}.jpg`);
+    }));
+  list.querySelectorAll('[data-goficha]').forEach(el =>
+    el.addEventListener('click', ev => {
+      ev.stopPropagation();
+      gotoFicha(ROWS.find(x => x.id === +el.dataset.goficha));
+    }));
+  list.querySelectorAll('[data-copy]').forEach(el =>
+    el.addEventListener('click', ev => {
+      ev.stopPropagation();
+      const r = ROWS.find(x => x.id === +el.dataset.copy);
+      if (r) copyToClipboard(rowCopyText(r), el);
+    }));
 
   updateBars();
 }
