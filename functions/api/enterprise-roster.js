@@ -287,6 +287,13 @@ export async function onRequestPost({ request, env }) {
       const cc = (body.company_code || '').trim();
       const chk = await checkCompany(env, cc, allowed);
       if (!chk.ok) return json(chk, 403);
+      // v4.51: limpiar la lista es mantenimiento reservado al SUPERADMIN
+      // (decision de Pablo 2026-07-09; el permiso roster.clear existe en la
+      // matriz pero por defecto NADIE lo tiene: superadmin pasa por diseno).
+      // El shadow ya queda registrado por el mapa ER_CODE_BY_ACTION de arriba.
+      if (!admin || admin.role !== 'superadmin') {
+        return json({ ok: false, error: 'Limpiar la lista es una accion de mantenimiento reservada al superadministrador.' }, 403);
+      }
       await sb(env, `enterprise_workers?company_code=eq.${encodeURIComponent(cc)}`, { method: 'DELETE' });
       await sb(env, `enterprise_roster_meta?company_code=eq.${encodeURIComponent(cc)}`, { method: 'DELETE' });
       return json({ ok: true, cleared: true });

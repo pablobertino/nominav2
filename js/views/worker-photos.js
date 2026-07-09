@@ -336,7 +336,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
           ${isAdmin ? `<button class="btn" id="wpPublish" title="Publicar: envia a AX los cambios hechos aqui" aria-label="Publicar cambios en AX" disabled><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar <span id="wpPublishN" class="wp-pubcount">0</span></button>` : ''}
           ${(isAdmin && mode === 'enterprise') ? `<button class="btn" id="wpAssignDept" title="Seleccionar varias personas y asignarles departamento"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Asignar depto.</button>` : ''}
           ${(isSuper && mode === 'enterprise') ? `<button class="btn" id="wpNewDept" title="Nuevo departamento" aria-label="Nuevo departamento"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Nuevo departamento</button>` : ''}
-          <button class="btn wp-btn-danger" id="wpClear" title="Limpiar lista de personal" aria-label="Limpiar lista de personal"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Limpiar lista</button>
+          ${isSuper ? `<button class="btn wp-btn-danger" id="wpClear" title="Limpiar lista de personal (mantenimiento, solo superadministrador)" aria-label="Limpiar lista de personal"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Limpiar lista</button>` : ''}
         </div>
       </div>
       <div id="wpRosterBar" class="wp-rosterbar" style="display:none"></div>
@@ -419,7 +419,8 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   });
   const publishBtn = $('#wpPublish');
   if (publishBtn) publishBtn.addEventListener('click', () => openPublishModal(null));
-  $('#wpClear').addEventListener('click', openClearModal);
+  const clearBtn = $('#wpClear');
+  if (clearBtn) clearBtn.addEventListener('click', openClearModal);
   const newDeptBtn = $('#wpNewDept');
   if (newDeptBtn) newDeptBtn.addEventListener('click', openNewDeptModal);
 

@@ -571,8 +571,19 @@ export async function onRequestPost({ request, env }) {
       const cc = (body.company_code || '').trim();
       if (!cc) return json({ ok: false, error: 'Falta company_code' }, 400);
       if (!(await userCanAccess(env, body.user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
-      // SHADOW: gate legacy = acceso a la empresa (userCanAccess). Code roster.clear.
-      await shadowCan(env, body.user, 'roster', 'clear', 'roster.clear', true);
+      // v4.51: limpiar la lista es mantenimiento reservado al SUPERADMIN
+      // (decision de Pablo 2026-07-09). El permiso roster.clear existe en la
+      // matriz pero por defecto NADIE lo tiene asignado: superadmin pasa
+      // por diseno. El gate legacy del shadow pasa a reflejar esta regla.
+      let isSuperUser = false;
+      if (body.user && body.user.kind === 'admin' && body.user.id) {
+        const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(body.user.id)}&is_active=eq.true&select=id,role`);
+        isSuperUser = !!(a && a.length && a[0].role === 'superadmin');
+      }
+      await shadowCan(env, body.user, 'roster', 'clear', 'roster.clear', isSuperUser);
+      if (!isSuperUser) {
+        return json({ ok: false, error: 'Limpiar la lista es una accion de mantenimiento reservada al superadministrador.' }, 403);
+      }
       // Borra la lista y sus metadatos. mark_report_lines NO se toca:
       // los reportes ya enviados conservan su detalle historico.
       await sb(env, `store_workers?company_code=eq.${encodeURIComponent(cc)}`, { method: 'DELETE' });
