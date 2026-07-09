@@ -1047,6 +1047,36 @@ async function publish(env, actor, user, body) {
     });
   }
 
+  // v4.67: reflejar lo publicado en los ROSTERS LOCALES (store_workers y
+  // enterprise_workers), que son lo que muestran Buscar y los directorios.
+  // Sin esto el portal seguia mostrando el dato viejo hasta el proximo pull
+  // (bug YONATHAN 28321728: master y sistema corregidos, Buscar corrupto).
+  // Solo se tocan los campos PUBLICADOS (ax_pending_fields, leidos en
+  // masterByCed ANTES de la limpieza); si cambio algun nombre se recalcula
+  // full_name = primer + segundo + apellidos. Errores aqui no rompen la
+  // publicacion (el pull posterior corrige igual).
+  for (const ced of okCeds) {
+    const m = masterByCed[ced];
+    if (!m) continue;
+    const pf = (m.ax_pending_fields && typeof m.ax_pending_fields === 'object') ? Object.keys(m.ax_pending_fields) : [];
+    const patch = {};
+    for (const f of pf) if (f in AX_FIELD_MAP && f !== 'address') patch[f] = m[f] ?? null;
+    if (pf.some(f => f === 'first_name' || f === 'second_name' || f === 'last_names')) {
+      const full = [m.first_name, m.second_name, m.last_names]
+        .map(x => String(x || '').trim()).filter(Boolean).join(' ');
+      if (full) patch.full_name = full;
+    }
+    if (!Object.keys(patch).length) continue;
+    for (const tbl of ['store_workers', 'enterprise_workers']) {
+      try {
+        await sb(env, `${tbl}?id_number=eq.${encodeURIComponent(ced)}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify(patch),
+        });
+      } catch (_) { /* roster local: el proximo pull lo corrige */ }
+    }
+  }
+
   return json({
     ok: true,
     sent: clean.length,

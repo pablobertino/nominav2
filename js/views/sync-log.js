@@ -17,9 +17,10 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { attachRefresh } from '../core/refresh.js';
 
 let USER = null;
-let SL = { process: 'companies', page: 1, size: 25, status: '', from: '', to: '', total: 0, rows: [], note: '' };
+let SL = { process: 'roster', page: 1, size: 25, status: '', from: '', to: '', total: 0, rows: [], note: '' };
 
 const PROC_LBL = {
   companies: 'Cat\u00e1logo de empresas',
@@ -272,7 +273,10 @@ function slPaint() {
 export async function renderSyncLog(user, presetProcess, backView) {
   USER = user;
   ensureStyles();
-  SL = { process: PROC_LBL[presetProcess] ? presetProcess : 'companies', page: 1, size: 25, status: '', from: '', to: '', total: 0, rows: [], note: '' };
+  // v4.66: sin preset (entrada por el menu) arranca en Personal de tiendas,
+  // el proceso que mas se consulta. Los botones de tarjetas/vistas siguen
+  // pasando su propio preset.
+  SL = { process: PROC_LBL[presetProcess] ? presetProcess : 'roster', page: 1, size: 25, status: '', from: '', to: '', total: 0, rows: [], note: '' };
   // v4.63: backView = data-view del menu desde donde se abrio (sync,
   // syncreview, axcompare, axhistory): el boton Volver re-navega alli.
   const backBtn = backView
@@ -280,10 +284,10 @@ export async function renderSyncLog(user, presetProcess, backView) {
     : '';
   $('#pnlMain').innerHTML = `
     ${backBtn}
-    <div class="sl-head"><div>
+    <div class="sl-head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px"><div>
       <h1>Registro de sincronizaciones</h1>
       <p>Historial de corridas de los procesos programados: qu\u00e9 corri\u00f3, cu\u00e1ndo, c\u00f3mo termin\u00f3 y su detalle.</p>
-    </div></div>
+    </div><span id="slRefresh"></span></div>
     <div class="sl-bar">
       <span class="fg">Proceso<select id="slProc">
         <option value="companies">Cat\u00e1logo de empresas</option>
@@ -333,4 +337,6 @@ export async function renderSyncLog(user, presetProcess, backView) {
   $('#slExport').addEventListener('click', () => slOpenExportMenu($('#slExport')));
 
   await slLoad();
+  // v4.66: chip "hace X min" + boton Recargar, como en Historial.
+  attachRefresh('#slRefresh', () => slLoad(), 'synclog');
 }

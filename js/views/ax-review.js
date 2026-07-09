@@ -988,7 +988,7 @@ export async function renderAxHistory(user) {
     <div class="axr-head"><div>
       <h1>Historial</h1>
       <p id="hSub">Todo lo que pasó por Sincronizar: pendientes, publicados y anulados. Solo lectura; publicar y anular se hacen en la bandeja.</p>
-    </div><div class="head-actions">${slRegBtn('axhistory')}</div><span id="hRefresh"></span></div>
+    </div><div class="head-actions" style="margin-left:auto;display:flex;align-items:center;gap:12px">${slRegBtn('axhistory')}<span id="hRefresh"></span></div></div>
     <div class="axr-hctrl" style="margin-top:16px">
       <span class="fg">Buscar<input id="hQ" type="text" placeholder="Cédula o nombre…" style="width:200px"></span>
       <span class="fg">Estado<select id="hSt"><option value="">Todos</option><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="discarded">Anulado</option></select></span>
