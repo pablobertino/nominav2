@@ -39,7 +39,7 @@ function fmtDT(iso) {
 async function api(payload) {
   return fetch('/api/sync-log', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ adminId: USER.id, ...payload }),
+    body: JSON.stringify({ adminId: USER.id, user: { kind: USER.kind, id: USER.id || null, companyCode: USER.companyCode || null }, ...payload }),
   }).then(x => x.json()).catch(() => null);
 }
 
@@ -185,18 +185,42 @@ async function slLoad() {
   SL.note = r.note || '';
   slPaint();
 }
-function detHtml(r) {
+function detHtml(r, idx) {
   if (!r.detail && !r.error) return '';
+  const copyBtn = `<div style="margin-top:7px"><button class="sl-more" data-copy="${idx}">Copiar detalle</button> <span id="slCopied_${idx}" style="display:none;font-size:11px;color:var(--success,#15803d)">✓ copiado</span></div>`;
   if (Array.isArray(r.detail)) {
     return r.detail.map(st => st.skipped
-      ? `<span style="color:#b45309">${esc(st.company_code)} \u26a0 ${esc(st.alert || '')}</span>`
-      : `${esc(st.company_code)} ${st.added ? '+' + st.added : ''}${st.removed ? '\u2212' + st.removed : ''}`
-    ).join(' \u00b7 ');
+      ? `<span style="color:#b45309">${esc(st.company_code)} ⚠ ${esc(st.alert || '')}</span>`
+      : `${esc(st.company_code)} ${st.added ? '+' + st.added : ''}${st.removed ? '−' + st.removed : ''}`
+    ).join(' · ') + copyBtn;
   }
+  // v4.63: detalle LEGIBLE para no-programadores (nunca JSON crudo en
+  // pantalla); el boton Copiar entrega el detalle tecnico completo.
+  const LBL = {
+    companies: 'Empresas', zones: 'Zonas', subzones: 'Subzonas', concepts: 'Conceptos',
+    updated: 'Actualizados', inserted: 'Nuevos', rows: 'Registros', count: 'Registros',
+    changes: 'Cambios', changes_count: 'Cambios', mode: 'Modo', stores: 'Tiendas revisadas',
+    added: 'Ingresos', removed: 'Egresos', alerts: 'Alertas', errors: 'Errores',
+    skipped: 'Saltadas', total: 'Total', duration_ms: 'Duracion (ms)', incomplete: 'Corrida parcial',
+    run_id: 'Corrida', total_stores: 'Tiendas totales',
+  };
   const parts = [];
-  if (r.error) parts.push('\u26a0 ' + esc(r.error));
-  if (r.detail) { try { parts.push(esc(JSON.stringify(r.detail, null, 1))); } catch (_) { /* nada */ } }
-  return parts.join('\n');
+  if (r.error) parts.push(`<div style="color:var(--danger,#b91c1c);margin-bottom:4px">⚠ ${esc(r.error)}</div>`);
+  const d = r.detail;
+  if (d && typeof d === 'object') {
+    const items = [];
+    for (const [k, v] of Object.entries(d)) {
+      if (v == null) continue;
+      if (typeof v === 'object') {
+        if (Array.isArray(v)) items.push(`<b>${esc(LBL[k] || k)}:</b> ${v.length}`);
+        continue;
+      }
+      if (typeof v === 'boolean') { if (v) items.push(`<b>${esc(LBL[k] || k)}:</b> sí`); continue; }
+      items.push(`<b>${esc(LBL[k] || k)}:</b> ${esc(String(v))}`);
+    }
+    if (items.length) parts.push(items.join(' · '));
+  }
+  return parts.join('') + copyBtn;
 }
 function slPaint() {
   const note = $('#slNote');
@@ -214,7 +238,7 @@ function slPaint() {
         <td>${fmtDT(r.run_at)}</td>
         <td>${r.source === 'cron' ? 'Autom\u00e1tica' : 'Manual'}</td>
         <td><span class="sl-st ${st}">${stLbl}</span></td>
-        <td>${esc(r.summary || '')}${hasDet ? `<div id="slDet_${i}" class="sl-det" hidden>${detHtml(r)}</div>` : ''}</td>
+        <td>${esc(r.summary || '')}${hasDet ? `<div id="slDet_${i}" class="sl-det" hidden>${detHtml(r, i)}</div>` : ''}</td>
         <td style="text-align:right;white-space:nowrap">${r.duration_ms != null ? (r.duration_ms / 1000).toFixed(1) + ' s' : '\u2014'}</td>
         <td>${hasDet ? `<button class="sl-more" data-det="${i}">Detalle</button>` : ''}</td>
       </tr>`;
@@ -223,6 +247,18 @@ function slPaint() {
       b.addEventListener('click', () => {
         const el = $('#slDet_' + b.dataset.det);
         if (el) el.hidden = !el.hidden;
+      }));
+    // v4.63: Copiar el detalle tecnico completo (JSON) al portapapeles.
+    body.querySelectorAll('[data-copy]').forEach(b =>
+      b.addEventListener('click', async () => {
+        const r = SL.rows[+b.dataset.copy];
+        if (!r) return;
+        const payload = { fecha: r.run_at, origen: r.source, estado: r.status, resumen: r.summary, error: r.error || undefined, detalle: r.detail };
+        try {
+          await navigator.clipboard.writeText(JSON.stringify(payload, null, 2));
+          const ok = $('#slCopied_' + b.dataset.copy);
+          if (ok) { ok.style.display = 'inline'; setTimeout(() => { ok.style.display = 'none'; }, 1800); }
+        } catch (_) { /* portapapeles no disponible */ }
       }));
   }
   const from = SL.total ? (SL.page - 1) * SL.size + 1 : 0;
@@ -233,11 +269,17 @@ function slPaint() {
   $('#slExport').disabled = !SL.rows.length;
 }
 
-export async function renderSyncLog(user, presetProcess) {
+export async function renderSyncLog(user, presetProcess, backView) {
   USER = user;
   ensureStyles();
   SL = { process: PROC_LBL[presetProcess] ? presetProcess : 'companies', page: 1, size: 25, status: '', from: '', to: '', total: 0, rows: [], note: '' };
+  // v4.63: backView = data-view del menu desde donde se abrio (sync,
+  // syncreview, axcompare, axhistory): el boton Volver re-navega alli.
+  const backBtn = backView
+    ? `<button class="sl-btn" id="slBack" style="margin-bottom:10px">← Volver</button>`
+    : '';
   $('#pnlMain').innerHTML = `
+    ${backBtn}
     <div class="sl-head"><div>
       <h1>Registro de sincronizaciones</h1>
       <p>Historial de corridas de los procesos programados: qu\u00e9 corri\u00f3, cu\u00e1ndo, c\u00f3mo termin\u00f3 y su detalle.</p>
@@ -268,6 +310,13 @@ export async function renderSyncLog(user, presetProcess) {
     </div>`;
 
   $('#slProc').value = SL.process;
+  if (backView) {
+    const bk = $('#slBack');
+    if (bk) bk.addEventListener('click', () => {
+      const navBtn = document.querySelector(`.pnl-side [data-view="${backView}"]`) || document.querySelector(`[data-view="${backView}"]`);
+      if (navBtn) navBtn.click();
+    });
+  }
   const apply = () => {
     SL.process = $('#slProc').value;
     SL.from = $('#slFrom').value;

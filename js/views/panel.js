@@ -363,7 +363,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.61</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.63</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2994,7 +2994,7 @@ async function viewEquipo(user) {
       <div class="role-head">
         <span class="role-title">Administradores</span>
         <span class="role-badge rb-admin">admin</span>
-        <span class="role-desc">Alcance de Tiendas y Empresas \u00b7 osTicket como agente</span>
+        <span class="role-desc">Alcance de Tiendas y Empresas \u00b7 osTicket: <span style="display:inline-flex;align-items:center;padding:1px 9px;border-radius:999px;background:#eff4ff;color:#1e40af;font-weight:600">Agente</span></span>
       </div>
       <div class="sum-cards c4">
         ${statCard('total', adminStats.total, 'Administradores')}
@@ -3011,7 +3011,7 @@ async function viewEquipo(user) {
       <div class="role-head">
         <span class="role-title">Gestores de empresa</span>
         <span class="role-badge rb-gestor">gestor</span>
-        <span class="role-desc">Alcance solo de Empresas / departamentos \u00b7 osTicket como cliente</span>
+        <span class="role-desc">Alcance solo de Empresas / departamentos \u00b7 osTicket: <span style="display:inline-flex;align-items:center;padding:1px 9px;border-radius:999px;background:#f0fdf4;color:#15803d;font-weight:600">Usuario</span></span>
       </div>
       <div class="sum-cards c4">
         ${statCard('total', gestorStats.total, 'Gestores')}
@@ -4310,16 +4310,16 @@ async function viewSync(user) {
     // v4.59: acceso al Registro de sincronizaciones (pagina unificada) con
     // el proceso de cada tarjeta preseleccionado.
     const lgR = $('#rsLogBtn');
-    if (lgR) lgR.addEventListener('click', () => renderSyncLog(user, 'roster'));
+    if (lgR) lgR.addEventListener('click', () => renderSyncLog(user, 'roster', 'sync'));
     const lgC = $('#syncLogBtn');
-    if (lgC) lgC.addEventListener('click', () => renderSyncLog(user, 'companies'));
+    if (lgC) lgC.addEventListener('click', () => renderSyncLog(user, 'companies', 'sync'));
     // payLogBtn se pinta DESPUES (renderPaySyncCard corre tras este bloque):
     // delegacion a nivel documento, registrada una sola vez.
     if (!window.__payLogNav) {
       window.__payLogNav = true;
       document.addEventListener('click', (ev) => {
         const b = ev.target && ev.target.closest && ev.target.closest('#payLogBtn');
-        if (b) renderSyncLog(user, 'pay');
+        if (b) renderSyncLog(user, 'pay', 'sync');
       });
     }
     loadRs();

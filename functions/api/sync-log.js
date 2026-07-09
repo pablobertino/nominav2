@@ -18,7 +18,7 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
-import { shadowCan } from './_auth.js';
+import { resolveActor, can, shadowCan } from './_auth.js';
 
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -47,14 +47,15 @@ export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'Solicitud invalida.' }, 400); }
 
-  // Solo superadmin (mismo criterio que Configurar).
+  // v4.63: gate por MATRIZ (permiso enforced hcm.log). Antes era superadmin
+  // hardcodeado; ahora se puede otorgar a otros roles desde la vista Roles.
   const adminId = parseInt(body.adminId, 10) || (body.user && parseInt(body.user.id, 10)) || null;
-  if (!adminId) return json({ ok: false, error: 'Sesion no valida.' }, 403);
-  const adm = await sb(env, `admin_users?id=eq.${adminId}&is_active=eq.true&select=id,role`);
-  if (!adm || !adm.length || adm[0].role !== 'superadmin') {
-    return json({ ok: false, error: 'Solo el superadministrador puede ver este registro.' }, 403);
+  const actor = await resolveActor(env, body.user || (adminId ? { kind: 'admin', id: adminId } : null));
+  if (!actor) return json({ ok: false, error: 'Sesion no valida.' }, 403);
+  if (!can(actor, 'hcm.log')) {
+    return json({ ok: false, error: 'No tienes permiso para ver el registro de sincronizaciones.' }, 403);
   }
-  try { await shadowCan(env, { kind: 'admin', id: adminId }, 'sync-log', body.process || 'list', 'hcm.view', true); } catch (_) { /* bitacora */ }
+  try { await shadowCan(env, body.user || { kind: 'admin', id: adminId }, 'sync-log', body.process || 'list', 'hcm.log', true); } catch (_) { /* bitacora */ }
 
   const process = ['companies', 'pay', 'roster'].includes(body.process) ? body.process : 'companies';
   const page = Math.max(1, parseInt(body.page, 10) || 1);

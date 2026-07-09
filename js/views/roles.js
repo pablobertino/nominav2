@@ -181,7 +181,7 @@ function paintList() {
   const rows = ST.roles.map(r => {
     const acts = r.is_system
       ? ''
-      : `<button class="btn btn-sm" data-ren="${esc(r.code)}">Renombrar</button>`
+      : `<button class="btn btn-sm" data-ren="${esc(r.code)}">Editar</button>`
         + (r.is_active
           ? `<button class="btn btn-sm" style="color:var(--danger,#dc2626);border-color:#f6cccc" data-tog="${esc(r.code)}" data-to="off">Desactivar</button>`
           : `<button class="btn btn-sm" data-tog="${esc(r.code)}" data-to="on">Activar</button>`);
@@ -657,7 +657,7 @@ function openRenameModal(code) {
   if (!r) return;
   const host = baseModal(`
     <button class="wp-x" id="rnX" title="Cerrar">✕</button>
-    <h3>Renombrar rol</h3>
+    <h3>Editar rol</h3>
     <p class="wp-who"><span class="wp-ced">${esc(code)}</span></p>
     <label class="flabel">Nombre visible</label>
     <input id="rnLabel" type="text" maxlength="60" value="${esc(r.label || '')}">

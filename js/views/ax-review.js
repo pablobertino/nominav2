@@ -19,6 +19,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { renderSyncLog } from './sync-log.js';
 import { attachRefresh } from '../core/refresh.js';
 import { renderWorkerPhotos, openWorkerLightbox } from './worker-photos.js';
 
@@ -342,7 +343,8 @@ export async function renderAxReview(user) {
     </div>
     <div class="axr-toolbar">
       <span class="axr-spacer"></span>
-      <button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>
+      <button class="axr-btn" data-synclog="syncreview" title="Registro de sincronizaciones (corridas programadas)">Registro</button>
+        <button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>
       <button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar con cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>
       <button class="axr-btn axr-btn-dis" id="axrDisAll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular todo</button>
     </div>
@@ -623,6 +625,21 @@ function confirmAction(verb, scope, id) {
    Empresa, Zona->Subzona, Concepto) con el catalogo COMPLETO del actor via
    detect_scope. Al confirmar, dispara la comparacion por empresa en bucle
    con progreso (panel modal existente). */
+function slRegBtn(view) {
+  // v4.63: acceso al Registro de sincronizaciones desde las vistas del grupo
+  // (con Volver a la vista de origen). El permiso hcm.log decide adentro.
+  return `<button class="btn" data-synclog="${view}" title="Registro de sincronizaciones (corridas programadas)">Registro</button>`;
+}
+// v4.63: delegacion global (una sola vez): cualquier boton [data-synclog]
+// de estas vistas abre el Registro con Volver a la vista de origen.
+if (!window.__slRegNav) {
+  window.__slRegNav = true;
+  document.addEventListener('click', (ev) => {
+    const b = ev.target && ev.target.closest && ev.target.closest('[data-synclog]');
+    if (b && USER) renderSyncLog(USER, undefined, b.dataset.synclog);
+  });
+}
+
 export async function renderAxCompare(user) {
   USER = user;
   ensureStyles();
@@ -631,7 +648,7 @@ export async function renderAxCompare(user) {
     <div class="axr-head"><div>
       <h1>Comparar</h1>
       <p>Compara el portal contra el sistema, empresa por empresa, y resuelve cada diferencia: <b>Publicar</b> (portal → sistema) o <b>Adoptar</b> (sistema → portal).</p>
-    </div></div>
+    </div><div class="head-actions">${slRegBtn('axcompare')}</div></div>
     <div style="margin:16px 0 14px;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.5;background:var(--brand-bg,#eff6ff);border:1px solid #bfdbfe;color:#1e40af">
       Solo se listan diferencias reales: un valor en el portal y otro distinto en el sistema. Los datos que faltan de un lado no aparecen (esos se resuelven con <b>Actualizar</b> en Personal).
     </div>
@@ -971,7 +988,7 @@ export async function renderAxHistory(user) {
     <div class="axr-head"><div>
       <h1>Historial</h1>
       <p id="hSub">Todo lo que pasó por Sincronizar: pendientes, publicados y anulados. Solo lectura; publicar y anular se hacen en la bandeja.</p>
-    </div><span id="hRefresh"></span></div>
+    </div><div class="head-actions">${slRegBtn('axhistory')}</div><span id="hRefresh"></span></div>
     <div class="axr-hctrl" style="margin-top:16px">
       <span class="fg">Buscar<input id="hQ" type="text" placeholder="Cédula o nombre…" style="width:200px"></span>
       <span class="fg">Estado<select id="hSt"><option value="">Todos</option><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="discarded">Anulado</option></select></span>
