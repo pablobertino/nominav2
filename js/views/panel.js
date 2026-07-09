@@ -358,7 +358,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.54</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.56</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4185,10 +4185,120 @@ async function viewSync(user) {
 
     <div id="payCfgCard"></div>
 
+    <div id="rosterCfgCard">
+    <div class="card">
+      <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">Personal de tiendas · ingresos y egresos</h3>
+        <div class="head-actions"><button class="btn" id="rsRunBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg> Ejecutar ahora</button></div>
+      </div>
+      <p class="cfg-desc" style="margin:0 0 6px">Ingresa a los trabajadores nuevos y retira a los egresados de cada tienda, segun el sistema. <b>No modifica los datos de los que ya estan</b> (nombre, cargo, ficha: eso sigue manual). El maestro global nunca se toca: un egreso solo sale de la tienda y su historial se conserva.</p>
+      <div id="rsLast" style="margin:0 0 12px"><span class="muted">Sin corridas todavía.</span></div>
+      <p class="cfg-desc" style="margin:0 0 12px">Reglas de seguridad: egreso solo con fin de contrato explícito (nunca por ausencia) y si el sistema devuelve una lista sospechosamente corta, esa tienda se salta con alerta.</p>
+      <div class="cfg-grid3">
+        <div><label class="flabel">Estado</label>
+          <select id="rsEnabled"><option value="0">Inactiva</option><option value="1">Activa</option></select></div>
+        <div><label class="flabel">Frecuencia</label><select id="rsFreq"><option value="hourly">Cada hora</option><option value="6h">Cada 6 horas</option><option value="12h">Cada 12 horas</option><option value="daily">Una vez al día</option><option value="2d">Cada 2 días</option></select></div>
+        <div id="rsHourWrap" style="display:none"><label class="flabel">Hora (Caracas)</label><select id="rsHour">${Array.from({ length: 24 }, (_, h) => `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('')}</select></div>
+      </div>
+      <details style="margin-top:14px">
+        <summary class="muted" style="cursor:pointer;font-size:12.5px">Opciones avanzadas</summary>
+        <div style="margin-top:10px"><label class="flabel">URL del portal <span class="muted">(donde corre /api/sync-roster)</span></label>
+          <input type="text" id="rsUrl" value="" placeholder="https://nominav2.pages.dev">
+          <p class="muted" style="font-size:11.5px;margin:6px 0 0">El cron llama a esta URL. Si se deja vacío, usa el valor por defecto.</p></div>
+      </details>
+      <div class="cfg-foot"><span class="cfg-saved" id="rsSaved">✓ Guardado</span><button class="btn btn-primary" id="rsSave">Guardar programación</button></div>
+      <div id="rsRuns" style="margin-top:14px"></div>
+    </div></div>
+
     <div id="syncRuns">${runsHtml(cfgRes.runs)}</div>`;
 
   wireRunToggles();
   applySyncCooldown(cfg);
+
+  /* ---- v4.56: tarjeta "Personal de tiendas · ingresos y egresos" ---- */
+  (function initRosterCard() {
+    const rsApi = (payload) => fetch('/api/sync-roster', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminId: user.id, ...payload }),
+    }).then(x => x.json()).catch(() => null);
+    const fmtDT = (iso) => {
+      const d = new Date(iso); const p = n => String(n).padStart(2, '0');
+      return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
+    };
+    const paintLast = (c) => {
+      const el = $('#rsLast'); if (!el) return;
+      if (!c || !c.last_run_at) { el.innerHTML = '<span class="muted">Sin corridas todavía. Ejecuta una manual para probar (no modifica a nadie que ya esté).</span>'; return; }
+      const s = c.last_summary || {};
+      const okPill = c.last_status === 'ok'
+        ? '<span class="pill pill-open">✅ OK</span>'
+        : '<span class="pill" style="background:#fef2f2;color:#b91c1c">⚠ Error</span>';
+      el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${okPill}<b>${fmtDT(c.last_run_at)}</b><span class="muted">${c.last_source === 'cron' ? 'automática' : 'manual'} · ${(((c.last_duration_ms || 0)) / 1000).toFixed(1)} s</span></div>`
+        + `<div style="margin-top:8px">${s.stores != null ? s.stores : 0} tiendas revisadas · <b>${s.added || 0}</b> ingreso(s) · <b>${s.removed || 0}</b> egreso(s)`
+        + `${s.alerts ? ` · <span style="color:#b45309">${s.alerts} con alerta</span>` : ''}${s.incomplete ? ' · <span style="color:#b45309">corrida parcial (continúa en la próxima)</span>' : ''}</div>`;
+    };
+    const paintRuns = (runs) => {
+      const el = $('#rsRuns'); if (!el) return;
+      if (!runs || !runs.length) { el.innerHTML = ''; return; }
+      const rows = runs.map(g => {
+        const det = (g.stores || []).map(st => st.skipped
+          ? `<span title="${(st.alert || '').replace(/"/g, '&quot;')}" style="color:#b45309">${st.company_code} ⚠</span>`
+          : `${st.company_code} ${st.added ? '+' + st.added : ''}${st.removed ? '−' + st.removed : ''}`
+        ).join(' · ');
+        return `<tr><td data-label="Fecha">${fmtDT(g.run_at)}</td>`
+          + `<td data-label="Origen">${g.source === 'cron' ? 'Automática' : 'Manual'}</td>`
+          + `<td data-label="Ingresos"><b>${g.added}</b></td>`
+          + `<td data-label="Egresos"><b>${g.removed}</b></td>`
+          + `<td data-label="Tiendas" style="font-size:12px;color:var(--muted)">${det || '—'}</td></tr>`;
+      }).join('');
+      el.innerHTML = `<h3 style="margin:0 0 10px;font-size:14px">Últimas corridas con movimiento</h3>`
+        + `<table class="cfg-cat-table tbl-cards"><thead><tr><th>Fecha</th><th>Origen</th><th>Ingresos</th><th>Egresos</th><th>Tiendas</th></tr></thead><tbody>${rows}</tbody></table>`;
+    };
+    const rsHourVis = () => {
+      const f = $('#rsFreq').value;
+      $('#rsHourWrap').style.display = (f === 'daily' || f === '2d') ? '' : 'none';
+    };
+    async function loadRs() {
+      const [c, r] = await Promise.all([rsApi({ action: 'get_config' }), rsApi({ action: 'runs' })]);
+      const rc = c && c.config;
+      if (rc) {
+        $('#rsEnabled').value = rc.enabled ? '1' : '0';
+        $('#rsFreq').value = rc.frequency || 'daily';
+        $('#rsHour').value = String(rc.daily_hour != null ? rc.daily_hour : 6);
+        $('#rsUrl').value = rc.endpoint_url || '';
+        paintLast(rc);
+      }
+      rsHourVis();
+      if (r && r.ok) paintRuns(r.runs);
+    }
+    $('#rsFreq').addEventListener('change', rsHourVis);
+    $('#rsSave').addEventListener('click', async () => {
+      const b = $('#rsSave'); b.disabled = true;
+      const r = await rsApi({
+        action: 'save_config',
+        config: {
+          enabled: $('#rsEnabled').value === '1',
+          frequency: $('#rsFreq').value,
+          daily_hour: +$('#rsHour').value,
+          endpoint_url: $('#rsUrl').value.trim(),
+        },
+      });
+      b.disabled = false;
+      const chip = $('#rsSaved');
+      if (chip && r && r.ok) { chip.classList.add('show'); setTimeout(() => chip.classList.remove('show'), 2000); }
+    });
+    $('#rsRunBtn').addEventListener('click', async () => {
+      const b = $('#rsRunBtn'); b.disabled = true;
+      const prev = b.innerHTML; b.textContent = 'Ejecutando…';
+      const r = await rsApi({ source: 'manual' });
+      b.disabled = false; b.innerHTML = prev;
+      const el = $('#rsLast');
+      if (!r || !r.ok) {
+        if (el) el.innerHTML = `<span style="color:#b91c1c">⚠ ${(r && r.error) || 'No se pudo ejecutar.'}</span>`;
+        return;
+      }
+      loadRs();
+    });
+    loadRs();
+  })();
   // Tarjeta de programacion del Estado de pago (cron aparte, config propia).
   renderPaySyncCard(user);
 
