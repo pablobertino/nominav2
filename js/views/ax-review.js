@@ -127,7 +127,8 @@ function ensureStyles() {
   .axr-iconbtn:hover{background:var(--bg-soft,#f1f5f9)}
   .axr-iconbtn svg{width:15px;height:15px}
   .axr-iconbtn.ok{color:var(--success,#16a34a);border-color:#bbf7d0;background:var(--success-bg,#f0fdf4)}
-  .axr-who{flex:1;min-width:0}
+  .axr-who{flex:0 1 auto;min-width:0;max-width:46%}
+  .axr-flex{flex:1}
   .axr-nm{font-weight:600;font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .axr-sub{color:var(--muted);font-size:12px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .axr-edit{font-size:11px;color:var(--muted);margin-top:2px}
@@ -410,15 +411,16 @@ function paint() {
           <div class="axr-sub">${esc(r.ced_kind || '')}-${esc(r.id_number)} · ${esc(r.company_name || r.company_code)}</div>
           ${(r.changed_by || r.changed_at) ? `<div class="axr-edit">Editado${r.changed_by ? ` por <b>${esc(r.changed_by)}</b>` : ''}${r.changed_at ? ' · ' + esc(fmtDateTime(r.changed_at)) : ''}</div>` : ''}
         </div>
+        <div class="axr-rowacts">
+          <button type="button" class="axr-iconbtn" data-goficha="${r.id}" title="Ver ficha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M15 8h4M15 12h4M5.5 18c.7-1.8 2.1-2.8 3.5-2.8s2.8 1 3.5 2.8"/></svg></button>
+          <button type="button" class="axr-iconbtn" data-copy="${r.id}" title="Copiar datos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+        </div>
+        <span class="axr-flex"></span>
         <div class="axr-meta">
           <span class="axr-emp">${esc(r.company_code)}</span>
           ${emeta ? `<span class="axr-emeta">${emeta}</span>` : ''}
           ${bank ? '<span class="axr-bank">⚠ Cuenta bancaria</span>' : ''}
           <span class="axr-nf">${n} campo${n === 1 ? '' : 's'}</span>
-        </div>
-        <div class="axr-rowacts">
-          <button type="button" class="axr-iconbtn" data-goficha="${r.id}" title="Ver ficha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M15 8h4M15 12h4M5.5 18c.7-1.8 2.1-2.8 3.5-2.8s2.8 1 3.5 2.8"/></svg></button>
-          <button type="button" class="axr-iconbtn" data-copy="${r.id}" title="Copiar datos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
         </div>
         <svg class="axr-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
       </div>

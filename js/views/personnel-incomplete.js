@@ -173,6 +173,7 @@ function ensureStyles() {
   .pi-row{display:flex;align-items:center;gap:13px;padding:11px 13px;border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);transition:border-color .12s,box-shadow .12s}
   .pi-row:hover{border-color:var(--brand,#2563eb);box-shadow:0 2px 10px rgba(15,23,42,.06)}
   .pi-ava{width:42px;height:42px;border-radius:10px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;overflow:hidden}
+  .pi-ava.haspic{cursor:zoom-in}
   .pi-ava img{width:100%;height:100%;object-fit:cover;display:block}
   .pi-main{flex:0 1 auto;min-width:0;max-width:34%}
   .pi-name{font-weight:600;color:var(--ink);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -433,10 +434,11 @@ async function run() {
   paint();
 }
 
-function avatarCell(w) {
-  // Miniatura si hay foto (URL publica directa); si no, iniciales de color.
+function avatarCell(w, idx) {
+  // Miniatura si hay foto (URL publica directa): la FOTO MISMA es clicable y
+  // abre el visor (v4.42, igual que Sincronizar). Sin foto: iniciales.
   if (w.thumb_url) {
-    return `<div class="pi-ava"><img src="${esc(w.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
+    return `<div class="pi-ava haspic" data-avpic="${idx}" title="Ver foto"><img src="${esc(w.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
   }
   const ci = avatarColor(w.id_number);
   return `<div class="pi-ava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>`;
@@ -508,12 +510,11 @@ function paint() {
     const updLine = updLineHtml(w);
     const hasPhoto = !!w.thumb_url;
     const acts = `<div class="pi-actions">
-        <button type="button" class="pi-iconbtn" data-photo="${start + i}" title="${hasPhoto ? 'Ver foto' : 'Sin foto'}" ${hasPhoto ? '' : 'disabled'}>${icoPhoto()}</button>
         <button type="button" class="pi-iconbtn" data-ficha="${start + i}" title="Ver ficha">${icoFicha()}</button>
         <button type="button" class="pi-iconbtn" data-copy="${start + i}" title="Copiar datos">${icoCopy()}</button>
       </div>`;
     return `<div class="pi-row">
-      ${avatarCell(w)}
+      ${avatarCell(w, start + i)}
       <div class="pi-main">
         <div class="pi-name">${esc(w.full_name)}</div>
         <div class="pi-sub">${sub.join(' · ')}</div>
@@ -534,9 +535,9 @@ function paint() {
     b.addEventListener('click', () => openWorker(shown[+b.dataset.ficha])));
   list.querySelectorAll('[data-copy]').forEach(b =>
     b.addEventListener('click', () => copyWorkerData(shown[+b.dataset.copy], b)));
-  list.querySelectorAll('[data-photo]').forEach(b =>
+  list.querySelectorAll('[data-avpic]').forEach(b =>
     b.addEventListener('click', () => {
-      const w = shown[+b.dataset.photo];
+      const w = shown[+b.dataset.avpic];
       if (!w || !w.thumb_url) return;
       openWorkerLightbox(w.thumb_url, `${w.full_name} · C.I. ${w.id_number}`, `${w.id_number}.jpg`);
     }));
