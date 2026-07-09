@@ -29,6 +29,7 @@ import { renderCertSigners } from './cert-signers.js';
 import { renderCertRequests } from './cert-requests.js';
 import { renderAxReview, renderAxCompare, renderAxHistory } from './ax-review.js';
 import { renderErpQuery } from './erp-query.js';
+import { renderSyncLog } from './sync-log.js';
 import { renderResetData } from './reset-data.js';
 import { renderRoles } from './roles.js';
 import { injectPeriodTimeline } from './period-timeline.js';
@@ -362,7 +363,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.58</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.59</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4016,7 +4017,7 @@ async function renderPaySyncCard(user) {
   host.innerHTML = `
     <div class="card">
       <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">Estado de pago del periodo</h3>
-        <div class="head-actions"><button class="btn" id="payRunBtn">${I.sync} Actualizar ahora</button></div>
+        <div class="head-actions"><button class="btn" id="payLogBtn" title="Ver el registro completo de corridas">Registro</button><button class="btn" id="payRunBtn">${I.sync} Actualizar ahora</button></div>
       </div>
       <p class="cfg-desc" style="margin:0 0 6px">Refresca la tabla con el estado de pago (index 0 y -1) de todas las empresas; de ahi leen la tienda, el admin y el superadmin. Asi no se llama al API en cada visita.</p>
       <div id="payLast" style="margin:0 0 12px">${lastHtml(cfg)}</div>
@@ -4147,7 +4148,7 @@ async function viewSync(user) {
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Sincronización</h1><p>Catálogo de empresas · AX → Supabase</p></div>
-      <div class="head-actions"><button class="btn btn-primary" id="syncBtn">${I.sync} Sincronizar ahora</button></div>
+      <div class="head-actions"><button class="btn" id="syncLogBtn" title="Ver el registro completo de corridas">Registro</button><button class="btn btn-primary" id="syncBtn">${I.sync} Sincronizar ahora</button></div>
     </div>
 
     <div class="card">
@@ -4192,7 +4193,7 @@ async function viewSync(user) {
     <div id="rosterCfgCard">
     <div class="card">
       <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">Personal de tiendas · ingresos y egresos</h3>
-        <div class="head-actions"><button class="btn" id="rsRunBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg> Ejecutar ahora</button></div>
+        <div class="head-actions"><button class="btn" id="rsLogBtn" title="Ver el registro completo de corridas">Registro</button><button class="btn" id="rsRunBtn"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg> Ejecutar ahora</button></div>
       </div>
       <p class="cfg-desc" style="margin:0 0 6px">Ingresa a los trabajadores nuevos y retira a los egresados de cada tienda, segun el sistema. <b>No modifica los datos de los que ya estan</b> (nombre, cargo, ficha: eso sigue manual). El maestro global nunca se toca: un egreso solo sale de la tienda y su historial se conserva.</p>
       <div id="rsLast" style="margin:0 0 12px"><span class="muted">Sin corridas todavía.</span></div>
@@ -4306,6 +4307,21 @@ async function viewSync(user) {
       }
       loadRs();
     });
+    // v4.59: acceso al Registro de sincronizaciones (pagina unificada) con
+    // el proceso de cada tarjeta preseleccionado.
+    const lgR = $('#rsLogBtn');
+    if (lgR) lgR.addEventListener('click', () => renderSyncLog(user, 'roster'));
+    const lgC = $('#syncLogBtn');
+    if (lgC) lgC.addEventListener('click', () => renderSyncLog(user, 'companies'));
+    // payLogBtn se pinta DESPUES (renderPaySyncCard corre tras este bloque):
+    // delegacion a nivel documento, registrada una sola vez.
+    if (!window.__payLogNav) {
+      window.__payLogNav = true;
+      document.addEventListener('click', (ev) => {
+        const b = ev.target && ev.target.closest && ev.target.closest('#payLogBtn');
+        if (b) renderSyncLog(user, 'pay');
+      });
+    }
     loadRs();
   })();
   // Tarjeta de programacion del Estado de pago (cron aparte, config propia).
@@ -5935,6 +5951,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'axcompare') renderAxCompare(user);
   else if (view === 'axhistory') renderAxHistory(user);
   else if (view === 'erpquery') renderErpQuery(user);
+  else if (view === 'synclog') renderSyncLog(user);
   else if (view === 'resetdata') renderResetData(user);
   else if (view === 'roles') renderRoles(user);
   else if (view === 'rostersync') viewRosterSync(user);
