@@ -92,12 +92,12 @@ export async function onRequestPost({ request, env }) {
     const actor = await resolveActor(env, body.user || null);
     if (!actor) return json({ ok: false, error: 'Sesion no valida.' }, 403);
     // Mismo gate que Sincronizar: quien publica al sistema puede consultarlo.
-    // v4.57: gate REAL relajado a hcm.view (Consultar API es LECTURA pura;
-    // antes exigia hcm.publish). Dominio enforced, ya no shadow.
-    if (!can(actor, 'hcm.view')) {
+    // v4.60: gate propio hcm.query (pedido de Pablo: poder apagarle Consultar
+    // API a un rol sin quitarle la bandeja, que usa hcm.view). Enforced.
+    if (!can(actor, 'hcm.query')) {
       return json({ ok: false, error: 'No tienes permiso para consultar las APIs.' }, 403);
     }
-    try { await shadowCan(env, body.user, 'erp-query', body.action || 'query', 'hcm.view', true); } catch (_) { /* bitacora */ }
+    try { await shadowCan(env, body.user, 'erp-query', body.action || 'query', 'hcm.query', true); } catch (_) { /* bitacora */ }
 
     /* ---------- catalog: APIs activas para el selector ---------- */
     if (body.action === 'catalog') {
