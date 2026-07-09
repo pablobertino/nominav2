@@ -40,6 +40,7 @@ let CMP_SCOPE = null;      // filtro usado en la comparacion (para re-detectar p
 let CMP_FACETS = null;     // catalogo completo para los combos del modal Comparar
 let CMP_FILTER = { type: '', company: '', zone: '', subzone: '', concept: '' };
 let CMP_PARTIAL = [];      // empresas con respuesta parcial del sistema (aviso)
+let CMP_RUN_ID = 0;        // v4.68: token de corrida (invalida corridas previas)
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -643,6 +644,7 @@ if (!window.__slRegNav) {
 export async function renderAxCompare(user) {
   USER = user;
   ensureStyles();
+  CMP_RUN_ID++;   // v4.68: entrar a la vista invalida cualquier corrida en curso
   CMP_FILTER = { type: '', company: '', zone: '', subzone: '', concept: '' };
   $('#pnlMain').innerHTML = `
     <div class="axr-head"><div>
@@ -656,7 +658,8 @@ export async function renderAxCompare(user) {
     <div class="axr-toolbar" style="margin-top:14px">
       <span class="axr-spacer"></span>
       <button class="axr-btn axr-btn-cmp" id="cmpStart" disabled>Comparar</button>
-    </div>`;
+    </div>
+    <div id="cmpResHost" style="margin-top:16px"></div>`;
 
   // Catalogo completo del alcance (facetas) via detect_scope sin filtro.
   let sc;
@@ -716,10 +719,15 @@ export async function renderAxCompare(user) {
   $('#cmpCon').addEventListener('change', e => { CMP_FILTER.concept = e.target.value; refreshCount(); });
   $('#cmpFClear').addEventListener('click', () => { CMP_FILTER = { type: '', company: '', zone: '', subzone: '', concept: '' }; buildCmp(); refreshCount(); });
 
-  startBtn.addEventListener('click', () => {
+  startBtn.addEventListener('click', async () => {
     const codes = codesForFilter();
     if (!codes.length) return;
-    runCompare({ ...CMP_FILTER }, codes);
+    // v4.68: deshabilitar mientras corre (la corrida nueva invalida la
+    // anterior via CMP_RUN_ID, pero mejor no invitar al doble clic).
+    startBtn.disabled = true;
+    startBtn.textContent = 'Comparando…';
+    try { await runCompare({ ...CMP_FILTER }, codes); }
+    finally { refreshCount(); }
   });
 }
 
@@ -735,53 +743,75 @@ async function runCompare(filter, codes) {
   CMP_ROWS = [];
   CMP_PARTIAL = [];
   const total = codes.length;
+  const myRun = ++CMP_RUN_ID;               // v4.68: esta corrida
+  const isCancelled = () => CMP_RUN_ID !== myRun;
 
-  const wrap = document.createElement('div');
-  wrap.className = 'axr-modal-vp';
-  wrap.id = 'axrCmpPanel';
-  wrap.innerHTML = `
-    <div class="axr-cmp">
-      <div class="axr-cmp-head">
-        <h3>Comparación con el sistema</h3>
-        <p id="cmpSub">Comparando 0 de ${total}…</p>
-      </div>
-      <div class="axr-cmp-body" id="cmpBody">
+  // v4.68 (pedido Pablo): en la pagina Comparar los resultados van EN GRILLA
+  // dentro de la misma pagina (#cmpResHost), aprovechando el espacio; el
+  // modal queda solo como respaldo para flujos legados sin host. Las
+  // confirmaciones (confirmCompare) siguen siendo modales, regla del portal.
+  const progressHtml = `
         <div class="axr-loading">
           <div style="margin-bottom:12px">Comparando empresa por empresa…</div>
           <div style="height:8px;border-radius:999px;background:var(--border-soft,#eef1f5);overflow:hidden;max-width:360px;margin:0 auto">
             <div id="cmpBar" style="height:100%;width:0;background:var(--brand,#2563eb);transition:width .2s"></div>
           </div>
+        </div>`;
+  const host = $('#cmpResHost');
+  let wrap = null;
+  if (host) {
+    host.innerHTML = `
+      <div style="border:1px solid var(--border);border-radius:13px;background:var(--card,#fff);padding:16px 18px">
+        <div style="display:flex;align-items:baseline;gap:12px;flex-wrap:wrap">
+          <h3 style="margin:0;font-size:16px">Comparación con el sistema</h3>
+          <p id="cmpSub" style="margin:0;color:var(--muted);font-size:12.5px">Comparando 0 de ${total}…</p>
         </div>
+        <div id="cmpBody" style="margin-top:12px">${progressHtml}</div>
+        <div id="cmpFootInfo" style="margin-top:10px;color:var(--muted);font-size:12.5px"></div>
+      </div>`;
+    try { host.scrollIntoView({ behavior: 'smooth', block: 'nearest' }); } catch (_) { /* nada */ }
+  } else {
+    wrap = document.createElement('div');
+    wrap.className = 'axr-modal-vp';
+    wrap.id = 'axrCmpPanel';
+    wrap.innerHTML = `
+    <div class="axr-cmp">
+      <div class="axr-cmp-head">
+        <h3>Comparación con el sistema</h3>
+        <p id="cmpSub">Comparando 0 de ${total}…</p>
       </div>
+      <div class="axr-cmp-body" id="cmpBody">${progressHtml}</div>
       <div class="axr-cmp-foot">
         <span id="cmpFootInfo" style="color:var(--muted);font-size:12.5px"></span>
         <span class="axr-spacer"></span>
         <button class="axr-btn" id="cmpClose">Cerrar</button>
       </div>
     </div>`;
-  document.body.appendChild(wrap);
-  let cancelled = false;
-  // Al cerrar: si estamos sobre la bandeja de Sincronizar, recargarla; si
-  // venimos de la pagina Comparar (v4.46), no hay bandeja que recargar.
-  const close = () => {
-    cancelled = true; document.removeEventListener('keydown', onKey); wrap.remove();
-    if ($('#axrList')) load();
-  };
-  const onKey = ev => { if (ev.key === 'Escape') close(); };
-  document.addEventListener('keydown', onKey);
-  wrap.querySelector('#cmpClose').addEventListener('click', close);
+    document.body.appendChild(wrap);
+    // Al cerrar: invalidar la corrida y, si estamos sobre la bandeja de
+    // Sincronizar, recargarla.
+    const close = () => {
+      CMP_RUN_ID++; document.removeEventListener('keydown', onKey); wrap.remove();
+      if ($('#axrList')) load();
+    };
+    const onKey = ev => { if (ev.key === 'Escape') close(); };
+    document.addEventListener('keydown', onKey);
+    wrap.querySelector('#cmpClose').addEventListener('click', close);
+  }
 
-  const sub = wrap.querySelector('#cmpSub');
-  const bar = wrap.querySelector('#cmpBar');
-  const footInfo = wrap.querySelector('#cmpFootInfo');
+  const root = host || wrap;
+  const sub = root.querySelector('#cmpSub');
+  const bar = root.querySelector('#cmpBar');
+  const footInfo = root.querySelector('#cmpFootInfo');
 
   let scanned = 0, okCount = 0;
   const failed = [];
   const partial = [];
 
-  // Bucle secuencial: una empresa por llamada.
+  // Bucle secuencial: una empresa por llamada (liviano para los workers;
+  // nunca en paralelo para no saturar subrequests).
   for (let i = 0; i < codes.length; i++) {
-    if (cancelled) return;
+    if (isCancelled()) return;
     const cc = codes[i];
     if (sub) sub.textContent = `Comparando ${i + 1} de ${total}… (${cc})`;
     if (bar) bar.style.width = `${Math.round(((i) / total) * 100)}%`;
@@ -789,7 +819,7 @@ async function runCompare(filter, codes) {
     let r;
     try { r = await api({ action: 'detect', user: sessionUserPayload(USER), company_code: cc }); }
     catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
-    if (cancelled) return;
+    if (isCancelled()) return;
 
     if (!r || !r.ok) { failed.push(cc); continue; }
     scanned += (r.scanned || 0);
@@ -802,7 +832,7 @@ async function runCompare(filter, codes) {
     if (CMP_ROWS.length) paintCompare();
   }
 
-  if (cancelled) return;
+  if (isCancelled()) return;
   if (bar) bar.style.width = '100%';
   CMP_PARTIAL = partial;
   if (sub) sub.textContent = `${scanned} ficha(s) revisada(s) · ${CMP_ROWS.length} con diferencias`
