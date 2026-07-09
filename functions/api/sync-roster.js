@@ -228,6 +228,7 @@ export async function onRequestPost({ request, env }) {
       enabled: !!c.enabled,
       frequency: ['hourly', '6h', '12h', 'daily', '2d'].includes(c.frequency) ? c.frequency : 'daily',
       daily_hour: Math.min(23, Math.max(0, parseInt(c.daily_hour, 10) || 6)),
+      retry_minutes: Math.min(720, Math.max(0, parseInt(c.retry_minutes, 10) || 0)),
       endpoint_url: (c.endpoint_url || '').trim() || null,
     };
     await sb(env, 'roster_sync_config?id=eq.1', {
@@ -266,6 +267,7 @@ export async function onRequestPost({ request, env }) {
   const results = [];
   let incomplete = false;
 
+  try {
   for (let i = 0; i < codes.length; i += BATCH) {
     if (Date.now() - t0 > TIME_BUDGET_MS) { incomplete = true; break; }
     const chunk = codes.slice(i, i + BATCH);
@@ -306,4 +308,19 @@ export async function onRequestPost({ request, env }) {
   } catch (_) { /* resumen best-effort */ }
 
   return json({ ok: true, ...summary, duration_ms: Date.now() - t0 });
+  } catch (e) {
+    // v4.58: una falla dura marca la corrida como error en la config para
+    // que el tick REINTENTE a los retry_minutes configurados.
+    try {
+      await sb(env, 'roster_sync_config?id=eq.1', {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          last_run_at: new Date().toISOString(), last_source: source,
+          last_status: 'error', last_error: String(e && e.message || e).slice(0, 400),
+          last_duration_ms: Date.now() - t0,
+        }),
+      });
+    } catch (_) { /* best-effort */ }
+    return json({ ok: false, error: String(e && e.message || e) }, 500);
+  }
 }

@@ -362,7 +362,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.57</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.58</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4201,7 +4201,10 @@ async function viewSync(user) {
         <div><label class="flabel">Estado</label>
           <select id="rsEnabled"><option value="0">Inactiva</option><option value="1">Activa</option></select></div>
         <div><label class="flabel">Frecuencia</label><select id="rsFreq"><option value="hourly">Cada hora</option><option value="6h">Cada 6 horas</option><option value="12h">Cada 12 horas</option><option value="daily">Una vez al día</option><option value="2d">Cada 2 días</option></select></div>
-        <div id="rsHourWrap" style="display:none"><label class="flabel">Hora (Caracas)</label><select id="rsHour">${Array.from({ length: 24 }, (_, h) => `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('')}</select></div>
+        <div id="rsHourWrap" style="display:none"><label class="flabel">Hora ancla (Caracas)</label><select id="rsHour">${Array.from({ length: 24 }, (_, h) => `<option value="${h}">${String(h).padStart(2, '0')}:00</option>`).join('')}</select>
+          <p class="muted" style="font-size:11px;margin:6px 0 0">Diaria/2 días: corre a esta hora. Cada 6/12 h: corre en las horas alineadas al ancla (ej. 06 → 06, 12, 18, 00).</p></div>
+        <div><label class="flabel">Reintento si falla <span class="muted">(minutos, 0 = no)</span></label>
+          <input type="number" id="rsRetry" min="0" max="720" value="30" style="width:110px"></div>
       </div>
       <details style="margin-top:14px">
         <summary class="muted" style="cursor:pointer;font-size:12.5px">Opciones avanzadas</summary>
@@ -4258,7 +4261,7 @@ async function viewSync(user) {
     };
     const rsHourVis = () => {
       const f = $('#rsFreq').value;
-      $('#rsHourWrap').style.display = (f === 'daily' || f === '2d') ? '' : 'none';
+      $('#rsHourWrap').style.display = (f === 'hourly') ? 'none' : '';
     };
     async function loadRs() {
       const [c, r] = await Promise.all([rsApi({ action: 'get_config' }), rsApi({ action: 'runs' })]);
@@ -4268,6 +4271,7 @@ async function viewSync(user) {
         $('#rsFreq').value = rc.frequency || 'daily';
         $('#rsHour').value = String(rc.daily_hour != null ? rc.daily_hour : 6);
         $('#rsUrl').value = rc.endpoint_url || '';
+        $('#rsRetry').value = String(rc.retry_minutes != null ? rc.retry_minutes : 30);
         paintLast(rc);
       }
       rsHourVis();
@@ -4282,6 +4286,7 @@ async function viewSync(user) {
           enabled: $('#rsEnabled').value === '1',
           frequency: $('#rsFreq').value,
           daily_hour: +$('#rsHour').value,
+          retry_minutes: +$('#rsRetry').value,
           endpoint_url: $('#rsUrl').value.trim(),
         },
       });
