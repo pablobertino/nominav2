@@ -1477,6 +1477,14 @@ function wireFicha(host, w) {
   }
 
   ['#e_account', '#e_phone', '#e_birth', '#e_email'].forEach(sel => q(sel).addEventListener('input', runValidations));
+  // Correo SIEMPRE en minusculas (v4.38): se transforma al salir del campo
+  // (el usuario lo ve normalizarse) y el save() lo baja de nuevo por si acaso.
+  q('#e_email').addEventListener('blur', () => {
+    const el = q('#e_email');
+    const low = el.value.trim().toLowerCase();
+    if (el.value !== low) el.value = low;
+    runValidations();
+  });
 
   async function save() {
     const phRaw = q('#e_phone').value.replace(/\D/g, '');
@@ -1501,7 +1509,7 @@ function wireFicha(host, w) {
       account_number: accRaw || null,
       bank_code: accRaw ? accRaw.slice(0, 4) : null,
       phone: phRaw ? '+58' + phRaw.slice(1) : null,
-      email: q('#e_email').value.trim() || null,
+      email: q('#e_email').value.trim().toLowerCase() || null,
       address: q('#e_address').value.trim() || null,
     };
     // El CARGO (role) NUNCA se envia desde la ficha: es dato maestro que solo

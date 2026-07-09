@@ -743,7 +743,7 @@ async function saveProfile(env, cc, body, table, deptScope) {
     account_number: acc,
     bank_code: acc ? acc.slice(0, 4) : null,
     phone: phone,
-    email: p.email || null,
+    email: p.email ? String(p.email).trim().toLowerCase() : null,   // v4.38: siempre minusculas
     address: p.address || null,
     last_source_company: cc,
     // v4.20: sello de QUIEN edito la ficha y CUANDO (etiqueta pre-armada).
