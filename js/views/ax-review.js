@@ -563,7 +563,9 @@ function confirmAction(verb, scope, id) {
   wrap.querySelector('#axrCancel').addEventListener('click', close);
 
   const goB = wrap.querySelector('#axrGo');
+  let finished = false;   // v4.53: tras el exito, el boton pasa a ser SOLO Cerrar
   goB.addEventListener('click', async () => {
+    if (finished) { close(); return; }
     goB.disabled = true; goB.textContent = isPub ? 'Publicando…' : 'Anulando…';
     const res = wrap.querySelector('#axrRes');
     res.className = 'res'; res.textContent = '';
@@ -582,16 +584,28 @@ function confirmAction(verb, scope, id) {
     }
     const done = isPub ? (r.published || []).length : (r.discarded || []).length;
     const rej = (r.rejected_count || 0);
-    res.className = 'res ok';
-    res.innerHTML = isPub
-      ? `✓ <b>${done}</b> ficha(s) publicada(s)${rej ? ` · ${rej} no se pudo enviar` : ''}.`
-      : `✓ <b>${done}</b> ficha(s) anulada(s).`;
+    if (done > 0) {
+      res.className = 'res ok';
+      res.innerHTML = isPub
+        ? `✓ <b>${done}</b> ficha(s) publicada(s)${rej ? ` · ${rej} no se pudo enviar` : ''}.`
+        : `✓ <b>${done}</b> ficha(s) anulada(s).`;
+    } else {
+      // Nada que hacer (ej. la fila ya estaba resuelta y la lista de la
+      // pantalla estaba desactualizada): mensaje claro, no un check enganoso.
+      res.className = 'res err';
+      res.textContent = 'ℹ ' + ((r.message || `Nada para ${isPub ? 'publicar' : 'anular'}: los cambios ya estaban resueltos.`)) + ' La lista se actualizó.';
+    }
+    // v4.53 FIX: la lista se recarga DE INMEDIATO (antes solo recargaba el
+    // boton principal al cerrar; el boton Cancelar renombrado a "Cerrar"
+    // cerraba SIN recargar y la ficha publicada quedaba pintada como
+    // fantasma, invitando a re-publicar "0"). Ademas queda UN solo Cerrar
+    // y el listener original ya no re-dispara la accion (flag finished).
+    finished = true;
     goB.textContent = 'Cerrar';
     goB.disabled = false;
-    goB.onclick = () => { close(); load(); };   // recargar la lista al cerrar
-    // Cancelar pasa a "Cerrar" tambien.
     const cancelBtn = wrap.querySelector('#axrCancel');
-    if (cancelBtn) cancelBtn.textContent = 'Cerrar';
+    if (cancelBtn) cancelBtn.style.display = 'none';
+    load();
   });
 }
 
@@ -930,8 +944,12 @@ function confirmCompare(verb, rows) {
     CMP_ROWS.forEach(row => { if (doneSet.has(String(row.id_number))) row._done = verb; });
     goB.textContent = 'Listo';
     goB.disabled = false;
-    goB.onclick = () => { close(); paintCompare(); };
-    const cxl = wrap.querySelector('#cmpCxl'); if (cxl) cxl.textContent = 'Cerrar';
+    // v4.53: clonar el boton elimina el listener original (evita que
+    // "Cerrar" re-dispare la accion) y se oculta el otro boton.
+    const goB2 = goB.cloneNode(true);
+    goB.replaceWith(goB2);
+    goB2.onclick = () => { close(); paintCompare(); };
+    const cxl = wrap.querySelector('#cmpCxl'); if (cxl) cxl.style.display = 'none';
   });
 }
 
