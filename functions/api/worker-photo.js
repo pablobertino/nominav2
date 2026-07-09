@@ -731,6 +731,13 @@ async function saveProfile(env, cc, body, table, deptScope) {
   //   S=Soltero/a C=Casado/a D=Divorciado/a V=Viudo/a O=Cohabitando R=Asociacion registrada
   if (p.marital_status && !['S', 'C', 'D', 'V', 'O', 'R'].includes(p.marital_status)) return json({ ok: false, error: 'Estado civil invalido.' }, 400);
   if (p.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email)) return json({ ok: false, error: 'Correo invalido.' }, 400);
+  // v4.45: la fecha de nacimiento solo se acepta en ISO (YYYY-MM-DD). El
+  // input type=date del front ya garantiza ese formato (lo que el usuario VE
+  // es la presentacion regional dd/mm/aaaa del navegador); esto blinda contra
+  // clientes viejos o llamadas directas con formatos regionales.
+  if (p.birth_date && !/^\d{4}-\d{2}-\d{2}$/.test(String(p.birth_date).trim())) {
+    return json({ ok: false, error: 'Fecha de nacimiento invalida (formato YYYY-MM-DD).' }, 400);
+  }
 
   // v4.43: BLOQUEO DE VACIADO server-side (defensa aunque el cliente no valide).
   // Un campo protegido que TIENE valor en el maestro no puede llegar vacio en
