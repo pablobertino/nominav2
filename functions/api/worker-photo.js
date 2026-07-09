@@ -732,6 +732,42 @@ async function saveProfile(env, cc, body, table, deptScope) {
   if (p.marital_status && !['S', 'C', 'D', 'V', 'O', 'R'].includes(p.marital_status)) return json({ ok: false, error: 'Estado civil invalido.' }, 400);
   if (p.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email)) return json({ ok: false, error: 'Correo invalido.' }, 400);
 
+  // v4.43: BLOQUEO DE VACIADO server-side (defensa aunque el cliente no valide).
+  // Un campo protegido que TIENE valor en el maestro no puede llegar vacio en
+  // el patch: eso seria un borrado (como el Nacimiento perdido detectado en
+  // Sincronizar). Si estaba vacio, puede seguir vacio o llenarse. Segundo
+  // nombre SI se puede vaciar (decision 2026-07-08). Cargo/departamento no
+  // entran: no se editan desde la ficha por tiendas/gestores.
+  {
+    const PROTECTED = ['first_name', 'last_names', 'birth_date', 'gender',
+      'marital_status', 'account_number', 'phone', 'email', 'address'];
+    const LBL = {
+      first_name: 'Primer nombre', last_names: 'Apellidos', birth_date: 'Nacimiento',
+      gender: 'Genero', marital_status: 'Estado civil', account_number: 'Cuenta bancaria',
+      phone: 'Telefono', email: 'Correo', address: 'Direccion',
+    };
+    const prevRows = await sb(env,
+      `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=${PROTECTED.join(',')}`);
+    const prev = prevRows && prevRows[0] ? prevRows[0] : null;
+    if (prev) {
+      const incoming = {
+        first_name: p.first_name, last_names: p.last_names, birth_date: p.birth_date,
+        gender: p.gender, marital_status: p.marital_status, account_number: acc,
+        phone: phone, email: p.email, address: p.address,
+      };
+      const cleared = PROTECTED.filter(f =>
+        prev[f] != null && String(prev[f]).trim() !== ''
+        && (incoming[f] == null || String(incoming[f]).trim() === ''));
+      if (cleared.length) {
+        return json({
+          ok: false,
+          error: 'No se puede dejar vacio: ' + cleared.map(f => LBL[f]).join(', ')
+            + '. Si el dato esta mal, escribe el valor correcto; si el vigente es otro, usa Actualizar para traerlo.',
+        }, 400);
+      }
+    }
+  }
+
   const patch = {
     first_name: p.first_name || null,
     second_name: p.second_name || null,

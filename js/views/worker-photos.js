@@ -1472,10 +1472,19 @@ function wireFicha(host, w) {
       depLocked.classList.toggle('empty', emptyDep);
     }
     q('#e_email').value = w.email || ''; q('#e_address').value = w.address || '';
+    // v4.43: capturar los valores ORIGINALES protegidos al entrar a editar.
+    // Regla: un campo que TENIA dato no puede quedar vacio (si estaba vacio,
+    // puede seguir vacio o llenarse). Segundo nombre SI se puede vaciar.
+    ORIG_PROT = {
+      first_name: w.first_name, last_names: w.last_names, birth_date: w.birth_date,
+      gender: w.gender, marital_status: w.marital_status, account_number: w.account_number,
+      phone: w.phone, email: w.email, address: w.address,
+    };
     runValidations();
     window.scrollTo(0, 0);
   }
 
+  let ORIG_PROT = null;   // v4.43: valores al entrar a editar (bloqueo de vaciado)
   ['#e_account', '#e_phone', '#e_birth', '#e_email'].forEach(sel => q(sel).addEventListener('input', runValidations));
   // Correo SIEMPRE en minusculas (v4.38): se transforma al salir del campo
   // (el usuario lo ve normalizarse) y el save() lo baja de nuevo por si acaso.
@@ -1512,6 +1521,34 @@ function wireFicha(host, w) {
       email: q('#e_email').value.trim().toLowerCase() || null,
       address: q('#e_address').value.trim() || null,
     };
+    // v4.43: BLOQUEO DE VACIADO. Un campo protegido que tenia valor no puede
+    // guardarse vacio (evita perdidas como el Nacimiento borrado detectado en
+    // Sincronizar). Mensaje inline (sin alert, regla del portal).
+    const PROT_LBL = {
+      first_name: 'Primer nombre', last_names: 'Apellidos', birth_date: 'Nacimiento',
+      gender: 'Género', marital_status: 'Estado civil', account_number: 'Cuenta bancaria',
+      phone: 'Teléfono', email: 'Correo', address: 'Dirección',
+    };
+    const vaciados = ORIG_PROT
+      ? Object.keys(PROT_LBL).filter(k =>
+          ORIG_PROT[k] != null && String(ORIG_PROT[k]).trim() !== '' && !profile[k])
+      : [];
+    if (vaciados.length) {
+      let bar = host.querySelector('#ffValMsg');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'ffValMsg';
+        bar.style.cssText = 'margin:10px 0;padding:10px 13px;border:1px solid #f3c2c2;background:#fef2f2;color:#b91c1c;border-radius:10px;font-size:13px';
+        const sb2 = host.querySelector('#ffSave');
+        if (sb2 && sb2.parentElement) sb2.parentElement.insertBefore(bar, sb2);
+      }
+      bar.textContent = 'No se puede dejar vacío: ' + vaciados.map(k => PROT_LBL[k]).join(', ')
+        + '. Si el dato está mal, escribe el valor correcto; si el vigente es otro, usa Actualizar para traerlo.';
+      bar.scrollIntoView({ block: 'nearest' });
+      return;
+    }
+    const oldBar = host.querySelector('#ffValMsg');
+    if (oldBar) oldBar.remove();
     // El CARGO (role) NUNCA se envia desde la ficha: es dato maestro que solo
     // cambia por la sincronizacion de personal desde AX (afecta el salario).
     // El backend ademas ignora 'role' aunque llegara.
