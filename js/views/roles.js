@@ -170,6 +170,13 @@ function rolePill(r) {
   if (r.readonly_scope) return '<span class="rl-pill rl-pill-ro">ve todo</span>';
   return '<span class="rl-pill rl-pill-gray">estandar</span>';
 }
+// v4.61: tipo de acceso osTicket del rol (que se crea para sus usuarios).
+function okindPill(r) {
+  const k = r.osticket_kind || 'none';
+  if (k === 'agent') return '<span class="rl-pill" style="background:#eff4ff;color:#1e40af" title="Sus usuarios se crean como AGENTES del panel osTicket">Agente</span>';
+  if (k === 'client') return '<span class="rl-pill" style="background:#f0fdf4;color:#15803d" title="Sus usuarios se crean como USUARIOS del portal osTicket">Usuario</span>';
+  return '<span class="rl-pill rl-pill-gray" title="Sus usuarios no tienen acceso a osTicket">—</span>';
+}
 function paintList() {
   const rows = ST.roles.map(r => {
     const acts = r.is_system
@@ -181,6 +188,7 @@ function paintList() {
     return `<tr data-open="${esc(r.code)}">
       <td><div class="rl-rname">${esc(r.label || r.code)}</div><div class="rl-rdesc">${esc(r.code)}</div></td>
       <td>${rolePill(r)}</td>
+      <td>${okindPill(r)}</td>
       <td class="rl-num">${r.perm_count == null ? 'todos' : r.perm_count}</td>
       <td class="rl-num">${r.user_count}</td>
       <td><div class="rl-rowacts">${acts}<svg class="rl-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></div></td>
@@ -197,7 +205,7 @@ function paintList() {
     </div>
     <div class="rl-tablebox">
       <table>
-        <thead><tr><th>Rol</th><th>Tipo</th><th class="rl-num">Permisos</th><th class="rl-num">Usuarios</th><th></th></tr></thead>
+        <thead><tr><th>Rol</th><th>Tipo</th><th>osTicket</th><th class="rl-num">Permisos</th><th class="rl-num">Usuarios</th><th></th></tr></thead>
         <tbody>${rows}</tbody>
       </table>
     </div>
@@ -598,6 +606,14 @@ function openNewRoleModal() {
     <input id="nrLabel" type="text" maxlength="60" placeholder="ej. Auditor">
     <label class="flabel" style="margin-top:10px">Codigo interno <span class="opt">(minusculas, sin espacios)</span></label>
     <input id="nrCode" type="text" maxlength="31" placeholder="ej. auditor" style="font-family:ui-monospace,Menlo,monospace">
+    <label class="flabel" style="margin-top:10px">Acceso a osTicket <span class="opt">(obligatorio)</span></label>
+    <select id="nrOkind">
+      <option value="">— Elegir —</option>
+      <option value="agent">Agente (panel del staff)</option>
+      <option value="client">Usuario (portal de tickets)</option>
+      <option value="none">Ninguno (sin acceso a osTicket)</option>
+    </select>
+    <p class="wp-help" style="margin-top:6px">Define qué acceso de osTicket se crea para los usuarios de este rol. Hoy: tiendas y gestores son <b>Usuarios</b>; los administradores son <b>Agentes</b>.</p>
     <div id="nrMsg" class="wp-prev" style="display:none"></div>
     <p class="wp-help">El rol nace <b>sin permisos</b>: al crearlo, abrilo y asignale los que corresponda. El alcance de empresas se define aparte, en Permisos.</p>
     <div class="wp-foot"><span style="flex:1"></span>
@@ -610,20 +626,21 @@ function openNewRoleModal() {
   q('#nrX').addEventListener('click', () => closeModal(host, onKey));
   q('#nrCancel').addEventListener('click', () => closeModal(host, onKey));
 
-  const labelEl = q('#nrLabel'), codeEl = q('#nrCode'), saveB = q('#nrSave');
+  const labelEl = q('#nrLabel'), codeEl = q('#nrCode'), saveB = q('#nrSave'), okindEl = q('#nrOkind');
   let codeTouched = false;
   const slug = s => String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 31);
   const refresh = () => {
     if (!codeTouched) codeEl.value = slug(labelEl.value);
-    saveB.disabled = !(labelEl.value.trim().length >= 2 && /^[a-z][a-z0-9_]{2,30}$/.test(codeEl.value));
+    saveB.disabled = !(labelEl.value.trim().length >= 2 && /^[a-z][a-z0-9_]{2,30}$/.test(codeEl.value) && okindEl.value);
   };
   labelEl.addEventListener('input', refresh);
   codeEl.addEventListener('input', () => { codeTouched = true; refresh(); });
+  okindEl.addEventListener('change', refresh);
   setTimeout(() => labelEl.focus(), 30);
 
   saveB.addEventListener('click', async () => {
     saveB.disabled = true; saveB.textContent = 'Creando…';
-    const d = await api({ action: 'create', user: userPayload(ST.user), code: codeEl.value, label: labelEl.value.trim() });
+    const d = await api({ action: 'create', user: userPayload(ST.user), code: codeEl.value, label: labelEl.value.trim(), osticket_kind: okindEl.value });
     if (!d.ok) {
       saveB.disabled = false; saveB.textContent = 'Crear rol';
       const m = q('#nrMsg'); m.style.display = 'block'; m.className = 'wp-prev warn'; m.textContent = d.error || 'No se pudo crear.';
@@ -644,6 +661,13 @@ function openRenameModal(code) {
     <p class="wp-who"><span class="wp-ced">${esc(code)}</span></p>
     <label class="flabel">Nombre visible</label>
     <input id="rnLabel" type="text" maxlength="60" value="${esc(r.label || '')}">
+    <label class="flabel" style="margin-top:10px">Acceso a osTicket</label>
+    <select id="rnOkind">
+      <option value="agent"${(r.osticket_kind || 'none') === 'agent' ? ' selected' : ''}>Agente (panel del staff)</option>
+      <option value="client"${(r.osticket_kind || 'none') === 'client' ? ' selected' : ''}>Usuario (portal de tickets)</option>
+      <option value="none"${(r.osticket_kind || 'none') === 'none' ? ' selected' : ''}>Ninguno (sin acceso a osTicket)</option>
+    </select>
+    <p class="wp-help" style="margin-top:6px">Cambiarlo solo afecta a los accesos que se creen a partir de ahora; los existentes no se tocan.</p>
     <div id="rnMsg" class="wp-prev" style="display:none"></div>
     <div class="wp-foot"><span style="flex:1"></span>
       <button class="btn" id="rnCancel">Cancelar</button>
@@ -663,6 +687,16 @@ function openRenameModal(code) {
       saveB.disabled = false; saveB.textContent = 'Guardar';
       const m = q('#rnMsg'); m.style.display = 'block'; m.className = 'wp-prev warn'; m.textContent = d.error || 'No se pudo renombrar.';
       return;
+    }
+    // v4.61: si cambio el tipo osTicket, guardarlo tambien (solo no-sistema).
+    const nk = q('#rnOkind') ? q('#rnOkind').value : null;
+    if (nk && nk !== (r.osticket_kind || 'none')) {
+      const d2 = await api({ action: 'set_osticket', user: userPayload(ST.user), role_code: code, osticket_kind: nk });
+      if (!d2.ok) {
+        saveB.disabled = false; saveB.textContent = 'Guardar';
+        const m = q('#rnMsg'); m.style.display = 'block'; m.className = 'wp-prev warn'; m.textContent = d2.error || 'El nombre se guardo, pero el acceso osTicket no se pudo cambiar.';
+        return;
+      }
     }
     closeModal(host, onKey);
     await reload();

@@ -89,7 +89,7 @@ export async function onRequestPost({ request, env }) {
     /* ---------- matriz completa ---------- */
     if (action === 'matrix') {
       const [roles, perms, rps, admins, tiendas] = await Promise.all([
-        sb(env, 'roles?select=code,label,is_system,readonly_scope,is_active,sort_order&order=sort_order.asc,code.asc'),
+        sb(env, 'roles?select=code,label,is_system,readonly_scope,is_active,sort_order,osticket_kind&order=sort_order.asc,code.asc'),
         sb(env, 'permissions?is_active=eq.true&select=code,label,domain,kind,sort_order,help,enforced&order=sort_order.asc,code.asc'),
         sb(env, 'role_permissions?select=role_code,permission_code'),
         sb(env, 'admin_users?is_active=eq.true&select=role'),
@@ -211,6 +211,10 @@ export async function onRequestPost({ request, env }) {
     if (action === 'create') {
       const code = String(body.code || '').trim().toLowerCase();
       const label = String(body.label || '').trim();
+      // v4.61: tipo osTicket OBLIGATORIO al crear (decide que acceso se crea
+      // en osTicket para los usuarios del rol: agente, usuario o nada).
+      const okind = ['agent', 'client', 'none'].includes(body.osticket_kind) ? body.osticket_kind : null;
+      if (!okind) return json({ ok: false, error: 'Indica el tipo de acceso osTicket del rol (agente, usuario o ninguno).' }, 400);
       if (!/^[a-z][a-z0-9_]{2,30}$/.test(code)) {
         return json({ ok: false, error: 'Codigo invalido: minusculas, numeros y _, de 3 a 31 caracteres, empezando con letra.' }, 400);
       }
@@ -221,9 +225,25 @@ export async function onRequestPost({ request, env }) {
       const nextSort = ((maxRows && maxRows[0] && maxRows[0].sort_order) || 0) + 10;
       await sb(env, 'roles', {
         method: 'POST', headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({ code, label, is_system: false, readonly_scope: false, is_active: true, sort_order: nextSort }),
+        body: JSON.stringify({ code, label, is_system: false, readonly_scope: false, is_active: true, sort_order: nextSort, osticket_kind: okind }),
       });
       return json({ ok: true, code, label });
+    }
+
+    // v4.61: cambiar el tipo osTicket de un rol NO-sistema (superadmin).
+    // Solo afecta a los accesos que se creen a partir de ahora.
+    if (action === 'set_osticket') {
+      const rc = String(body.role_code || '').trim();
+      const okind = ['agent', 'client', 'none'].includes(body.osticket_kind) ? body.osticket_kind : null;
+      if (!rc || !okind) return json({ ok: false, error: 'Datos incompletos.' }, 400);
+      const rows = await sb(env, `roles?code=eq.${encodeURIComponent(rc)}&select=code,is_system`);
+      if (!rows || !rows.length) return json({ ok: false, error: 'Rol no encontrado.' }, 404);
+      if (rows[0].is_system) return json({ ok: false, error: 'Los roles de sistema no se modifican.' }, 400);
+      await sb(env, `roles?code=eq.${encodeURIComponent(rc)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ osticket_kind: okind }),
+      });
+      return json({ ok: true });
     }
 
     return json({ ok: false, error: 'Accion no reconocida.' }, 400);
