@@ -607,6 +607,14 @@ function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
 
+/* Miniatura publica del esquema por photo_key (mismo bucket que Personal:
+   URL directa, cacheable, sin firmar). null si la ficha no tiene foto nueva. */
+const PUBLIC_THUMB_BUCKET = 'worker-thumbs';
+function thumbUrlPub(env, photoKey) {
+  if (!photoKey) return null;
+  return `${env.supabase_url}/storage/v1/object/public/${PUBLIC_THUMB_BUCKET}/${photoKey}.jpg`;
+}
+
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
     ...opts,
@@ -654,21 +662,14 @@ async function listPending(env, actor, user) {
   const sets = await sb(env, path) || [];
   if (!sets.length) return json({ ok: true, rows: [], companies: [] });
 
-  // Enriquecer: nombre del trabajador (workers_master) y nombre de quien edito.
+  // Enriquecer: nombre del trabajador (workers_master) y su foto (thumb).
   const ceds = [...new Set(sets.map(s => s.id_number))];
-  const editorIds = [...new Set(sets.map(s => s.changed_by).filter(x => x != null))];
 
   let nameByCed = {};
   if (ceds.length) {
     const inList = ceds.map(c => `"${c}"`).join(',');
-    const wm = await sb(env, `workers_master?id_number=in.(${inList})&select=id_number,full_name,ced_kind`);
-    (wm || []).forEach(w => { nameByCed[w.id_number] = { full_name: w.full_name, ced_kind: w.ced_kind }; });
-  }
-  let editorById = {};
-  if (editorIds.length) {
-    const inList = editorIds.join(',');
-    const admins = await sb(env, `admin_users?id=in.(${inList})&select=id,username,name`);
-    (admins || []).forEach(a => { editorById[a.id] = a.name || a.username || ('admin#' + a.id); });
+    const wm = await sb(env, `workers_master?id_number=in.(${inList})&select=id_number,full_name,ced_kind,photo_key`);
+    (wm || []).forEach(w => { nameByCed[w.id_number] = { full_name: w.full_name, ced_kind: w.ced_kind, photo_key: w.photo_key || null }; });
   }
 
   // Empresas presentes: razon social + tipo + zona/subzona/concepto (para los
@@ -727,6 +728,7 @@ async function listPending(env, actor, user) {
       id_number: s.id_number,
       ced_kind: nm.ced_kind || null,
       full_name: nm.full_name || null,
+      thumb_url: thumbUrlPub(env, nm.photo_key),
       company_code: s.company_code,
       company_name: cm.name || null,
       company_type: cm.type || null,
@@ -736,7 +738,11 @@ async function listPending(env, actor, user) {
       zona: cm.zone || null,
       subzona: cm.subzone || null,
       concepto: cm.concept || null,
-      changed_by: s.changed_by != null ? (editorById[s.changed_by] || ('admin#' + s.changed_by)) : null,
+      // v4.37: changed_by YA es la etiqueta legible del actor (texto). Si
+      // quedara algun id numerico viejo sin mapear, se muestra como admin#N.
+      changed_by: s.changed_by != null
+        ? (/^\d+$/.test(String(s.changed_by)) ? ('admin#' + s.changed_by) : String(s.changed_by))
+        : null,
       changed_at: s.changed_at,
       origin: s.origin || 'edit',
       fields,
