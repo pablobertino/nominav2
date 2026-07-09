@@ -251,9 +251,9 @@ export function launchWizard(user, reportDef, onExit) {
           <span style="font-size:12px">El archivo se procesa en tu navegador</span></div>
         <input type="file" id="rFile" accept=".xlsx,.xls" hidden>
         <div id="rUpResult"></div>
-        ${S.meta ? `<div style="border-top:1px solid var(--border-soft);margin-top:18px;padding-top:16px">
+        ${(S.meta && user.kind === 'admin' && user.role === 'superadmin') ? `<div style="border-top:1px solid var(--border-soft);margin-top:18px;padding-top:16px">
           <div class="rs-title" style="font-size:13px;margin-bottom:4px">Eliminar la lista guardada</div>
-          <p class="hint" style="margin:0 0 10px">Borra por completo la lista de esta tienda de la base de datos. Úsalo si quieres empezar de cero. Los reportes ya enviados no se ven afectados.</p>
+          <p class="hint" style="margin:0 0 10px">Borra por completo la lista de esta tienda de la base de datos. Úsalo si quieres empezar de cero. Los reportes ya enviados no se ven afectados. Acción de mantenimiento: solo superadministrador.</p>
           <button class="btn" id="rClear" style="color:var(--danger);border-color:#f3c2c2">🗑 Eliminar lista de la tienda</button>
         </div>` : ''}
       </div>
