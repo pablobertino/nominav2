@@ -1276,6 +1276,7 @@ function fichaHtml(w, c) {
         <div class="ff-actions">
           <button class="btn btn-ghost-danger" id="ffDel" style="display:none">Quitar foto</button>
           ${(STATE.isSuper && w.ax_pending) ? `<button class="btn wp-btn-publish" id="ffPublish" title="Publicar en el sistema los cambios de esta ficha (solo superadministrador)"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar</button>` : ''}
+          <button class="btn" id="ffCopy" title="Copiar datos de la ficha"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copiar</button>
           <button class="btn" id="ffEdit">Editar</button>
           <button class="btn" id="ffCancel" style="display:none">Cancelar</button>
           <button class="btn btn-primary" id="ffSave" style="display:none">Guardar cambios</button>
@@ -1534,21 +1535,9 @@ function wireFicha(host, w) {
           ORIG_PROT[k] != null && String(ORIG_PROT[k]).trim() !== '' && !profile[k])
       : [];
     if (vaciados.length) {
-      let bar = host.querySelector('#ffValMsg');
-      if (!bar) {
-        bar = document.createElement('div');
-        bar.id = 'ffValMsg';
-        bar.style.cssText = 'margin:10px 0;padding:10px 13px;border:1px solid #f3c2c2;background:#fef2f2;color:#b91c1c;border-radius:10px;font-size:13px';
-        const sb2 = host.querySelector('#ffSave');
-        if (sb2 && sb2.parentElement) sb2.parentElement.insertBefore(bar, sb2);
-      }
-      bar.textContent = 'No se puede dejar vacío: ' + vaciados.map(k => PROT_LBL[k]).join(', ')
-        + '. Si el dato está mal, escribe el valor correcto; si el vigente es otro, usa Actualizar para traerlo.';
-      bar.scrollIntoView({ block: 'nearest' });
+      showFieldGuardModal(vaciados.map(k => PROT_LBL[k]));
       return;
     }
-    const oldBar = host.querySelector('#ffValMsg');
-    if (oldBar) oldBar.remove();
     // El CARGO (role) NUNCA se envia desde la ficha: es dato maestro que solo
     // cambia por la sincronizacion de personal desde AX (afecta el salario).
     // El backend ademas ignora 'role' aunque llegara.
@@ -1598,6 +1587,8 @@ function wireFicha(host, w) {
   }
 
   q('#ffBack').addEventListener('click', fichaBack);
+  const cpBtn = q('#ffCopy');
+  if (cpBtn) cpBtn.addEventListener('click', () => copyWorkerData(w, cpBtn));
   q('#ffEdit').addEventListener('click', toEdit);
   q('#ffCancel').addEventListener('click', () => openFicha(w.id_number));
   q('#ffSave').addEventListener('click', save);
@@ -1605,6 +1596,30 @@ function wireFicha(host, w) {
   q('#ffDel').addEventListener('click', () => openPhotoModal(w.id_number));
   const pubBtn = q('#ffPublish');
   if (pubBtn) pubBtn.addEventListener('click', () => openPublishModal(String(w.id_number)));
+}
+
+/* v4.47: aviso de campos protegidos en MODAL del portal (la barra inline
+   deformaba la fila de botones de la ficha). Cierra solo con su boton o
+   Escape (regla del portal: nunca al clic fuera). */
+function showFieldGuardModal(labels) {
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;z-index:1200;padding:20px';
+  wrap.innerHTML = `
+    <div style="background:var(--card,#fff);border-radius:16px;max-width:440px;width:100%;padding:22px 24px;box-shadow:0 20px 60px rgba(15,23,42,.3)">
+      <h3 style="margin:0 0 10px;font-size:17px;color:var(--ink)">No se puede guardar</h3>
+      <div style="border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.55;background:#fef2f2;border:1px solid #f3c2c2;color:#b91c1c">
+        <b>${labels.map(l => String(l).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]))).join(', ')}</b> ya tenía${labels.length === 1 ? '' : 'n'} un valor y no puede${labels.length === 1 ? '' : 'n'} quedar vacío${labels.length === 1 ? '' : 's'}.
+        <br><br>Si el dato está mal, escribe el valor correcto. Si el vigente es otro, usa <b>Actualizar</b> en Personal para traerlo.
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:16px">
+        <button id="fgOk" style="font:inherit;font-size:13.5px;font-weight:600;padding:9px 16px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--ink);cursor:pointer">Entendido</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  const close = () => { document.removeEventListener('keydown', onKey); wrap.remove(); };
+  const onKey = ev => { if (ev.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  wrap.querySelector('#fgOk').addEventListener('click', close);
 }
 
 function backToGrid() {

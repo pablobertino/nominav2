@@ -340,8 +340,6 @@ export async function renderAxReview(user) {
       <button class="axr-clear" id="axrClear">Limpiar</button>
     </div>
     <div class="axr-toolbar">
-      <button class="axr-btn axr-btn-cmp" id="axrCompare"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg> Comparar</button>
-      <button class="axr-btn" id="axrHistory"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> Historial</button>
       <span class="axr-spacer"></span>
       <button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>
       <button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar con cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>
@@ -370,8 +368,6 @@ export async function renderAxReview(user) {
   $('#axrPubSafe').addEventListener('click', () => confirmAction('publish', 'nobank'));
   $('#axrPubBank').addEventListener('click', () => confirmAction('publish', 'bank'));
   $('#axrDisAll').addEventListener('click', () => confirmAction('discard', 'all'));
-  $('#axrCompare').addEventListener('click', () => openCompareScope());
-  $('#axrHistory').addEventListener('click', () => openHistory());
 
   await load();
   attachRefresh('#axrRefresh', load, 'sincronizar');
@@ -608,42 +604,39 @@ function confirmAction(verb, scope, id) {
    Carga el catalogo COMPLETO del alcance del actor via detect_scope (no solo
    las empresas con pendientes). Al confirmar, dispara la comparacion por
    empresa en bucle con progreso. */
-async function openCompareScope() {
+/* Paso 1 (v4.46: pagina propia en el menu). Combos de alcance (Tipo,
+   Empresa, Zona->Subzona, Concepto) con el catalogo COMPLETO del actor via
+   detect_scope. Al confirmar, dispara la comparacion por empresa en bucle
+   con progreso (panel modal existente). */
+export async function renderAxCompare(user) {
+  USER = user;
+  ensureStyles();
   CMP_FILTER = { type: '', company: '', zone: '', subzone: '', concept: '' };
-  const wrap = document.createElement('div');
-  wrap.className = 'axr-modal-vp';
-  wrap.innerHTML = `
-    <div class="axr-modal">
-      <h3>Comparar con el sistema</h3>
-      <p class="who">Elige el alcance. Se compara empresa por empresa; puedes acotar por tipo, empresa, zona o concepto.</p>
-      <div class="box" style="background:var(--brand-bg,#eff6ff);border:1px solid #bfdbfe;color:#1e40af;margin-bottom:14px">
-        Solo se listan diferencias reales: un valor en el portal y otro distinto en el sistema. Los datos que faltan de un lado no aparecen.
-      </div>
-      <div id="cmpScopeBody"><div class="axr-loading">Cargando empresas…</div></div>
-      <div class="res" id="cmpScopeRes" style="margin-top:12px"></div>
-      <div class="foot">
-        <button class="axr-btn" id="cmpCancel">Cancelar</button>
-        <button class="axr-btn axr-btn-cmp" id="cmpStart" disabled>Comparar</button>
-      </div>
+  $('#pnlMain').innerHTML = `
+    <div class="axr-head"><div>
+      <h1>Comparar</h1>
+      <p>Compara el portal contra el sistema, empresa por empresa, y resuelve cada diferencia: <b>Publicar</b> (portal → sistema) o <b>Adoptar</b> (sistema → portal).</p>
+    </div></div>
+    <div style="margin:16px 0 14px;border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.5;background:var(--brand-bg,#eff6ff);border:1px solid #bfdbfe;color:#1e40af">
+      Solo se listan diferencias reales: un valor en el portal y otro distinto en el sistema. Los datos que faltan de un lado no aparecen (esos se resuelven con <b>Actualizar</b> en Personal).
+    </div>
+    <div id="cmpScopeBody"><div class="axr-loading">Cargando empresas…</div></div>
+    <div class="axr-toolbar" style="margin-top:14px">
+      <span class="axr-spacer"></span>
+      <button class="axr-btn axr-btn-cmp" id="cmpStart" disabled>Comparar</button>
     </div>`;
-  document.body.appendChild(wrap);
-  const close = () => { document.removeEventListener('keydown', onKey); wrap.remove(); };
-  const onKey = ev => { if (ev.key === 'Escape') close(); };
-  document.addEventListener('keydown', onKey);
-  wrap.querySelector('#cmpCancel').addEventListener('click', close);
 
-  // Cargar catalogo completo (facetas) via detect_scope sin filtro.
+  // Catalogo completo del alcance (facetas) via detect_scope sin filtro.
   let sc;
   try { sc = await api({ action: 'detect_scope', user: sessionUserPayload(USER), filter: {} }); }
   catch (e) { sc = { ok: false, error: String(e && e.message || e) }; }
-  const scopeBody = wrap.querySelector('#cmpScopeBody');
+  const scopeBody = $('#cmpScopeBody');
   if (!sc || !sc.ok) {
     scopeBody.innerHTML = `<div class="axr-empty">No se pudo cargar el catálogo${sc && sc.error ? ': ' + esc(sc.error) : ''}.</div>`;
     return;
   }
   CMP_FACETS = sc.facets || emptyFacetsCli();
 
-  // Render combos.
   scopeBody.innerHTML = `
     <div class="axr-filters" style="margin:0">
       <span class="fg">Tipo <select id="cmpType"></select></span>
@@ -655,20 +648,18 @@ async function openCompareScope() {
     </div>
     <div id="cmpScopeCount" style="margin-top:10px;font-size:12.5px;color:var(--muted)"></div>`;
 
-  const startBtn = wrap.querySelector('#cmpStart');
-  const countEl = wrap.querySelector('#cmpScopeCount');
+  const startBtn = $('#cmpStart');
+  const countEl = $('#cmpScopeCount');
 
-  // Poblar combos (encadenados con el catalogo completo).
   const cmpCompaniesFor = (type) => (CMP_FACETS.companies || []).filter(c => !type || c.type === type);
   const cmpSubsFor = (zoneId) => (CMP_FACETS.subzones || []).filter(s => !zoneId || String(s.zone_id) === String(zoneId));
   const buildCmp = () => {
-    fillSelect(wrap.querySelector('#cmpType'), (CMP_FACETS.types || []).map(t => ({ id: t, name: t })), CMP_FILTER.type, 'Todos', x => x.id, x => x.name);
-    fillSelect(wrap.querySelector('#cmpEmp'), cmpCompaniesFor(CMP_FILTER.type), CMP_FILTER.company, 'Todas', x => x.code, x => `${x.code} · ${x.name || ''}`);
-    fillSelect(wrap.querySelector('#cmpZone'), (CMP_FACETS.zones || []), CMP_FILTER.zone, 'Todas', x => x.id, x => x.name);
-    fillSelect(wrap.querySelector('#cmpSub'), cmpSubsFor(CMP_FILTER.zone), CMP_FILTER.subzone, 'Todas', x => x.id, x => x.name);
-    fillSelect(wrap.querySelector('#cmpCon'), (CMP_FACETS.concepts || []), CMP_FILTER.concept, 'Todos', x => x.id, x => x.name);
+    fillSelect($('#cmpType'), (CMP_FACETS.types || []).map(t => ({ id: t, name: t })), CMP_FILTER.type, 'Todos', x => x.id, x => x.name);
+    fillSelect($('#cmpEmp'), cmpCompaniesFor(CMP_FILTER.type), CMP_FILTER.company, 'Todas', x => x.code, x => `${x.code} · ${x.name || ''}`);
+    fillSelect($('#cmpZone'), (CMP_FACETS.zones || []), CMP_FILTER.zone, 'Todas', x => x.id, x => x.name);
+    fillSelect($('#cmpSub'), cmpSubsFor(CMP_FILTER.zone), CMP_FILTER.subzone, 'Todas', x => x.id, x => x.name);
+    fillSelect($('#cmpCon'), (CMP_FACETS.concepts || []), CMP_FILTER.concept, 'Todos', x => x.id, x => x.name);
   };
-  // Calcula cuantas empresas caen en el filtro actual (cliente, sobre el catalogo).
   const codesForFilter = () => (CMP_FACETS.companies || []).filter(c =>
     (!CMP_FILTER.type || c.type === CMP_FILTER.type) &&
     (!CMP_FILTER.company || c.code === CMP_FILTER.company) &&
@@ -686,17 +677,16 @@ async function openCompareScope() {
   };
 
   buildCmp(); refreshCount();
-  wrap.querySelector('#cmpType').addEventListener('change', e => { CMP_FILTER.type = e.target.value; CMP_FILTER.company = ''; buildCmp(); refreshCount(); });
-  wrap.querySelector('#cmpEmp').addEventListener('change', e => { CMP_FILTER.company = e.target.value; refreshCount(); });
-  wrap.querySelector('#cmpZone').addEventListener('change', e => { CMP_FILTER.zone = e.target.value; CMP_FILTER.subzone = ''; buildCmp(); refreshCount(); });
-  wrap.querySelector('#cmpSub').addEventListener('change', e => { CMP_FILTER.subzone = e.target.value; refreshCount(); });
-  wrap.querySelector('#cmpCon').addEventListener('change', e => { CMP_FILTER.concept = e.target.value; refreshCount(); });
-  wrap.querySelector('#cmpFClear').addEventListener('click', () => { CMP_FILTER = { type: '', company: '', zone: '', subzone: '', concept: '' }; buildCmp(); refreshCount(); });
+  $('#cmpType').addEventListener('change', e => { CMP_FILTER.type = e.target.value; CMP_FILTER.company = ''; buildCmp(); refreshCount(); });
+  $('#cmpEmp').addEventListener('change', e => { CMP_FILTER.company = e.target.value; refreshCount(); });
+  $('#cmpZone').addEventListener('change', e => { CMP_FILTER.zone = e.target.value; CMP_FILTER.subzone = ''; buildCmp(); refreshCount(); });
+  $('#cmpSub').addEventListener('change', e => { CMP_FILTER.subzone = e.target.value; refreshCount(); });
+  $('#cmpCon').addEventListener('change', e => { CMP_FILTER.concept = e.target.value; refreshCount(); });
+  $('#cmpFClear').addEventListener('click', () => { CMP_FILTER = { type: '', company: '', zone: '', subzone: '', concept: '' }; buildCmp(); refreshCount(); });
 
   startBtn.addEventListener('click', () => {
     const codes = codesForFilter();
     if (!codes.length) return;
-    close();
     runCompare({ ...CMP_FILTER }, codes);
   });
 }
@@ -739,7 +729,12 @@ async function runCompare(filter, codes) {
     </div>`;
   document.body.appendChild(wrap);
   let cancelled = false;
-  const close = () => { cancelled = true; document.removeEventListener('keydown', onKey); wrap.remove(); load(); };
+  // Al cerrar: si estamos sobre la bandeja de Sincronizar, recargarla; si
+  // venimos de la pagina Comparar (v4.46), no hay bandeja que recargar.
+  const close = () => {
+    cancelled = true; document.removeEventListener('keydown', onKey); wrap.remove();
+    if ($('#axrList')) load();
+  };
   const onKey = ev => { if (ev.key === 'Escape') close(); };
   document.addEventListener('keydown', onKey);
   wrap.querySelector('#cmpClose').addEventListener('click', close);
@@ -949,64 +944,50 @@ let HIST = { page: 1, size: 50, q: '', status: '', origin: '', dir: 'desc', tota
 const HIST_STATUS_LBL = { pending: 'Pendiente', published: 'Publicado', discarded: 'Anulado' };
 const HIST_ORIGIN_LBL = { edit: 'Edición', erp_detect: 'Comparación', auto_sync: 'Automático' };
 
-function openHistory() {
+export async function renderAxHistory(user) {
+  USER = user;
+  ensureStyles();
   HIST = { page: 1, size: 50, q: '', status: '', origin: '', dir: 'desc', total: 0, rows: [] };
-  const wrap = document.createElement('div');
-  wrap.className = 'axr-modal-vp';
-  wrap.id = 'axrHistPanel';
-  wrap.innerHTML = `
-    <div class="axr-cmp">
-      <div class="axr-cmp-head">
-        <h3>Historial de sincronización</h3>
-        <p id="hSub">Todo lo que pasó por esta bandeja: pendientes, publicados y anulados.</p>
-      </div>
-      <div class="axr-cmp-body">
-        <div class="axr-hctrl">
-          <span class="fg">Buscar<input id="hQ" type="text" placeholder="Cédula o nombre…" style="width:190px"></span>
-          <span class="fg">Estado<select id="hSt"><option value="">Todos</option><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="discarded">Anulado</option></select></span>
-          <span class="fg">Origen<select id="hOr"><option value="">Todos</option><option value="edit">Edición</option><option value="erp_detect">Comparación</option></select></span>
-          <span class="fg">Orden<select id="hDir"><option value="desc">Más recientes primero</option><option value="asc">Más antiguos primero</option></select></span>
-          <span class="fg">Por página<select id="hSize"><option>25</option><option selected>50</option><option>100</option></select></span>
-          <button class="axr-btn" id="hGo">Aplicar</button>
-        </div>
-        <div id="hList"><div class="axr-loading">Cargando…</div></div>
-        <div class="axr-hpager" id="hPager" hidden>
-          <span id="hRange"></span>
-          <button class="axr-btn" id="hPrev">← Anterior</button>
-          <button class="axr-btn" id="hNext">Siguiente →</button>
-        </div>
-      </div>
-      <div class="axr-cmp-foot">
-        <span style="color:var(--muted);font-size:12.5px">Solo lectura: publicar y anular se hacen en la bandeja.</span>
-        <span class="axr-spacer"></span>
-        <button class="axr-btn" id="hClose">Cerrar</button>
-      </div>
+  $('#pnlMain').innerHTML = `
+    <div class="axr-head"><div>
+      <h1>Historial</h1>
+      <p id="hSub">Todo lo que pasó por Sincronizar: pendientes, publicados y anulados. Solo lectura; publicar y anular se hacen en la bandeja.</p>
+    </div><span id="hRefresh"></span></div>
+    <div class="axr-hctrl" style="margin-top:16px">
+      <span class="fg">Buscar<input id="hQ" type="text" placeholder="Cédula o nombre…" style="width:200px"></span>
+      <span class="fg">Estado<select id="hSt"><option value="">Todos</option><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="discarded">Anulado</option></select></span>
+      <span class="fg">Origen<select id="hOr"><option value="">Todos</option><option value="edit">Edición</option><option value="erp_detect">Comparación</option></select></span>
+      <span class="fg">Orden<select id="hDir"><option value="desc">Más recientes primero</option><option value="asc">Más antiguos primero</option></select></span>
+      <span class="fg">Por página<select id="hSize"><option>25</option><option selected>50</option><option>100</option></select></span>
+      <button class="axr-btn" id="hGo">Aplicar</button>
+    </div>
+    <div id="hList" style="margin-top:6px"><div class="axr-loading">Cargando…</div></div>
+    <div class="axr-hpager" id="hPager" hidden>
+      <span id="hRange"></span>
+      <button class="axr-btn" id="hPrev">← Anterior</button>
+      <button class="axr-btn" id="hNext">Siguiente →</button>
     </div>`;
-  document.body.appendChild(wrap);
-  const close = () => { document.removeEventListener('keydown', onKey); wrap.remove(); };
-  const onKey = ev => { if (ev.key === 'Escape') close(); };
-  document.addEventListener('keydown', onKey);
-  wrap.querySelector('#hClose').addEventListener('click', close);
 
   const apply = () => {
-    HIST.q = wrap.querySelector('#hQ').value.trim();
-    HIST.status = wrap.querySelector('#hSt').value;
-    HIST.origin = wrap.querySelector('#hOr').value;
-    HIST.dir = wrap.querySelector('#hDir').value;
-    HIST.size = +wrap.querySelector('#hSize').value;
+    HIST.q = $('#hQ').value.trim();
+    HIST.status = $('#hSt').value;
+    HIST.origin = $('#hOr').value;
+    HIST.dir = $('#hDir').value;
+    HIST.size = +$('#hSize').value;
     HIST.page = 1;
-    histLoad(wrap);
+    histLoad(document);
   };
-  wrap.querySelector('#hGo').addEventListener('click', apply);
-  wrap.querySelector('#hQ').addEventListener('keydown', e => { if (e.key === 'Enter') apply(); });
+  $('#hGo').addEventListener('click', apply);
+  $('#hQ').addEventListener('keydown', e => { if (e.key === 'Enter') apply(); });
   ['#hSt', '#hOr', '#hDir', '#hSize'].forEach(sel =>
-    wrap.querySelector(sel).addEventListener('change', apply));
-  wrap.querySelector('#hPrev').addEventListener('click', () => { if (HIST.page > 1) { HIST.page--; histLoad(wrap); } });
-  wrap.querySelector('#hNext').addEventListener('click', () => {
-    if (HIST.page * HIST.size < HIST.total) { HIST.page++; histLoad(wrap); }
+    $(sel).addEventListener('change', apply));
+  $('#hPrev').addEventListener('click', () => { if (HIST.page > 1) { HIST.page--; histLoad(document); } });
+  $('#hNext').addEventListener('click', () => {
+    if (HIST.page * HIST.size < HIST.total) { HIST.page++; histLoad(document); }
   });
 
-  histLoad(wrap);
+  await histLoad(document);
+  attachRefresh('#hRefresh', () => histLoad(document), 'historial');
 }
 
 async function histLoad(wrap) {

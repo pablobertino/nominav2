@@ -27,7 +27,7 @@ import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { renderCertSigners } from './cert-signers.js';
 import { renderCertRequests } from './cert-requests.js';
-import { renderAxReview } from './ax-review.js';
+import { renderAxReview, renderAxCompare, renderAxHistory } from './ax-review.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderResetData } from './reset-data.js';
 import { renderRoles } from './roles.js';
@@ -66,6 +66,9 @@ let TIENDAS_FILTERS = null;  // { name, type, statuses:[], zone, sub, concept }
 
 /* ---------- iconos ---------- */
 const I = {
+  // v4.46: iconos de Comparar (flechas de intercambio) e Historial (reloj).
+  compare: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M21 2v6h-6"/><path d="M3 12a9 9 0 0 1 15-6.7L21 8"/><path d="M3 22v-6h6"/><path d="M21 12a9 9 0 0 1-15 6.7L3 16"/></svg>',
+  history: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
   logo: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
   store: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18M5 21V7l8-4v18M19 21V11l-6-4"/></svg>',
   catalog: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>',
@@ -140,6 +143,8 @@ const NAV_GROUPS = [
   ] },
   { title: 'Sincronización', items: [
     ['syncreview', I.sync, 'Sincronizar', 'superonly'],
+    ['axcompare', I.compare, 'Comparar', 'superonly'],
+    ['axhistory', I.history, 'Historial', 'superonly'],
     ['erpquery', I.search, 'Consultar API', 'superonly'],
     ['sync', I.cog, 'Configurar', 'superonly'],
   ] },
@@ -353,7 +358,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.45</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.46</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5808,6 +5813,8 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'constancias') renderCertRequests(user);
   else if (view === 'sync') viewSync(user);
   else if (view === 'syncreview') renderAxReview(user);
+  else if (view === 'axcompare') renderAxCompare(user);
+  else if (view === 'axhistory') renderAxHistory(user);
   else if (view === 'erpquery') renderErpQuery(user);
   else if (view === 'resetdata') renderResetData(user);
   else if (view === 'roles') renderRoles(user);
