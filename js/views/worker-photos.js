@@ -213,30 +213,61 @@ function caracasYMD(d) {
   return `${c.getUTCFullYear()}-${z(c.getUTCMonth() + 1)}-${z(c.getUTCDate())}`;
 }
 function updFootbarHtml(w) {
+  // v4.77: el pie refleja el ESTADO DE PUBLICACION de la ficha (mockup
+  // aprobado, sin badge sobre la foto):
+  //  - NARANJA "● N cambios · fecha": hay cambios sin publicar (bandeja de
+  //    Sincronizar). N = campos pendientes (ax_pending_fields).
+  //  - VERDE "✓ quien · fecha": la ultima edicion ya se publico al sistema
+  //    (sin pendientes y con ax_synced_at).
+  //  - Editada pero sin dato de publicacion: pie clasico (semaforo por
+  //    antiguedad + quien + fecha). Sin ediciones: gris, como siempre.
+  const shortDt = (iso) => {
+    const d = iso ? new Date(iso) : null;
+    if (!d || isNaN(d)) return '—';
+    if (caracasYMD(d) === caracasYMD(new Date())) return 'hoy';
+    const c = new Date(d.getTime() - 4 * 3600 * 1000);
+    const z = n => String(n).padStart(2, '0');
+    return `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${String(c.getUTCFullYear()).slice(2)}`;
+  };
+  const shortWho = (by) => {
+    let who = String(by || '');
+    const m = who.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
+    if (m) {
+      const parts = m[1].trim().split(/\s+/).filter(Boolean);
+      const nm = parts.length >= 2 ? `${parts[0]} ${parts[1].charAt(0).toUpperCase()}.` : (parts[0] || m[1]);
+      who = `${nm} (${m[2]})`;
+    }
+    return who;
+  };
+  if (w.ax_pending) {
+    const n = (w.ax_pending_fields && typeof w.ax_pending_fields === 'object')
+      ? Math.max(1, Object.keys(w.ax_pending_fields).length) : 1;
+    const tip = `${n} cambio${n === 1 ? '' : 's'} sin publicar`
+      + (w.profile_updated_by ? ` · editado por ${w.profile_updated_by}` : '')
+      + (w.profile_updated_at ? ` · ${fmtDateTime(w.profile_updated_at)}` : '');
+    return `<div class="wp-footbar" title="${esc(tip)}" style="color:#b45309;background:#fdf3e7;border-top-color:#f3ddc0">`
+      + `<span class="who" style="font-weight:700">● ${n} cambio${n === 1 ? '' : 's'}</span>`
+      + `<span class="dt" style="color:#b45309">${shortDt(w.profile_updated_at)}</span></div>`;
+  }
+  if (w.profile_updated_by && w.ax_synced_at) {
+    const tip = `Publicado al sistema · editado por ${w.profile_updated_by}`
+      + (w.profile_updated_at ? ` · ${fmtDateTime(w.profile_updated_at)}` : '')
+      + ` · publicado ${fmtDateTime(w.ax_synced_at)}`;
+    return `<div class="wp-footbar" title="${esc(tip)}" style="color:#0e9f6e;background:#e9f7f1;border-top-color:#c4e8d9">`
+      + `<span class="who" style="font-weight:700">✓ ${esc(shortWho(w.profile_updated_by))}</span>`
+      + `<span class="dt" style="color:#0e9f6e">${shortDt(w.ax_synced_at)}</span></div>`;
+  }
   if (!w.profile_updated_by) {
     return `<div class="wp-footbar none" title="Esta ficha aún no tiene ediciones registradas"><span class="wp-footdot none"></span><span class="who">Sin ediciones</span><span class="dt">—</span></div>`;
   }
   const by = String(w.profile_updated_by);
-  // Nombre corto: primer nombre + inicial del apellido + rol. Etiquetas de un
-  // solo token ('BA05 (tienda)') quedan igual.
-  let who = by;
-  const m = by.match(/^(.*?)\s*\(([^)]+)\)\s*$/);
-  if (m) {
-    const parts = m[1].trim().split(/\s+/).filter(Boolean);
-    const nm = parts.length >= 2 ? `${parts[0]} ${parts[1].charAt(0).toUpperCase()}.` : (parts[0] || m[1]);
-    who = `${nm} (${m[2]})`;
-  }
+  const who = shortWho(by);
   let dotCls = 'old', dt = '—';
   const d = w.profile_updated_at ? new Date(w.profile_updated_at) : null;
   if (d && !isNaN(d)) {
     const days = (Date.now() - d.getTime()) / 86400000;
     dotCls = days <= 7 ? 'ok' : (days <= 30 ? 'mid' : 'old');
-    if (caracasYMD(d) === caracasYMD(new Date())) dt = 'hoy';
-    else {
-      const c = new Date(d.getTime() - 4 * 3600 * 1000);
-      const z = n => String(n).padStart(2, '0');
-      dt = `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${String(c.getUTCFullYear()).slice(2)}`;
-    }
+    dt = shortDt(w.profile_updated_at);
   }
   const tip = `Ficha actualizada por ${by}${w.profile_updated_at ? ' · ' + fmtDateTime(w.profile_updated_at) : ''}`;
   return `<div class="wp-footbar" title="${esc(tip)}"><span class="wp-footdot ${dotCls}"></span><span class="who">${esc(who)}</span><span class="dt">${dt}</span></div>`;
@@ -271,6 +302,37 @@ function avatarColor(seed) {
   let h = 0;
   for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
   return h % AVATAR_BG.length;
+}
+
+/* ===================== v4.76: JERARQUIA DE CARGOS (solo tiendas) =====================
+   Colores por jerarquia (mismo mapa que Configuracion > Cargos): 1 Gerente
+   ambar, 2 Sub-Gerente morado, 3 Cajero azul, 4 Vendedor verde,
+   5 Depositario gris; sin match -> neutro y al final. El rank de cada
+   trabajador se resuelve matcheando su cargo (texto del R10/AX) contra los
+   patrones del catalogo que trae el directory (cargo_ranks): primero
+   igualdad exacta, luego el patron MAS LARGO contenido en el texto
+   (especificidad: SUB GERENTE gana sobre GERENTE). Sin numeros en la UI
+   (decision de Pablo): solo el color en el borde y el texto del cargo. */
+const CARGO_RANK_COLORS = { 1: '#b45309', 2: '#7e22ce', 3: '#2b6cff', 4: '#0e9f6e', 5: '#64748b' };
+const RANK_NONE = 999;
+function rankColor(rank) { return CARGO_RANK_COLORS[rank] || '#94a3b8'; }
+let RANK_CACHE = new Map();
+function normRole(s) { return String(s || '').trim().toUpperCase().replace(/\s+/g, ' '); }
+function workerRank(w) {
+  const role = normRole(w.role);
+  if (!role || !(STATE.cargoRanks || []).length) return RANK_NONE;
+  if (RANK_CACHE.has(role)) return RANK_CACHE.get(role);
+  let best = RANK_NONE, bestLen = -1;
+  for (const cr of (STATE.cargoRanks || [])) {
+    for (const p of (cr.patterns || [])) {
+      if (!p) continue;
+      if (role === p) { best = cr.rank; bestLen = Infinity; break; }
+      if (p.length > bestLen && role.includes(p)) { best = cr.rank; bestLen = p.length; }
+    }
+    if (bestLen === Infinity) break;
+  }
+  RANK_CACHE.set(role, best);
+  return best;
 }
 
 /* Barra de contexto de empresa (codigo + razon social + RIF/zona/subzona/
@@ -315,8 +377,8 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   // y solo queda el atajo "Asignar Retail" para quien no lo tiene.
   const isGestor = !!(user && user.kind === 'admin' && user.role === 'gestor_empresa');
   const canEditDept = mode === 'enterprise' && !isGestor;
-  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, isSuper, isGestor, canEditDept, departments: [], selMode: false, selected: new Set(),
-    sortKey: 'name_az', fPhoto: 'all', fGender: 'all', fCargo: 'ALL', fDept: 'ALL', fStatus: 'all' };
+  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, isSuper, isGestor, canEditDept, departments: [], cargoRanks: [], selMode: false, selected: new Set(),
+    sortKey: mode === 'enterprise' ? 'name_az' : 'rank', fPhoto: 'all', fGender: 'all', fCargo: 'ALL', fDept: 'ALL', fStatus: 'all' };
 
   const back = onExit
     ? `<button class="btn" id="wpBack" style="margin-bottom:14px">← Volver</button>`
@@ -361,6 +423,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
           <option value="inactive">Solo egresados</option>
         </select>
         <select id="wpSort">
+          ${mode !== 'enterprise' ? '<option value="rank">Orden: Jerarquía de cargo</option>' : ''}
           <option value="name_az">Orden: Nombre (A→Z)</option>
           <option value="name_za">Orden: Nombre (Z→A)</option>
           <option value="photo_pending">Orden: Sin foto primero</option>
@@ -453,6 +516,10 @@ async function load() {
   STATE.company = d.company || { code: STATE.cc };
   STATE.bankMap = d.bank_map || {};
   STATE.departments = d.departments || [];
+  // v4.76: catalogo de jerarquia de cargos (solo tiendas). Reset del cache
+  // de resolucion cargo->rank por si el catalogo cambio entre recargas.
+  STATE.cargoRanks = d.cargo_ranks || [];
+  RANK_CACHE = new Map();
   STATE.meta = d.meta || null;
   STATE.manualCount = d.manual_count || 0;
   STATE.reportCount = d.report_count != null ? d.report_count : (STATE.workers.length - STATE.manualCount);
@@ -675,6 +742,7 @@ function sortWorkers(list) {
   const k = STATE.sortKey || 'name_az';
   list.sort((a, b) => {
     switch (k) {
+      case 'rank': return (workerRank(a) - workerRank(b)) || cmpName(a, b);
       case 'name_za': return -cmpName(a, b);
       case 'photo_pending': return ((a.has_photo ? 1 : 0) - (b.has_photo ? 1 : 0)) || cmpName(a, b);
       case 'photo_loaded': return ((b.has_photo ? 1 : 0) - (a.has_photo ? 1 : 0)) || cmpName(a, b);
@@ -758,6 +826,10 @@ function paintGrid() {
 
   grid.innerHTML = list.map(w => {
     const ci = avatarColor(w.id_number);
+    // v4.76: color del cargo por jerarquia (solo tiendas). Sin match ->
+    // neutro. Pinta el borde superior de la tarjeta y el texto del cargo.
+    const rk = STATE.mode === 'enterprise' ? RANK_NONE : workerRank(w);
+    const rkColor = STATE.mode === 'enterprise' ? null : rankColor(rk);
     // Tres estados de la foto en la tarjeta:
     //  - thumb_url presente (esquema nuevo: URL publica directa) -> <img> ya.
     //  - needs_sign (foto vieja sin firmar) -> spinner; el lazy-loader la
@@ -800,13 +872,16 @@ function paintGrid() {
     const ov = sel
       ? `<div class="wp-ov"><span>${checked ? 'Quitar' : 'Seleccionar'}</span></div>`
       : `<div class="wp-ov"><span>Ver ficha</span>${hasPhoto ? '<button type="button" class="wp-ov-photo" data-viewphoto="' + w.id_number + '">' + eyeIco() + ' Ver foto</button>' : ''}</div>`;
-    return `<div class="wp-card" data-ced="${w.id_number}"${sel && checked ? ' style="outline:2px solid var(--brand);outline-offset:2px;border-radius:14px"' : ''}>
+    const cardStyles = [];
+    if (rkColor) cardStyles.push(`border-top:4px solid ${rkColor}`);
+    if (sel && checked) cardStyles.push('outline:2px solid var(--brand)', 'outline-offset:2px', 'border-radius:14px');
+    return `<div class="wp-card" data-ced="${w.id_number}"${cardStyles.length ? ` style="${cardStyles.join(';')}"` : ''}>
       ${deptBar}
       <div class="wp-photo${bday ? ' wp-bday' : ''}">${chk}${conf}${photo}${bflag}${ov}</div>
       <div class="wp-body">
         <p class="wp-name">${esc(w.full_name)}</p>
         <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}<button type="button" data-copyced="${w.id_number}" title="Copiar datos" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:5px;padding:0;border:1px solid var(--border);border-radius:6px;background:var(--surface,#fff);color:var(--ink-soft,#475569);cursor:pointer;vertical-align:middle"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></span>
-        ${w.role ? `<div class="wp-role">${esc(w.role)}</div>` : ''}
+        ${w.role ? `<div class="wp-role"${(rkColor && rk !== RANK_NONE) ? ` style="color:${rkColor};font-weight:700"` : ''}>${esc(w.role)}</div>` : ''}
         ${egr}${manualTag}
         <div class="wp-spacer"></div>
         ${miniRowHtml(w)}
@@ -1207,6 +1282,34 @@ function openNewDeptModal() {
 /* ===================== FICHA (página) ===================== */
 let CUR = null;
 
+/* v4.77: pill del CARGO coloreado por jerarquia en la cabecera de la ficha
+   (solo tiendas, sin numero — decision de Pablo) + chip largo del ESTADO DE
+   PUBLICACION junto al nombre (version completa del pie corto de la
+   tarjeta): naranja "N cambio(s) sin publicar · editado por quien · fecha"
+   o verde "✓ Publicado al sistema · editado por quien · fecha". El bloque
+   REGISTRO de abajo queda igual; esto es el vistazo rapido. */
+function fichaRolePill(w) {
+  const rk = STATE.mode === 'enterprise' ? RANK_NONE : workerRank(w);
+  if (STATE.mode === 'enterprise' || rk === RANK_NONE || !w.role) {
+    return `<span class="pill">${esc(w.role || 'Sin cargo')}</span>`;
+  }
+  const col = rankColor(rk);
+  return `<span class="pill" style="background:${col}1a;color:${col};border:1px solid ${col}55;font-weight:800">${esc(w.role)}</span>`;
+}
+function fichaStatusChip(w) {
+  if (w.ax_pending) {
+    const n = (w.ax_pending_fields && typeof w.ax_pending_fields === 'object')
+      ? Math.max(1, Object.keys(w.ax_pending_fields).length) : 1;
+    const who = w.profile_updated_by ? ` · editado por ${esc(w.profile_updated_by)}` : '';
+    const when = w.profile_updated_at ? ` · ${fmtDateTime(w.profile_updated_at)}` : '';
+    return `<span class="pill wp-pill-pending" id="ffPendBadge" title="Hay cambios en esta ficha que aun no se publican en el sistema"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>${n} cambio${n === 1 ? '' : 's'} sin publicar${who}${when}</span>`;
+  }
+  if (w.profile_updated_by && w.ax_synced_at) {
+    return `<span class="pill" style="background:#e9f7f1;color:#0e9f6e;border:1px solid #c4e8d9;font-weight:700" title="La ultima edicion de esta ficha ya se publico al sistema">✓ Publicado al sistema · editado por ${esc(w.profile_updated_by)} · ${fmtDateTime(w.ax_synced_at)}</span>`;
+  }
+  return '';
+}
+
 function setVal(host, key, text) {
   const el = host.querySelector(`[data-v="${key}"]`);
   if (!el) return;
@@ -1289,7 +1392,7 @@ function fichaHtml(w, c) {
         <div class="ff-id">
           <h2>${esc(w.full_name || '—')}</h2>
           <div class="ced">${w.ced_kind || ''}-${w.id_number}</div>
-          <div class="meta"><span class="pill">${esc(w.role || 'Sin cargo')}</span>${w.ax_pending ? '<span class="pill wp-pill-pending" id="ffPendBadge" title="Hay cambios en esta ficha que aun no se publican en el sistema"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>Cambios sin publicar</span>' : ''}</div>
+          <div class="meta">${fichaRolePill(w)}${fichaStatusChip(w)}</div>
         </div>
         <div class="ff-actions">
           <button class="btn btn-ghost-danger" id="ffDel" style="display:none">Quitar foto</button>
