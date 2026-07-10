@@ -28,6 +28,7 @@ import { renderDepartmentCargos } from './department-cargos.js';
 import { renderCertSigners } from './cert-signers.js';
 import { renderCertRequests } from './cert-requests.js';
 import { renderAxReview, renderAxCompare, renderAxHistory } from './ax-review.js';
+import { renderBankStats } from './bank-stats.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderSyncLog } from './sync-log.js';
 import { renderResetData } from './reset-data.js';
@@ -149,6 +150,12 @@ const NAV_GROUPS = [
     ['synclog', I.docs, 'Registro', 'adminonly'],
     ['erpquery', I.search, 'Consultar API', 'adminonly'],
     ['sync', I.cog, 'Configurar', 'superonly'],
+  ] },
+  // v4.78: grupo DATOS BANCARIOS (aprobado por Pablo). Nace con Estadisticas;
+  // Sincronizar e Historial (clones filtrados a cuentas) llegan en v4.79/80,
+  // y a futuro otros instrumentos (pago movil) seran nuevos items aqui.
+  { title: 'Datos bancarios', items: [
+    ['bankstats', I.chart, 'Estadísticas', 'adminonly'],
   ] },
   { title: 'Administración', items: [
     ['equipo', I.team, 'Equipo'],
@@ -364,7 +371,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.77</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.78</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5965,6 +5972,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'syncreview') renderAxReview(user);
   else if (view === 'axcompare') renderAxCompare(user);
   else if (view === 'axhistory') renderAxHistory(user);
+  else if (view === 'bankstats') renderBankStats(user);
   else if (view === 'erpquery') renderErpQuery(user);
   else if (view === 'synclog') renderSyncLog(user);
   else if (view === 'resetdata') renderResetData(user);
@@ -6229,6 +6237,7 @@ export function renderPanel() {
       constancias: 'view.solicitudes',
       syncreview: 'view.syncreview', axcompare: 'view.axcompare',
       axhistory: 'view.axhistory', synclog: 'view.synclog', erpquery: 'view.erpquery',
+      bankstats: 'view.bankstats',
       equipo: 'view.equipo',
     };
     try {
