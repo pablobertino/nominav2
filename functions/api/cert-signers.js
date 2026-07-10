@@ -27,7 +27,7 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
-import { shadowCan } from './_auth.js';
+import { resolveActor, can } from './_auth.js';
 
 const BUCKET = 'cert-signatures';   // privado
 const SIGNED_TTL = 60 * 60;         // 1h
@@ -179,12 +179,14 @@ export async function onRequestPost({ request, env }) {
   const adminId = body.adminId != null ? body.adminId : (body.user && body.user.id);
 
   try {
-    /* ---------- LECTURA (admin/superadmin) ---------- */
+    // v4.71: CORTE del shadow (Lote 1). Lecturas exigen view.solicitudes;
+    // la escritura del catalogo exige cert.signers (hoy: nadie en matriz ->
+    // solo superadmin, que hace bypass en can()).
+    /* ---------- LECTURA ---------- */
     if (action === 'list') {
       if (!(await isAdmin(env, adminId))) return json({ ok: false, error: 'Sesion no valida.' }, 403);
-      // Shadow: gate legacy = admin activo (isAdmin). El combo de firmantes se
-      // usa al revisar solicitudes -> code view.solicitudes.
-      await shadowCan(env, adminId, 'cert-signers', 'list', 'view.solicitudes', true);
+      const actorL = await resolveActor(env, { kind: 'admin', id: adminId });
+      if (!can(actorL, 'view.solicitudes')) return json({ ok: false, error: 'No tienes permiso para esta pantalla.' }, 403);
       const onlyActive = !!body.only_active;
       let path = 'cert_signers?select=*&order=is_active.desc,full_name.asc';
       if (onlyActive) path = 'cert_signers?is_active=eq.true&select=*&order=full_name.asc';
@@ -212,8 +214,8 @@ export async function onRequestPost({ request, env }) {
 
     if (action === 'sign') {
       if (!(await isAdmin(env, adminId))) return json({ ok: false, error: 'Sesion no valida.' }, 403);
-      // Shadow: gate legacy = admin activo (isAdmin). Code view.solicitudes.
-      await shadowCan(env, adminId, 'cert-signers', 'sign', 'view.solicitudes', true);
+      const actorS = await resolveActor(env, { kind: 'admin', id: adminId });
+      if (!can(actorS, 'view.solicitudes')) return json({ ok: false, error: 'No tienes permiso para esta pantalla.' }, 403);
       const ids = Array.isArray(body.ids)
         ? [...new Set(body.ids.map(x => parseInt(x, 10)).filter(Boolean))].slice(0, 50)
         : [];
@@ -226,10 +228,9 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, signatures: out });
     }
 
-    /* ---------- ESCRITURA (superadmin; shadow cert.signers) ---------- */
-    const legacyOk = await isSuperadmin(env, adminId);
-    await shadowCan(env, adminId, 'cert-signers', action || '?', 'cert.signers', legacyOk);
-    if (!legacyOk) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+    /* ---------- ESCRITURA (exige cert.signers en la matriz) ---------- */
+    const actorW = await resolveActor(env, { kind: 'admin', id: adminId });
+    if (!can(actorW, 'cert.signers')) return json({ ok: false, error: 'No tienes permiso para gestionar firmantes.' }, 403);
 
     if (action === 'create') {
       const f = buildFields(body, { requireName: true });

@@ -26,7 +26,7 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
-import { resolveActor, can as canPerm, shadowCan } from './_auth.js';
+import { resolveActor, can as canPerm } from './_auth.js';
 
 const BUCKET = 'personnel-docs';
 const SIGNED_TTL = 60 * 60;            // 1h
@@ -236,6 +236,11 @@ export async function onRequestPost({ request, env }) {
   try {
     const u = await resolveUser(env, body.user);
     if (!u) return json({ ok: false, error: 'Sesion no valida.' }, 403);
+    // v4.71: CORTE del shadow (Lote 1). Los permisos docs.* de la matriz
+    // ahora se EXIGEN de verdad (can) como gate global por accion; las
+    // reglas de propiedad (dueno del documento o superadmin) se conservan
+    // dentro de cada funcion. Superadmin: bypass total en can().
+    const actor = await resolveActor(env, body.user);
 
     // Lectura de la lista y descarga: cualquiera autenticado (admin/super/editor/gestor/company).
     if (action === 'list') return await listDocs(env, body, u);
@@ -247,34 +252,40 @@ export async function onRequestPost({ request, env }) {
     if (action === 'versions') return await listVersions(env, body, u);
     if (action === 'audit') return await listAudit(env, body, u);
 
-    // Crear documento nuevo: cualquier admin/superadmin (no gestor/editor).
+    // Crear documento nuevo: exige docs.create en la matriz del rol.
     if (action === 'create') {
-      const allowed = canCreate(u);
-      await shadowCan(env, body.user, 'personnel-docs', 'create', 'docs.create', allowed);
-      if (!allowed) return json({ ok: false, error: 'No tienes permiso para crear documentos.' }, 403);
+      if (!canPerm(actor, 'docs.create')) return json({ ok: false, error: 'No tienes permiso para crear documentos.' }, 403);
       return await createDoc(env, body, u);
     }
 
-    // Acciones sobre un documento existente: la propiedad se valida adentro
-    // (dueno o superadmin). editar / nueva version / archivar / restaurar.
-    if (action === 'upload_version') return await uploadVersion(env, body, u);
-    if (action === 'update') return await updateDoc(env, body, u);
-    if (action === 'archive') return await archiveDoc(env, body, u);
-    if (action === 'restore') return await restoreDoc(env, body, u);
+    // Acciones sobre un documento existente: permiso global de la matriz +
+    // la propiedad se valida adentro (dueno o superadmin).
+    if (action === 'upload_version') {
+      if (!canPerm(actor, 'docs.version')) return json({ ok: false, error: 'No tienes permiso para subir versiones.' }, 403);
+      return await uploadVersion(env, body, u);
+    }
+    if (action === 'update') {
+      if (!canPerm(actor, 'docs.edit')) return json({ ok: false, error: 'No tienes permiso para editar documentos.' }, 403);
+      return await updateDoc(env, body, u);
+    }
+    if (action === 'archive') {
+      if (!canPerm(actor, 'docs.archive')) return json({ ok: false, error: 'No tienes permiso para archivar documentos.' }, 403);
+      return await archiveDoc(env, body, u);
+    }
+    if (action === 'restore') {
+      if (!canPerm(actor, 'docs.archive')) return json({ ok: false, error: 'No tienes permiso para restaurar documentos.' }, 403);
+      return await restoreDoc(env, body, u);
+    }
 
-    // Borrado DEFINITIVO: solo superadmin.
+    // Borrado DEFINITIVO: exige docs.delete (hoy: nadie en matriz -> solo superadmin).
     if (action === 'delete_forever') {
-      const allowed = canDeleteForever(u);
-      await shadowCan(env, body.user, 'personnel-docs', 'delete_forever', 'docs.delete', allowed);
-      if (!allowed) return json({ ok: false, error: 'Solo el superadmin puede borrar definitivamente.' }, 403);
+      if (!canPerm(actor, 'docs.delete')) return json({ ok: false, error: 'No tienes permiso para borrar definitivamente.' }, 403);
       return await deleteForever(env, body, u);
     }
 
-    // ABM de categorias: solo superadmin.
+    // ABM de categorias: exige docs.categories (hoy: nadie en matriz -> solo superadmin).
     if (['cat_save', 'cat_toggle'].includes(action)) {
-      const allowed = (u.role === 'superadmin');
-      await shadowCan(env, body.user, 'personnel-docs', action, 'docs.categories', allowed);
-      if (!allowed) return json({ ok: false, error: 'Solo el superadmin gestiona categorias.' }, 403);
+      if (!canPerm(actor, 'docs.categories')) return json({ ok: false, error: 'No tienes permiso para gestionar categorias.' }, 403);
       if (action === 'cat_save') return await catSave(env, body);
       if (action === 'cat_toggle') return await catToggle(env, body);
     }

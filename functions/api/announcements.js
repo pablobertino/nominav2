@@ -37,7 +37,7 @@ function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
 
-import { shadowCan } from './_auth.js';
+import { resolveActor, can, shadowCan } from './_auth.js';
 
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
@@ -131,15 +131,19 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true });
     }
 
-    // ---------- GESTION (solo admin/superadmin; editor NO) ----------
+    // ---------- GESTION (v4.71: corte del shadow, Lote 1) ----------
+    // El gate de rol (admin/super, no editor) se conserva como primer filtro;
+    // ademas cada accion EXIGE su permiso de la matriz (can). Superadmin:
+    // bypass en can(). El gestor_empresa, que pasaba el filtro legacy pero
+    // nunca tuvo pantalla de avisos, queda ahora correctamente bloqueado
+    // por la matriz (no tiene view.avisosconfig ni avisos.manual).
     if (!u.isAdmin || u.role === 'editor_personal') {
       return json({ ok: false, error: 'No autorizado.' }, 403);
     }
+    const actor = await resolveActor(env, body.user);
 
     if (body.action === 'tpl_get') {
-      // Shadow: gate legacy = admin/super no-editor (chequeo de arriba).
-      // Code view.avisosconfig (pantalla de configuracion de avisos).
-      await shadowCan(env, body.user, 'announcements', 'tpl_get', 'view.avisosconfig', true);
+      if (!can(actor, 'view.avisosconfig')) return json({ ok: false, error: 'No tienes permiso para esta pantalla.' }, 403);
       const rows = await sb(env, "app_settings?key=in.(aviso_tpl_calc,aviso_tpl_cut,aviso_tpl_pay,corte_hora_limite_general,corte_hora_limite,aviso_dias_previos)&select=key,value");
       const map = {}; (rows || []).forEach(r => { map[r.key] = r.value; });
       const parse = k => { try { return JSON.parse(map[k] || '{}'); } catch { return {}; } };
@@ -161,9 +165,8 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (body.action === 'tpl_save') {
-      // Solo superadmin puede editar plantillas.
-      await shadowCan(env, body.user, 'announcements', 'tpl_save', 'avisos.templates', u.isSuper);
-      if (!u.isSuper) return json({ ok: false, error: 'Solo el superadministrador puede editar las plantillas.' }, 403);
+      // Exige avisos.templates (hoy: nadie en matriz -> solo superadmin).
+      if (!can(actor, 'avisos.templates')) return json({ ok: false, error: 'No tienes permiso para editar las plantillas.' }, 403);
       const type = clean(body.type);
       if (!['calc', 'cut', 'pay'].includes(type)) return json({ ok: false, error: 'Tipo invalido.' }, 400);
       const tpl = {
@@ -192,8 +195,7 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (body.action === 'list_manual') {
-      // Shadow: gate legacy = admin/super no-editor. Code view.avisosconfig.
-      await shadowCan(env, body.user, 'announcements', 'list_manual', 'view.avisosconfig', true);
+      if (!can(actor, 'view.avisosconfig')) return json({ ok: false, error: 'No tienes permiso para esta pantalla.' }, 403);
       // admin: solo los suyos; superadmin: todos.
       const filter = u.isSuper ? '' : `&created_by=eq.${encodeURIComponent(u.key)}`;
       const rows = await sb(env, `announcements?select=*${filter}&order=created_at.desc`) || [];
@@ -201,8 +203,8 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (body.action === 'save_manual') {
-      // Shadow Fase 3: gate de rol (admin/super, no editor) ya pasado arriba.
-      await shadowCan(env, body.user, 'announcements', 'save_manual', 'avisos.manual', true);
+      // Exige avisos.manual; la regla "solo los suyos" (abajo) se conserva.
+      if (!can(actor, 'avisos.manual')) return json({ ok: false, error: 'No tienes permiso para gestionar avisos.' }, 403);
       const title = clean(body.title);
       if (!title) return json({ ok: false, error: 'El titulo es obligatorio.' }, 400);
       const aud = ['everyone', 'all', 'stores', 'enterprises', 'admins', 'editors'].includes(body.audience) ? body.audience : 'all';
@@ -234,7 +236,7 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (body.action === 'toggle_manual') {
-      await shadowCan(env, body.user, 'announcements', 'toggle_manual', 'avisos.manual', true);
+      if (!can(actor, 'avisos.manual')) return json({ ok: false, error: 'No tienes permiso para gestionar avisos.' }, 403);
       const id = clean(body.id);
       if (!id) return json({ ok: false, error: 'Falta id.' }, 400);
       const cur = await sb(env, `announcements?id=eq.${encodeURIComponent(id)}&select=is_active,created_by`);
@@ -250,7 +252,7 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (body.action === 'delete_manual') {
-      await shadowCan(env, body.user, 'announcements', 'delete_manual', 'avisos.manual', true);
+      if (!can(actor, 'avisos.manual')) return json({ ok: false, error: 'No tienes permiso para gestionar avisos.' }, 403);
       const id = clean(body.id);
       if (!id) return json({ ok: false, error: 'Falta id.' }, 400);
       const cur = await sb(env, `announcements?id=eq.${encodeURIComponent(id)}&select=created_by`);
