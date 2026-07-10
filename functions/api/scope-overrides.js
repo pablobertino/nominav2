@@ -23,7 +23,7 @@
 import { resolveActor, can } from './_auth.js';
 
 const SECTIONS = new Set(['bank']);
-const KINDS = new Set(['all', 'stores', 'non_stores', 'custom']);
+const KINDS = new Set(['all', 'stores', 'non_stores', 'custom', 'types']);
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -70,7 +70,7 @@ export async function onRequestPost({ request, env }) {
       if (!ids.length) return json({ ok: true, overrides: [], canEdit: can(actor, 'team.scope_override') });
       const rows = await sb(env,
         `admin_scope_overrides?admin_id=in.(${ids.join(',')})`
-        + `&select=admin_id,section,scope_kind,company_codes,include_base,updated_at,updated_by`);
+        + `&select=admin_id,section,scope_kind,company_codes,company_types,include_base,updated_at,updated_by`);
       return json({ ok: true, overrides: rows || [], canEdit: can(actor, 'team.scope_override') });
     }
 
@@ -88,6 +88,7 @@ export async function onRequestPost({ request, env }) {
         p_admin_id: adminId,
         p_scope_kind: kind,
         p_company_codes: Array.isArray(body.company_codes) ? body.company_codes : null,
+        p_company_types: Array.isArray(body.company_types) ? body.company_types : null,
         p_include_base: body.include_base !== false,
       });
       return json({ ok: true, ...(p || {}) });
@@ -124,11 +125,16 @@ export async function onRequestPost({ request, env }) {
       }
 
       if (!KINDS.has(kind)) return json({ ok: false, error: 'Tipo de alcance inválido.' }, 400);
-      let codes = null;
+      let codes = null, types = null;
       if (kind === 'custom') {
         codes = (Array.isArray(body.company_codes) ? body.company_codes : [])
           .map(c => String(c || '').trim()).filter(Boolean);
         if (!codes.length) return json({ ok: false, error: 'El alcance personalizado necesita al menos una empresa.' }, 400);
+      }
+      if (kind === 'types') {
+        types = (Array.isArray(body.company_types) ? body.company_types : [])
+          .map(c => String(c || '').trim()).filter(Boolean);
+        if (!types.length) return json({ ok: false, error: 'El alcance por tipos necesita al menos un tipo de empresa.' }, 400);
       }
 
       await sb(env, 'admin_scope_overrides?on_conflict=admin_id,section', {
@@ -138,6 +144,7 @@ export async function onRequestPost({ request, env }) {
           admin_id: adminId, section,
           scope_kind: kind,
           company_codes: codes,
+          company_types: types,
           include_base: body.include_base !== false,
           updated_at: new Date().toISOString(),
           updated_by: String(actor.actor || ''),

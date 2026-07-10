@@ -84,6 +84,7 @@ export async function onRequestPost({ request, env }) {
       p_filter_company: isCompany ? null : nn(body.company),
       p_zone: isCompany ? null : nn(body.zone),
       p_subzone: isCompany ? null : nn(body.subzone),
+      p_department: Number.isFinite(parseInt(body.department, 10)) ? parseInt(body.department, 10) : null,
       p_limit: lim,
       p_offset: off,
     });
@@ -96,6 +97,7 @@ export async function onRequestPost({ request, env }) {
       banks: data.banks || [],
       companies: data.companies || [],
       zones: data.zones || [],
+      departments: data.departments || [],
       rows: data.rows || [],
     });
   } catch (e) {

@@ -23,7 +23,7 @@ import { $ } from '../core/dom.js';
 import { attachRefresh } from '../core/refresh.js';
 
 let USER = null;
-let F = { q: '', bank: '', has: '', type: '', company: '', zone: '' };
+let F = { q: '', bank: '', has: '', type: '', company: '', zone: '', department: '' };
 let PAGE = { limit: 50, offset: 0 };
 let RAW = { cards: {}, total: 0, banks: [], companies: [], zones: [], rows: [] };
 let COMBOS_READY = false;
@@ -47,7 +47,7 @@ async function api(extra) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       user: { kind: USER.kind, id: USER.id || null, companyCode: USER.companyCode || null },
-      q: F.q, bank: F.bank, has: F.has, type: F.type, company: F.company, zone: F.zone,
+      q: F.q, bank: F.bank, has: F.has, type: F.type, company: F.company, zone: F.zone, department: F.department,
       limit: PAGE.limit, offset: PAGE.offset,
       ...(extra || {}),
     }),
@@ -121,6 +121,7 @@ function exportCols() {
     ['Zona', r => r.zone || ''],
   );
   cols.push(
+    ['Departamento', r => r.department || ''],
     ['Banco', r => r.bank || ''],
     ['Prefijo', r => r.pref || ''],
     ['NumeroCuenta', r => r.acct || ''],
@@ -208,6 +209,7 @@ function paintRows() {
         <td class="bkac-ced">${esc(r.id_number)}</td>
         <td class="bkac-nm"><b>${esc(r.full_name || '(sin nombre)')}</b><small>${esc(r.role || '')}</small></td>
         ${admin ? `<td class="bkac-emp">${esc(r.company_name || r.company_code)}<small>${esc(r.company_code)} · ${esc(r.type || '')}</small></td>` : ''}
+        <td style="color:var(--ink-soft,#475569)">${esc(r.department || '—')}</td>
         <td>${bankCell}</td>
         <td>${acctCell}</td>
         ${admin ? `<td style="color:var(--muted)">${esc(r.zone || '')}</td>` : ''}
@@ -228,6 +230,9 @@ function paintCombos() {
   const bk = $('#bkacFBank');
   bk.innerHTML = '<option value="">Banco: Todos</option>'
     + (RAW.banks || []).map(b => `<option value="${esc(b.code)}">${esc(b.code)} · ${esc(b.name)}</option>`).join('');
+  const multiCo = new Set((RAW.departments || []).map(d => d.company)).size > 1;
+  $('#bkacFDept').innerHTML = '<option value="">Departamento: Todos</option>'
+    + (RAW.departments || []).map(d => `<option value="${esc(d.id)}">${esc(d.name)}${multiCo ? ' (' + esc(d.company) + ')' : ''}</option>`).join('');
   if (!isCompany()) {
     $('#bkacFComp').innerHTML = '<option value="">Empresa: Todas</option>'
       + (RAW.companies || []).map(c => `<option value="${esc(c.code)}">${esc(c.name || c.code)}</option>`).join('');
@@ -278,6 +283,7 @@ export async function renderBankAccounts(user) {
         <option value="si">Con cuenta</option>
         <option value="no">Sin cuenta / inválida</option>
       </select>
+      <select id="bkacFDept"><option value="">Departamento: Todos</option></select>
       ${admin ? `
       <select id="bkacFType"><option value="">Tipo: Todos</option>${TIPOS.map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join('')}</select>
       <select id="bkacFComp"><option value="">Empresa: Todas</option></select>
@@ -297,7 +303,7 @@ export async function renderBankAccounts(user) {
       <div class="bkac-tblwrap"><table class="bkac-tbl">
         <thead><tr>
           <th>Cédula</th><th>Colaborador</th>${admin ? '<th>Empresa</th>' : ''}
-          <th>Banco</th><th>N° de cuenta</th>${admin ? '<th>Zona</th>' : ''}
+          <th>Departamento</th><th>Banco</th><th>N° de cuenta</th>${admin ? '<th>Zona</th>' : ''}
         </tr></thead>
         <tbody id="bkacTb"></tbody>
       </table></div>
@@ -320,14 +326,15 @@ export async function renderBankAccounts(user) {
   });
   $('#bkacFBank').addEventListener('change', e => { F.bank = e.target.value; resetAndLoad(); });
   $('#bkacFHas').addEventListener('change', e => { F.has = e.target.value; resetAndLoad(); });
+  $('#bkacFDept').addEventListener('change', e => { F.department = e.target.value; resetAndLoad(); });
   if (admin) {
     $('#bkacFType').addEventListener('change', e => { F.type = e.target.value; resetAndLoad(); });
     $('#bkacFComp').addEventListener('change', e => { F.company = e.target.value; resetAndLoad(); });
     $('#bkacFZone').addEventListener('change', e => { F.zone = e.target.value; resetAndLoad(); });
   }
   $('#bkacClear').addEventListener('click', () => {
-    F = { q: '', bank: '', has: '', type: '', company: '', zone: '' };
-    $('#bkacFQ').value = ''; $('#bkacFBank').value = ''; $('#bkacFHas').value = '';
+    F = { q: '', bank: '', has: '', type: '', company: '', zone: '', department: '' };
+    $('#bkacFQ').value = ''; $('#bkacFBank').value = ''; $('#bkacFHas').value = ''; $('#bkacFDept').value = '';
     if (admin) { $('#bkacFType').value = ''; $('#bkacFComp').value = ''; $('#bkacFZone').value = ''; }
     resetAndLoad();
   });

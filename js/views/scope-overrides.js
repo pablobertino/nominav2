@@ -25,9 +25,11 @@ const KIND_LABELS = [
   ['inherit', 'Heredado (alcance base)'],
   ['stores', 'Solo tiendas — todas'],
   ['non_stores', 'Solo empresas no-tienda — todas'],
+  ['types', 'Por tipos de empresa…'],
   ['all', 'Todas las empresas'],
   ['custom', 'Personalizado (elegir empresas)'],
 ];
+const COMPANY_TYPES = ['Tienda', 'Importadora', 'Administrativa', 'Externa', 'Servicio', 'Tienda en línea'];
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
@@ -95,6 +97,7 @@ export async function injectScopeOverridesBlock(host, member, user) {
     kind: ov ? ov.scope_kind : 'inherit',
     include_base: ov ? ov.include_base !== false : true,
     codes: (ov && ov.company_codes) || [],
+    types: (ov && ov.company_types) || [],
     dirty: false,
     companies: null,
   };
@@ -120,6 +123,12 @@ export async function injectScopeOverridesBlock(host, member, user) {
           <select id="scovCodes" multiple ${canEdit ? '' : 'disabled'}></select>
           <div class="hint">Ctrl+clic para elegir varias empresas.</div>
         </div>
+        <div class="scov-custom" id="scovTypes">
+          <select id="scovTypeSel" multiple ${canEdit ? '' : 'disabled'} style="min-height:110px">
+            ${COMPANY_TYPES.map(t => `<option value="${esc(t)}"${st.types.includes(t) ? ' selected' : ''}>${esc(t)}</option>`).join('')}
+          </select>
+          <div class="hint">Ctrl+clic para elegir varios tipos. Las empresas nuevas de esos tipos entran solas.</div>
+        </div>
         <div class="scov-note">El override aplica a <b>Cuentas</b> y <b>Estadísticas</b>. <b>Sincronizar</b> e <b>Historial</b> bancarios siguen con el alcance base. Qué menús ve cada rol se decide en <b>Roles</b>.</div>
         ${canEdit ? `<div class="scov-acts"><span class="scov-msg" id="scovMsg"></span>
           <button class="scov-btn pri" id="scovSave" disabled>Guardar alcance</button></div>` : ''}
@@ -130,6 +139,8 @@ export async function injectScopeOverridesBlock(host, member, user) {
   const $base = host.querySelector('#scovBase');
   const $det = host.querySelector('#scovDet');
   const $cust = host.querySelector('#scovCustom');
+  const $types = host.querySelector('#scovTypes');
+  const $typeSel = host.querySelector('#scovTypeSel');
   const $codes = host.querySelector('#scovCodes');
   const $prev = host.querySelector('#scovPrev');
   const $save = host.querySelector('#scovSave');
@@ -150,6 +161,7 @@ export async function injectScopeOverridesBlock(host, member, user) {
     const p = await api(user, {
       action: 'preview', admin_id: member.id, scope_kind: st.kind,
       company_codes: st.kind === 'custom' ? st.codes : null,
+      company_types: st.kind === 'types' ? st.types : null,
       include_base: st.include_base,
     });
     if (p && p.ok) {
@@ -164,8 +176,11 @@ export async function injectScopeOverridesBlock(host, member, user) {
     $det.style.display = isInh ? 'none' : '';
     $row.classList.toggle('active', !isInh);
     $cust.classList.toggle('open', st.kind === 'custom');
+    $types.classList.toggle('open', st.kind === 'types');
     if (st.kind === 'custom') await ensureCompanies();
-    if ($save) $save.disabled = !st.dirty || (st.kind === 'custom' && !st.codes.length);
+    if ($save) $save.disabled = !st.dirty
+      || (st.kind === 'custom' && !st.codes.length)
+      || (st.kind === 'types' && !st.types.length);
     if (!isInh && canEdit) refreshPreview();
   }
 
@@ -176,12 +191,17 @@ export async function injectScopeOverridesBlock(host, member, user) {
       st.codes = [...$codes.selectedOptions].map(o => o.value);
       st.dirty = true; sync();
     });
+    $typeSel.addEventListener('change', () => {
+      st.types = [...$typeSel.selectedOptions].map(o => o.value);
+      st.dirty = true; sync();
+    });
     $save.addEventListener('click', async () => {
       $save.disabled = true; $save.textContent = 'Guardando…'; $msg.textContent = ''; $msg.className = 'scov-msg';
       const res = await api(user, {
         action: 'save', admin_id: member.id, section: SECTION,
         scope_kind: st.kind,
         company_codes: st.kind === 'custom' ? st.codes : null,
+        company_types: st.kind === 'types' ? st.types : null,
         include_base: st.include_base,
       });
       $save.textContent = 'Guardar alcance';
