@@ -20,7 +20,7 @@
 // Tipos de empresa que PUEDEN tener departamentos (todo lo que no sea tienda).
 const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
 
-import { shadowCan } from './_auth.js';
+import { resolveActor, can } from './_auth.js';
 
 function json(b, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } }); }
 
@@ -74,6 +74,9 @@ export async function onRequestPost({ request, env }) {
     const admin = await getAdmin(env, adminId);
     if (!admin) return json({ ok: false, error: 'No autorizado.' }, 401);
     const allowed = await allowedCompanies(env, admin);
+    // v4.72: CORTE del shadow (Lote 2). Las acciones dept.* EXIGEN la matriz
+    // (can). El alcance por empresa (allowed) se conserva como segunda capa.
+    const actor = await resolveActor(env, { kind: 'admin', id: adminId });
 
     if (action === 'list') {
       const code = body.company_code;
@@ -96,7 +99,7 @@ export async function onRequestPost({ request, env }) {
       if (!name) return json({ ok: false, error: 'Falta el nombre del departamento.' }, 400);
       const chk = await checkCompany(env, code, allowed);
       if (!chk.ok) return json(chk, chk.error === 'Fuera de tu alcance.' ? 403 : 400);
-      await shadowCan(env, adminId, 'departments', 'create', 'dept.create', true);
+      if (!can(actor, 'dept.create')) return json({ ok: false, error: 'No tienes permiso para crear departamentos.' }, 403);
       try {
         const row = await sb(env, 'departments', {
           method: 'POST', headers: { Prefer: 'return=representation' },
@@ -119,7 +122,7 @@ export async function onRequestPost({ request, env }) {
       if (!dep || !dep.length) return json({ ok: false, error: 'Departamento no encontrado.' }, 404);
       const chk = await checkCompany(env, dep[0].company_code, allowed);
       if (!chk.ok) return json(chk, 403);
-      await shadowCan(env, adminId, 'departments', 'rename', 'dept.rename', true);
+      if (!can(actor, 'dept.rename')) return json({ ok: false, error: 'No tienes permiso para renombrar departamentos.' }, 403);
       try {
         await sb(env, `departments?id=eq.${id}`, {
           method: 'PATCH', headers: { Prefer: 'return=minimal' },
@@ -141,7 +144,7 @@ export async function onRequestPost({ request, env }) {
       if (!dep || !dep.length) return json({ ok: false, error: 'Departamento no encontrado.' }, 404);
       const chk = await checkCompany(env, dep[0].company_code, allowed);
       if (!chk.ok) return json(chk, 403);
-      await shadowCan(env, adminId, 'departments', 'toggle', 'dept.toggle', true);
+      if (!can(actor, 'dept.toggle')) return json({ ok: false, error: 'No tienes permiso para activar o desactivar departamentos.' }, 403);
       await sb(env, `departments?id=eq.${id}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({ is_active: !!body.is_active }),
@@ -156,7 +159,7 @@ export async function onRequestPost({ request, env }) {
       if (!dep || !dep.length) return json({ ok: false, error: 'Departamento no encontrado.' }, 404);
       const chk = await checkCompany(env, dep[0].company_code, allowed);
       if (!chk.ok) return json(chk, 403);
-      await shadowCan(env, adminId, 'departments', 'delete', 'dept.delete', true);
+      if (!can(actor, 'dept.delete')) return json({ ok: false, error: 'No tienes permiso para eliminar departamentos.' }, 403);
       // no borrar si tiene usuarios (alcance) asignados
       const used = await sb(env, `enterprise_user_scope?department_id=eq.${id}&select=id`);
       if (used && used.length) {

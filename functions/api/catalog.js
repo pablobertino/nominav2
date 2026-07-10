@@ -11,8 +11,6 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
-import { shadowCan } from './_auth.js';
-
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
     status, headers: { 'Content-Type': 'application/json' },
@@ -182,10 +180,16 @@ export async function onRequestPost({ request, env }) {
 
     const allowed = await allowedSet(env, user); // null=todas | Set
 
-    // SHADOW: el listado general de empresas es la vista Empresas. El gate
-    // legacy es "sesion valida" (superadmin=null; admin/company con su Set,
-    // que puede estar vacio). Se registra contra view.empresas.
-    await shadowCan(env, user, 'catalog', 'list', 'view.empresas', true);
+    // v4.72: fin del shadow view.empresas aqui. Este listado es
+    // INFRAESTRUCTURA del panel (lo usan el dashboard de la tienda, las
+    // fichas y los wizards, no solo la vista Empresas), asi que gatearlo
+    // con view.empresas era un falso positivo: generaba ~63 discrepancias
+    // por mes de tiendas cargando SU propia empresa. El gate real es la
+    // SESION VALIDA + el alcance de allowedSet (superadmin=todas; admin=su
+    // alcance; tienda=solo su empresa). Sesion invalida -> 403.
+    if (allowed !== null && allowed.size === 0) {
+      return json({ ok: false, error: 'Sesion no valida.' }, 403);
+    }
 
     const [companies, zones, subzones, concepts, users,
            storeMeta, entMeta, staffCounts, depts, photoCov] = await Promise.all([

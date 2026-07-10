@@ -13,7 +13,7 @@
 
 function json(b, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } }); }
 
-import { shadowCan } from './_auth.js';
+import { resolveActor, can } from './_auth.js';
 
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
@@ -75,9 +75,10 @@ export async function onRequestPost({ request, env }) {
     if (!admin) return json({ ok: false, error: 'No autorizado.' }, 401);
     if (!companyCode) return json({ ok: false, error: 'Falta la compañía.' }, 400);
     if (!(await canTouch(env, admin, companyCode))) return json({ ok: false, error: 'Fuera de tu alcance.' }, 403);
-    // Shadow Fase 3: el gate de rol es "admin valido"; el alcance (canTouch)
-    // es ortogonal. Se registra si el sistema tabla-driven difiere.
-    await shadowCan(env, adminId, 'company-contact', 'save', 'company.contact', true);
+    // v4.72: CORTE del shadow (Lote 2). Editar contacto exige company.contact
+    // en la matriz; el alcance (canTouch) se conserva como segunda capa.
+    const actor = await resolveActor(env, { kind: 'admin', id: adminId });
+    if (!can(actor, 'company.contact')) return json({ ok: false, error: 'No tienes permiso para editar el contacto de la empresa.' }, 403);
 
     const patch = {};
 

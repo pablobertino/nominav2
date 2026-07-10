@@ -319,12 +319,16 @@ export async function onRequestPost({ request, env }) {
     if (!cc) return json({ ok: false, error: 'Falta la empresa.' }, 400);
     if (!(await userCanAccess(env, user, cc))) return json({ ok: false, error: 'No tienes acceso a esta empresa.' }, 403);
 
-    // SHADOW: gate legacy binario = acceso a la empresa (userCanAccess). El
-    // alcance por departamento (deptScope) se evalua aparte. Code por accion.
-    // push_to_ax NO pasa por shadow: desde v4.23 su gate es REAL (hcm.publish
-    // dentro de pushToAx), asi que compararlo aqui solo generaria ruido.
+    // v4.72: CORTE del shadow (Lote 2). Cada accion EXIGE su permiso en la
+    // matriz (can): directory/sign -> view.fotos; save/remove/set_department
+    // -> photo.manage; save_profile -> ficha.edit. El acceso a la empresa
+    // (userCanAccess) y el alcance por departamento (deptScope) se conservan
+    // como capas adicionales. push_to_ax ya usa gate real (hcm.publish) y
+    // migrate_thumbs valida superadmin dentro de su handler.
     if (action !== 'push_to_ax') {
-      await shadowCan(env, user, 'worker-photo', action || '?', WP_CODE_BY_ACTION[action] || 'view.fotos', true);
+      const actor = await resolveActor(env, user);
+      const needed = WP_CODE_BY_ACTION[action] || 'view.fotos';
+      if (!can(actor, needed)) return json({ ok: false, error: 'No tienes permiso para esta accion.' }, 403);
     }
 
     const table = await rosterTable(env, cc);
