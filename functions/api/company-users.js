@@ -13,7 +13,7 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
-import { shadowCan } from './_auth.js';
+import { resolveActor, can } from './_auth.js';
 
 const SALT = 'nm_salt_2025';
 
@@ -84,9 +84,13 @@ export async function onRequestPost({ request, env }) {
     const admin = await getAdmin(env, adminId);
     if (!admin) return json({ ok: false, error: 'No autorizado.' }, 401);
 
-    // SHADOW: gate legacy binario = admin activo (getAdmin). El alcance por
-    // empresa (canTouch) no lo evalua el shadow. Code fino por accion.
-    await shadowCan(env, adminId, 'company-users', action || '?', CU_CODE_BY_ACTION[action] || 'view.usuarios', !!admin);
+    // v4.73: CORTE del shadow (Lote 3). Cada accion EXIGE su permiso de la
+    // matriz (can): list->view.usuarios; create/reset/update_email/toggle->
+    // compuser.*. El alcance por empresa (canTouch) sigue intacto.
+    const actor = await resolveActor(env, { kind: 'admin', id: adminId });
+    if (!can(actor, CU_CODE_BY_ACTION[action] || 'view.usuarios')) {
+      return json({ ok: false, error: 'No tienes permiso para esta accion.' }, 403);
+    }
 
     const allowed = await allowedCompanies(env, admin);
     const canTouch = (code) => allowed === null || allowed.has(code);

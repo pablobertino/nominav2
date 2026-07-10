@@ -9,7 +9,7 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
-import { shadowCan } from './_auth.js';
+import { resolveActor, can } from './_auth.js';
 
 const SALT = 'nm_salt_2025';
 
@@ -147,15 +147,18 @@ export async function onRequestPost({ request, env }) {
     if (!me) return json({ ok: false, error: 'No autorizado.' }, 401);
     const isSuper = me.role === 'superadmin';
 
-    // Acciones SOLO superadmin: crear usuarios, cambiar roles y sincronizacion
-    // masiva de clientes osTicket. Las demas (list/reset/toggle/sync_client)
-    // las puede hacer un admin, pero limitadas a los gestores de su alcance.
-    const SUPER_ONLY = new Set(['create', 'update_role', 'sync_clients_all']);
-    const legacyOk = isSuper || !SUPER_ONLY.has(action);
-    // SHADOW: gate legacy = superadmin para SUPER_ONLY; admin activo para el resto.
-    await shadowCan(env, adminId, 'admin-users', action || '?', TEAM_CODE_BY_ACTION[action] || 'team.role', legacyOk);
-    if (SUPER_ONLY.has(action) && !isSuper) {
-      return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+    // v4.73: CORTE del shadow (Lote 3). Cada accion EXIGE su permiso de la
+    // matriz (can): list->view.equipo; create->team.create; reset->team.reset;
+    // toggle->team.toggle; update_role->team.role; sync_client y
+    // sync_clients_all->team.osticket. Reglas de negocio intactas: el admin
+    // no-super sigue limitado a los gestores de su alcance (canTouchTarget),
+    // y la sincronizacion MASIVA de osTicket conserva su gate adicional de
+    // superadmin (team.osticket gobierna la individual).
+    const actor = await resolveActor(env, { kind: 'admin', id: adminId });
+    const needed = TEAM_CODE_BY_ACTION[action] || 'team.role';
+    if (!can(actor, needed)) return json({ ok: false, error: 'No tienes permiso para esta accion.' }, 403);
+    if (action === 'sync_clients_all' && !isSuper) {
+      return json({ ok: false, error: 'La sincronizacion masiva requiere superadmin.' }, 403);
     }
 
     // Para un admin no-super, set de gestores que puede ver/gestionar (los
