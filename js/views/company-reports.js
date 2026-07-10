@@ -74,9 +74,15 @@ const NON_STORE = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio
 
 /* ---------- estilos ---------- */
 function ensureStyles() {
-  if (document.getElementById('crStyles')) return;
+  // v4.89: id renombrado de 'crStyles' a 'corepStyles'. El id anterior
+  // COLISIONABA con el de cert-requests.js (Constancias): si el usuario
+  // pasaba por Constancias antes que por Analisis, el guard veia el
+  // <style> ajeno y esta vista quedaba SIN estilos (HTML crudo) hasta
+  // recargar. Regla: el id del style de cada vista usa el nombre largo
+  // de la vista, nunca iniciales.
+  if (document.getElementById('corepStyles')) return;
   const st = document.createElement('style');
-  st.id = 'crStyles';
+  st.id = 'corepStyles';
   st.textContent = `
   .cr-head { display:flex; justify-content:space-between; align-items:flex-end; gap:14px; flex-wrap:wrap; }
   .cr-head h1 { margin:0; font-size:21px; font-weight:700; color:var(--ink); }
