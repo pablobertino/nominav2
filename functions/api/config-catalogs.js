@@ -311,6 +311,11 @@ export async function onRequestPost({ request, env }) {
         selectable_on_ingreso: c.selectable_on_ingreso !== false,
         is_active: c.is_active !== false,
       };
+      // v4.75: JERARQUIA del cargo (menor = mas arriba). Se guarda en
+      // sort_order, el mismo campo que ya ordena combos y catalogos, y que
+      // ahora ademas ordena las fichas de tienda y define su color.
+      const hier = parseInt(c.hierarchy, 10);
+      if (!Number.isNaN(hier) && hier >= 1 && hier <= 99) row.sort_order = hier;
       const existing = await sb(env, `cargos?code=eq.${encodeURIComponent(code)}&select=id`);
       let cargoId;
       if (existing && existing.length) {
@@ -320,7 +325,7 @@ export async function onRequestPost({ request, env }) {
         });
       } else {
         const last = await sb(env, 'cargos?select=sort_order&order=sort_order.desc&limit=1');
-        row.sort_order = ((last && last[0] && last[0].sort_order) || 0) + 10;
+        if (row.sort_order == null) row.sort_order = ((last && last[0] && last[0].sort_order) || 0) + 1;
         const ins = await sb(env, 'cargos', { method: 'POST', headers: { Prefer: 'return=representation' }, body: JSON.stringify(row) });
         cargoId = ins && ins[0] && ins[0].id;
       }

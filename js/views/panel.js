@@ -364,7 +364,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.74</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.75</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5519,6 +5519,17 @@ function cfgEgressReasonModal(user, r) {
 }
 
 /* ===== Pestana CARGOS ===== */
+/* v4.75: colores de la JERARQUIA de cargos (aprobados en el mockup de
+   fichas): 1 Gerente ambar, 2 Sub-Gerente morado, 3 Cajero azul,
+   4 Vendedor verde, 5 Depositario gris. Fuera de 1..5 -> neutro. Este
+   mismo mapa colorea el borde de las fichas de tienda (worker-photos). */
+const CARGO_RANK_COLORS = { 1: '#b45309', 2: '#7e22ce', 3: '#2b6cff', 4: '#0e9f6e', 5: '#64748b' };
+function cargoRankColor(n) { return CARGO_RANK_COLORS[n] || '#94a3b8'; }
+function cargoRankBadge(n) {
+  if (n == null || n === '') return '<span style="color:var(--muted)">—</span>';
+  return `<span style="display:inline-grid;place-items:center;width:26px;height:26px;border-radius:50%;background:${cargoRankColor(n)};color:#fff;font-weight:800;font-size:13px">${n}</span>`;
+}
+
 function cfgRenderCargos(user, body) {
   const rows = (CFG_DATA.cargos || []).map(c => {
     const resp = c.can_be_responsible
@@ -5528,6 +5539,7 @@ function cfgRenderCargos(user, body) {
     const estado = c.is_active ? '<span class="pill pill-open">activo</span>' : '<span class="pill pill-closed">inactivo</span>';
     const pats = (c.patterns || []).map(p => p.pattern).join(', ') || '<span style="color:var(--muted)">—</span>';
     return `<tr>
+      <td data-label="Jerarquía" style="text-align:center">${cargoRankBadge(c.sort_order)}</td>
       <td data-label="Cargo"><b>${c.label}</b><br><span class="muted" style="font-size:11px;font-family:monospace">${c.code}</span></td>
       <td data-label="Cód. plantilla"><span class="pill pill-ax">${c.ax_code}</span></td>
       <td data-label="Responsable">${resp}</td><td data-label="En ingreso">${ing}</td>
@@ -5537,15 +5549,15 @@ function cfgRenderCargos(user, body) {
         <button class="btn btn-mini" data-edit-car="${c.code}">${I.pencil}</button>
         <button class="btn btn-mini" data-toggle-car="${c.code}" data-active="${c.is_active}">${c.is_active ? 'Desactivar' : 'Activar'}</button>
       </td></tr>`;
-  }).join('') || '<tr><td colspan="7" class="empty">Sin cargos.</td></tr>';
+  }).join('') || '<tr><td colspan="8" class="empty">Sin cargos.</td></tr>';
 
   body.innerHTML = `
     <div class="card">
       <div class="cfg-card-head"><h3>Cargos</h3>
         <button class="btn btn-primary btn-mini" id="carNew">${I.plus} Nuevo cargo</button></div>
-      <p class="cfg-desc" style="margin:0 0 14px">Catálogo único de cargos. La <b>etiqueta</b> es lo que ve la tienda; el <b>código de plantilla</b> es lo que se exporta (puede diferir, ej. Cajero → CAJEROS). Quien puede ser <b>responsable</b> y los <b>patrones</b> de lectura de la lista de personal se definen aquí.</p>
+      <p class="cfg-desc" style="margin:0 0 14px">Catálogo único de cargos. La <b>jerarquía</b> (1 = más arriba) ordena las fichas del personal en las tiendas y les da su color distintivo. La <b>etiqueta</b> es lo que ve la tienda; el <b>código de plantilla</b> es lo que se exporta (puede diferir, ej. Cajero → CAJEROS). Quien puede ser <b>responsable</b> y los <b>patrones</b> de lectura de la lista de personal se definen aquí.</p>
       <table class="cfg-cat-table tbl-cards"><thead><tr>
-        <th>Cargo</th><th>Cód. plantilla</th><th>Responsable</th><th>En ingreso</th><th>Patrones (lista de personal)</th><th>Estado</th><th></th>
+        <th style="text-align:center">Jerarquía</th><th>Cargo</th><th>Cód. plantilla</th><th>Responsable</th><th>En ingreso</th><th>Patrones (lista de personal)</th><th>Estado</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>
     </div>`;
 
@@ -5569,8 +5581,9 @@ function cfgCargoModal(user, c) {
       <div><label class="flabel">Nombre (lo ve la tienda)</label><input id="cg_label" value="${c ? c.label.replace(/"/g,'&quot;') : ''}" placeholder="Cajero"></div>
       <div><label class="flabel">Código de plantilla</label><input id="cg_ax" value="${c ? (c.ax_code||'') : ''}" placeholder="CAJEROS" style="font-family:monospace;text-transform:uppercase"></div>
     </div>
-    <div class="cfg-grid2" style="margin-top:12px">
+    <div class="cfg-grid3" style="margin-top:12px">
       <div><label class="flabel">Código (interno)</label><input id="cg_code" value="${c ? c.code : ''}" ${c ? 'readonly' : ''} placeholder="CAJERO" style="font-family:monospace;text-transform:uppercase"></div>
+      <div><label class="flabel">Jerarquía <span class="muted">(1 = más arriba)</span></label><input id="cg_hier" type="number" min="1" max="99" value="${c && c.sort_order != null ? c.sort_order : ''}" placeholder="ej. 3"></div>
       <div><label class="flabel">Estado</label>
         <select id="cg_active"><option value="1" ${!c || c.is_active ? 'selected' : ''}>Activo</option><option value="0" ${c && !c.is_active ? 'selected' : ''}>Inactivo</option></select></div>
     </div>
@@ -5598,6 +5611,7 @@ function cfgCargoModal(user, c) {
     const r = await cfgCatalogs({ action: 'cargo_save', adminId: user.id,
       cargo: {
         code: $('#cg_code').value, label: $('#cg_label').value, ax_code: $('#cg_ax').value,
+        hierarchy: $('#cg_hier').value,
         can_be_responsible: canResp, responsible_role: canResp ? role : null,
         selectable_on_ingreso: $('#cg_ing').value === '1', is_active: $('#cg_active').value === '1',
         patterns: $('#cg_pats').value.split(',').map(s => s.trim()).filter(Boolean),

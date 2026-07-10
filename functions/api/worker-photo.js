@@ -390,6 +390,25 @@ async function directory(env, cc, table, deptScope) {
     .filter(d => !Array.isArray(deptScope) || deptScope.includes(Number(d.id)))
     .map(d => ({ id: d.id, name: d.name }));
 
+  // v4.76: JERARQUIA DE CARGOS (solo tiendas). Catalogo de cargos activos
+  // con su jerarquia (cargos.sort_order: 1 = mas arriba) + patrones del
+  // Reporte 10 (cargo_patterns), para que el front ordene y coloree las
+  // fichas por cargo. En empresas no-tienda no aplica (cargos muy diversos).
+  let cargoRanks = [];
+  if (!isEnterprise) {
+    const [cgs, pats] = await Promise.all([
+      sb(env, 'cargos?is_active=eq.true&select=id,label,sort_order&order=sort_order.asc'),
+      sb(env, 'cargo_patterns?is_active=eq.true&select=cargo_id,pattern'),
+    ]);
+    const patsByCargo = {};
+    (pats || []).forEach(p => {
+      const t = String(p.pattern || '').trim().toUpperCase();
+      if (!t) return;
+      (patsByCargo[p.cargo_id] = patsByCargo[p.cargo_id] || []).push(t);
+    });
+    cargoRanks = (cgs || []).map(c => ({ rank: c.sort_order, label: c.label, patterns: patsByCargo[c.id] || [] }));
+  }
+
   // Roster de la empresa (tabla segun tipo). En modo empresa traemos TODOS
   // los datos personales desde enterprise_workers (el Reporte AX los tiene),
   // para no depender de que workers_master este poblado: la ficha usa el
@@ -515,6 +534,7 @@ async function directory(env, cc, table, deptScope) {
     manual_count: manualCount,
     report_count: items.length - manualCount,
     departments: deptList,
+    cargo_ranks: cargoRanks,
     meta,
     workers: items,
   });
