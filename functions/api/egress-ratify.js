@@ -23,7 +23,7 @@ function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
 
-import { shadowCan } from './_auth.js';
+import { resolveActor, can } from './_auth.js';
 
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
@@ -65,9 +65,14 @@ export async function onRequestPost({ request, env }) {
   try {
     const admin = await resolveAdmin(env, adminId);
     if (!admin) return json({ ok: false, error: 'Requiere un administrador valido.' }, 403);
+    // v4.74: CORTE del shadow (Lote 4). La pantalla exige view.egmotivos y
+    // ratificar/rectificar exige egress.ratify en la matriz (can). La regla
+    // legacy anti-gestor (resolveAdmin) y el alcance por empresa se conservan.
+    const actor = await resolveActor(env, { kind: 'admin', id: adminId });
 
     /* ---------------- LISTAR ---------------- */
     if (action === 'list') {
+      if (!can(actor, 'view.egmotivos')) return json({ ok: false, error: 'No tienes permiso para esta pantalla.' }, 403);
       const status = (body.status || '').trim() || null; // pendiente|ratificado|rectificado|null(todos)
       const rows = await sb(env, 'rpc/egress_ratify_list', {
         method: 'POST',
@@ -84,10 +89,7 @@ export async function onRequestPost({ request, env }) {
       if (!['ratificar', 'rectificar', 'pendiente'].includes(mode)) {
         return json({ ok: false, error: 'Accion invalida.' }, 400);
       }
-      // Shadow Fase 3: el gate de rol ya excluyo a gestor_empresa en
-      // resolveAdmin; aqui solo llegan admin/superadmin. Se registra si el
-      // sistema tabla-driven difiere para egress.ratify.
-      await shadowCan(env, adminId, 'egress-ratify', 'apply', 'egress.ratify', true);
+      if (!can(actor, 'egress.ratify')) return json({ ok: false, error: 'No tienes permiso para ratificar motivos de egreso.' }, 403);
 
       // Traer la linea + la empresa del reporte (para validar alcance).
       const line = await sb(env, `egress_report_lines?id=eq.${lineId}&select=id,reason_code,report_id`);

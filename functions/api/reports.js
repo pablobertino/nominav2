@@ -27,8 +27,7 @@
    ===================================================================== */
 
 import { buildReportText, buildAxWorkbookBase64 } from './_ax-template.js';
-// Shadow de permisos (Fase 3): solo compara y logea; no cambia el flujo.
-import { shadowCan } from './_auth.js';
+import { resolveActor, can } from './_auth.js';
 
 // Mapa accion -> code de permiso (uno por tipo de reporte). 'window' no
 // lleva code: es informacion de ventana reportable, sin permiso especial.
@@ -211,15 +210,21 @@ export async function onRequestPost({ request, env }) {
   try { body = await request.json(); } catch { return json({ ok: false, error: 'JSON invalido' }, 400); }
 
   try {
-    // SHADOW por tipo de reporte. OJO: este endpoint HOY no exige sesion
-    // (gate legacy abierto = true; cerrarlo es parte de la pasada final de
-    // permisos). Identidad best-effort para el shadow: body.user si viene;
-    // si no, el admin de origen (source_admin_id) o la tienda (company_code).
+    // v4.74: CORTE del shadow (Lote 4, el critico). Cada tipo de reporte
+    // EXIGE su permiso report.* en la matriz (can). La identidad es la MISMA
+    // que uso el shadow durante 30 dias sin discrepancias: body.user si
+    // viene; si no, el admin de origen (source_admin_id, revalidado por
+    // resolveActor) o la tienda (company_code, que viaja SIEMPRE en los
+    // submits). BONUS: cierra los envios anonimos (sin identidad valida ->
+    // 403). 'window' sigue libre: es informacion de ventana, sin permiso.
     if (RPT_CODE_BY_ACTION[body.action]) {
       const su = body.user
         || (body.source_kind === 'admin' && body.source_admin_id ? { kind: 'admin', id: body.source_admin_id } : null)
         || (body.company_code ? { kind: 'company', companyCode: String(body.company_code).trim() } : null);
-      await shadowCan(env, su, 'reports', body.action, RPT_CODE_BY_ACTION[body.action], true);
+      const actor = await resolveActor(env, su);
+      if (!can(actor, RPT_CODE_BY_ACTION[body.action])) {
+        return json({ ok: false, error: 'No tienes permiso para enviar este tipo de reporte.' }, 403);
+      }
     }
     if (body.action === 'submit_marcaje') {
       return await submitMarcaje(env, body);
