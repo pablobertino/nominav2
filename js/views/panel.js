@@ -30,7 +30,7 @@ import { renderCertRequests } from './cert-requests.js';
 import { renderAxReview, renderAxCompare, renderAxHistory } from './ax-review.js';
 import { renderBankStats } from './bank-stats.js';
 import { renderBankAccounts } from './bank-accounts.js';
-import { injectScopeOverridesBlock } from './scope-overrides.js';
+import { renderScopeOverridesEditor, decorateScovBadges } from './scope-overrides.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderSyncLog } from './sync-log.js';
 import { renderResetData } from './reset-data.js';
@@ -387,7 +387,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.85</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.86</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2853,8 +2853,10 @@ function ostClientCell(a) {
 function auRowCommonActs(a, self, isSuper = true) {
   // El cambio de ROL es exclusivo de superadmin (create/update_role son
   // SUPER_ONLY en el backend). Para un admin no-super no se muestra.
-  const roleBtn = (self || !isSuper) ? ''
-    : `<button class="btn btn-mini" data-act="role" data-id="${a.id}" data-u="${a.username}" data-role="${a.role}" title="Cambiar rol">Rol</button>`;
+  const scovBtn = (!isSuper || a.role === 'superadmin') ? ''
+    : `<button class="btn btn-mini au-scov" data-id="${a.id}" data-u="${a.username}" data-name="${(a.name || '').replace(/"/g, '&quot;')}" data-role="${a.role}" title="Alcances por sección (override)">⚡</button>`;
+  const roleBtn = (self || !isSuper) ? scovBtn
+    : scovBtn + `<button class="btn btn-mini" data-act="role" data-id="${a.id}" data-u="${a.username}" data-role="${a.role}" title="Cambiar rol">Rol</button>`;
   const resetBtn = `<button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>`;
   const toggleBtn = self ? ''
     : `<button class="btn btn-mini" data-act="toggle" data-id="${a.id}" data-active="${a.is_active}">${a.is_active ? 'Desactivar' : 'Activar'}</button>`;
@@ -2916,17 +2918,26 @@ async function openEquipoScovModal(user) {
     if (!host) return;
     host.innerHTML = '';
     const m = members.find(x => String(x.id) === sel.value);
-    if (m) injectScopeOverridesBlock(host, m, user);
+    if (m) renderScopeOverridesEditor(user, m, async () => { await viewEquipo(user); decorateScovBadges(user); });
   });
 }
-// Delegacion global del boton (instalacion unica por carga de pagina).
+// Delegacion global del boton ⚡ por fila de Equipo (instalacion unica).
+// Click en .au-scov -> editor de pagina completa (scope-overrides.js);
+// el volver re-pinta Equipo y decora los badges de overrides.
 if (!window.__scovEquipoWired) {
   window.__scovEquipoWired = true;
   document.addEventListener('click', (e) => {
-    if (e.target && e.target.closest && e.target.closest('#auScov')) {
-      const u = getSession();
-      if (u) openEquipoScovModal(u);
-    }
+    const b = e.target && e.target.closest ? e.target.closest('.au-scov') : null;
+    if (!b) return;
+    const u = getSession();
+    if (!u) return;
+    const member = {
+      id: parseInt(b.dataset.id, 10),
+      username: b.dataset.u || '',
+      name: b.dataset.name || '',
+      role: b.dataset.role || '',
+    };
+    renderScopeOverridesEditor(u, member, async () => { await viewEquipo(u); decorateScovBadges(u); });
   });
 }
 
@@ -3052,7 +3063,6 @@ async function viewEquipo(user) {
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Equipo</h1><p>${isSuper ? `${rows.length} miembros \u00b7 cada rol con sus columnas y acciones` : `${gestores.length} gestor${gestores.length === 1 ? '' : 'es'} de empresa en tu alcance`}</p></div>
       ${isSuper ? `<div class="head-actions">
-        <button class="btn" id="auScov" title="Alcances por sección (overrides): dar a un miembro un alcance distinto solo para una sección, p.ej. Datos bancarios">⚡ Alcances por sección</button>
         <button class="btn" id="auSyncClients" title="Crear/actualizar los gestores de empresa como clientes de osTicket">${I.sync} Gestores osTicket</button>
         <button class="btn btn-primary" id="auNew">${I.plus} Nuevo miembro</button>
       </div>` : ''}</div>
@@ -6025,7 +6035,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'usuarios') viewUsuarios(user);
   else if (view === 'quincenas') viewPeriods(user);
   else if (view === 'calendario') viewPeriods(user);
-  else if (view === 'equipo') { await ensureAdminRoles(user); viewEquipo(user); }
+  else if (view === 'equipo') { await ensureAdminRoles(user); await viewEquipo(user); decorateScovBadges(user); }
   else if (view === 'permisos') viewPermisos(user);
   else if (view === 'firmantes') renderCertSigners(user);
   else if (view === 'constancias') renderCertRequests(user);
