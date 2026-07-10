@@ -29,6 +29,7 @@ import { renderCertSigners } from './cert-signers.js';
 import { renderCertRequests } from './cert-requests.js';
 import { renderAxReview, renderAxCompare, renderAxHistory } from './ax-review.js';
 import { renderBankStats } from './bank-stats.js';
+import { renderBankAccounts } from './bank-accounts.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderSyncLog } from './sync-log.js';
 import { renderResetData } from './reset-data.js';
@@ -158,6 +159,9 @@ const NAV_GROUPS = [
     ['bankstats', I.chart, 'Estadísticas', 'adminonly'],
     ['banksync', I.sync, 'Sincronizar', 'adminonly'],
     ['bankhist', I.history, 'Historial', 'adminonly'],
+    // v4.82: Cuentas SIN adminonly: todos los roles del equipo la ven (con
+    // su alcance); el permiso view.bankaccounts la gobierna desde Roles.
+    ['bankaccounts', I.wallet, 'Cuentas'],
   ] },
   { title: 'Administración', items: [
     ['equipo', I.team, 'Equipo'],
@@ -191,6 +195,9 @@ const NAV_COMPANY_GROUPS = [
   { title: 'Solicitudes', items: [
     ['constancias', I.docs, 'Constancias'],
   ] },
+  { title: 'Datos bancarios', items: [
+    ['bankaccounts', I.wallet, 'Cuentas'],
+  ] },
   { title: 'Reportes', items: [
     ['historial', I.history, 'Historial'],
     ['misstats', I.chart, 'Mis estadísticas'],
@@ -218,6 +225,9 @@ const NAV_EDITOR_GROUPS = [
     ['buscar', I.search, 'Buscar'],
     ['datosincompletos', I.bizreport, 'Datos incompletos'],
     ['rostersync', I.sync, 'Carga de personal'],
+  ] },
+  { title: 'Datos bancarios', items: [
+    ['bankaccounts', I.wallet, 'Cuentas'],
   ] },
   { title: 'Comunicación', items: [
     ['avisos', I.bell, 'Avisos'],
@@ -256,6 +266,9 @@ const NAV_GESTOR_GROUPS = [
   { title: 'Reportes', items: [
     ['historial', I.history, 'Historial'],
     ['reportempresas', I.bizreport, 'Análisis'],
+  ] },
+  { title: 'Datos bancarios', items: [
+    ['bankaccounts', I.wallet, 'Cuentas'],
   ] },
   { title: 'Comunicación', items: [
     ['avisos', I.bell, 'Avisos'],
@@ -373,7 +386,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.81</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.82</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5977,6 +5990,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'bankstats') renderBankStats(user);
   else if (view === 'banksync') renderAxReview(user, 'account_number');
   else if (view === 'bankhist') renderAxHistory(user, 'account_number');
+  else if (view === 'bankaccounts') renderBankAccounts(user);
   else if (view === 'erpquery') renderErpQuery(user);
   else if (view === 'synclog') renderSyncLog(user);
   else if (view === 'resetdata') renderResetData(user);
@@ -6242,6 +6256,7 @@ export function renderPanel() {
       syncreview: 'view.syncreview', axcompare: 'view.axcompare',
       axhistory: 'view.axhistory', synclog: 'view.synclog', erpquery: 'view.erpquery',
       bankstats: 'view.bankstats', banksync: 'view.banksync', bankhist: 'view.bankhist',
+      bankaccounts: 'view.bankaccounts',
       equipo: 'view.equipo',
     };
     try {

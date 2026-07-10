@@ -54,7 +54,7 @@ const VIEW_SUBGROUPS = [
   ['Comunicacion', ['view.avisos', 'view.avisosconfig']],
   ['Solicitudes', ['view.solicitudes', 'view.firmantes']],
   ['Sincronizacion', ['view.sync', 'view.syncreview', 'view.axcompare', 'view.axhistory', 'view.synclog', 'view.erpquery']],
-  ['Datos bancarios', ['view.bankstats', 'view.banksync', 'view.bankhist']],
+  ['Datos bancarios', ['view.bankstats', 'view.banksync', 'view.bankhist', 'view.bankaccounts']],
   ['Administracion', ['view.equipo', 'view.permisos', 'view.config', 'view.roles', 'view.resetdata']],
   ['Empresa (tienda)', ['view.miempresa']],
   ['Ver pestañas de Configuracion', ['view.cfg.referencias', 'view.cfg.cargos', 'view.cfg.incidencias', 'view.cfg.calendario', 'view.cfg.sincronizacion', 'view.cfg.osticket', 'view.cfg.ajustes']],
@@ -114,6 +114,8 @@ const MENU_CATALOG = [
     { id: 'bankstats', lbl: 'Estadisticas', view: 'view.bankstats', acts: [] },
     { id: 'banksync', lbl: 'Sincronizar', view: 'view.banksync', acts: ['hcm.publish'] },
     { id: 'bankhist', lbl: 'Historial', view: 'view.bankhist', acts: [] },
+    // v4.82: Cuentas, habilitada a todos los roles (grilla de solo lectura).
+    { id: 'bankaccounts', lbl: 'Cuentas', view: 'view.bankaccounts', acts: [] },
   ] },
   { g: 'Administracion', items: [
     { id: 'equipo', lbl: 'Equipo', view: 'view.equipo', acts: ['team.create', 'team.reset', 'team.toggle', 'team.role', 'team.scope', 'team.osticket'] },

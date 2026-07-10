@@ -52,7 +52,9 @@ export async function onRequestPost({ request, env }) {
     }
 
     // Alcance: superadmin ve todo el grupo; el resto, sus empresas.
-    const adminId = actor.role === 'superadmin' ? null : (actor.id || null);
+    // v4.82 FIX: resolveActor NO devuelve id; usar body.user.id (ya validado
+    // por resolveActor contra admin_users: existe, activo y su role es de BD).
+    const adminId = actor.role === 'superadmin' ? null : (Number(body.user && body.user.id) || null);
     if (actor.role !== 'superadmin' && adminId == null) {
       return json({ ok: false, error: 'No se pudo determinar tu alcance.' }, 403);
     }
