@@ -22,7 +22,7 @@
 
 import { resolveActor, can } from './_auth.js';
 
-const SECTIONS = new Set(['bank']);
+const SECTIONS = new Set(['bank', 'buscar']);
 const KINDS = new Set(['all', 'stores', 'non_stores', 'custom', 'types']);
 
 function json(data, status = 200) {

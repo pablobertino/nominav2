@@ -53,15 +53,26 @@ function withThumbs(env, rows) {
   return (rows || []).map(r => ({ ...r, thumb_url: thumbUrl(env, r.photo_key) }));
 }
 
-/** admin -> { id, role, codes }  codes=null (todas) | array de company_code. */
-async function resolveAdmin(env, adminId) {
+/** admin -> { id, role, codes }  codes=null (todas) | array de company_code.
+    p_section: si se indica (p.ej. 'buscar'), resuelve las empresas con
+    get_admin_companies_scoped (respeta el override de alcance por seccion
+    del miembro, v4.87); sin seccion usa el alcance base de siempre. La
+    restriccion por DEPARTAMENTO la aplican las RPC personnel_* via
+    p_admin_id sobre las empresas donde el admin tiene departamentos
+    declarados (su base); las empresas que entran por override no tienen
+    departamentos declarados y se ven completas. */
+async function resolveAdmin(env, adminId, section = null) {
   if (!adminId) return null;
   const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(adminId)}&is_active=eq.true&select=id,role`);
   if (!a || !a.length) return null;
   if (a[0].role === 'superadmin') return { id: a[0].id, role: a[0].role, codes: null };
-  const rows = await sb(env, 'rpc/get_admin_companies', {
-    method: 'POST', body: JSON.stringify({ p_admin_id: a[0].id }),
-  });
+  const rows = section
+    ? await sb(env, 'rpc/get_admin_companies_scoped', {
+        method: 'POST', body: JSON.stringify({ p_admin_id: a[0].id, p_section: section }),
+      })
+    : await sb(env, 'rpc/get_admin_companies', {
+        method: 'POST', body: JSON.stringify({ p_admin_id: a[0].id }),
+      });
   return { id: a[0].id, role: a[0].role, codes: (rows || []).map(r => r.company_code) };
 }
 
@@ -71,7 +82,10 @@ export async function onRequestPost({ request, env }) {
   const { action, adminId } = body;
 
   try {
-    const admin = await resolveAdmin(env, adminId);
+    // search/facets (vista Buscar) respetan el override de alcance por
+    // seccion 'buscar'; incomplete (Datos incompletos) sigue con la base.
+    const section = (action === 'search' || action === 'facets') ? 'buscar' : null;
+    const admin = await resolveAdmin(env, adminId, section);
     if (!admin) return json({ ok: false, error: 'Requiere un administrador valido.' }, 403);
 
     // SHADOW: gate legacy = admin valido (resolveAdmin). Code por vista.

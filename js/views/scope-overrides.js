@@ -1,23 +1,43 @@
 /* =====================================================================
-   js/views/scope-overrides.js  →  Alcances por sección (v4.86)
+   js/views/scope-overrides.js  →  Alcances por sección (v4.87)
 
-   Editor de PÁGINA COMPLETA (mockup aprobado:
-   _PRUEBAS/equipo_alcance_overrides_page_mockup.html v1-mock1).
+   Editor de PÁGINA COMPLETA multi-sección (diseño base aprobado en
+   _PRUEBAS/equipo_alcance_overrides_page_mockup.html v1-mock1; en v4.87
+   se apila un panel por sección, como preveía el mockup original).
    Se llega desde la grilla de Equipo con el botón ⚡ de cada fila
    (auRowCommonActs en panel.js); el ← vuelve a Equipo (callback onBack).
 
+   Secciones activas:
+     bank   → Datos bancarios (Cuentas + Estadísticas)
+     buscar → Buscar personal (búsqueda global)
+
    Exporta:
      renderScopeOverridesEditor(user, member, onBack)
-       member = { id, username, name, role } (dataset del botón de fila)
-     decorateScovBadges(user)
-       marca con .has-ov los botones ⚡ de miembros con override.
+     decorateScovBadges(user)  (marca .has-ov los ⚡ con override)
 
    Endpoint: /api/scope-overrides (list/save/preview/companies).
-   Sección activa: 'bank' (Datos bancarios: Cuentas + Estadísticas).
    Editable solo con team.scope_override (list devuelve canEdit).
+   Con varias secciones el guardado es POR SECCIÓN y no se vuelve
+   automáticamente: el usuario regresa con ←.
    ===================================================================== */
 
-const SECTION = 'bank';
+const SECTION_DEFS = [
+  {
+    id: 'bank',
+    title: 'Datos bancarios',
+    pill: 'Cuentas y Estadísticas',
+    icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
+    note: 'El override aplica a <b>Cuentas</b> y <b>Estadísticas</b>. <b>Sincronizar</b> e <b>Historial</b> bancarios siguen con el alcance base.',
+  },
+  {
+    id: 'buscar',
+    title: 'Buscar personal',
+    pill: 'Personal · Buscar',
+    icon: '<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>',
+    note: 'El override aplica a la búsqueda global de <b>Buscar</b>. <b>Datos incompletos</b> y el resto de Personal siguen con el alcance base. En las empresas de su alcance base se mantiene la restricción por departamento.',
+  },
+];
+
 const KINDS = [
   ['inherit',    'Heredado',             'Su alcance base, sin excepción'],
   ['stores',     'Solo tiendas',         'Todas las empresas tipo Tienda'],
@@ -60,10 +80,13 @@ function ensureStyles() {
   .scovp .who b{font-size:15px;display:block}
   .scovp .who small{color:var(--muted)}
   .scovp .basebox{margin-left:auto;background:#f8fafc;border:1px solid var(--border);border-radius:9px;padding:7px 12px;font-size:12px;color:var(--ink-soft,#475569)}
-  .scovp .panel{background:var(--card,#fff);border:1px solid var(--border);border-radius:13px;padding:17px 19px}
-  .scovp .panel h3{font-size:13.5px;margin:0 0 2px}
+  .scovp .panel{background:var(--card,#fff);border:1px solid var(--border);border-radius:13px;padding:17px 19px;margin-bottom:14px}
+  .scovp .panel.hasov{border-color:#ddd6fe}
+  .scovp .ph3{display:flex;align-items:center;gap:9px;margin:0 0 2px}
+  .scovp .ph3 .ic{width:29px;height:29px;border-radius:9px;background:var(--pri-soft,#eff6ff);color:var(--accent,#2563eb);display:grid;place-items:center;flex:none}
+  .scovp .ph3 h3{font-size:13.5px;margin:0}
   .scovp .pill{display:inline-block;background:#f5f3ff;border:1px solid #ddd6fe;border-radius:999px;padding:1px 9px;font-size:10.5px;font-weight:800;color:#6d28d9;margin-left:7px;vertical-align:middle}
-  .scovp .d{font-size:12px;color:var(--muted);margin:0 0 13px}
+  .scovp .d{font-size:12px;color:var(--muted);margin:0 0 13px;padding-left:38px}
   .scovp .ro{font-size:12px;color:var(--muted);font-style:italic;margin-left:8px}
   .scovp .kinds{display:grid;grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:9px;margin-bottom:14px}
   .scovp .kind{border:1px solid var(--border);border-radius:11px;padding:11px 13px;cursor:pointer;background:var(--surface,#fff);display:flex;gap:9px;align-items:flex-start}
@@ -107,7 +130,7 @@ function ensureStyles() {
 }
 
 /* Marca .has-ov en los botones ⚡ de la grilla de Equipo cuyos miembros
-   tienen override. Se llama tras pintar viewEquipo. */
+   tienen algún override (cualquier sección). */
 export async function decorateScovBadges(user) {
   const btns = [...document.querySelectorAll('.au-scov[data-id]')];
   if (!btns.length) return;
@@ -115,16 +138,18 @@ export async function decorateScovBadges(user) {
   const ids = btns.map(b => parseInt(b.dataset.id, 10)).filter(Number.isFinite);
   const r = await api(user, { action: 'list', admin_ids: ids });
   if (!r || !r.ok) return;
-  const withOv = new Set((r.overrides || []).map(o => Number(o.admin_id)));
+  const count = {};
+  (r.overrides || []).forEach(o => { count[o.admin_id] = (count[o.admin_id] || 0) + 1; });
   btns.forEach(b => {
-    if (withOv.has(parseInt(b.dataset.id, 10))) {
+    const n = count[parseInt(b.dataset.id, 10)] || 0;
+    if (n > 0) {
       b.classList.add('has-ov');
-      b.title = 'Alcances por sección: tiene override activo';
+      b.title = `Alcances por sección: ${n} override${n === 1 ? '' : 's'} activo${n === 1 ? '' : 's'}`;
     }
   });
 }
 
-/* Editor de página completa para un miembro. */
+/* Editor de página completa para un miembro (todas las secciones). */
 export async function renderScopeOverridesEditor(user, member, onBack) {
   ensureStyles();
   const main = document.getElementById('pnlMain');
@@ -147,38 +172,93 @@ export async function renderScopeOverridesEditor(user, member, onBack) {
   const canEdit = !!lst.canEdit;
   const companies = (comp && comp.ok && comp.companies) || [];
   const typeCounts = {};
+  const compGroups = {};
   companies.forEach(c => {
     const t = c.company_type || '(sin tipo)';
     typeCounts[t] = (typeCounts[t] || 0) + 1;
+    (compGroups[t] = compGroups[t] || []).push(c);
   });
   const allTypes = Object.keys(typeCounts).sort();
-  const ov = (lst.overrides || []).find(o => o.section === SECTION) || null;
 
-  const st = {
-    kind: ov ? ov.scope_kind : 'inherit',
-    include_base: ov ? ov.include_base !== false : true,
-    codes: new Set((ov && ov.company_codes) || []),
-    types: new Set((ov && ov.company_types) || []),
-    hadOv: !!ov,
-    dirty: false,
-    baseN: null,
-  };
+  // Estado por sección
+  const ST = {};
+  SECTION_DEFS.forEach(def => {
+    const ov = (lst.overrides || []).find(o => o.section === def.id) || null;
+    ST[def.id] = {
+      kind: ov ? ov.scope_kind : 'inherit',
+      include_base: ov ? ov.include_base !== false : true,
+      codes: new Set((ov && ov.company_codes) || []),
+      types: new Set((ov && ov.company_types) || []),
+      hadOv: !!ov,
+      dirty: false,
+      prevSeq: 0,
+    };
+  });
 
   const initials = (member.name || member.username || '?')
     .split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
 
-  const compGroups = {};
-  companies.forEach(c => {
-    const t = c.company_type || '(sin tipo)';
-    (compGroups[t] = compGroups[t] || []).push(c);
-  });
+  const sectionHtml = (def) => {
+    const s = ST[def.id];
+    return `<div class="panel ${s.hadOv ? 'hasov' : ''}" id="pnl-${def.id}">
+      <div class="ph3"><span class="ic">${def.icon}</span><h3>${def.title} <span class="pill">${def.pill}</span></h3></div>
+      <p class="d">¿Qué empresas ve en esta sección?</p>
+
+      <div class="kinds" data-sec="${def.id}">
+        ${KINDS.map(([v, t, d]) => `
+          <label class="kind ${s.kind === v ? 'on' : ''} ${canEdit ? '' : 'dis'}">
+            <input type="radio" name="scovK-${def.id}" value="${v}" ${s.kind === v ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
+            <span><b>${t}</b><small>${d}</small></span>
+          </label>`).join('')}
+      </div>
+
+      <div class="typegrid" id="types-${def.id}" style="${s.kind === 'types' ? '' : 'display:none'}">
+        ${allTypes.map(t => `
+          <label class="tchk ${s.types.has(t) ? 'on' : ''}">
+            <input type="checkbox" value="${esc(t)}" ${s.types.has(t) ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
+            ${esc(t)} <span class="n">${nf(typeCounts[t])}</span>
+          </label>`).join('')}
+      </div>
+
+      <div id="custom-${def.id}" style="${s.kind === 'custom' ? '' : 'display:none'}">
+        <div class="comp-tools">
+          <input id="q-${def.id}" placeholder="Buscar empresa por nombre o código…" ${canEdit ? '' : 'disabled'}>
+          <button id="mark-${def.id}" ${canEdit ? '' : 'disabled'}>Marcar visibles</button>
+          <button id="clear-${def.id}" ${canEdit ? '' : 'disabled'}>Limpiar</button>
+        </div>
+        <div class="complist" id="list-${def.id}">
+          ${allTypes.map(t => `
+            <div class="cgroup">${esc(t)}</div>
+            ${compGroups[t].map(c => `
+              <label class="crow ${s.codes.has(c.company_code) ? 'on' : ''}" data-txt="${esc(norm((c.business_name || '') + ' ' + c.company_code))}">
+                <input type="checkbox" value="${esc(c.company_code)}" ${s.codes.has(c.company_code) ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
+                ${esc(c.business_name || c.company_code)} <small>${esc(c.company_code)}</small>
+              </label>`).join('')}`).join('')}
+        </div>
+        <div class="ccount" id="count-${def.id}"></div>
+      </div>
+
+      <div class="extra" id="extra-${def.id}" style="${s.kind === 'inherit' ? 'display:none' : ''}">
+        <label><input type="checkbox" id="incbase-${def.id}" ${s.include_base ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> Sumar también su alcance base</label>
+        <span class="preview" id="prev-${def.id}">⚡ calculando…</span>
+      </div>
+
+      <div class="note">${def.note} Qué menús ve cada rol se decide en <b>Roles</b>.</div>
+
+      ${canEdit ? `<div class="acts">
+        <span class="msg" id="msg-${def.id}"></span>
+        <button class="btn2 danger" id="rm-${def.id}" style="${s.hadOv ? '' : 'display:none'}">Quitar override</button>
+        <button class="btn2 pri" id="save-${def.id}" disabled>Guardar alcance</button>
+      </div>` : ''}
+    </div>`;
+  };
 
   main.innerHTML = `<div class="scovp">
     <div class="phead">
       <button class="back" id="scovBack" title="Volver a Equipo">←</button>
       <h1>⚡ Alcances por sección</h1>
     </div>
-    <p class="sub">Editando excepciones de la sección Datos bancarios.${canEdit ? '' : '<span class="ro">Solo lectura: requiere el permiso team.scope_override.</span>'}</p>
+    <p class="sub">Excepciones de alcance por sección para este miembro.${canEdit ? '' : '<span class="ro">Solo lectura: requiere el permiso team.scope_override.</span>'}</p>
 
     <div class="who">
       <span class="av">${esc(initials)}</span>
@@ -186,93 +266,13 @@ export async function renderScopeOverridesEditor(user, member, onBack) {
       <span class="basebox" id="scovBase">📍 Alcance base: …</span>
     </div>
 
-    <div class="panel">
-      <h3>Datos bancarios <span class="pill">Cuentas y Estadísticas</span></h3>
-      <p class="d">¿Qué empresas ve en esta sección?</p>
-
-      <div class="kinds" id="scovKinds">
-        ${KINDS.map(([v, t, d]) => `
-          <label class="kind ${st.kind === v ? 'on' : ''} ${canEdit ? '' : 'dis'}">
-            <input type="radio" name="scovK" value="${v}" ${st.kind === v ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
-            <span><b>${t}</b><small>${d}</small></span>
-          </label>`).join('')}
-      </div>
-
-      <div class="typegrid" id="scovTypes" style="${st.kind === 'types' ? '' : 'display:none'}">
-        ${allTypes.map(t => `
-          <label class="tchk ${st.types.has(t) ? 'on' : ''}">
-            <input type="checkbox" value="${esc(t)}" ${st.types.has(t) ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
-            ${esc(t)} <span class="n">${nf(typeCounts[t])}</span>
-          </label>`).join('')}
-      </div>
-
-      <div id="scovCustom" style="${st.kind === 'custom' ? '' : 'display:none'}">
-        <div class="comp-tools">
-          <input id="scovQ" placeholder="Buscar empresa por nombre o código…" ${canEdit ? '' : 'disabled'}>
-          <button id="scovMarkVis" ${canEdit ? '' : 'disabled'}>Marcar visibles</button>
-          <button id="scovClearSel" ${canEdit ? '' : 'disabled'}>Limpiar</button>
-        </div>
-        <div class="complist" id="scovList">
-          ${allTypes.map(t => `
-            <div class="cgroup" data-g="${esc(t)}">${esc(t)}</div>
-            ${compGroups[t].map(c => `
-              <label class="crow ${st.codes.has(c.company_code) ? 'on' : ''}" data-txt="${esc(norm((c.business_name || '') + ' ' + c.company_code))}">
-                <input type="checkbox" value="${esc(c.company_code)}" ${st.codes.has(c.company_code) ? 'checked' : ''} ${canEdit ? '' : 'disabled'}>
-                ${esc(c.business_name || c.company_code)} <small>${esc(c.company_code)}</small>
-              </label>`).join('')}`).join('')}
-        </div>
-        <div class="ccount" id="scovCount"></div>
-      </div>
-
-      <div class="extra" id="scovExtra" style="${st.kind === 'inherit' ? 'display:none' : ''}">
-        <label><input type="checkbox" id="scovIncBase" ${st.include_base ? 'checked' : ''} ${canEdit ? '' : 'disabled'}> Sumar también su alcance base</label>
-        <span class="preview" id="scovPrev">⚡ calculando…</span>
-      </div>
-
-      <div class="note">El override aplica a <b>Cuentas</b> y <b>Estadísticas</b>. <b>Sincronizar</b> e <b>Historial</b> bancarios siguen con el alcance base. Qué menús ve cada rol se decide en <b>Roles</b>.</div>
-
-      ${canEdit ? `<div class="acts">
-        <span class="msg" id="scovMsg"></span>
-        <button class="btn2 danger" id="scovRemove" style="${st.hadOv ? '' : 'display:none'}">Quitar override</button>
-        <button class="btn2" id="scovCancel">Cancelar</button>
-        <button class="btn2 pri" id="scovSave" disabled>Guardar alcance</button>
-      </div>` : ''}
-    </div>
+    ${SECTION_DEFS.map(sectionHtml).join('')}
   </div>`;
 
   const q = id => document.getElementById(id);
   q('scovBack').addEventListener('click', onBack);
 
-  function updCount() {
-    const el = q('scovCount');
-    if (el) el.innerHTML = `<b>${nf(st.codes.size)}</b> empresa${st.codes.size === 1 ? '' : 's'} seleccionada${st.codes.size === 1 ? '' : 's'}`;
-  }
-  updCount();
-
-  let prevSeq = 0;
-  async function refreshPreview() {
-    const box = q('scovPrev');
-    if (!box || st.kind === 'inherit') return;
-    const seq = ++prevSeq;
-    box.textContent = '⚡ calculando…';
-    const p = await api(user, {
-      action: 'preview', admin_id: member.id, scope_kind: st.kind,
-      company_codes: st.kind === 'custom' ? [...st.codes] : null,
-      company_types: st.kind === 'types' ? [...st.types] : null,
-      include_base: st.include_base,
-    });
-    if (seq !== prevSeq) return;
-    if (p && p.ok) {
-      st.baseN = p.base_n;
-      box.innerHTML = `⚡ Verá <b>${nf(p.total_n)}</b> empresas en esta sección — ${nf(p.extra_n)} del override${st.include_base ? ` + su base de ${nf(p.base_n)}` : ''}`;
-      const bb = q('scovBase');
-      if (bb) bb.innerHTML = `📍 Alcance base: <b>${nf(p.base_n)}</b> empresa${p.base_n === 1 ? '' : 's'}`;
-    } else {
-      box.textContent = (p && p.error) || 'No se pudo calcular.';
-    }
-  }
-
-  // alcance base en cabecera aunque el kind sea inherit
+  // alcance base en cabecera (independiente de secciones)
   (async () => {
     const p = await api(user, {
       action: 'preview', admin_id: member.id, scope_kind: 'custom',
@@ -282,98 +282,142 @@ export async function renderScopeOverridesEditor(user, member, onBack) {
     if (p && p.ok && bb) bb.innerHTML = `📍 Alcance base: <b>${nf(p.base_n)}</b> empresa${p.base_n === 1 ? '' : 's'}`;
   })();
 
-  function sync() {
-    const t = q('scovTypes'), c = q('scovCustom'), e = q('scovExtra');
-    if (t) t.style.display = st.kind === 'types' ? '' : 'none';
-    if (c) c.style.display = st.kind === 'custom' ? '' : 'none';
-    if (e) e.style.display = st.kind === 'inherit' ? 'none' : '';
-    const sv = q('scovSave');
-    if (sv) sv.disabled = !st.dirty
-      || (st.kind === 'custom' && !st.codes.size)
-      || (st.kind === 'types' && !st.types.size);
-    if (st.kind !== 'inherit') refreshPreview();
-  }
-  if (st.kind !== 'inherit') refreshPreview();
+  // Wiring por sección
+  SECTION_DEFS.forEach(def => {
+    const s = ST[def.id];
+    const sid = def.id;
 
-  if (!canEdit) return;
-
-  q('scovKinds').addEventListener('change', e => {
-    if (e.target.name !== 'scovK') return;
-    st.kind = e.target.value; st.dirty = true;
-    q('scovKinds').querySelectorAll('.kind').forEach(k => k.classList.remove('on'));
-    e.target.closest('.kind').classList.add('on');
-    const m = q('scovMsg'); if (m) { m.textContent = ''; m.className = 'msg'; }
-    sync();
-  });
-
-  q('scovTypes').addEventListener('change', e => {
-    if (e.target.type !== 'checkbox') return;
-    e.target.checked ? st.types.add(e.target.value) : st.types.delete(e.target.value);
-    e.target.closest('.tchk').classList.toggle('on', e.target.checked);
-    st.dirty = true; sync();
-  });
-
-  q('scovList').addEventListener('change', e => {
-    if (e.target.type !== 'checkbox') return;
-    e.target.checked ? st.codes.add(e.target.value) : st.codes.delete(e.target.value);
-    e.target.closest('.crow').classList.toggle('on', e.target.checked);
-    st.dirty = true; updCount(); sync();
-  });
-
-  q('scovQ').addEventListener('input', () => {
-    const needle = norm(q('scovQ').value.trim());
-    const rows = q('scovList').querySelectorAll('.crow');
-    rows.forEach(r => { r.style.display = !needle || r.dataset.txt.includes(needle) ? '' : 'none'; });
-    q('scovList').querySelectorAll('.cgroup').forEach(g => {
-      let n = g.nextElementSibling, any = false;
-      while (n && !n.classList.contains('cgroup')) { if (n.style.display !== 'none') any = true; n = n.nextElementSibling; }
-      g.style.display = any ? '' : 'none';
-    });
-  });
-
-  q('scovMarkVis').addEventListener('click', () => {
-    q('scovList').querySelectorAll('.crow').forEach(r => {
-      if (r.style.display === 'none') return;
-      const cb = r.querySelector('input');
-      if (!cb.checked) { cb.checked = true; st.codes.add(cb.value); r.classList.add('on'); }
-    });
-    st.dirty = true; updCount(); sync();
-  });
-
-  q('scovClearSel').addEventListener('click', () => {
-    q('scovList').querySelectorAll('.crow input:checked').forEach(cb => {
-      cb.checked = false; cb.closest('.crow').classList.remove('on');
-    });
-    st.codes.clear(); st.dirty = true; updCount(); sync();
-  });
-
-  q('scovIncBase').addEventListener('change', e => {
-    st.include_base = e.target.checked; st.dirty = true; sync();
-  });
-
-  q('scovCancel').addEventListener('click', onBack);
-
-  async function doSave(kind) {
-    const sv = q('scovSave'), rm = q('scovRemove'), m = q('scovMsg');
-    sv.disabled = true; rm.disabled = true; m.textContent = ''; m.className = 'msg';
-    const res = await api(user, {
-      action: 'save', admin_id: member.id, section: SECTION,
-      scope_kind: kind,
-      company_codes: kind === 'custom' ? [...st.codes] : null,
-      company_types: kind === 'types' ? [...st.types] : null,
-      include_base: st.include_base,
-    });
-    if (res && res.ok) {
-      m.textContent = kind === 'inherit' ? 'Override eliminado: vuelve al alcance base.' : 'Alcance guardado.';
-      m.classList.add('ok');
-      setTimeout(onBack, 650);
-    } else {
-      sv.disabled = false; rm.disabled = false;
-      m.textContent = (res && res.error) || 'No se pudo guardar.';
-      m.classList.add('err');
+    function updCount() {
+      const el = q(`count-${sid}`);
+      if (el) el.innerHTML = `<b>${nf(s.codes.size)}</b> empresa${s.codes.size === 1 ? '' : 's'} seleccionada${s.codes.size === 1 ? '' : 's'}`;
     }
-  }
+    updCount();
 
-  q('scovSave').addEventListener('click', () => doSave(st.kind === 'inherit' ? 'inherit' : st.kind));
-  q('scovRemove').addEventListener('click', () => doSave('inherit'));
+    async function refreshPreview() {
+      const box = q(`prev-${sid}`);
+      if (!box || s.kind === 'inherit') return;
+      const seq = ++s.prevSeq;
+      box.textContent = '⚡ calculando…';
+      const p = await api(user, {
+        action: 'preview', admin_id: member.id, scope_kind: s.kind,
+        company_codes: s.kind === 'custom' ? [...s.codes] : null,
+        company_types: s.kind === 'types' ? [...s.types] : null,
+        include_base: s.include_base,
+      });
+      if (seq !== s.prevSeq) return;
+      if (p && p.ok) {
+        box.innerHTML = `⚡ Verá <b>${nf(p.total_n)}</b> empresas en esta sección — ${nf(p.extra_n)} del override${s.include_base ? ` + su base de ${nf(p.base_n)}` : ''}`;
+      } else {
+        box.textContent = (p && p.error) || 'No se pudo calcular.';
+      }
+    }
+
+    function sync() {
+      const t = q(`types-${sid}`), c = q(`custom-${sid}`), e = q(`extra-${sid}`);
+      if (t) t.style.display = s.kind === 'types' ? '' : 'none';
+      if (c) c.style.display = s.kind === 'custom' ? '' : 'none';
+      if (e) e.style.display = s.kind === 'inherit' ? 'none' : '';
+      const sv = q(`save-${sid}`);
+      if (sv) sv.disabled = !s.dirty
+        || (s.kind === 'custom' && !s.codes.size)
+        || (s.kind === 'types' && !s.types.size);
+      if (s.kind !== 'inherit') refreshPreview();
+    }
+    if (s.kind !== 'inherit') refreshPreview();
+
+    if (!canEdit) return;
+
+    const kindsBox = document.querySelector(`.kinds[data-sec="${sid}"]`);
+    kindsBox.addEventListener('change', e => {
+      if (!e.target.name || e.target.name !== `scovK-${sid}`) return;
+      s.kind = e.target.value; s.dirty = true;
+      kindsBox.querySelectorAll('.kind').forEach(k => k.classList.remove('on'));
+      e.target.closest('.kind').classList.add('on');
+      const m = q(`msg-${sid}`); if (m) { m.textContent = ''; m.className = 'msg'; }
+      sync();
+    });
+
+    q(`types-${sid}`).addEventListener('change', e => {
+      if (e.target.type !== 'checkbox') return;
+      e.target.checked ? s.types.add(e.target.value) : s.types.delete(e.target.value);
+      e.target.closest('.tchk').classList.toggle('on', e.target.checked);
+      s.dirty = true; sync();
+    });
+
+    q(`list-${sid}`).addEventListener('change', e => {
+      if (e.target.type !== 'checkbox') return;
+      e.target.checked ? s.codes.add(e.target.value) : s.codes.delete(e.target.value);
+      e.target.closest('.crow').classList.toggle('on', e.target.checked);
+      s.dirty = true; updCount(); sync();
+    });
+
+    q(`q-${sid}`).addEventListener('input', () => {
+      const needle = norm(q(`q-${sid}`).value.trim());
+      const list = q(`list-${sid}`);
+      list.querySelectorAll('.crow').forEach(r => {
+        r.style.display = !needle || r.dataset.txt.includes(needle) ? '' : 'none';
+      });
+      list.querySelectorAll('.cgroup').forEach(g => {
+        let n = g.nextElementSibling, any = false;
+        while (n && !n.classList.contains('cgroup')) { if (n.style.display !== 'none') any = true; n = n.nextElementSibling; }
+        g.style.display = any ? '' : 'none';
+      });
+    });
+
+    q(`mark-${sid}`).addEventListener('click', () => {
+      q(`list-${sid}`).querySelectorAll('.crow').forEach(r => {
+        if (r.style.display === 'none') return;
+        const cb = r.querySelector('input');
+        if (!cb.checked) { cb.checked = true; s.codes.add(cb.value); r.classList.add('on'); }
+      });
+      s.dirty = true; updCount(); sync();
+    });
+
+    q(`clear-${sid}`).addEventListener('click', () => {
+      q(`list-${sid}`).querySelectorAll('.crow input:checked').forEach(cb => {
+        cb.checked = false; cb.closest('.crow').classList.remove('on');
+      });
+      s.codes.clear(); s.dirty = true; updCount(); sync();
+    });
+
+    q(`incbase-${sid}`).addEventListener('change', e => {
+      s.include_base = e.target.checked; s.dirty = true; sync();
+    });
+
+    async function doSave(kind) {
+      const sv = q(`save-${sid}`), rm = q(`rm-${sid}`), m = q(`msg-${sid}`);
+      sv.disabled = true; rm.disabled = true; m.textContent = ''; m.className = 'msg';
+      const res = await api(user, {
+        action: 'save', admin_id: member.id, section: sid,
+        scope_kind: kind,
+        company_codes: kind === 'custom' ? [...s.codes] : null,
+        company_types: kind === 'types' ? [...s.types] : null,
+        include_base: s.include_base,
+      });
+      rm.disabled = false;
+      if (res && res.ok) {
+        s.dirty = false;
+        s.hadOv = kind !== 'inherit';
+        if (kind === 'inherit') {
+          s.kind = 'inherit';
+          const kb = document.querySelector(`.kinds[data-sec="${sid}"]`);
+          kb.querySelectorAll('.kind').forEach(k => k.classList.remove('on'));
+          const inh = kb.querySelector('input[value="inherit"]');
+          if (inh) { inh.checked = true; inh.closest('.kind').classList.add('on'); }
+          sync();
+        }
+        rm.style.display = s.hadOv ? '' : 'none';
+        q(`pnl-${sid}`).classList.toggle('hasov', s.hadOv);
+        m.textContent = kind === 'inherit' ? 'Override eliminado: vuelve al alcance base.' : 'Alcance guardado.';
+        m.classList.add('ok');
+      } else {
+        sv.disabled = false;
+        m.textContent = (res && res.error) || 'No se pudo guardar.';
+        m.classList.add('err');
+      }
+    }
+
+    q(`save-${sid}`).addEventListener('click', () => doSave(s.kind === 'inherit' ? 'inherit' : s.kind));
+    q(`rm-${sid}`).addEventListener('click', () => doSave('inherit'));
+  });
 }
