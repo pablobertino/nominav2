@@ -28,6 +28,11 @@ import { renderWorkerPhotos, openWorkerLightbox } from './worker-photos.js';
 const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
 
 let USER = null;
+// v4.79: modo "Datos bancarios": cuando la vista se abre desde ese grupo,
+// TODAS las llamadas al endpoint llevan field_filter='account_number' y la
+// maquinaria (bandeja, publicar/anular todo, historial) queda acotada a los
+// change_sets que TOCAN la cuenta. null = modo general (sin filtro).
+let FIELD_FILTER = null;
 let ROWS = [];             // filas pendientes (del backend)
 let FACETS = null;         // { types, companies, zones, subzones, concepts }
 const SELECTED = new Set();  // ids de change_set seleccionados
@@ -68,6 +73,10 @@ function fmtDateTime(iso) {
 }
 
 async function api(payload) {
+  // v4.79: en modo Datos bancarios el filtro viaja en TODAS las llamadas.
+  // El endpoint lo aplica en list/history/publish/discard (resolveTargetSets)
+  // y lo ignora sin efecto en las demas acciones.
+  if (FIELD_FILTER && payload && !('field_filter' in payload)) payload.field_filter = FIELD_FILTER;
   return fetch('/api/ax-review', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
@@ -279,7 +288,9 @@ function isBankField(f) {
 function gotoFicha(r) {
   if (!r) return;
   const mode = NON_STORE_TYPES.has(r.company_type) ? 'enterprise' : 'store';
-  renderWorkerPhotos(USER, r.company_code, () => renderAxReview(USER), { mode, openCed: r.id_number });
+  // v4.79: al volver de la ficha se conserva el modo (general o bancario).
+  const ff = FIELD_FILTER;
+  renderWorkerPhotos(USER, r.company_code, () => renderAxReview(USER, ff), { mode, openCed: r.id_number });
 }
 
 /* Texto ordenado del cambio pendiente para el portapapeles. */
@@ -321,13 +332,18 @@ async function copyToClipboard(text, btn) {
   return ok;
 }
 
-export async function renderAxReview(user) {
+export async function renderAxReview(user, fieldFilter) {
   USER = user;
+  // v4.79: menu "Datos bancarios · Sincronizar" = esta misma bandeja con el
+  // filtro fijo a la cuenta. Cualquier otro valor se ignora (lista blanca).
+  FIELD_FILTER = fieldFilter === 'account_number' ? 'account_number' : null;
   ensureStyles();
   $('#pnlMain').innerHTML = `
     <div class="axr-head"><div>
-      <h1>Sincronizar</h1>
-      <p>Revisa los cambios de fichas pendientes y decide qué se <b>publica</b> y qué se <b>anula</b>. Al final, usa <b>Actualizar</b> en Personal para revertir lo anulado.</p>
+      <h1>${FIELD_FILTER ? 'Datos bancarios · Sincronizar' : 'Sincronizar'}</h1>
+      <p>${FIELD_FILTER
+        ? 'Solo los cambios pendientes que tocan la <b>cuenta bancaria</b>. Si una ficha trae la cuenta junto a otros campos, aparece aquí y al publicarla se envía completa.'
+        : 'Revisa los cambios de fichas pendientes y decide qué se <b>publica</b> y qué se <b>anula</b>. Al final, usa <b>Actualizar</b> en Personal para revertir lo anulado.'}</p>
     </div><span id="axrRefresh"></span></div>
     <div class="axr-stats">
       <div class="axr-stat pend"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> Fichas pendientes</div><div class="v" id="axrSPend">—</div></div>
@@ -344,7 +360,7 @@ export async function renderAxReview(user) {
     </div>
     <div class="axr-toolbar">
       <span class="axr-spacer"></span>
-      <button class="axr-btn" data-synclog="syncreview" title="Registro de sincronizaciones (corridas programadas)">Registro</button>
+      <button class="axr-btn" data-synclog="${FIELD_FILTER ? 'banksync' : 'syncreview'}" title="Registro de sincronizaciones (corridas programadas)">Registro</button>
         <button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>
       <button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar con cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>
       <button class="axr-btn axr-btn-dis" id="axrDisAll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular todo</button>
@@ -643,6 +659,7 @@ if (!window.__slRegNav) {
 
 export async function renderAxCompare(user) {
   USER = user;
+  FIELD_FILTER = null;   // v4.79: Comparar siempre trabaja en modo general
   ensureStyles();
   CMP_RUN_ID++;   // v4.68: entrar a la vista invalida cualquier corrida en curso
   CMP_FILTER = { type: '', company: '', zone: '', subzone: '', concept: '' };
@@ -1010,15 +1027,20 @@ let HIST = { page: 1, size: 50, q: '', status: '', origin: '', dir: 'desc', ftyp
 const HIST_STATUS_LBL = { pending: 'Pendiente', published: 'Publicado', discarded: 'Anulado' };
 const HIST_ORIGIN_LBL = { edit: 'Edición', erp_detect: 'Comparación', auto_sync: 'Automático' };
 
-export async function renderAxHistory(user) {
+export async function renderAxHistory(user, fieldFilter) {
   USER = user;
+  // v4.80: menu "Datos bancarios · Historial" = este mismo historial con el
+  // filtro fijo a la cuenta (via api() -> field_filter, lista blanca).
+  FIELD_FILTER = fieldFilter === 'account_number' ? 'account_number' : null;
   ensureStyles();
   HIST = { page: 1, size: 50, q: '', status: '', origin: '', dir: 'desc', ftype: '', fcompany: '', fzone: '', fsubzone: '', fconcept: '', total: 0, rows: [] };
   $('#pnlMain').innerHTML = `
     <div class="axr-head"><div>
-      <h1>Historial</h1>
-      <p id="hSub">Todo lo que pasó por Sincronizar: pendientes, publicados y anulados. Solo lectura; publicar y anular se hacen en la bandeja.</p>
-    </div><div class="head-actions" style="margin-left:auto;display:flex;align-items:center;gap:12px">${slRegBtn('axhistory')}<span id="hRefresh"></span></div></div>
+      <h1>${FIELD_FILTER ? 'Datos bancarios · Historial' : 'Historial'}</h1>
+      <p id="hSub">${FIELD_FILTER
+        ? 'Todo lo que pasó por Sincronizar y toca la <b>cuenta bancaria</b>: pendientes, publicados y anulados. Solo lectura.'
+        : 'Todo lo que pasó por Sincronizar: pendientes, publicados y anulados. Solo lectura; publicar y anular se hacen en la bandeja.'}</p>
+    </div><div class="head-actions" style="margin-left:auto;display:flex;align-items:center;gap:12px">${slRegBtn(FIELD_FILTER ? 'bankhist' : 'axhistory')}<span id="hRefresh"></span></div></div>
     <div class="axr-hctrl" style="margin-top:16px">
       <span class="fg">Buscar<input id="hQ" type="text" placeholder="Cédula o nombre…" style="width:200px"></span>
       <span class="fg">Estado<select id="hSt"><option value="">Todos</option><option value="pending">Pendiente</option><option value="published">Publicado</option><option value="discarded">Anulado</option></select></span>

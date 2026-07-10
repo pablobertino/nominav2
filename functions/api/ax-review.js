@@ -648,6 +648,18 @@ async function actorAdminId(env, user) {
   return a && a.length ? a[0].id : null;
 }
 
+/* ---------- v4.79: filtro por CAMPO del jsonb changes ----------
+   Para el grupo "Datos bancarios": sus menues Sincronizar e Historial son la
+   MISMA maquinaria de aqui con un unico filtro fijo: solo change_sets que
+   TOCAN ese campo. Los valores de changes son objetos {old,new} (nunca null),
+   asi que "la clave existe" equivale en PostgREST a `changes->campo=not.is.null`.
+   Lista blanca: jamas se interpola texto libre del cliente en la query. */
+const FIELD_FILTER_WHITELIST = new Set(['account_number']);
+function fieldFilterOf(body) {
+  const f = body ? String(body.field_filter || '').trim() : '';
+  return FIELD_FILTER_WHITELIST.has(f) ? f : null;
+}
+
 /* ---------- HISTORY: bitacora completa del alcance (v4.44) ----------
    Todo lo que paso por Sincronizar: pendientes, publicados y anulados
    (ax_change_set es historial permanente). Paginado SERVER-SIDE con count
@@ -666,6 +678,9 @@ async function listHistory(env, actor, user, body) {
   const parts = [];
   if (status) parts.push(`status=eq.${status}`);
   if (origin) parts.push(`origin=eq.${origin}`);
+  // v4.79: Datos bancarios -> solo sets que tocan la cuenta.
+  const ffield = fieldFilterOf(body);
+  if (ffield) parts.push(`changes->${ffield}=not.is.null`);
   // v4.65: filtros de ALCANCE como en el resto del portal (Tipo, Zona,
   // Subzona, Concepto, Tienda/Empresa). Se resuelven contra companies a una
   // lista de codigos y se intersectan con el alcance del actor (AND).
@@ -786,15 +801,18 @@ async function listHistory(env, actor, user, body) {
 }
 
 /* ---------- LIST: change_set pendientes del alcance ---------- */
-async function listPending(env, actor, user) {
+async function listPending(env, actor, user, body) {
   const allowed = await allowedCompanies(env, actor, user);
+  // v4.79: Datos bancarios -> solo pendientes que tocan la cuenta.
+  const ffield = fieldFilterOf(body);
+  const ff = ffield ? `&changes->${ffield}=not.is.null` : '';
 
   // Traer los pendientes (filtrando por empresa si hay alcance acotado).
-  let path = `ax_change_set?status=eq.pending&select=id,id_number,company_code,changes,changed_by,changed_at,origin&order=changed_at.desc`;
+  let path = `ax_change_set?status=eq.pending${ff}&select=id,id_number,company_code,changes,changed_by,changed_at,origin&order=changed_at.desc`;
   if (allowed !== null) {
     if (!allowed.size) return json({ ok: true, rows: [], companies: [] });
     const inList = [...allowed].map(c => `"${c}"`).join(',');
-    path = `ax_change_set?status=eq.pending&company_code=in.(${inList})&select=id,id_number,company_code,changes,changed_by,changed_at,origin&order=changed_at.desc`;
+    path = `ax_change_set?status=eq.pending${ff}&company_code=in.(${inList})&select=id,id_number,company_code,changes,changed_by,changed_at,origin&order=changed_at.desc`;
   }
   const sets = await sb(env, path) || [];
   if (!sets.length) return json({ ok: true, rows: [], companies: [] });
@@ -916,6 +934,11 @@ async function listPending(env, actor, user) {
 async function resolveTargetSets(env, actor, user, body) {
   const allowed = await allowedCompanies(env, actor, user);
   let path = `ax_change_set?status=eq.pending&select=id,id_number,company_code`;
+  // v4.79: si la accion viene del menu Datos bancarios, el universo de
+  // "todo" se limita a los sets que tocan la cuenta (Publicar todo / Anular
+  // todo desde alli JAMAS deben alcanzar sets de otros campos).
+  const ffield = fieldFilterOf(body);
+  if (ffield) path += `&changes->${ffield}=not.is.null`;
   if (allowed !== null) {
     if (!allowed.size) return [];
     const inList = [...allowed].map(c => `"${c}"`).join(',');
@@ -1153,7 +1176,7 @@ export async function onRequestPost({ request, env }) {
     }
     try { await shadowCan(env, user, 'ax-review', action, NEED, true); } catch (_) { /* bitacora, jamas rompe */ }
 
-    if (action === 'list') return await listPending(env, actor, user);
+    if (action === 'list') return await listPending(env, actor, user, body);
     if (action === 'history') return await listHistory(env, actor, user, body);
     if (action === 'publish') return await publish(env, actor, user, body);
     if (action === 'discard') return await discard(env, actor, user, body);
