@@ -157,6 +157,7 @@ const NAV_GROUPS = [
   { title: 'Datos bancarios', items: [
     ['bankstats', I.chart, 'Estadísticas', 'adminonly'],
     ['banksync', I.sync, 'Sincronizar', 'adminonly'],
+    ['bankhist', I.history, 'Historial', 'adminonly'],
   ] },
   { title: 'Administración', items: [
     ['equipo', I.team, 'Equipo'],
@@ -372,7 +373,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.79</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.80</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5975,6 +5976,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'axhistory') renderAxHistory(user);
   else if (view === 'bankstats') renderBankStats(user);
   else if (view === 'banksync') renderAxReview(user, 'account_number');
+  else if (view === 'bankhist') renderAxHistory(user, 'account_number');
   else if (view === 'erpquery') renderErpQuery(user);
   else if (view === 'synclog') renderSyncLog(user);
   else if (view === 'resetdata') renderResetData(user);
@@ -6239,7 +6241,7 @@ export function renderPanel() {
       constancias: 'view.solicitudes',
       syncreview: 'view.syncreview', axcompare: 'view.axcompare',
       axhistory: 'view.axhistory', synclog: 'view.synclog', erpquery: 'view.erpquery',
-      bankstats: 'view.bankstats', banksync: 'view.banksync',
+      bankstats: 'view.bankstats', banksync: 'view.banksync', bankhist: 'view.bankhist',
       equipo: 'view.equipo',
     };
     try {
