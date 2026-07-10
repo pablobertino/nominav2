@@ -118,7 +118,7 @@ const MENU_CATALOG = [
     { id: 'bankaccounts', lbl: 'Cuentas', view: 'view.bankaccounts', acts: [] },
   ] },
   { g: 'Administracion', items: [
-    { id: 'equipo', lbl: 'Equipo', view: 'view.equipo', acts: ['team.create', 'team.reset', 'team.toggle', 'team.role', 'team.scope', 'team.osticket'] },
+    { id: 'equipo', lbl: 'Equipo', view: 'view.equipo', acts: ['team.create', 'team.reset', 'team.toggle', 'team.role', 'team.scope', 'team.osticket', 'team.scope_override'] },
     { id: 'permisos', lbl: 'Permisos (alcance)', view: 'view.permisos', acts: [] },
     { id: 'roles', lbl: 'Roles', view: 'view.roles', acts: [] },
     { id: 'config', lbl: 'Configuracion', view: 'view.config', acts: ['config.referencias', 'config.cargos', 'config.incidencias', 'config.calendario', 'config.sincronizacion', 'config.osticket', 'settings.save'] },
