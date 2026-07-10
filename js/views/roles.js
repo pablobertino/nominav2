@@ -59,6 +59,63 @@ const VIEW_SUBGROUPS = [
   ['Ver pestañas de Configuracion', ['view.cfg.referencias', 'view.cfg.cargos', 'view.cfg.incidencias', 'view.cfg.calendario', 'view.cfg.sincronizacion', 'view.cfg.osticket', 'view.cfg.ajustes']],
 ];
 
+/* v4.70: CATALOGO DEL MENU para el editor visual (modo "Menu").
+   Calcado del NAV real de shell(): grupos -> items (data-view real) con su
+   permiso view.* y las ACCIONES (permisos de uso) que viven dentro de cada
+   menu. Las etiquetas y ayudas de cada accion salen de ST.permissions (BD).
+   Un mismo code puede colgar de dos menus (ej. hcm.publish en Sincronizar y
+   Comparar): la piel sincroniza por code, no hay duplicacion real. */
+const MENU_CATALOG = [
+  { g: '', items: [
+    { id: 'dashboard', lbl: 'Inicio', view: 'view.dashboard', acts: [] },
+    { id: 'miempresa', lbl: 'Mi empresa', view: 'view.miempresa', acts: ['report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion'] },
+    { id: 'usuarios', lbl: 'Usuarios', view: 'view.usuarios', acts: ['compuser.create', 'compuser.reset', 'compuser.toggle', 'compuser.email', 'entuser.create', 'entuser.update', 'entuser.reset', 'entuser.toggle', 'entuser.scope'] },
+    { id: 'documentos', lbl: 'Documentos', view: 'view.documentos', acts: ['docs.create', 'docs.version', 'docs.edit', 'docs.archive', 'docs.delete', 'docs.categories'] },
+    { id: 'calendario', lbl: 'Calendario', view: 'view.calendario', acts: [] },
+  ] },
+  { g: 'Organizacion', items: [
+    { id: 'tiendas', lbl: 'Empresas', view: 'view.empresas', acts: ['company.contact', 'company.responsables', 'dept.create', 'dept.rename', 'dept.toggle', 'dept.delete', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion'] },
+    { id: 'catalogos', lbl: 'Estructura', view: 'view.estructura', acts: [] },
+  ] },
+  { g: 'Personal', items: [
+    { id: 'fotos', lbl: 'Personal', view: 'view.fotos', acts: ['photo.manage', 'ficha.edit', 'dept.assign'] },
+    { id: 'buscar', lbl: 'Buscar', view: 'view.buscar', acts: [] },
+    { id: 'datosincompletos', lbl: 'Datos incompletos', view: 'view.datosincompletos', acts: [] },
+    { id: 'egmotivos', lbl: 'Ratificar egresos', view: 'view.egmotivos', acts: ['egress.ratify'] },
+    { id: 'rostersync', lbl: 'Carga de personal', view: 'view.rostersync', acts: ['roster.upload', 'roster.upload_ax', 'roster.upload_api', 'roster.manual', 'roster.clear'] },
+  ] },
+  { g: 'Reportes', items: [
+    { id: 'historial', lbl: 'Historial', view: 'view.historial', acts: ['report.attention'] },
+    { id: 'estadisticas', lbl: 'Estadisticas', view: 'view.estadisticas', acts: [] },
+    { id: 'misstats', lbl: 'Mis estadisticas', view: 'view.misstats', acts: [] },
+    { id: 'reportempresas', lbl: 'Analisis', view: 'view.reportempresas', acts: [] },
+    { id: 'estadopago', lbl: 'Estado de pago', view: 'view.estadopago', acts: [] },
+  ] },
+  { g: 'Comunicacion', items: [
+    { id: 'avisos', lbl: 'Avisos', view: 'view.avisos', acts: [] },
+    { id: 'avisosconfig', lbl: 'Envio de avisos', view: 'view.avisosconfig', acts: ['avisos.templates', 'avisos.manual'] },
+  ] },
+  { g: 'Solicitudes', items: [
+    { id: 'constancias', lbl: 'Constancias', view: 'view.solicitudes', acts: ['cert.request', 'cert.generate', 'cert.reject', 'cert.cancel'] },
+    { id: 'firmantes', lbl: 'Firmantes', view: 'view.firmantes', acts: ['cert.signers'] },
+  ] },
+  { g: 'Sincronizacion', items: [
+    { id: 'syncreview', lbl: 'Sincronizar', view: 'view.syncreview', acts: ['hcm.publish'] },
+    { id: 'axcompare', lbl: 'Comparar', view: 'view.axcompare', acts: ['hcm.sync', 'hcm.publish'] },
+    { id: 'axhistory', lbl: 'Historial', view: 'view.axhistory', acts: [] },
+    { id: 'synclog', lbl: 'Registro', view: 'view.synclog', acts: ['hcm.log'] },
+    { id: 'erpquery', lbl: 'Consultar API', view: 'view.erpquery', acts: ['hcm.query'] },
+    { id: 'sync', lbl: 'Configurar (sincronizaciones)', view: 'view.sync', acts: [] },
+  ] },
+  { g: 'Administracion', items: [
+    { id: 'equipo', lbl: 'Equipo', view: 'view.equipo', acts: ['team.create', 'team.reset', 'team.toggle', 'team.role', 'team.scope', 'team.osticket'] },
+    { id: 'permisos', lbl: 'Permisos (alcance)', view: 'view.permisos', acts: [] },
+    { id: 'roles', lbl: 'Roles', view: 'view.roles', acts: [] },
+    { id: 'config', lbl: 'Configuracion', view: 'view.config', acts: ['config.referencias', 'config.cargos', 'config.incidencias', 'config.calendario', 'config.sincronizacion', 'config.osticket', 'settings.save'] },
+    { id: 'resetdata', lbl: 'Reiniciar datos', view: 'view.resetdata', acts: [] },
+  ] },
+];
+
 /* ===================== ESTILOS ===================== */
 function ensureStyles() {
   if (document.getElementById('rlStyles')) return;
@@ -135,6 +192,42 @@ function ensureStyles() {
   .viewmode .rl-sw input:not(:checked) + .track{background:var(--border-soft,#f1f4f8)}
   .viewmode .rl-sw input:not(:checked) ~ .knob{background:#cbd5e1}
   .rl-supernote{background:#eff4ff;border:1px solid #cfe0ff;border-radius:10px;padding:12px 16px;font-size:13px;color:#1e3a8a;margin-bottom:14px}
+  /* ===== v4.70 editor visual de menu (modo Menu) ===== */
+  .rl-mode{display:inline-flex;border:1px solid var(--border,#e6eaf0);border-radius:9px;overflow:hidden}
+  .rl-mode button{font:inherit;font-size:12.5px;font-weight:600;padding:7px 13px;border:0;background:var(--card,#fff);color:var(--muted,#64748b);cursor:pointer}
+  .rl-mode button.on{background:var(--brand,#2563eb);color:#fff}
+  .rl-me{display:grid;grid-template-columns:320px 1fr;gap:14px;align-items:start}
+  @media(max-width:860px){.rl-me{grid-template-columns:1fr}}
+  .rl-me-menu{border:1px solid var(--border,#e6eaf0);border-radius:13px;overflow:hidden;background:var(--card,#fff)}
+  .rl-me-g{padding:3px 0}
+  .rl-me-g + .rl-me-g{border-top:1px solid var(--border-soft,#f1f4f8)}
+  .rl-me-gl{display:flex;align-items:center;gap:8px;padding:9px 14px 3px;font-size:10.5px;font-weight:800;letter-spacing:.08em;color:var(--faint,#94a3b8);text-transform:uppercase}
+  .rl-me-it{display:flex;align-items:center;gap:9px;padding:7px 14px;cursor:pointer;border-left:3px solid transparent}
+  .rl-me-it:hover{background:#eff6ff}
+  .rl-me-it.sel{background:#eff6ff;border-left-color:var(--brand,#2563eb)}
+  .rl-me-it.off .melbl{color:var(--faint,#94a3b8);text-decoration:line-through;text-decoration-color:#cbd5e1}
+  .rl-me-it .melbl{font-size:13px;font-weight:550;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rl-me-it .mecnt{font-size:9.5px;color:var(--muted,#64748b);background:var(--border-soft,#f1f4f8);border-radius:999px;padding:1px 6px;font-weight:700}
+  .rl-me-sw{position:relative;width:32px;height:18px;flex:none;cursor:pointer;display:inline-block}
+  .rl-me-sw input{opacity:0;width:0;height:0;position:absolute}
+  .rl-me-sw .tk{position:absolute;inset:0;background:var(--border,#e6eaf0);border-radius:999px;transition:.15s}
+  .rl-me-sw .tk::before{content:'';position:absolute;width:14px;height:14px;border-radius:99px;background:#fff;top:2px;left:2px;transition:.15s;box-shadow:0 1px 2px rgba(0,0,0,.22)}
+  .rl-me-sw input:checked + .tk{background:var(--brand,#2563eb)}
+  .rl-me-sw input:checked + .tk::before{left:16px}
+  .viewmode .rl-me-sw{pointer-events:none;opacity:.75}
+  .rl-me-det{border:1px solid var(--border,#e6eaf0);border-radius:13px;background:var(--card,#fff);padding:16px 18px;position:sticky;top:12px}
+  .rl-me-emp{color:var(--muted,#64748b);text-align:center;padding:60px 16px;font-size:13px}
+  .rl-me-dh{display:flex;align-items:center;gap:11px;flex-wrap:wrap}
+  .rl-me-dh h3{margin:0;font-size:15.5px}
+  .rl-me-dh .mecode{font-size:11px;color:var(--faint,#94a3b8);font-family:ui-monospace,Menlo,monospace}
+  .rl-me-vis{margin-left:auto;display:flex;align-items:center;gap:8px;background:var(--border-soft,#f1f4f8);border-radius:10px;padding:7px 11px;font-size:12px;font-weight:600;color:var(--ink-soft,#475569)}
+  .rl-me-arow{display:flex;align-items:center;gap:11px;padding:9px 11px;border:1px solid var(--border,#e6eaf0);border-radius:10px;margin-top:7px}
+  .rl-me-arow.off{opacity:.55}
+  .rl-me-arow .an{font-size:12.5px;font-weight:600}
+  .rl-me-arow .ad{font-size:11px;color:var(--muted,#64748b)}
+  .rl-me-arow .ag{flex:1;min-width:0}
+  .rl-me-arow .ac{font-family:ui-monospace,Menlo,monospace;font-size:10px;color:var(--faint,#94a3b8)}
+  .rl-me-warn{margin-top:10px;background:#fff7ed;border:1px solid #fed7aa;color:#9a3412;font-size:12px;border-radius:9px;padding:8px 11px}
   `;
   document.head.appendChild(st);
 }
@@ -332,9 +425,11 @@ function openDetail(code) {
         <span class="sp"></span><span class="rl-mini-note">Disponible en modo edicion.</span>
       </div>
       <div class="rl-toolbar">
+        <div class="rl-mode"><button id="rlModeMenu" class="on" type="button">Menú</button><button id="rlModeAdv" type="button">Avanzada</button></div>
         <div class="search"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg><input id="rlSearch" placeholder="Buscar permiso (documento, roster, cargo…)"></div>
         <span style="font-size:12.5px;color:var(--muted,#64748b)"><b id="rlOnCount2">${isSuperRole ? ST.permissions.length : ST.work.size}</b> de ${ST.permissions.length} permisos activos</span>
       </div>
+      <div id="rlMenuEd"></div>
       <div id="rlGroups">${groupHtml}</div>
       <div id="rlModalHost"></div>
     </div>`;
@@ -386,6 +481,11 @@ function wireDetail(r, isSuperRole) {
       qh.classList.toggle('open');
     }));
   root.addEventListener('click', () => root.querySelectorAll('[data-qh].open').forEach(o => o.classList.remove('open')));
+
+  // v4.70: editor visual (modo Menu). Se monta ANTES del corte de superadmin
+  // para que el super tambien lo vea (en solo lectura, switches bloqueados
+  // por CSS .viewmode).
+  initMenuEditor(root);
 
   // El texto de la fila togglea su switch (solo en modo edicion).
   root.querySelectorAll('[data-txt]').forEach(t =>
@@ -515,6 +615,123 @@ function wireDetail(r, isSuperRole) {
   });
 
   toView();
+}
+
+/* ===================== v4.70 EDITOR VISUAL (modo Menu) =====================
+   Piel master-detail sobre la MISMA matriz: cada switch del editor visual
+   opera el checkbox correspondiente de la matriz avanzada (#rlGroups,
+   oculta en este modo) y le dispara 'change', de modo que TODA la logica
+   existente (ST.work, usar-implica-ver, contadores, guardar, copiar,
+   restablecer) funciona sin duplicarse. La piel se repinta tras cada
+   cambio leyendo ST.work. */
+let ME_SEL = null;      // id del menu seleccionado en el master-detail
+let ME_MODE = 'menu';   // 'menu' | 'adv'
+
+function permMeta(code) { return ST.permissions.find(p => p.code === code) || null; }
+function meItems() { return MENU_CATALOG.flatMap(g => g.items); }
+
+function paintMenuEditor(root) {
+  const host = root.querySelector('#rlMenuEd');
+  if (!host) return;
+  const exists = c => !!permMeta(c);
+  const onSet = c => ST.work.has(c);
+
+  // --- columna izquierda: el menu clonado ---
+  const menuHtml = MENU_CATALOG.map(g => {
+    const items = g.items.filter(it => exists(it.view));
+    if (!items.length) return '';
+    return `<div class="rl-me-g">
+      ${g.g ? `<div class="rl-me-gl">${esc(g.g)}</div>` : ''}
+      ${items.map(it => {
+        const on = onSet(it.view);
+        const acts = it.acts.filter(exists);
+        const nOn = acts.filter(onSet).length;
+        const orphan = !on && nOn > 0;
+        return `<div class="rl-me-it ${ME_SEL === it.id ? 'sel' : ''} ${on ? '' : 'off'}" data-meit="${esc(it.id)}">
+          <span class="melbl">${esc(it.lbl)}</span>
+          ${orphan ? '<span title="Acciones activas en un menu apagado" style="width:7px;height:7px;border-radius:99px;background:#c2410c;flex:none"></span>' : ''}
+          ${acts.length ? `<span class="mecnt">${nOn}/${acts.length}</span>` : ''}
+          <label class="rl-me-sw"><input type="checkbox" data-mev="${esc(it.view)}"${on ? ' checked' : ''}><span class="tk"></span></label>
+        </div>`;
+      }).join('')}
+    </div>`;
+  }).join('');
+
+  // --- panel derecho: detalle del menu seleccionado ---
+  const it = meItems().find(x => x.id === ME_SEL) || null;
+  let detHtml = '<div class="rl-me-emp">👈 Toca un menú para ver y editar sus acciones.</div>';
+  if (it && exists(it.view)) {
+    const on = onSet(it.view);
+    const acts = it.acts.filter(exists);
+    const rows = acts.map(c => {
+      const p = permMeta(c);
+      const aon = onSet(c);
+      return `<div class="rl-me-arow ${aon ? '' : 'off'}">
+        <div class="ag"><div class="an">${esc(p.label || c)}</div>${p.help ? `<div class="ad">${esc(p.help)}</div>` : ''}</div>
+        <span class="ac">${esc(c)}</span>
+        <label class="rl-me-sw"><input type="checkbox" data-mea="${esc(c)}"${aon ? ' checked' : ''}><span class="tk"></span></label>
+      </div>`;
+    }).join('');
+    const orphan = !on && acts.some(onSet);
+    detHtml = `
+      <div class="rl-me-dh">
+        <div><h3>${esc(it.lbl)}</h3><div class="mecode">${esc(it.view)}</div></div>
+        <div class="rl-me-vis">Este rol ${on ? 'VE' : 'NO ve'} este menú
+          <label class="rl-me-sw"><input type="checkbox" data-mev="${esc(it.view)}"${on ? ' checked' : ''}><span class="tk"></span></label></div>
+      </div>
+      ${orphan ? '<div class="rl-me-warn">⚠ Hay acciones activas en un menú que este rol no ve. No es un error (el servidor protege igual), pero conviene revisarlo.</div>' : ''}
+      ${acts.length
+        ? rows
+        : '<div class="rl-me-arow off"><div class="ag"><div class="an">Sin acciones adicionales</div><div class="ad">Con ver el menú alcanza.</div></div></div>'}`;
+  }
+
+  host.innerHTML = `<div class="rl-me"><div class="rl-me-menu">${menuHtml}</div><div class="rl-me-det">${detHtml}</div></div>`;
+
+  // Seleccion de item (clic en la fila, no en el switch).
+  host.querySelectorAll('[data-meit]').forEach(el => el.addEventListener('click', (e) => {
+    if (e.target.closest('.rl-me-sw')) return;
+    ME_SEL = el.dataset.meit;
+    paintMenuEditor(root);
+  }));
+
+  // Switches (vista y acciones): operan el checkbox REAL de la matriz
+  // avanzada y le disparan change, reusando toda su logica. Si el input
+  // real esta bloqueado (implied lock), el repintado restaura el estado.
+  const relay = (code) => {
+    const target = root.querySelector(`#rlGroups input[data-perm="${code}"]`);
+    if (target && !target.disabled) {
+      target.checked = !target.checked;
+      target.dispatchEvent(new Event('change'));
+    }
+    paintMenuEditor(root);
+  };
+  host.querySelectorAll('input[data-mev]').forEach(inp =>
+    inp.addEventListener('change', () => relay(inp.dataset.mev)));
+  host.querySelectorAll('input[data-mea]').forEach(inp =>
+    inp.addEventListener('change', () => relay(inp.dataset.mea)));
+}
+
+function initMenuEditor(root) {
+  ME_SEL = null;
+  ME_MODE = 'menu';
+  const groupsEl = root.querySelector('#rlGroups');
+  const meEl = root.querySelector('#rlMenuEd');
+  const searchInp = root.querySelector('#rlSearch');
+  const searchWrap = searchInp ? searchInp.closest('.search') : null;
+  const bMenu = root.querySelector('#rlModeMenu');
+  const bAdv = root.querySelector('#rlModeAdv');
+  const apply = () => {
+    const menu = ME_MODE === 'menu';
+    if (meEl) meEl.style.display = menu ? '' : 'none';
+    if (groupsEl) groupsEl.style.display = menu ? 'none' : '';
+    if (searchWrap) searchWrap.style.display = menu ? 'none' : '';
+    if (bMenu) bMenu.classList.toggle('on', menu);
+    if (bAdv) bAdv.classList.toggle('on', !menu);
+    if (menu) paintMenuEditor(root);   // repinta desde ST.work al entrar
+  };
+  if (bMenu) bMenu.addEventListener('click', () => { ME_MODE = 'menu'; apply(); });
+  if (bAdv) bAdv.addEventListener('click', () => { ME_MODE = 'adv'; apply(); });
+  apply();
 }
 
 /* ===================== MODALES (propios; cierran solo con botones) ===================== */
