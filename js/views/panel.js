@@ -30,6 +30,7 @@ import { renderCertRequests } from './cert-requests.js';
 import { renderAxReview, renderAxCompare, renderAxHistory } from './ax-review.js';
 import { renderBankStats } from './bank-stats.js';
 import { renderBankAccounts } from './bank-accounts.js';
+import { injectScopeOverridesBlock } from './scope-overrides.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderSyncLog } from './sync-log.js';
 import { renderResetData } from './reset-data.js';
@@ -386,7 +387,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.84</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.85</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2885,6 +2886,50 @@ function lastLoginLabel(iso) {
   return `<div class="cell-lastlogin">Ultimo acceso: ${fecha} \u00b7 ${hora}</div>`;
 }
 
+/* ---------- Alcance por seccion (overrides) desde Equipo (v4.85) ----------
+   Modal lanzado por el boton #auScov de la cabecera de Equipo. Selector de
+   miembro (no-super activos) + bloque injectScopeOverridesBlock (modulo
+   js/views/scope-overrides.js, mockup aprobado equipo_alcance_overrides).
+   Listener por DELEGACION global (instalacion unica): sobrevive re-renders
+   de viewEquipo y evita problemas de timing con su fetch inicial. */
+async function openEquipoScovModal(user) {
+  openModal(`
+    <div class="modal-head"><span>⚡ Alcances por sección</span><button class="modal-x" id="scovX">✕</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 12px">El miembro conserva su alcance base en todo el portal; aquí puedes darle un alcance <b>distinto solo para una sección</b> (p.ej. tesorería: cuentas de todas las tiendas).</p>
+    <label style="display:block;font-size:12px;font-weight:700;color:var(--ink-soft,#475569);margin-bottom:5px">Miembro del equipo</label>
+    <select id="scovMember" style="width:100%;font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border,#e6eaf0);border-radius:9px;background:var(--surface,#fff);color:var(--ink)">
+      <option value="">Cargando miembros…</option>
+    </select>
+    <div id="scovHost"></div>`);
+  $('#scovX').addEventListener('click', closeModal);
+
+  const d = await auApi({ action: 'list', adminId: user.id });
+  const sel = document.getElementById('scovMember');
+  if (!sel) return; // modal cerrado antes de cargar
+  if (!d || !d.ok) { sel.innerHTML = '<option value="">No se pudo cargar el equipo</option>'; return; }
+  const members = (d.rows || []).filter(a => a.role !== 'superadmin' && a.is_active !== false);
+  if (!members.length) { sel.innerHTML = '<option value="">Sin miembros elegibles</option>'; return; }
+  sel.innerHTML = '<option value="">— Elige un miembro —</option>'
+    + members.map(a => `<option value="${a.id}">${(a.name || a.username || ('#' + a.id))} · ${a.role || ''}</option>`).join('');
+  sel.addEventListener('change', () => {
+    const host = document.getElementById('scovHost');
+    if (!host) return;
+    host.innerHTML = '';
+    const m = members.find(x => String(x.id) === sel.value);
+    if (m) injectScopeOverridesBlock(host, m, user);
+  });
+}
+// Delegacion global del boton (instalacion unica por carga de pagina).
+if (!window.__scovEquipoWired) {
+  window.__scovEquipoWired = true;
+  document.addEventListener('click', (e) => {
+    if (e.target && e.target.closest && e.target.closest('#auScov')) {
+      const u = getSession();
+      if (u) openEquipoScovModal(u);
+    }
+  });
+}
+
 async function viewEquipo(user) {
   $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Equipo</h1><p>Miembros del portal por rol</p></div></div><div class="pnl-loading">Cargando\u2026</div>`;
   const d = await auApi({ action: 'list', adminId: user.id });
@@ -3007,6 +3052,7 @@ async function viewEquipo(user) {
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Equipo</h1><p>${isSuper ? `${rows.length} miembros \u00b7 cada rol con sus columnas y acciones` : `${gestores.length} gestor${gestores.length === 1 ? '' : 'es'} de empresa en tu alcance`}</p></div>
       ${isSuper ? `<div class="head-actions">
+        <button class="btn" id="auScov" title="Alcances por sección (overrides): dar a un miembro un alcance distinto solo para una sección, p.ej. Datos bancarios">⚡ Alcances por sección</button>
         <button class="btn" id="auSyncClients" title="Crear/actualizar los gestores de empresa como clientes de osTicket">${I.sync} Gestores osTicket</button>
         <button class="btn btn-primary" id="auNew">${I.plus} Nuevo miembro</button>
       </div>` : ''}</div>
