@@ -8,6 +8,52 @@
   <link rel="stylesheet" href="/css/base.css">
   <link rel="stylesheet" href="/css/login.css">
   <link rel="stylesheet" href="/css/panel.css">
+  <script>
+  /* Watchdog de estilos (v4.88). Sintoma que corrige: a veces una pagina
+     carga sin estilos (HTML crudo) y hay que recargar a mano. Causa: un
+     <link> de CSS fallo transitoriamente (red debil o justo durante un
+     deploy de Cloudflare Pages) y el navegador NO reintenta solo.
+     Estrategia: (1) cualquier link que dispare onerror se reintenta con
+     cache-bust; (2) al terminar de cargar se verifica la variable
+     centinela --ink de tokens.css: si no esta aplicada, se recargan los
+     stylesheets con cache-bust. Maximo 3 intentos por via. */
+  (function () {
+    var MAX = 3;
+    function bust(link) {
+      var tries = Number(link.dataset.cssTries || 0);
+      if (tries >= MAX) return;
+      link.dataset.cssTries = tries + 1;
+      var base = link.href.split('?')[0];
+      var fresh = document.createElement('link');
+      fresh.rel = 'stylesheet';
+      fresh.dataset.cssTries = link.dataset.cssTries;
+      wireRetry(fresh);
+      fresh.href = base + '?r=' + Date.now();
+      link.parentNode.insertBefore(fresh, link.nextSibling);
+      link.remove();
+    }
+    function wireRetry(link) {
+      link.addEventListener('error', function () { bust(link); });
+    }
+    function links() {
+      return Array.prototype.slice.call(
+        document.querySelectorAll('link[rel="stylesheet"]'));
+    }
+    links().forEach(wireRetry);
+
+    var checks = 0;
+    function verify() {
+      checks++;
+      var ink = getComputedStyle(document.documentElement)
+        .getPropertyValue('--ink');
+      if (ink && ink.trim()) return;           // tokens aplicados: todo bien
+      links().forEach(bust);                    // recarga con cache-bust
+      if (checks < MAX) setTimeout(verify, 1800);
+    }
+    if (document.readyState === 'complete') setTimeout(verify, 300);
+    else window.addEventListener('load', function () { setTimeout(verify, 300); });
+  })();
+  </script>
 </head>
 <body>
   <!-- Shell mínimo: cada vista se monta dentro de #app -->
