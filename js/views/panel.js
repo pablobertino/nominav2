@@ -364,7 +364,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.68</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.69</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -6186,30 +6186,55 @@ export function renderPanel() {
   CATALOG = null; CU_ROWS = null; SCOPE = null; USERS_USER = null; TIENDAS_FILTERS = null; currentView = 'dashboard';
   mount(shell(user));
   loadAvatar((user.email || '').trim().toLowerCase());
-  // v4.64: menu por permisos (grupo Sincronizacion). Los items adminonly se
-  // pintan y luego se PODAN segun la matriz de Roles del propio usuario
-  // (permisos view.* enforced, consultados via /api/my-perms). Superadmin
-  // no consulta: ve todo. Si la consulta falla, el menu queda como esta y
-  // los endpoints gatean igual (defensa en profundidad).
-  (async function applySyncMenuPerms() {
-    if (!(user.kind === 'admin' && user.role !== 'superadmin')) return;
-    const MAP = { syncreview: 'view.syncreview', axcompare: 'view.axcompare', axhistory: 'view.axhistory', synclog: 'view.synclog', erpquery: 'view.erpquery' };
+  // v4.69: MENU DINAMICO (Etapa 1 del editor visual de roles). Todos los
+  // items del nav (menos los superonly) se pintan y luego se PODAN segun la
+  // matriz de Roles del propio actor (permisos view.* enforced, via
+  // /api/my-perms). Aplica a todos los roles no-super, INCLUIDAS las
+  // tiendas (resolveActor las evalua con el rol 'tienda'). Superadmin no
+  // consulta: ve todo. Si la consulta falla o viene vacia, el menu queda
+  // como esta y los endpoints gatean igual (defensa en profundidad, y
+  // nadie se queda sin menu por un error de red).
+  (async function applyMenuPerms() {
+    if (user.kind === 'admin' && user.role === 'superadmin') return;
+    if (user.kind !== 'admin' && user.kind !== 'company') return;
+    // data-view -> permiso view.* que gobierna el item. Los superonly del
+    // nav (firmantes, sync, permisos, roles, config, resetdata) NO estan
+    // en el MAP: su gate sigue siendo isSuper en shell() (defensa doble).
+    const MAP = {
+      dashboard: 'view.dashboard', miempresa: 'view.miempresa',
+      usuarios: 'view.usuarios', documentos: 'view.documentos',
+      calendario: 'view.calendario',
+      tiendas: 'view.empresas', catalogos: 'view.estructura',
+      fotos: 'view.fotos', buscar: 'view.buscar',
+      datosincompletos: 'view.datosincompletos', egmotivos: 'view.egmotivos',
+      rostersync: 'view.rostersync',
+      historial: 'view.historial', estadisticas: 'view.estadisticas',
+      misstats: 'view.misstats', reportempresas: 'view.reportempresas',
+      estadopago: 'view.estadopago',
+      avisos: 'view.avisos', avisosconfig: 'view.avisosconfig',
+      constancias: 'view.solicitudes',
+      syncreview: 'view.syncreview', axcompare: 'view.axcompare',
+      axhistory: 'view.axhistory', synclog: 'view.synclog', erpquery: 'view.erpquery',
+      equipo: 'view.equipo',
+    };
     try {
       const r = await fetch('/api/my-perms', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null }, codes: Object.values(MAP) }),
+        body: JSON.stringify({ user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null }, codes: [...new Set(Object.values(MAP))] }),
       }).then(x => x.json());
       if (!r || !r.ok || r.super) return;
-      let group = null;
+      // Anti-bloqueo: si NINGUN permiso vino concedido, algo anda mal
+      // (matriz vacia o backend caido). Mejor menu completo que vacio.
+      if (!Object.values(r.perms || {}).some(Boolean)) return;
       Object.entries(MAP).forEach(([view, code]) => {
         if (r.perms && r.perms[code]) return;
-        const btn = document.querySelector(`#pnlNav [data-view="${view}"]`) || document.querySelector(`.pnl-side [data-view="${view}"]`);
-        if (btn) { btn.style.display = 'none'; group = btn.closest('.nav-group') || group; }
+        document.querySelectorAll(`.pnl-side [data-view="${view}"]`).forEach(btn => { btn.style.display = 'none'; });
       });
-      if (group) {
-        const anyVisible = [...group.querySelectorAll('button[data-view]')].some(b => b.style.display !== 'none');
-        if (!anyVisible) group.style.display = 'none';
-      }
+      // Ocultar grupos que quedaron sin items visibles.
+      document.querySelectorAll('.pnl-side .nav-group').forEach(g => {
+        const anyVisible = [...g.querySelectorAll('button[data-view]')].some(b => b.style.display !== 'none');
+        if (!anyVisible) g.style.display = 'none';
+      });
     } catch (_) { /* sin cambios en el menu */ }
   })();
   $('#logoutBtn').addEventListener('click', () => { clearSession(); go('/login'); });

@@ -52,9 +52,9 @@ const VIEW_SUBGROUPS = [
   ['Personal', ['view.buscar', 'view.datosincompletos', 'view.egmotivos', 'view.rostersync', 'view.fotos']],
   ['Reportes', ['view.historial', 'view.estadisticas', 'view.reportempresas', 'view.estadopago', 'view.misstats']],
   ['Comunicacion', ['view.avisos', 'view.avisosconfig']],
-  ['Solicitudes', ['view.solicitudes']],
+  ['Solicitudes', ['view.solicitudes', 'view.firmantes']],
   ['Sincronizacion', ['view.sync', 'view.syncreview', 'view.axcompare', 'view.axhistory', 'view.synclog', 'view.erpquery']],
-  ['Administracion', ['view.equipo', 'view.permisos', 'view.config', 'view.roles']],
+  ['Administracion', ['view.equipo', 'view.permisos', 'view.config', 'view.roles', 'view.resetdata']],
   ['Empresa (tienda)', ['view.miempresa']],
   ['Ver pestañas de Configuracion', ['view.cfg.referencias', 'view.cfg.cargos', 'view.cfg.incidencias', 'view.cfg.calendario', 'view.cfg.sincronizacion', 'view.cfg.osticket', 'view.cfg.ajustes']],
 ];
