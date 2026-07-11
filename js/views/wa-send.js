@@ -24,6 +24,22 @@ function esc(s) {
 const nf = n => Number(n || 0).toLocaleString('es-VE');
 const MAX_MESSAGE = 4000;
 
+/* v4.95: picker de emojis curado (clasicos universalmente soportados;
+   para el catalogo completo esta el teclado nativo: Win+. / moviles).
+   WhatsApp y Green-API los transportan como UTF-8 sin tratamiento. */
+const EMOJI_GROUPS = [
+  ['Saludos y gestos', ['👋', '🙏', '🙌', '👏', '💪', '👍', '👌', '🤝', '✌️', '☝️']],
+  ['Caritas', ['😊', '😀', '😃', '🙂', '😉', '😁', '😎', '🤗', '🥳', '😅']],
+  ['Avisos y estados', ['📢', '📣', '🔔', '⚠️', '❗', '✅', '✔️', '❌', '📌', 'ℹ️']],
+  ['Trabajo y documentos', ['📋', '📄', '🧾', '📎', '💼', '✍️', '🗂️', '🖊️', '📑', '🔎']],
+  ['Fechas y tiempo', ['📅', '🗓️', '⏰', '⏳', '🕐', '🌅', '🌙', '📆', '⏱️', '🕔']],
+  ['Pagos y dinero', ['💰', '💵', '💳', '🏦', '🧮', '💸', '🪙', '📈', '📉', '💲']],
+  ['Celebración', ['🎉', '🎊', '🎁', '🎈', '🏆', '⭐', '🌟', '✨', '🎂', '🥂']],
+  ['Lugares y envíos', ['🏪', '🏢', '🏠', '🚚', '📦', '👟', '👕', '🧸', '🛍️', '🛒']],
+  ['Comunicación', ['📱', '💬', '📩', '✉️', '📞', '🔗', '📡', '📬', '📲', '🔊']],
+  ['Corazones', ['❤️', '💙', '💚', '💛', '🧡', '💜', '🤍', '💖', '💕', '💝']],
+];
+
 let FACETS = null;
 let PREVIEW = null;      // resultado vigente de 'preview'
 let SENDING = false;
@@ -107,7 +123,15 @@ function ensureStyles() {
   .wa-pbar>div{height:100%;width:0%;background:#25d366;border-radius:999px;transition:width .3s}
   .wa-pmeta{display:flex;justify-content:space-between;font-size:11.5px;color:var(--ink-soft,#475569);margin-top:6px}
   .wa-errbox{margin-top:10px;border:1px solid #fecaca;background:#fef2f2;border-radius:10px;padding:10px 13px;font-size:12px;color:#991b1b}
-  .wa-errbox ul{margin:6px 0 0 18px}`;
+  .wa-errbox ul{margin:6px 0 0 18px}
+  .wa-emoji-btn{border:1px solid var(--border);background:var(--surface,#fff);border-radius:8px;padding:4px 10px;font:inherit;font-size:12px;font-weight:700;color:var(--ink-soft,#475569);cursor:pointer;margin-right:8px}
+  .wa-emoji-btn.open{background:#e9fbf0;border-color:#bbf1d2;color:#0f7a4d}
+  .wa-emoji-panel{border:1px solid var(--border);border-radius:11px;background:var(--surface,#fff);padding:10px 12px;margin-top:8px;max-height:240px;overflow-y:auto}
+  .wa-emoji-cat{font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 3px}
+  .wa-emoji-cat:first-child{margin-top:0}
+  .wa-emoji-grid{display:flex;flex-wrap:wrap;gap:2px}
+  .wa-emoji{border:none;background:transparent;font-size:21px;line-height:1;padding:5px;border-radius:8px;cursor:pointer}
+  .wa-emoji:hover{background:#f1f5f9}`;
   document.head.appendChild(st);
 }
 
@@ -261,8 +285,9 @@ export async function renderWaSend(user) {
     <div class="wa-card">
       <h3><span class="n">2</span> Mensaje</h3>
       <textarea class="wa-msg" id="waMsg" placeholder="Escribe aquí el mensaje…"></textarea>
+      <div class="wa-emoji-panel" id="waEmojiPanel" style="display:none"></div>
       <div class="wa-msgfoot">
-        <span>Formato: <code>*negrita*</code> <code>_cursiva_</code> <code>~tachado~</code> · emojis OK</span>
+        <span><button class="wa-emoji-btn" id="waEmojiBtn" type="button" title="Insertar emoji">😊 Emojis</button>Formato: <code>*negrita*</code> <code>_cursiva_</code> <code>~tachado~</code></span>
         <span id="waCount">0 / ${nf(MAX_MESSAGE)}</span>
       </div>
     </div>
@@ -321,6 +346,30 @@ export async function renderWaSend(user) {
   $('#waFTel').addEventListener('input', invalidatePreview);
   $('#waFGroup').addEventListener('change', invalidatePreview);
   $('#waMsg').addEventListener('input', syncSendState);
+
+  // v4.95: picker de emojis (insercion en la posicion del cursor)
+  const emPanel = $('#waEmojiPanel');
+  emPanel.innerHTML = EMOJI_GROUPS.map(([title, arr]) =>
+    `<div class="wa-emoji-cat">${esc(title)}</div><div class="wa-emoji-grid">${arr.map(e =>
+      `<button type="button" class="wa-emoji" data-e="${e}" title="${e}">${e}</button>`).join('')}</div>`).join('');
+  $('#waEmojiBtn').addEventListener('click', () => {
+    const open = emPanel.style.display === 'none';
+    emPanel.style.display = open ? '' : 'none';
+    $('#waEmojiBtn').classList.toggle('open', open);
+  });
+  emPanel.addEventListener('click', ev => {
+    const b = ev.target.closest('.wa-emoji');
+    if (!b) return;
+    const ta = $('#waMsg');
+    const em = b.dataset.e;
+    const s = ta.selectionStart != null ? ta.selectionStart : ta.value.length;
+    const e2 = ta.selectionEnd != null ? ta.selectionEnd : s;
+    ta.value = ta.value.slice(0, s) + em + ta.value.slice(e2);
+    const pos = s + em.length;
+    ta.focus();
+    ta.setSelectionRange(pos, pos);
+    syncSendState();
+  });
 
   $('#waClear').addEventListener('click', () => {
     ['waFZone', 'waFSubzone', 'waFType', 'waFConcept', 'waFCompany'].forEach(id => { $('#' + id).value = ''; });
