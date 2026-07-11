@@ -8,18 +8,24 @@
      facets   {}                          -> catalogos para los filtros
                 gate: view.whatsapp
      preview  { target, filtros..., active, people[], group_id, direct_phone }
-                -> { total, with_phone, without_phone, messages?, rows[<=100] }
+                -> { total, with_phone, without_phone, messages?, rows[<=1000] }
                 gate: view.whatsapp
                 v4.99 target: 'companies' (default) = telefonos de las
                 EMPRESAS/TIENDAS segun filtros de estructura + solo
                 activas (1 mensaje POR TELEFONO valido, muchas tienen 2);
                 'people' = lista manual de cedulas armada con el buscador.
                 Grupo y numero directo siguen mandando sobre todo.
+                v5.05: limit 1000 (antes 100): el universo entra completo,
+                asi excluir sobre la grilla es fiable.
      search_people { q }                  -> buscador de personas (roster
                 activo, por nombre o cedula) para armar la lista manual
                 gate: view.whatsapp (solo superadmin)
-     send     { target, filtros..., message }  -> crea lote + cola (pending)
+     send     { target, filtros..., message, exclude[] }  -> lote + cola
                 -> { batch_id, queued }   gate: wa.send
+                v5.05 exclude[]: codigos de empresa (o cedulas en modo
+                Personas) QUITADOS a mano en la grilla del preview. El send
+                re-consulta el RPC, por eso los excluidos deben viajar: se
+                filtran aca y quedan registrados en wa_batches.filters.
      process  { batch_id }                -> envia una TANDA (<=8) con
                 delay entre mensajes; el front repite hasta remaining=0
                 -> { sent, errors, remaining }   gate: wa.send
@@ -49,6 +55,11 @@ const BIG_THRESHOLD = 20;
 const BIG_BATCH_SIZE = 4;
 const bigDelay = () => 2500 + Math.floor(Math.random() * 1500);
 const MAX_MESSAGE = 4000;      // limite practico del portal (API admite 20000)
+/* v5.05: el preview trae hasta 1000 filas (antes 100). Con ~150 empresas
+   activas el universo entra COMPLETO: lo que se ve es lo que se envia, y
+   por eso excluir sobre la grilla es fiable (antes, con un filtro de mas
+   de 100, se excluia sobre una muestra parcial y el resto viajaba igual). */
+const PREVIEW_LIMIT = 1000;
 /* v4.98 GUARDIAN DEL DELAY DE LINEA: el "Message sending delay" de la
    instancia (delaySendMessagesMilliseconds) es la SEGUNDA linea de
    defensa del estandar (pausa REAL entre salidas hacia WhatsApp). El
@@ -110,6 +121,18 @@ function pickCompanyFilters(body) {
 function pickPeople(body) {
   const arr = Array.isArray(body.people) ? body.people : [];
   return [...new Set(arr.map(x => String(x || '').replace(/\D/g, '')).filter(Boolean))];
+}
+
+/* v5.05: EXCLUIDOS del preview. La grilla de destinatarios permite quitar
+   empresas (una a una con la X, o varias con los checkboxes). El 'send' NO
+   usa las filas del preview: RE-CONSULTA el RPC con los filtros, asi que la
+   lista de excluidos tiene que VIAJAR y filtrarse aca; si no, se enviaria a
+   quienes el usuario quito. Se guarda en wa_batches.filters (auditoria de a
+   quien NO se le mando). Para empresas la clave es company_code; para
+   personas, la cedula. */
+function pickExclude(body) {
+  const arr = Array.isArray(body.exclude) ? body.exclude : [];
+  return new Set(arr.map(x => String(x || '').trim()).filter(Boolean));
 }
 
 /* v4.91: numero directo (pruebas / destinatario fuera de nomina).
@@ -226,7 +249,7 @@ export async function onRequestPost({ request, env }) {
         const r = await rpc(env, 'wa_people_by_ids', { p_ids: ids });
         return json({ ok: true, target: 'people', ...(r || {}) });
       }
-      const r = await rpc(env, 'wa_company_recipients', { ...pickCompanyFilters(body), p_limit: 100 });
+      const r = await rpc(env, 'wa_company_recipients', { ...pickCompanyFilters(body), p_limit: PREVIEW_LIMIT });
       return json({ ok: true, target: 'companies', ...(r || {}) });
     }
 
@@ -290,6 +313,7 @@ export async function onRequestPost({ request, env }) {
       // para personas se exige lista no vacia.
       let r, rows, batchFilters;
       const target = String(body.target || 'companies');
+      const EXC = pickExclude(body);   // v5.05: quitados a mano en la grilla
       if (grp) {
         r = { total: 1 };
         rows = [{ id_number: 'grupo', full_name: `Grupo: ${grp.alias || grp.wa_name || grp.chat_id}`, company_code: '', phone: grp.chat_id, phone_ok: true, chat_id_direct: grp.chat_id }];
@@ -305,17 +329,19 @@ export async function onRequestPost({ request, env }) {
         rows = ((r && r.rows) || []).filter(x => x.phone_ok);
         batchFilters = Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== null));
       } else if (target === 'people') {
-        const ids = pickPeople(body);
+        const ids = pickPeople(body).filter(id => !EXC.has(id));   // v5.05
         if (!ids.length) return json({ ok: false, error: 'Agrega al menos una persona a la lista con el buscador.' }, 400);
         r = await rpc(env, 'wa_people_by_ids', { p_ids: ids });
         rows = ((r && r.rows) || []).filter(x => x.phone_ok);
-        batchFilters = { target: 'people', people: ids };
+        batchFilters = { target: 'people', people: ids, ...(EXC.size ? { excluded: [...EXC] } : {}) };
       } else {
         const cf = pickCompanyFilters(body);
         r = await rpc(env, 'wa_company_recipients', { ...cf, p_limit: 100000 });
+        // v5.05: fuera las empresas que el usuario quito en la grilla.
+        const src = ((r && r.rows) || []).filter(c => !EXC.has(String(c.company_code)));
         // Expandir: 1 fila de cola POR TELEFONO valido de cada empresa.
         rows = [];
-        for (const c of ((r && r.rows) || [])) {
+        for (const c of src) {
           for (const tel of (c.phones || [])) {
             rows.push({
               id_number: c.company_code,
@@ -329,9 +355,14 @@ export async function onRequestPost({ request, env }) {
           target: 'companies', active: cf.p_active,
           ...Object.fromEntries(Object.entries(cf).filter(([k, v]) => k !== 'p_active' && v !== null)
             .map(([k, v]) => [k.replace(/^p_/, ''), v])),
+          ...(EXC.size ? { excluded: [...EXC] } : {}),
         };
       }
-      if (!rows.length) return json({ ok: false, error: 'Ningún destinatario del filtro tiene teléfono válido.' }, 400);
+      if (!rows.length) {
+        return json({ ok: false, error: EXC.size
+          ? 'No queda ningún destinatario: excluiste a todos los que tenían teléfono.'
+          : 'Ningún destinatario del filtro tiene teléfono válido.' }, 400);
+      }
 
       const batch = await sb(env, 'wa_batches', {
         method: 'POST',
@@ -340,7 +371,11 @@ export async function onRequestPost({ request, env }) {
           created_by: actorName,
           message,
           filters: batchFilters,
-          total: (r && r.total) || rows.length,
+          // v5.05: 'total' = universo del filtro MENOS lo excluido (lo que
+          // realmente se intento), no el universo bruto.
+          total: (target === 'companies' && !grp && !direct)
+            ? [...new Set(rows.map(x => x.company_code))].length
+            : ((r && r.total) || rows.length),
           with_phone: rows.length,
         }),
       });
