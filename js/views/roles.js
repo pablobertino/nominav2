@@ -100,6 +100,9 @@ const MENU_CATALOG = [
     { id: 'fotos', lbl: 'Personal', view: 'view.fotos', acts: ['photo.manage', 'ficha.edit', 'dept.assign', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion'] },
     { id: 'buscar', lbl: 'Buscar', view: 'view.buscar', acts: [] },
     { id: 'datosincompletos', lbl: 'Datos incompletos', view: 'view.datosincompletos', acts: [] },
+    // v5.19: Doble empleo. Solo consulta (los casos se corrigen en el sistema),
+    // por eso no tiene acciones: el permiso de vista es todo lo que hay.
+    { id: 'dobleempleo', lbl: 'Doble empleo', view: 'view.dobleempleo', acts: [] },
     { id: 'egmotivos', lbl: 'Ratificar egresos', view: 'view.egmotivos', acts: ['egress.ratify'] },
     { id: 'rostersync', lbl: 'Carga de personal', view: 'view.rostersync', acts: ['roster.upload', 'roster.upload_ax', 'roster.upload_api', 'roster.manual', 'roster.clear'] },
   ] },
