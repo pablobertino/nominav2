@@ -262,17 +262,17 @@ export async function renderWaSend(user) {
 
     <div class="wa-card">
       <h3><span class="n">1</span> ¿A quién va el mensaje?</h3>
-      <div class="wa-filters">
+      <div class="wa-filters" id="waFiltersGrid">
         <div><label>Zona</label><select id="waFZone"><option value="">Todas</option></select></div>
         <div><label>Subzona</label><select id="waFSubzone"><option value="">Todas</option></select></div>
         <div><label>Tipo de empresa</label><select id="waFType"><option value="">Todos</option></select></div>
         <div><label>Concepto / Marca</label><select id="waFConcept"><option value="">Todos</option></select></div>
         <div><label>Empresa</label><select id="waFCompany"><option value="">Todas</option></select></div>
       </div>
-      <div class="wa-orsep">o un trabajador individual · o un número directo · o un grupo</div>
+      <div class="wa-orsep" id="waOrsep">o un trabajador individual · o un número directo · o un grupo</div>
       <div class="wa-frow">
-        <div><label>Cédula</label><input id="waFCed" placeholder="Ej: 12345678 (si la escribes, manda sola)"></div>
-        <div><label>Número directo (pruebas / fuera de nómina)</label><input id="waFTel" placeholder="Ej: 0414-1234567 · manda sobre cédula y filtros"></div>
+        <div id="waCedBox"><label>Cédula</label><input id="waFCed" placeholder="Ej: 12345678 (si la escribes, manda sola)"></div>
+        <div id="waTelBox"><label>Número directo (pruebas / fuera de nómina)</label><input id="waFTel" placeholder="Ej: 0414-1234567 · manda sobre cédula y filtros"></div>
         <div><label>Grupo habilitado (un solo mensaje al grupo)</label><select id="waFGroup"><option value="">— Ninguno —</option></select></div>
         <button class="wa-btn pri" id="waPreview">Ver destinatarios</button>
         <button class="wa-btn" id="waClear">Limpiar</button>
@@ -319,13 +319,27 @@ export async function renderWaSend(user) {
     }
   });
 
-  // Grupos habilitados para el combo (catalogo de WhatsApp > Grupos)
+  // Grupos habilitados para el combo (catalogo de WhatsApp > Grupos).
+  // v4.97: para un admin no-super, list devuelve mode:'admin' con SOLO sus
+  // grupos asignados; la pantalla se reduce al destino grupo (los filtros
+  // de estructura, la cedula y el numero directo son de superadmin).
   apiGroups(user).then(r => {
     const sel = $('#waFGroup');
     if (!sel || !r || !r.ok) return;
     const en = (r.groups || []).filter(g => g.enabled);
     sel.innerHTML = '<option value="">— Ninguno —</option>'
       + en.map(g => `<option value="${g.id}">${esc(g.alias || g.wa_name || g.chat_id)}</option>`).join('');
+    if (r.mode === 'admin') {
+      const fg = $('#waFiltersGrid'), cb = $('#waCedBox'), tb = $('#waTelBox');
+      if (fg) fg.style.display = 'none';
+      if (cb) cb.style.display = 'none';
+      if (tb) tb.style.display = 'none';
+      const os = $('#waOrsep');
+      if (os) os.textContent = 'elige el grupo asignado al que enviarás';
+      if (!en.length) {
+        $('#waTblNote').textContent = 'Aún no tienes grupos asignados: pídele al superadministrador que te autorice en la pantalla Grupos.';
+      }
+    }
   });
 
   // Facets

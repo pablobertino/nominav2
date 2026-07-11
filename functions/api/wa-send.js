@@ -25,7 +25,7 @@
    segunda linea de defensa. Todo queda auditado en wa_batches/wa_outbox.
    ===================================================================== */
 
-import { resolveActor, can } from './_auth.js';
+import { resolveActor, can, isSuperadmin } from './_auth.js';
 import { gaClient, toChatId } from './_greenapi.js';
 
 const BATCH_SIZE = 8;          // mensajes por invocacion (lotes chicos)
@@ -85,14 +85,21 @@ function pickDirectPhone(body) {
   return { raw, ok: digits.length >= 10 };
 }
 
-/* v4.93: grupo habilitado como destinatario. Devuelve la fila de
-   wa_groups solo si existe Y esta enabled; un solo mensaje al chat_id
-   @g.us (sin toChatId). Prioridad: grupo > numero directo > cedula. */
-async function pickGroup(env, body) {
+/* v4.93: grupo habilitado como destinatario. v4.97: si restrictAdminId
+   viene (admin no-super), el grupo ademas debe estar ASIGNADO a ese
+   admin en wa_group_admins. Un solo mensaje al chat_id @g.us (sin
+   toChatId). Prioridad: grupo > numero directo > cedula. */
+async function pickGroup(env, body, restrictAdminId) {
   const gid = Number(body.group_id || 0);
   if (!gid) return null;
   const r = await sb(env, `wa_groups?id=eq.${gid}&enabled=eq.true&select=id,chat_id,wa_name,alias`);
-  return (r && r[0]) || undefined;   // undefined = pedido pero no habilitado
+  const grp = (r && r[0]) || undefined;   // undefined = pedido pero no habilitado
+  if (grp && restrictAdminId) {
+    const link = await sb(env,
+      `wa_group_admins?group_id=eq.${gid}&admin_id=eq.${restrictAdminId}&select=group_id&limit=1`);
+    if (!link || !link.length) return undefined;   // no asignado a este admin
+  }
+  return grp;
 }
 
 export async function onRequestPost({ request, env }) {
@@ -107,9 +114,17 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: false, error: 'No tienes permiso para la difusión WhatsApp (view.whatsapp).' }, 403);
     }
     const actorName = String(actor.actor || '');
+    // v4.97: superadmin difunde a todo; un admin no-super con permisos
+    // concedidos SOLO publica a sus grupos asignados (wa_group_admins).
+    const superOk = isSuperadmin(actor);
+    const restrictId = superOk ? null : (Number(body.user && body.user.id) || -1);
 
     /* ---------------- facets: catalogos de filtros ---------------- */
     if (action === 'facets') {
+      if (!superOk) {
+        // Los filtros de estructura son exclusivos de superadmin.
+        return json({ ok: true, zones: [], subzones: [], concepts: [], companies: [], types: [] });
+      }
       const [zones, subzones, concepts, companies] = await Promise.all([
         sb(env, 'zones?select=id,name&order=name.asc'),
         sb(env, 'subzones?select=id,name,zone_id&order=name.asc'),
@@ -122,8 +137,11 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------------- preview: destinatarios ---------------- */
     if (action === 'preview') {
-      const grp = await pickGroup(env, body);
-      if (grp === undefined) return json({ ok: false, error: 'Ese grupo no está habilitado para difusión.' }, 400);
+      if (!superOk && !Number(body.group_id || 0)) {
+        return json({ ok: false, error: 'Tu difusión está limitada a los grupos que te asignaron: elige un grupo.' }, 400);
+      }
+      const grp = await pickGroup(env, body, restrictId);
+      if (grp === undefined) return json({ ok: false, error: 'Ese grupo no está habilitado o no está asignado a tu usuario.' }, 400);
       if (grp) {
         return json({
           ok: true,
@@ -182,8 +200,11 @@ export async function onRequestPost({ request, env }) {
       if (message.length > MAX_MESSAGE) {
         return json({ ok: false, error: `El mensaje supera los ${MAX_MESSAGE} caracteres.` }, 400);
       }
-      const grp = await pickGroup(env, body);
-      if (grp === undefined) return json({ ok: false, error: 'Ese grupo no está habilitado para difusión.' }, 400);
+      if (!superOk && !Number(body.group_id || 0)) {
+        return json({ ok: false, error: 'Tu difusión está limitada a los grupos que te asignaron: elige un grupo.' }, 400);
+      }
+      const grp = await pickGroup(env, body, restrictId);
+      if (grp === undefined) return json({ ok: false, error: 'Ese grupo no está habilitado o no está asignado a tu usuario.' }, 400);
       const direct = pickDirectPhone(body);
       if (direct && !direct.ok) {
         return json({ ok: false, error: 'El número directo no parece válido (mínimo 10 dígitos).' }, 400);

@@ -21,6 +21,8 @@ function esc(s) {
 }
 
 let GROUPS = [];
+let ASSIGN = [];   // v4.97: [{group_id, admin_id}]
+let ADMINS = [];   // v4.97: admins activos no-super [{id,name,username}]
 
 async function api(user, payload) {
   return fetch('/api/wa-groups', {
@@ -65,10 +67,32 @@ function ensureStyles() {
   .wg-saved{font-size:11px;color:#0f7a4d;font-weight:700;margin-left:6px}
   .wg-err{font-size:11px;color:#b91c1c;font-weight:700;margin-left:6px}
   .wg-note{font-size:11px;color:var(--muted);margin-top:8px}
+  .wg-chip{display:inline-flex;align-items:center;gap:5px;border-radius:999px;padding:2px 7px 2px 9px;font-size:11px;font-weight:700;background:#eef4ff;color:#1d4ed8;border:1px solid #d3e0fb;margin:2px 3px 2px 0}
+  .wg-chip .x{cursor:pointer;font-weight:900;color:#6d8dd8;font-size:12px;line-height:1}
+  .wg-chip .x:hover{color:#b91c1c}
+  .wg-addsel{font:inherit;font-size:11.5px;padding:4px 6px;border:1px dashed var(--border);border-radius:8px;background:var(--surface,#fff);color:var(--muted);max-width:150px;margin-top:2px}
   .wg-empty{text-align:center;padding:36px 20px;color:var(--muted)}
   .wg-empty .big{font-size:34px;margin-bottom:8px}
   .wg-empty b{color:var(--ink)}`;
   document.head.appendChild(st);
+}
+
+/* v4.97: celda de admins autorizados del grupo: chips con x (revocar) +
+   select punteado para agregar (solo admins activos no-super restantes).
+   El superadmin no se asigna: siempre puede publicar a todo. */
+function assignCell(groupId) {
+  const mine = ASSIGN.filter(a => a.group_id === groupId).map(a => a.admin_id);
+  const chips = mine.map(aid => {
+    const adm = ADMINS.find(x => x.id === aid);
+    const label = adm ? (adm.name || adm.username) : ('#' + aid);
+    return `<span class="wg-chip">${esc(label)}<span class="x" data-aid="${aid}" title="Quitar autorización">×</span></span>`;
+  }).join('');
+  const rest = ADMINS.filter(a => !mine.includes(a.id));
+  const sel = rest.length
+    ? `<select class="wg-addsel"><option value="">＋ autorizar admin…</option>${rest.map(a =>
+        `<option value="${a.id}">${esc(a.name || a.username)}</option>`).join('')}</select>`
+    : '';
+  return (chips || '<span style="font-size:11px;color:var(--muted)">Solo superadmin</span>') + (sel ? '<br>' + sel : '');
 }
 
 function fmtWhen(iso) {
@@ -95,10 +119,11 @@ function paintTable(user) {
   }
   box.innerHTML = `<table class="wg-table">
     <thead><tr>
-      <th style="width:34%">Grupo en WhatsApp</th>
-      <th style="width:30%">Alias interno (opcional)</th>
-      <th style="width:13%">Difusión</th>
-      <th style="width:13%">Estado</th>
+      <th style="width:27%">Grupo en WhatsApp</th>
+      <th style="width:22%">Alias interno (opcional)</th>
+      <th style="width:9%">Difusión</th>
+      <th style="width:10%">Estado</th>
+      <th style="width:22%">Admins autorizados</th>
       <th></th>
     </tr></thead>
     <tbody>${GROUPS.map(g => `<tr data-id="${g.id}">
@@ -106,6 +131,7 @@ function paintTable(user) {
       <td><input class="wg-alias" value="${esc(g.alias || '')}" placeholder="Sin alias" maxlength="80"></td>
       <td><span class="wg-sw ${g.enabled ? 'on' : ''}" title="Habilitar para difusión"><i></i></span></td>
       <td>${g.enabled ? '<span class="wg-en">Habilitado</span>' : '<span class="wg-off">No habilitado</span>'}</td>
+      <td class="wg-assign">${assignCell(g.id)}</td>
       <td><button class="wg-btn mini wg-save">Guardar</button><span class="wg-fb"></span></td>
     </tr>`).join('')}</tbody>
   </table>`;
@@ -115,6 +141,26 @@ function paintTable(user) {
 
   // Toggle (solo visual hasta Guardar)
   box.querySelectorAll('.wg-sw').forEach(sw => sw.addEventListener('click', () => sw.classList.toggle('on')));
+
+  // v4.97: asignacion de admins (grant/revoke, efecto inmediato)
+  box.querySelectorAll('.wg-assign').forEach(td => {
+    td.addEventListener('click', async ev => {
+      const x = ev.target.closest('.wg-chip .x');
+      if (!x) return;
+      const gid = Number(td.closest('tr').dataset.id);
+      const aid = Number(x.dataset.aid);
+      const r = await api(user, { action: 'revoke', group_id: gid, admin_id: aid });
+      if (r && r.ok) { ASSIGN = r.assign || []; td.innerHTML = assignCell(gid); }
+    });
+    td.addEventListener('change', async ev => {
+      const sel = ev.target.closest('.wg-addsel');
+      if (!sel || !sel.value) return;
+      const gid = Number(td.closest('tr').dataset.id);
+      const aid = Number(sel.value);
+      const r = await api(user, { action: 'grant', group_id: gid, admin_id: aid });
+      if (r && r.ok) { ASSIGN = r.assign || []; td.innerHTML = assignCell(gid); }
+    });
+  });
 
   // Guardar por fila
   box.querySelectorAll('.wg-save').forEach(btn => btn.addEventListener('click', async () => {
@@ -141,7 +187,7 @@ function paintTable(user) {
 
 export async function renderWaGroups(user) {
   ensureStyles();
-  GROUPS = [];
+  GROUPS = []; ASSIGN = []; ADMINS = [];
   const main = document.getElementById('pnlMain');
   main.innerHTML = `<div class="wg-wrap">
     <div class="wg-head">
@@ -166,6 +212,8 @@ export async function renderWaGroups(user) {
     btn.disabled = false; btn.textContent = '🔄 Buscar grupos de la línea';
     if (r && r.ok) {
       GROUPS = r.groups || [];
+      ASSIGN = r.assign || ASSIGN;
+      ADMINS = r.admins || ADMINS;
       paintTable(user);
     } else {
       $('#wgNote').textContent = (r && r.error) || 'No se pudo consultar la línea.';
@@ -174,6 +222,8 @@ export async function renderWaGroups(user) {
 
   const r = await api(user, { action: 'list' });
   GROUPS = (r && r.ok && r.groups) || [];
+  ASSIGN = (r && r.ok && r.assign) || [];
+  ADMINS = (r && r.ok && r.admins) || [];
   if (r && r.ok && r.phone) {
     const sp = $('#wgPhone');
     if (sp) sp.textContent = ' (' + r.phone + ')';

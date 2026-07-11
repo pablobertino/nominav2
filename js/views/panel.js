@@ -166,12 +166,12 @@ const NAV_GROUPS = [
     // su alcance); el permiso view.bankaccounts la gobierna desde Roles.
     ['bankaccounts', I.wallet, 'Cuentas'],
   ] },
-  // v4.90: grupo WHATSAPP (aprobado por Pablo). Nace con Difusion (texto
-  // masivo/individual, solo superadmin via view.whatsapp sin conceder);
-  // a futuro: constancias PDF por WhatsApp, encuestas, respuestas.
+  // v4.90: grupo WHATSAPP (aprobado por Pablo). v4.97: Difusion SIN
+  // superonly: la gobierna view.whatsapp (enforced) desde Roles; un admin
+  // con el permiso la ve, restringida a sus grupos asignados. Grupos
+  // (catalogo/asignacion) sigue superonly: es gobernanza no delegable.
   { title: 'WhatsApp', items: [
-    ['wadifusion', I.megaphone, 'Difusión', 'superonly'],
-    // v4.93: catalogo de grupos de la linea (habilitar + alias interno)
+    ['wadifusion', I.megaphone, 'Difusión'],
     ['wagrupos', I.team, 'Grupos', 'superonly'],
   ] },
   { title: 'Administración', items: [
@@ -397,7 +397,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.96</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.97</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>

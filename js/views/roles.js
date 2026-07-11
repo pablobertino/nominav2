@@ -118,11 +118,12 @@ const MENU_CATALOG = [
     // v4.82: Cuentas, habilitada a todos los roles (grilla de solo lectura).
     { id: 'bankaccounts', lbl: 'Cuentas', view: 'view.bankaccounts', acts: [] },
   ] },
-  // v4.90: grupo WhatsApp. Difusion nace solo-superadmin (view.whatsapp y
-  // wa.send sembrados sin conceder); desde aqui se prenden a otros roles.
+  // v4.90/v4.97: grupo WhatsApp. Conceder view.whatsapp + wa.send desde
+  // aqui habilita Difusion al rol (cada admin limitado a los grupos que
+  // el superadmin le asigne en la pantalla Grupos). La pantalla Grupos
+  // NO se ofrece: es gobernanza exclusiva de superadmin.
   { g: 'WhatsApp', items: [
     { id: 'wadifusion', lbl: 'Difusión', view: 'view.whatsapp', acts: ['wa.send'] },
-    { id: 'wagrupos', lbl: 'Grupos', view: 'view.whatsapp', acts: ['wa.send'] },
   ] },
   { g: 'Administracion', items: [
     { id: 'equipo', lbl: 'Equipo', view: 'view.equipo', acts: ['team.create', 'team.reset', 'team.toggle', 'team.role', 'team.scope', 'team.osticket', 'team.scope_override'] },
