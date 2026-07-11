@@ -296,10 +296,10 @@ const ROLE_LABELS = { superadmin: 'superadmin', admin: 'admin', editor_personal:
    miembro y el de Cambiar rol. Si la carga falla, se usa el fallback
    historico para no bloquear la pantalla. */
 const ADMIN_ROLES_FALLBACK = [
-  { code: 'admin', label: 'Administrador', is_system: false },
-  { code: 'gestor_empresa', label: 'Gestor de empresa', is_system: false },
-  { code: 'editor_personal', label: 'Editor de personal', is_system: false },
-  { code: 'superadmin', label: 'Superadmin', is_system: true },
+  { code: 'admin', label: 'Administrador', is_system: false, osticket_kind: 'agent', readonly_scope: false },
+  { code: 'gestor_empresa', label: 'Gestor de empresa', is_system: false, osticket_kind: 'client', readonly_scope: false },
+  { code: 'editor_personal', label: 'Editor de personal', is_system: false, osticket_kind: 'none', readonly_scope: false },
+  { code: 'superadmin', label: 'Superadmin', is_system: true, osticket_kind: 'agent', readonly_scope: false },
 ];
 let ADMIN_ROLES = null;
 async function ensureAdminRoles(user) {
@@ -397,7 +397,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.99</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.00</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2786,14 +2786,17 @@ async function cuApi(payload) {
   return res.json();
 }
 
-/* ---------- VISTA: EQUIPO (por rol: 3 grillas) ----------
+/* ---------- VISTA: EQUIPO (bloques DINAMICOS por rol, v5.00) ----------
    Superadmin en una fila destacada arriba (ve todo, sin alcance ni osTicket).
-   Debajo, tres grillas independientes: Admins, Gestores de empresa y Editores
-   de personal. Cada una con sus StatsCards y columnas segun sus
-   particularidades:
-     - admins:  alcance Tiendas + Empresas · osTicket como AGENTE (#staff)
-     - gestor:  alcance SOLO Empresas/deptos · osTicket como CLIENTE (#user)
-     - editor:  alcance Tiendas + Empresas · SIN osTicket
+   Debajo, UN BLOQUE POR CADA ROL del catalogo (tabla roles, via /api/roles
+   'options'): un rol creado en la vista Roles aparece aqui con sus miembros
+   sin tocar codigo. La especializacion de columnas/stats/acciones la dicta
+   el osticket_kind del rol:
+     - agent  -> como los administradores: alcance Tiendas + Empresas ·
+                 osTicket como AGENTE (#staff)
+     - client -> como los gestores: alcance SOLO Empresas/deptos · osTicket
+                 como CLIENTE (#user)
+     - none   -> como los editores: alcance Tiendas + Empresas · SIN osTicket
    Las acciones (data-act) las maneja auAction, sin cambios. */
 
 /* Resumen de alcance -> texto corto. `sc` = {inc:{type:n}, exc:{type:n}}.
@@ -2964,9 +2967,10 @@ async function viewEquipo(user) {
   const isSuper = user.role === 'superadmin';
 
   const supers = rows.filter(a => a.role === 'superadmin');
-  const admins = rows.filter(a => a.role === 'admin');
-  const gestores = rows.filter(a => a.role === 'gestor_empresa');
-  const editores = rows.filter(a => a.role === 'editor_personal');
+
+  // v5.00: catalogo de roles desde la BD (con osticket_kind/readonly_scope).
+  const roleCatalog = await ensureAdminRoles(user);
+  const gestoresCount = rows.filter(a => a.role === 'gestor_empresa').length;
 
   const emailCell = (a) => a.email
     ? `<td class="cell-mail" data-label="Correo">${a.email}</td>`
@@ -2990,88 +2994,108 @@ async function viewEquipo(user) {
     </div>`;
   }).join('');
 
-  // ---- Grilla ADMINS ----
-  const adminStats = {
-    total: admins.length,
-    withAgent: admins.filter(a => a.osticket_staff_id).length,
-    noAgent: admins.filter(a => !a.osticket_staff_id).length,
-    off: admins.filter(a => !a.is_active).length,
-  };
-  const adminRows = admins.map(a => {
-    const self = String(a.id) === String(user.id);
-    const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self, isSuper);
-    return `<tr>
-      <td class="code" data-label="Usuario">${a.username}</td>
-      <td class="cell-name" data-label="Nombre">${a.name || '\u2014'}</td>
-      ${emailCell(a)}
-      <td data-label="Alcance">${scopeCellBoth(a)}</td>
-      <td data-label="osTicket">${ostAgentCell(a)}</td>
-      <td data-label="Estado">${estadoPill(a)}${lastLoginLabel(a.last_login_at)}</td>
-      <td class="cell-actcell" style="text-align:right"><div class="cell-actions">
-        <button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas">${I.sliders} Tiendas</button>
-        <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>
-        ${roleBtn}
-        <button class="btn btn-mini" data-act="osticket-agent" data-id="${a.id}" data-u="${a.username}" data-staff="${a.osticket_staff_id || ''}" title="Agente osTicket (crear/resetear; se sincroniza al guardar el alcance)">osTicket</button>
-        ${resetBtn}
-        ${toggleBtn}
-      </div></td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="7" class="empty">Sin administradores.</td></tr>';
+  // ---- Bloques DINAMICOS por rol (v5.00) ----
+  // Overrides cosmeticos de los 3 roles historicos (titulos y badges de
+  // siempre); cualquier otro rol usa su label de la tabla y estilo estandar.
+  const TITLE_BY_CODE = { admin: 'Administradores', gestor_empresa: 'Gestores de empresa', editor_personal: 'Editores de personal' };
+  const BADGE_BY_CODE = { admin: 'rb-admin', gestor_empresa: 'rb-gestor', editor_personal: 'rb-editor' };
+  const STAT_BY_CODE = { admin: 'Administradores', gestor_empresa: 'Gestores', editor_personal: 'Editores' };
 
-  // ---- Grilla GESTORES ----
-  const gestorStats = {
-    total: gestores.length,
-    withClient: gestores.filter(a => a.osticket_user_id).length,
-    noClient: gestores.filter(a => !a.osticket_user_id).length,
-    off: gestores.filter(a => !a.is_active).length,
-  };
-  const gestorRows = gestores.map(a => {
-    const self = String(a.id) === String(user.id);
-    const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self, isSuper);
-    return `<tr>
-      <td class="code" data-label="Usuario">${a.username}</td>
-      <td class="cell-name" data-label="Nombre">${a.name || '\u2014'}</td>
-      ${emailCell(a)}
-      <td data-label="Alcance">${scopeCellEnt(a)}</td>
-      <td data-label="osTicket">${ostClientCell(a)}</td>
-      <td data-label="Estado">${estadoPill(a)}${lastLoginLabel(a.last_login_at)}</td>
-      <td class="cell-actcell" style="text-align:right"><div class="cell-actions">
-        ${isSuper ? `<button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>` : ''}
-        ${roleBtn}
-        <button class="btn btn-mini" data-act="osticket" data-id="${a.id}" data-u="${a.username}" title="Crear/actualizar como cliente de osTicket">osTicket</button>
-        ${resetBtn}
-        ${toggleBtn}
-      </div></td>
-    </tr>`;
-  }).join('') || '<tr><td colspan="7" class="empty">Sin gestores de empresa.</td></tr>';
+  const pillAgente = '<span style="display:inline-flex;align-items:center;padding:1px 9px;border-radius:999px;background:#eff4ff;color:#1e40af;font-weight:600">Agente</span>';
+  const pillCliente = '<span style="display:inline-flex;align-items:center;padding:1px 9px;border-radius:999px;background:#f0fdf4;color:#15803d;font-weight:600">Usuario</span>';
 
-  // ---- Grilla EDITORES ----
-  const editorStats = {
-    total: editores.length,
-    on: editores.filter(a => a.is_active).length,
-    off: editores.filter(a => !a.is_active).length,
-  };
-  const editorRows = editores.map(a => {
+  function roleRowHtml(a, kind) {
     const self = String(a.id) === String(user.id);
     const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self, isSuper);
+    const scopeTd = kind === 'client'
+      ? `<td data-label="Alcance">${scopeCellEnt(a)}</td>`
+      : `<td data-label="Alcance">${scopeCellBoth(a)}</td>`;
+    const ostTd = kind === 'agent' ? `<td data-label="osTicket">${ostAgentCell(a)}</td>`
+      : kind === 'client' ? `<td data-label="osTicket">${ostClientCell(a)}</td>` : '';
+    const scopeBtns = kind === 'client'
+      ? (isSuper ? `<button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>` : '')
+      : `<button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas">${I.sliders} Tiendas</button>
+        <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>`;
+    const ostBtn = kind === 'agent'
+      ? `<button class="btn btn-mini" data-act="osticket-agent" data-id="${a.id}" data-u="${a.username}" data-staff="${a.osticket_staff_id || ''}" title="Agente osTicket (crear/resetear; se sincroniza al guardar el alcance)">osTicket</button>`
+      : kind === 'client'
+      ? `<button class="btn btn-mini" data-act="osticket" data-id="${a.id}" data-u="${a.username}" title="Crear/actualizar como cliente de osTicket">osTicket</button>`
+      : '';
     return `<tr>
       <td class="code" data-label="Usuario">${a.username}</td>
       <td class="cell-name" data-label="Nombre">${a.name || '\u2014'}</td>
       ${emailCell(a)}
-      <td data-label="Alcance">${scopeCellBoth(a)}</td>
+      ${scopeTd}
+      ${ostTd}
       <td data-label="Estado">${estadoPill(a)}${lastLoginLabel(a.last_login_at)}</td>
       <td class="cell-actcell" style="text-align:right"><div class="cell-actions">
-        <button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas">${I.sliders} Tiendas</button>
-        <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>
+        ${scopeBtns}
         ${roleBtn}
+        ${ostBtn}
         ${resetBtn}
         ${toggleBtn}
       </div></td>
     </tr>`;
-  }).join('') || '<tr><td colspan="6" class="empty">Sin editores de personal.</td></tr>';
+  }
+
+  function roleBlockHtml(r, members) {
+    const kind = r.osticket_kind || 'none';
+    const title = TITLE_BY_CODE[r.code] || r.label || r.code;
+    const badgeCls = BADGE_BY_CODE[r.code] || 'rb-admin';
+    const statLbl = STAT_BY_CODE[r.code] || 'Miembros';
+    const ro = r.readonly_scope ? ' \u00b7 solo lectura' : '';
+    const desc = kind === 'agent'
+      ? `Alcance de Tiendas y Empresas${ro} \u00b7 osTicket: ${pillAgente}`
+      : kind === 'client'
+      ? `Alcance solo de Empresas / departamentos${ro} \u00b7 osTicket: ${pillCliente}`
+      : `Alcance de Tiendas y Empresas${ro} \u00b7 sin osTicket`;
+    const off = members.filter(a => !a.is_active).length;
+    const stats = kind === 'agent'
+      ? `<div class="sum-cards c4">${statCard('total', members.length, statLbl)}${statCard('ok', members.filter(a => a.osticket_staff_id).length, 'Con agente osTicket')}${statCard('none', members.filter(a => !a.osticket_staff_id).length, 'Sin agente')}${statCard('off', off, 'Inactivos')}</div>`
+      : kind === 'client'
+      ? `<div class="sum-cards c4">${statCard('total', members.length, statLbl)}${statCard('acc', members.filter(a => a.osticket_user_id).length, 'Con cliente osTicket')}${statCard('none', members.filter(a => !a.osticket_user_id).length, 'Sin cliente')}${statCard('off', off, 'Inactivos')}</div>`
+      : `<div class="sum-cards c3">${statCard('total', members.length, statLbl)}${statCard('ok', members.length - off, 'Activos')}${statCard('off', off, 'Inactivos')}</div>`;
+    const ostTh = kind === 'agent' ? '<th>osTicket (agente)</th>' : kind === 'client' ? '<th>osTicket (cliente)</th>' : '';
+    const scopeTh = kind === 'client' ? '<th>Alcance (empresas)</th>' : '<th>Alcance</th>';
+    const cols = kind === 'none' ? 6 : 7;
+    const bodyRows = members.map(a => roleRowHtml(a, kind)).join('')
+      || `<tr><td colspan="${cols}" class="empty">Sin miembros con este rol.</td></tr>`;
+    return `<div class="role-block">
+      <div class="role-head">
+        <span class="role-title">${escRoleLbl(title)}</span>
+        <span class="role-badge ${badgeCls}">${escRoleLbl(r.code)}</span>
+        <span class="role-desc">${desc}</span>
+      </div>
+      ${stats}
+      <div class="tablebox scroll-x u-compact tbl-cards"><table><thead><tr>
+        <th>Usuario</th><th>Nombre</th><th>Correo</th>${scopeTh}${ostTh}<th>Estado</th><th style="text-align:right">Acciones</th>
+      </tr></thead><tbody>${bodyRows}</tbody></table></div>
+    </div>`;
+  }
+
+  // Un bloque por rol del catalogo (sin superadmin, que va en su fila
+  // destacada). Con miembros siempre; vacio solo si es el bloque de gestores
+  // de un admin no-super (su unica vista) o para que superadmin vea que el
+  // rol existe cuando acaba de crearlo... criterio: superadmin ve bloques
+  // CON miembros; no-super ve solo su bloque de gestores (backend ya filtra).
+  // Ademas: usuarios con un rol fuera del catalogo (rol desactivado) se
+  // muestran en un bloque generico para que nadie quede invisible.
+  const known = new Set(roleCatalog.map(r => r.code));
+  const orphanCodes = [...new Set(rows.map(a => a.role))]
+    .filter(c => c && c !== 'superadmin' && !known.has(c));
+  const blockDefs = roleCatalog.filter(r => r.code !== 'superadmin')
+    .concat(orphanCodes.map(c => ({ code: c, label: c + ' (rol fuera de catalogo)', osticket_kind: 'none', readonly_scope: false })));
+  const blocksHtml = blockDefs.map(r => {
+    const members = rows.filter(a => a.role === r.code);
+    if (!isSuper) {
+      // Admin no-super: SOLO su bloque de gestores (visible aunque vacio).
+      return r.code === 'gestor_empresa' ? roleBlockHtml(r, members) : '';
+    }
+    return members.length ? roleBlockHtml(r, members) : '';
+  }).join('');
 
   $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Equipo</h1><p>${isSuper ? `${rows.length} miembros \u00b7 cada rol con sus columnas y acciones` : `${gestores.length} gestor${gestores.length === 1 ? '' : 'es'} de empresa en tu alcance`}</p></div>
+    <div class="pnl-head"><div><h1>Equipo</h1><p>${isSuper ? `${rows.length} miembros \u00b7 un bloque por rol, seg\u00fan el cat\u00e1logo de Roles` : `${gestoresCount} gestor${gestoresCount === 1 ? '' : 'es'} de empresa en tu alcance`}</p></div>
       ${isSuper ? `<div class="head-actions">
         <button class="btn" id="auSyncClients" title="Crear/actualizar los gestores de empresa como clientes de osTicket">${I.sync} Gestores osTicket</button>
         <button class="btn btn-primary" id="auNew">${I.plus} Nuevo miembro</button>
@@ -3079,55 +3103,7 @@ async function viewEquipo(user) {
 
     ${isSuper ? suHtml : ''}
 
-    ${isSuper ? `<div class="role-block">
-      <div class="role-head">
-        <span class="role-title">Administradores</span>
-        <span class="role-badge rb-admin">admin</span>
-        <span class="role-desc">Alcance de Tiendas y Empresas \u00b7 osTicket: <span style="display:inline-flex;align-items:center;padding:1px 9px;border-radius:999px;background:#eff4ff;color:#1e40af;font-weight:600">Agente</span></span>
-      </div>
-      <div class="sum-cards c4">
-        ${statCard('total', adminStats.total, 'Administradores')}
-        ${statCard('ok', adminStats.withAgent, 'Con agente osTicket')}
-        ${statCard('none', adminStats.noAgent, 'Sin agente')}
-        ${statCard('off', adminStats.off, 'Inactivos')}
-      </div>
-      <div class="tablebox scroll-x u-compact tbl-cards"><table><thead><tr>
-        <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Alcance</th><th>osTicket (agente)</th><th>Estado</th><th style="text-align:right">Acciones</th>
-      </tr></thead><tbody>${adminRows}</tbody></table></div>
-    </div>` : ''}
-
-    <div class="role-block">
-      <div class="role-head">
-        <span class="role-title">Gestores de empresa</span>
-        <span class="role-badge rb-gestor">gestor</span>
-        <span class="role-desc">Alcance solo de Empresas / departamentos \u00b7 osTicket: <span style="display:inline-flex;align-items:center;padding:1px 9px;border-radius:999px;background:#f0fdf4;color:#15803d;font-weight:600">Usuario</span></span>
-      </div>
-      <div class="sum-cards c4">
-        ${statCard('total', gestorStats.total, 'Gestores')}
-        ${statCard('acc', gestorStats.withClient, 'Con cliente osTicket')}
-        ${statCard('none', gestorStats.noClient, 'Sin cliente')}
-        ${statCard('off', gestorStats.off, 'Inactivos')}
-      </div>
-      <div class="tablebox scroll-x u-compact tbl-cards"><table><thead><tr>
-        <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Alcance (empresas)</th><th>osTicket (cliente)</th><th>Estado</th><th style="text-align:right">Acciones</th>
-      </tr></thead><tbody>${gestorRows}</tbody></table></div>
-    </div>
-
-    ${isSuper ? `<div class="role-block">
-      <div class="role-head">
-        <span class="role-title">Editores de personal</span>
-        <span class="role-badge rb-editor">editor</span>
-        <span class="role-desc">Alcance de Tiendas y Empresas \u00b7 sin osTicket</span>
-      </div>
-      <div class="sum-cards c3">
-        ${statCard('total', editorStats.total, 'Editores')}
-        ${statCard('ok', editorStats.on, 'Activos')}
-        ${statCard('off', editorStats.off, 'Inactivos')}
-      </div>
-      <div class="tablebox scroll-x u-compact tbl-cards"><table><thead><tr>
-        <th>Usuario</th><th>Nombre</th><th>Correo</th><th>Alcance</th><th>Estado</th><th style="text-align:right">Acciones</th>
-      </tr></thead><tbody>${editorRows}</tbody></table></div>
-    </div>` : ''}`;
+    ${blocksHtml}`;
 
   if (isSuper) {
     $('#auNew').addEventListener('click', () => auCreateModal(user));

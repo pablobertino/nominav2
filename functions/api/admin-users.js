@@ -271,8 +271,19 @@ export async function onRequestPost({ request, env }) {
     if (action === 'update_role') {
       const { id, role } = body;
       if (!id) return json({ ok: false, error: 'Falta el usuario.' }, 400);
-      const ALLOWED_ROLES = ['admin', 'superadmin', 'editor_personal', 'gestor_empresa'];
-      if (!ALLOWED_ROLES.includes(role)) return json({ ok: false, error: 'Rol no valido.' }, 400);
+      // v5.00: roles validos DESDE LA TABLA (antes lista hardcodeada, que
+      // rechazaba roles creados en la vista Roles como supervidor_tiendas).
+      // superadmin no se asigna desde aqui (regla del modal) y tienda es el
+      // login de empresa, no un rol del equipo.
+      const catalog = await sb(env,
+        'roles?is_active=eq.true&select=code,osticket_kind');
+      const kindBy = {};
+      (catalog || []).forEach(r => { kindBy[r.code] = r.osticket_kind || 'none'; });
+      const allowed = (catalog || []).map(r => r.code)
+        .filter(c => c !== 'superadmin' && c !== 'tienda');
+      if (!allowed.includes(role)) {
+        return json({ ok: false, error: 'Rol no válido. Roles asignables: ' + allowed.join(', ') + '.' }, 400);
+      }
       if (String(id) === String(adminId)) return json({ ok: false, error: 'No puedes cambiar tu propio rol.' }, 400);
       const target = await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}&select=id,username,name,email,role,is_active,osticket_staff_id,osticket_user_id`);
       if (!target || !target.length) return json({ ok: false, error: 'Usuario no encontrado.' }, 404);
@@ -292,8 +303,11 @@ export async function onRequestPost({ request, env }) {
 
       // 2) Reflejar en osTicket segun la transicion. No debe romper el cambio
       //    de rol (ya hecho): si osTicket falla, se informa como aviso.
-      const wasAgent = (prevRole === 'admin' || prevRole === 'superadmin');
-      const isAgent = (role === 'admin' || role === 'superadmin');
+      //    v5.00: la transicion se decide por el osticket_kind del ROL
+      //    (tabla roles: agent/client/none), no por codes hardcodeados.
+      const wasAgent = (kindBy[prevRole] || 'none') === 'agent';
+      const isAgent = (kindBy[role] || 'none') === 'agent';
+      const isClient = (kindBy[role] || 'none') === 'client';
       const osticket = { steps: [], warnings: [] };
       const base = await osticketBase(env);
       const canOst = base && env.osticket_api_key;
@@ -317,8 +331,9 @@ export async function onRequestPost({ request, env }) {
           });
         }
 
-        // 2b) Pasa a gestor: crear/activar su cliente osTicket (si tiene correo).
-        if (role === 'gestor_empresa') {
+        // 2b) Pasa a un rol CLIENTE (ej. gestor de empresa): crear/activar su
+        //     cliente osTicket (si tiene correo).
+        if (isClient) {
           if (canOst && u.email) {
             try {
               const r = await syncClientOne(env, base, u);
@@ -330,11 +345,11 @@ export async function onRequestPost({ request, env }) {
           }
         }
 
-        // 2c) Vuelve a ser agente (gestor/editor -> admin): no se crea agente
+        // 2c) Pasa a un rol AGENTE (ej. administrador): no se crea agente
         //     aqui (requiere clave). Se avisa: crear al guardar su alcance o
         //     desde el boton osTicket de su fila.
         if (!wasAgent && isAgent) {
-          osticket.steps.push('Ahora es administrador: crea su agente osTicket al guardar su alcance de tiendas, o con el boton osTicket de su fila.');
+          osticket.steps.push('El nuevo rol atiende como agente: crea su agente osTicket al guardar su alcance de tiendas, o con el boton osTicket de su fila.');
         }
       } catch (e) {
         osticket.warnings.push('osTicket: ' + (e.message || e));
@@ -357,7 +372,12 @@ export async function onRequestPost({ request, env }) {
       const rows = await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}&select=id,username,name,email,role`);
       if (!rows || !rows.length) return json({ ok: false, error: 'Usuario no encontrado.' }, 404);
       const u = rows[0];
-      if (u.role !== 'gestor_empresa') return json({ ok: false, error: 'Solo el gestor de empresa se crea como cliente de osTicket.' }, 400);
+      // v5.00: cliente osTicket para cualquier rol con osticket_kind='client'
+      // (antes solo gestor_empresa hardcodeado).
+      const kr = await sb(env, `roles?code=eq.${encodeURIComponent(u.role)}&select=osticket_kind`);
+      if (!kr || !kr.length || (kr[0].osticket_kind || 'none') !== 'client') {
+        return json({ ok: false, error: 'Solo los roles de tipo cliente osTicket se crean como cliente.' }, 400);
+      }
       if (password != null && String(password).length && String(password).length < 6) {
         return json({ ok: false, error: 'La clave debe tener al menos 6 caracteres.' }, 400);
       }

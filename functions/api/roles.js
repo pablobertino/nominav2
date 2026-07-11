@@ -76,9 +76,15 @@ export async function onRequestPost({ request, env }) {
        view.roles: solo nombres, sin matriz. Lo usa Equipo (crear miembro /
        cambiar rol). */
     if (action === 'options') {
+      // v5.00: incluye osticket_kind (agent/client/none) y readonly_scope
+      // para que Equipo pinte los bloques por rol DINAMICAMENTE (columnas,
+      // stats y acciones segun el tipo de osTicket del rol).
       const rows = await sb(env,
-        'roles?is_active=eq.true&code=neq.tienda&select=code,label,is_system&order=sort_order.asc,code.asc');
-      return json({ ok: true, roles: (rows || []).map(r => ({ code: r.code, label: r.label || r.code, is_system: !!r.is_system })) });
+        'roles?is_active=eq.true&code=neq.tienda&select=code,label,is_system,osticket_kind,readonly_scope&order=sort_order.asc,code.asc');
+      return json({ ok: true, roles: (rows || []).map(r => ({
+        code: r.code, label: r.label || r.code, is_system: !!r.is_system,
+        osticket_kind: r.osticket_kind || 'none', readonly_scope: !!r.readonly_scope,
+      })) });
     }
 
     // Gate REAL de lectura: view.roles (hoy solo superadmin por bypass).
