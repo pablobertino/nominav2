@@ -65,8 +65,9 @@ const VIEW_SUBGROUPS = [
    Calcado del NAV real de shell(): grupos -> items (data-view real) con su
    permiso view.* y las ACCIONES (permisos de uso) que viven dentro de cada
    menu. Las etiquetas y ayudas de cada accion salen de ST.permissions (BD).
-   Un mismo code puede colgar de dos menus (ej. hcm.publish en Sincronizar y
-   Comparar): la piel sincroniza por code, no hay duplicacion real. */
+   Un mismo code puede colgar de VARIOS menus (ej. report.* en Empresas, Mi
+   empresa y Personal; hcm.publish en Sincronizar y Comparar): la piel
+   sincroniza por code contra ST.work, no hay duplicacion real en BD. */
 const MENU_CATALOG = [
   { g: '', items: [
     { id: 'dashboard', lbl: 'Inicio', view: 'view.dashboard', acts: [] },
@@ -80,7 +81,10 @@ const MENU_CATALOG = [
     { id: 'catalogos', lbl: 'Estructura', view: 'view.estructura', acts: [] },
   ] },
   { g: 'Personal', items: [
-    { id: 'fotos', lbl: 'Personal', view: 'view.fotos', acts: ['photo.manage', 'ficha.edit', 'dept.assign'] },
+    // v5.03: los botones de emitir reportes tambien viven en la vista Personal
+    // (ficha del trabajador). Es el MISMO code que en Empresas y Mi empresa: la
+    // piel sincroniza por code (un solo estado en ST.work -> una sola fila en BD).
+    { id: 'fotos', lbl: 'Personal', view: 'view.fotos', acts: ['photo.manage', 'ficha.edit', 'dept.assign', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion'] },
     { id: 'buscar', lbl: 'Buscar', view: 'view.buscar', acts: [] },
     { id: 'datosincompletos', lbl: 'Datos incompletos', view: 'view.datosincompletos', acts: [] },
     { id: 'egmotivos', lbl: 'Ratificar egresos', view: 'view.egmotivos', acts: ['egress.ratify'] },
@@ -713,20 +717,23 @@ function paintMenuEditor(root) {
   }));
 
   // Switches (vista y acciones): operan el checkbox REAL de la matriz
-  // avanzada y le disparan change, reusando toda su logica. Si el input
-  // real esta bloqueado (implied lock), el repintado restaura el estado.
-  const relay = (code) => {
+  // avanzada y le disparan change, reusando toda su logica. v5.03: el relay
+  // ASIGNA el valor pedido (no invierte a ciegas): con un mismo code en varios
+  // items del menu (report.* en Empresas / Mi empresa / Personal) los switches
+  // duplicados quedan sincronizados por construccion — el repintado final los
+  // repinta a todos desde ST.work, que es el unico estado que viaja a BD.
+  const relay = (code, want) => {
     const target = root.querySelector(`#rlGroups input[data-perm="${code}"]`);
-    if (target && !target.disabled) {
-      target.checked = !target.checked;
+    if (target && !target.disabled && target.checked !== want) {
+      target.checked = want;
       target.dispatchEvent(new Event('change'));
     }
     paintMenuEditor(root);
   };
   host.querySelectorAll('input[data-mev]').forEach(inp =>
-    inp.addEventListener('change', () => relay(inp.dataset.mev)));
+    inp.addEventListener('change', () => relay(inp.dataset.mev, inp.checked)));
   host.querySelectorAll('input[data-mea]').forEach(inp =>
-    inp.addEventListener('change', () => relay(inp.dataset.mea)));
+    inp.addEventListener('change', () => relay(inp.dataset.mea, inp.checked)));
 }
 
 function initMenuEditor(root) {
