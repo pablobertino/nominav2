@@ -1180,6 +1180,14 @@
 .ff-id h2 { font-size:21px; font-weight:600; line-height:1.2; margin:0 0 6px; color:var(--ink); }
 .ff-id .ced { font-family:ui-monospace,Menlo,monospace; font-size:13.5px; color:var(--muted); }
 .ff-id .meta { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
+/* v5.02: chip largo de estado de publicacion (verde/naranja). En modo
+   edicion se OCULTA (la cabecera se llena de botones, .ff-id se comprime y
+   el pill de radio 999px envuelto en varias lineas se deformaba en un
+   ovalo). En modo vista, si el ancho lo obliga a envolver, pasa a radio de
+   tarjeta y texto multilinea sano en vez de huevo. */
+.ff-id .meta .ff-chip-status { border-radius:12px; line-height:1.5; white-space:normal;
+  text-align:left; max-width:100%; height:auto; }
+.wp-ficha.editing .ff-chip-status { display:none; }
 .ff-id .meta .pill { background:var(--bg-soft, #f1f5f9); color:var(--ink-soft); }
 
 /* Aviso de campos faltantes */

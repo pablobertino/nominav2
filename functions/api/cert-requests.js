@@ -44,9 +44,11 @@ function json(b, s = 200) {
 }
 
 // Shadow de permisos (Fase 3): solo compara y logea; no cambia el flujo.
-// v5.01: create usa GATE REAL cert.request (resolveActor + can), igual que
-// el patron de worker-photo/reports. El resto sigue en shadow.
-import { shadowCan, resolveActor, can } from './_auth.js';
+// v5.01: create usa GATE REAL cert.request, igual que el patron de
+// worker-photo/reports. OJO: este archivo YA tiene una funcion local
+// resolveActor (alcance por empresas), por eso el actor de la MATRIZ de
+// permisos se importa con alias (authResolveActor/authCan).
+import { shadowCan, resolveActor as authResolveActor, can as authCan } from './_auth.js';
 
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
@@ -275,8 +277,8 @@ export async function onRequestPost({ request, env }) {
       // permiso en la matriz de Roles (hoy: admin, gestor de empresa,
       // tienda). Un rol solo-lectura (ej. Supervisor Tiendas) ve las
       // solicitudes (view.solicitudes) pero no puede crearlas.
-      const realActor = await resolveActor(env, body.actor);
-      if (!can(realActor, 'cert.request')) {
+      const realActor = await authResolveActor(env, body.actor);
+      if (!authCan(realActor, 'cert.request')) {
         return json({ ok: false, error: 'No tienes permiso para crear solicitudes de constancia.' }, 403);
       }
 

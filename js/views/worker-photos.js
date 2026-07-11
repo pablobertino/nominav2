@@ -1326,10 +1326,10 @@ function fichaStatusChip(w) {
       ? Math.max(1, Object.keys(w.ax_pending_fields).length) : 1;
     const who = w.profile_updated_by ? ` · editado por ${esc(w.profile_updated_by)}` : '';
     const when = w.profile_updated_at ? ` · ${fmtDateTime(w.profile_updated_at)}` : '';
-    return `<span class="pill wp-pill-pending" id="ffPendBadge" title="Hay cambios en esta ficha que aun no se publican en el sistema"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>${n} cambio${n === 1 ? '' : 's'} sin publicar${who}${when}</span>`;
+    return `<span class="pill wp-pill-pending ff-chip-status" id="ffPendBadge" title="Hay cambios en esta ficha que aun no se publican en el sistema"><svg viewBox="0 0 24 24" width="12" height="12" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px;margin-right:3px"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>${n} cambio${n === 1 ? '' : 's'} sin publicar${who}${when}</span>`;
   }
   if (w.profile_updated_by && w.ax_synced_at) {
-    return `<span class="pill" style="background:#e9f7f1;color:#0e9f6e;border:1px solid #c4e8d9;font-weight:700" title="La ultima edicion de esta ficha ya se publico al sistema">✓ Publicado al sistema · editado por ${esc(w.profile_updated_by)} · ${fmtDateTime(w.ax_synced_at)}</span>`;
+    return `<span class="pill ff-chip-status" style="background:#e9f7f1;color:#0e9f6e;border:1px solid #c4e8d9;font-weight:700" title="La ultima edicion de esta ficha ya se publico al sistema">✓ Publicado al sistema · editado por ${esc(w.profile_updated_by)} · ${fmtDateTime(w.ax_synced_at)}</span>`;
   }
   return '';
 }
