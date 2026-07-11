@@ -22,6 +22,17 @@
 
    'count' es deliberadamente barato: lo llama el panel en cada carga para
    pintar el badge, asi que no trae filas, solo el numero.
+
+   ALCANCE (v5.21 - FIX): los RPC reciben p_admin_id.
+     superadmin      -> null  = ve todo el grupo.
+     admin con scope -> su id = solo casos que TOCAN sus empresas
+                        (get_admin_companies), y ve el caso completo (las dos
+                        tiendas), porque "esta duplicada pero no te digo donde"
+                        no sirve para resolverlo.
+     tienda/empresa  -> no aplica: esta vista es de administracion. Se corta
+                        antes de consultar (n=0 / lista vacia).
+   Hasta v5.20 los RPC NO filtraban: un admin de Valencia veia casos de tiendas
+   ajenas con nombre, cedula y cargo. Era una fuga de datos.
    ===================================================================== */
 
 import { resolveActor, can } from './_auth.js';
@@ -64,13 +75,30 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: false, error: 'No tienes permiso para ver el doble empleo (view.dobleempleo).' }, 403);
     }
 
+    /* ---- ALCANCE (v5.21) ----
+       El superadmin ve todo (null). Un admin ve SOLO los casos que tocan sus
+       empresas: se le pasa su id y el RPC filtra con get_admin_companies.
+       Los usuarios de tienda/empresa no tienen nada que hacer aca (es una
+       vista de administracion): se corta antes de tocar la base. */
+    const isSuper = actor.role === 'superadmin';
+    const adminId = (body.user && body.user.kind === 'admin' && body.user.id) ? Number(body.user.id) : null;
+
+    if (!isSuper && !adminId) {
+      // Ni superadmin ni admin identificable -> no ve nada (jamas todo).
+      if (action === 'count') return json({ ok: true, n: 0 });
+      return json({ ok: true, rows: [] });
+    }
+
+    // superadmin -> null (sin filtro). admin -> su id (filtra por alcance).
+    const pAdmin = isSuper ? null : adminId;
+
     if (action === 'count') {
-      const r = await rpc(env, 'double_employment_count', {});
+      const r = await rpc(env, 'double_employment_count', { p_admin_id: pAdmin });
       return json({ ok: true, n: Number(r) || 0 });
     }
 
     if (action === 'list') {
-      const rows = await rpc(env, 'double_employment_list', {});
+      const rows = await rpc(env, 'double_employment_list', { p_admin_id: pAdmin });
       return json({ ok: true, rows: rows || [] });
     }
 
