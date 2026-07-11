@@ -62,7 +62,7 @@ Object.entries(IMPLIES).forEach(([u, v]) => { IMPLIED_BY[v] = u; });
 const VIEW_SUBGROUPS = [
   ['Menu principal', ['view.dashboard', 'view.usuarios', 'view.documentos', 'view.calendario']],
   ['Organizacion', ['view.empresas', 'view.estructura']],
-  ['Personal', ['view.buscar', 'view.datosincompletos', 'view.egmotivos', 'view.rostersync', 'view.fotos']],
+  ['Personal', ['view.buscar', 'view.datosincompletos', 'view.dobleempleo', 'view.egmotivos', 'view.rostersync', 'view.fotos']],
   ['Reportes', ['view.historial', 'view.estadisticas', 'view.reportempresas', 'view.estadopago', 'view.misstats']],
   ['Comunicacion', ['view.avisos', 'view.avisosconfig']],
   ['Solicitudes', ['view.solicitudes', 'view.firmantes']],
