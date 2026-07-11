@@ -151,6 +151,49 @@ function template() {
         <button id="resetBtn" class="btn-primary">Guardar contraseña</button>
       </div>
 
+      <!-- Vista: CAMBIO OBLIGATORIO de clave (v5.08).
+           Se interpone despues de un login correcto cuando la cuenta trae
+           must_change_password: es el caso de la clave temporal que entrega
+           Capital Humano al crear el usuario o al resetearlo. Hasta v5.07 ese
+           flag se guardaba, viajaba al front... y nadie lo leia: la clave
+           "temporal" servia para siempre. Aca se corta: no se entra al panel
+           sin definir una propia. -->
+      <div id="mustView" style="display:none">
+        <p class="recover-title">Crea tu contraseña</p>
+
+        <div class="notice notice-info" style="margin-bottom:14px">
+          <span class="ico">${ICONS.info}</span>
+          <div>Entraste con una <strong>contraseña temporal</strong>. Para continuar,
+            definí una contraseña tuya: es la que vas a usar de ahora en adelante.</div>
+        </div>
+
+        <div id="mustMsg" class="login-msg"></div>
+
+        <div class="field">
+          <label for="mustPwd">Nueva contraseña</label>
+          <div class="field-icon">
+            <span class="ico">${ICONS.lock}</span>
+            <input id="mustPwd" type="password" autocomplete="new-password"
+                   class="has-toggle" placeholder="Mínimo 6 caracteres" />
+            <button id="toggleMustPwd" type="button" class="toggle-pwd"
+                    aria-label="Mostrar u ocultar contraseña">${ICONS.eye}</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="mustPwd2">Repetir contraseña</label>
+          <div class="field-icon">
+            <span class="ico">${ICONS.lock}</span>
+            <input id="mustPwd2" type="password" autocomplete="new-password"
+                   placeholder="Repite la contraseña" />
+          </div>
+        </div>
+
+        <button id="mustBtn" class="btn-primary">Guardar y entrar</button>
+
+        <p class="login-foot">No puede ser igual a la contraseña temporal.</p>
+      </div>
+
     </div>
   </div>`;
 }
@@ -352,6 +395,13 @@ function wire() {
         msg.className = 'login-msg err show';
         return;
       }
+      /* v5.08: clave temporal -> NO se entra al panel todavia. Primero hay que
+         definir una propia. Antes este flag llegaba y se ignoraba, asi que la
+         clave temporal nunca dejaba de servir. */
+      if (data.user && data.user.mustChangePassword) {
+        askNewPassword(data.user, pwd);
+        return;
+      }
       setSession(data.user);
       go('/panel');
     } catch (err) {
@@ -364,6 +414,76 @@ function wire() {
   }
   btn.addEventListener('click', doLogin);
   pwdInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') doLogin(); });
+
+  /* ---- v5.08: cambio obligatorio de clave ----
+     Se llega aca con un login CORRECTO pero con clave temporal. La sesion NO
+     se abre hasta que la clave nueva quede guardada: si el usuario cierra la
+     pestana a mitad de camino, sigue con su temporal y se le vuelve a pedir
+     en el proximo ingreso (el flag sigue en true en la BD). La clave actual
+     viaja al endpoint para que el SERVIDOR la re-verifique: no alcanza con
+     decir "soy el usuario 13".
+     El contexto del login en curso vive en MUST (no en el closure del
+     listener), asi los handlers se cablean UNA vez y siempre operan sobre el
+     intento vigente. */
+  let MUST = null;   // { user, currentPwd }
+
+  function askNewPassword(user, currentPwd) {
+    MUST = { user, currentPwd };
+    loginView.style.display = 'none';
+    recover.style.display = 'none';
+    $('#mustView').style.display = '';
+    $('#mustPwd').value = '';
+    $('#mustPwd2').value = '';
+    $('#mustMsg').className = 'login-msg';
+    $('#mustPwd').focus();
+  }
+
+  async function saveMustPwd() {
+    if (!MUST) return;
+    const mMsg = $('#mustMsg');
+    const mBtn = $('#mustBtn');
+    const a = $('#mustPwd').value;
+    const b = $('#mustPwd2').value;
+    const fail = (t) => { mMsg.textContent = t; mMsg.className = 'login-msg err show'; };
+
+    if (a.length < 6) return fail('La contraseña debe tener al menos 6 caracteres.');
+    if (a !== b) return fail('Las contraseñas no coinciden.');
+    if (a === MUST.currentPwd) return fail('La contraseña nueva no puede ser igual a la temporal.');
+
+    mBtn.disabled = true;
+    const orig = mBtn.textContent;
+    mBtn.textContent = 'Guardando…';
+    mMsg.className = 'login-msg';
+    try {
+      const r = await fetch('/api/change-password', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: MUST.user.kind, id: MUST.user.id,
+          currentPassword: MUST.currentPwd, newPassword: a,
+        }),
+      });
+      const d = await r.json();
+      if (!d.ok) return fail(d.error || 'No se pudo guardar la contraseña.');
+      // Recien ahora se abre la sesion, ya sin el flag.
+      setSession({ ...MUST.user, mustChangePassword: false });
+      MUST = null;
+      go('/panel');
+    } catch (_) {
+      fail('No se pudo conectar. Intenta de nuevo.');
+    } finally {
+      mBtn.disabled = false;
+      mBtn.textContent = orig;
+    }
+  }
+
+  $('#mustBtn').addEventListener('click', saveMustPwd);
+  $('#mustPwd2').addEventListener('keydown', (e) => { if (e.key === 'Enter') saveMustPwd(); });
+  $('#toggleMustPwd').addEventListener('click', () => {
+    const p = $('#mustPwd');
+    const show = p.type === 'password';
+    p.type = show ? 'text' : 'password';
+    $('#toggleMustPwd').innerHTML = show ? ICONS.eyeOff : ICONS.eye;
+  });
 
   // Comparar versión del código con la registrada en la tabla
   checkVersion();
