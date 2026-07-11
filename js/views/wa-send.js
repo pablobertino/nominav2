@@ -111,7 +111,7 @@ function ensureStyles() {
   .wa-chip.ok{background:#e9fbf0;color:#0f7a4d;border:1px solid #bbf1d2}
   .wa-chip.no{background:#f1f5f9;color:#64748b;border:1px solid var(--border)}
   .wa-tblnote{font-size:11px;color:var(--muted);margin-top:6px}
-  .wa-msg{width:100%;min-height:120px;font:inherit;font-size:13.5px;padding:11px 13px;border:1px solid var(--border);border-radius:11px;resize:vertical;line-height:1.5;background:var(--surface,#fff);color:var(--ink)}
+  .wa-msg{width:100%;min-height:220px;font:inherit;font-size:13.5px;padding:11px 13px;border:1px solid var(--border);border-radius:11px;resize:vertical;line-height:1.5;background:var(--surface,#fff);color:var(--ink)}
   .wa-msgfoot{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:11.5px;color:var(--muted);flex-wrap:wrap;gap:6px}
   .wa-msgfoot code{background:#f1f5f9;border-radius:4px;padding:1px 5px}
   .wa-sendrow{display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
