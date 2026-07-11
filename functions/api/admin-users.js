@@ -22,9 +22,18 @@ const TEAM_CODE_BY_ACTION = {
   reset: 'team.reset',
   toggle: 'team.toggle',
   update_role: 'team.role',
+  update_contact: 'team.create',   // v5.07: editar contacto = mismo gate que alta
   sync_client: 'team.osticket',
   sync_clients_all: 'team.osticket',
 };
+
+/* v5.07: el telefono se guarda tal como se escribe (solo se limpian espacios
+   y se descarta si queda vacio). La normalizacion a formato de linea la hace
+   el envio de WhatsApp, igual que con los telefonos de companies. */
+function cleanPhone(p) {
+  const s = String(p == null ? '' : p).trim();
+  return s || null;
+}
 
 function json(b, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } }); }
 
@@ -173,7 +182,7 @@ export async function onRequestPost({ request, env }) {
     };
 
     if (action === 'list') {
-      let rows = await sb(env, 'admin_users?select=id,username,name,email,role,is_active,osticket_staff_id,osticket_user_id,osticket_user_synced_at,last_login_at&order=role.desc,username');
+      let rows = await sb(env, 'admin_users?select=id,username,name,email,phone,role,is_active,osticket_staff_id,osticket_user_id,osticket_user_synced_at,last_login_at&order=role.desc,username');
       // admin no-super: solo los gestores entrelazados con su alcance.
       if (!isSuper) {
         rows = (rows || []).filter(a => a.role === 'gestor_empresa' && gestorSet.has(Number(a.id)));
@@ -233,13 +242,34 @@ export async function onRequestPost({ request, env }) {
       if (!pwd || pwd.length < 6) return json({ ok: false, error: 'Contraseña inválida (mín. 6).' }, 400);
       const hash = await hashPassword(pwd);
       await sb(env, 'admin_users', {
-        method: 'POST', headers: { Prefer: 'return=minimal' },
+        method: 'POST', headers: { Prefer: 'return=representation' },
         body: JSON.stringify({
-          username, name: name || null, email: email ? email.trim().toLowerCase() : null, password_hash: hash,
+          username, name: name || null, email: email ? email.trim().toLowerCase() : null,
+          phone: cleanPhone(body.phone),   // v5.07
+          password_hash: hash,
           role: r, must_change_password: !!useTemp, is_active: true,
         }),
       });
       return json({ ok: true, tempPassword: useTemp ? pwd : null });
+    }
+
+    /* v5.07: editar los datos de CONTACTO de un miembro (nombre, correo,
+       telefono). Antes no habia forma de cargarle el telefono a los miembros
+       que ya existian: solo se podia crear. No toca rol ni clave (para eso
+       estan update_role y reset). */
+    if (action === 'update_contact') {
+      const { id, name, email, phone } = body;
+      if (!id) return json({ ok: false, error: 'Falta el usuario.' }, 400);
+      if (!(await canTouchTarget(id))) return json({ ok: false, error: 'Ese usuario esta fuera de tu alcance.' }, 403);
+      await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          name: (name || '').trim() || null,
+          email: email ? String(email).trim().toLowerCase() : null,
+          phone: cleanPhone(phone),
+        }),
+      });
+      return json({ ok: true });
     }
 
     if (action === 'reset') {

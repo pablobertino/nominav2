@@ -1587,6 +1587,13 @@ input.needfill:focus, select.needfill:focus {
 .cell-name { font-weight:500; }
 .cell-mail { font-size:12.5px; color:var(--muted); }
 
+/* v5.07: la celda de contacto muestra correo + telefono. El telefono es lo que
+   habilita mandarle las credenciales por WhatsApp; "Sin telefono" en gris claro
+   deja a la vista a quien falta cargarselo (se hace con el boton Editar). */
+.ct-mail { font-size:12.5px; color:var(--muted); }
+.ct-tel { font-size:11.5px; color:var(--ink-soft, #475569); margin-top:3px; white-space:nowrap; }
+.ct-tel.none { color:var(--faint); font-style:italic; }
+
 /* Ultimo acceso al portal (last_login_at): linea gris chica bajo el estado. */
 .cell-lastlogin { font-size:10.5px; color:var(--faint); margin-top:4px; white-space:nowrap; }
 .cell-lastlogin.none { font-style:italic; }

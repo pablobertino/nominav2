@@ -417,7 +417,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.06</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.07</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2895,10 +2895,14 @@ function auRowCommonActs(a, self, isSuper = true) {
     : `<button class="btn btn-mini au-scov" data-id="${a.id}" data-u="${a.username}" data-name="${(a.name || '').replace(/"/g, '&quot;')}" data-role="${a.role}" title="Alcances por sección (override)">⚡</button>`;
   const roleBtn = (self || !isSuper) ? scovBtn
     : scovBtn + `<button class="btn btn-mini" data-act="role" data-id="${a.id}" data-u="${a.username}" data-role="${a.role}" title="Cambiar rol">Rol</button>`;
+  /* v5.07: boton Editar (nombre / correo / telefono). El telefono es lo que
+     habilita enviarle las credenciales por WhatsApp, y hasta ahora solo se
+     podia cargar AL CREAR: los miembros ya existentes no tenian como. */
+  const editBtn = `<button class="btn btn-mini" data-act="edit" data-id="${a.id}" data-u="${a.username}" data-name="${(a.name || '').replace(/"/g, '&quot;')}" data-mail="${(a.email || '').replace(/"/g, '&quot;')}" data-tel="${(a.phone || '').replace(/"/g, '&quot;')}" title="Editar nombre, correo y telefono">Editar</button>`;
   const resetBtn = `<button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>`;
   const toggleBtn = self ? ''
     : `<button class="btn btn-mini" data-act="toggle" data-id="${a.id}" data-active="${a.is_active}">${a.is_active ? 'Desactivar' : 'Activar'}</button>`;
-  return { roleBtn, resetBtn, toggleBtn };
+  return { roleBtn, editBtn, resetBtn, toggleBtn };
 }
 
 /* StatsCard reutilizable. */
@@ -2997,9 +3001,18 @@ async function viewEquipo(user) {
   const roleCatalog = await ensureAdminRoles(user);
   const gestoresCount = rows.filter(a => a.role === 'gestor_empresa').length;
 
-  const emailCell = (a) => a.email
-    ? `<td class="cell-mail" data-label="Correo">${a.email}</td>`
-    : '<td class="cell-mail" data-label="Correo"><span class="muted">\u2014</span></td>';
+  /* v5.07: la celda de Correo pasa a ser CONTACTO: correo + telefono. El
+     telefono se necesita a la vista para saber a quien se le puede mandar las
+     credenciales por WhatsApp y a quien le falta cargarselo. */
+  const emailCell = (a) => {
+    const mail = a.email
+      ? `<div class="ct-mail">${a.email}</div>`
+      : '<div class="ct-mail"><span class="muted">—</span></div>';
+    const tel = a.phone
+      ? `<div class="ct-tel">📱 ${a.phone}</div>`
+      : '<div class="ct-tel none">Sin teléfono</div>';
+    return `<td class="cell-mail" data-label="Contacto">${mail}${tel}</td>`;
+  };
 
   // ---- Fila superadmin (destacada, fuera de las grillas) ----
   const suHtml = supers.map(a => {
@@ -3031,7 +3044,7 @@ async function viewEquipo(user) {
 
   function roleRowHtml(a, kind) {
     const self = String(a.id) === String(user.id);
-    const { roleBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self, isSuper);
+    const { roleBtn, editBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self, isSuper);
     const scopeTd = kind === 'client'
       ? `<td data-label="Alcance">${scopeCellEnt(a)}</td>`
       : `<td data-label="Alcance">${scopeCellBoth(a)}</td>`;
@@ -3056,6 +3069,7 @@ async function viewEquipo(user) {
       <td class="cell-actcell" style="text-align:right"><div class="cell-actions">
         ${scopeBtns}
         ${roleBtn}
+        ${editBtn}
         ${ostBtn}
         ${resetBtn}
         ${toggleBtn}
@@ -3093,7 +3107,7 @@ async function viewEquipo(user) {
       </div>
       ${stats}
       <div class="tablebox scroll-x u-compact tbl-cards"><table><thead><tr>
-        <th>Usuario</th><th>Nombre</th><th>Correo</th>${scopeTh}${ostTh}<th>Estado</th><th style="text-align:right">Acciones</th>
+        <th>Usuario</th><th>Nombre</th><th>Contacto</th>${scopeTh}${ostTh}<th>Estado</th><th style="text-align:right">Acciones</th>
       </tr></thead><tbody>${bodyRows}</tbody></table></div>
     </div>`;
   }
@@ -3144,6 +3158,7 @@ function auCreateModal(user) {
     <label class="flabel">Usuario</label><input id="auU" placeholder="ej. nombre.apellido" style="margin-bottom:12px">
     <label class="flabel">Nombre</label><input id="auN" placeholder="Nombre completo" style="margin-bottom:12px">
     <label class="flabel">Correo <span class="muted">(opcional)</span></label><input id="auE" placeholder="correo@grupocanaima.com" style="margin-bottom:12px">
+    <label class="flabel">Teléfono <span class="muted">(opcional · para enviarle sus datos por WhatsApp)</span></label><input id="auT" placeholder="ej. 0414-1234567" style="margin-bottom:12px">
     <label class="flabel">Rol</label>
     <select id="auR" style="margin-bottom:14px;width:100%">${adminRoleOptionsHtml('admin')}</select>
     ${pwdBlockHtml()}
@@ -3155,6 +3170,7 @@ function auCreateModal(user) {
     const pw = readPwd();
     const d = await auApi({ action: 'create', adminId: user.id,
       username: $('#auU').value, name: $('#auN').value, email: $('#auE').value || null,
+      phone: $('#auT').value || null,   // v5.07
       role: $('#auR').value, ...pw });
     if (!d.ok) { alert(d.error); return; }
     closeModal();
@@ -3166,6 +3182,7 @@ function auAction(ds, user) {
   if (ds.act === 'scope-store') { openScopeEditor(user, ds.id, ds.u, 'store', 'equipo'); return; }
   if (ds.act === 'scope-ent') { openScopeEditor(user, ds.id, ds.u, 'enterprise', 'equipo'); return; }
   if (ds.act === 'role') { auRoleModal(ds, user); return; }
+  if (ds.act === 'edit') { auEditModal(ds, user); return; }   // v5.07
   if (ds.act === 'osticket') { auSyncClientOne(ds, user); return; }
   if (ds.act === 'osticket-agent') { auAgentInfo(ds, user); return; }
   if (ds.act === 'toggle') {
@@ -3311,6 +3328,48 @@ function auAgentInfo(ds, user) {
    personal (superadmin no es elegible aqui). Preselecciona el rol actual
    (ds.role). El backend rechaza: cambiar el propio rol y quitar el ultimo
    superadmin. El error se muestra dentro del modal (sin alert nativo). */
+/* v5.07: editar los datos de CONTACTO de un miembro (nombre, correo, telefono).
+   Hasta ahora el correo y el nombre solo se podian poner AL CREAR: si un miembro
+   ya existia, no habia forma de cargarle el telefono (que es lo que necesita el
+   envio de credenciales por WhatsApp). El rol y la clave siguen teniendo sus
+   propios botones (Rol / Resetear): aca no se tocan. */
+function auEditModal(ds, user) {
+  openModal(`
+    <div class="modal-head"><span>Editar datos</span><button class="modal-x" id="mX">✕</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 16px">${ds.u}</p>
+    <label class="flabel">Nombre</label><input id="aeN" placeholder="Nombre completo" style="margin-bottom:12px">
+    <label class="flabel">Correo <span class="muted">(opcional)</span></label><input id="aeE" placeholder="correo@grupocanaima.com" style="margin-bottom:12px">
+    <label class="flabel">Teléfono <span class="muted">(opcional · para enviarle sus datos por WhatsApp)</span></label><input id="aeT" placeholder="ej. 0414-1234567" style="margin-bottom:4px">
+    <p id="auEditErr" style="color:var(--danger);font-size:12.5px;margin:10px 0 0;display:none"></p>
+    <div class="modal-actions" style="margin-top:14px">
+      <button class="btn" id="mCancel">Cancelar</button>
+      <button class="btn btn-primary" id="mOk">Guardar</button>
+    </div>`);
+  $('#aeN').value = ds.name || '';
+  $('#aeE').value = ds.mail || '';
+  $('#aeT').value = ds.tel || '';
+  $('#mX').addEventListener('click', closeModal);
+  $('#mCancel').addEventListener('click', closeModal);
+  $('#mOk').addEventListener('click', async () => {
+    const err = $('#auEditErr');
+    const btn = $('#mOk');
+    btn.disabled = true; btn.textContent = 'Guardando…';
+    let d;
+    try {
+      d = await auApi({ action: 'update_contact', adminId: user.id, id: ds.id,
+        name: $('#aeN').value, email: $('#aeE').value || null, phone: $('#aeT').value || null });
+    } catch (e) { d = { ok: false, error: 'Error de conexion: ' + ((e && e.message) || e) }; }
+    if (!d || !d.ok) {
+      btn.disabled = false; btn.textContent = 'Guardar';
+      err.textContent = (d && d.error) || 'No se pudo guardar.';
+      err.style.display = '';
+      return;
+    }
+    closeModal();
+    viewEquipo(user);
+  });
+}
+
 function auRoleModal(ds, user) {
   // Roles desde la BD (cache ADMIN_ROLES, cargado al entrar a Equipo).
   // superadmin no es elegible aqui (se excluye). Fallback: lista historica.
@@ -3325,7 +3384,7 @@ function auRoleModal(ds, user) {
     <p class="muted" style="font-size:12.5px;margin:0 0 16px">${ds.u}</p>
     <label class="flabel">Rol</label>
     <select id="auRoleSel" style="width:100%;margin-bottom:8px">${opts}</select>
-    <p class="muted" style="font-size:11.5px;margin:0">Rol actual: <b>${ROLE_LABELS[cur] || cur || '\u2014'}</b>. El superadmin no se asigna desde aqui.</p>
+    <p class="muted" style="font-size:11.5px;margin:0">Rol actual: <b>${roleLabelOf(cur) || '\u2014'}</b>. El superadmin no se asigna desde aqui.</p>
     <p id="auRoleErr" style="color:var(--danger);font-size:12.5px;margin:10px 0 0;display:none"></p>
     <div class="modal-actions">
       <button class="btn" id="mCancel">Cancelar</button>
