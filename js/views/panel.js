@@ -397,7 +397,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.03</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.04</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -805,7 +805,8 @@ function empStatsHtml(companies) {
 }
 
 /* ---------- VISTA: TIENDAS ---------- */
-function viewTiendas(user) {
+async function viewTiendas(user) {
+  await ensureReportPerms(user);   // v5.04: el boton Reportar sale de la matriz
   const isAdmin = user.kind === 'admin';
   const isEditor = user.kind === 'admin' && user.role === 'editor_personal';
   const isGestor = user.kind === 'admin' && user.role === 'gestor_empresa';
@@ -815,7 +816,11 @@ function viewTiendas(user) {
   const canSyncAll = isAdmin && !isGestor;
   const canEditContact = !isEditor && !isGestor;
   const canDepartments = !isEditor && !isGestor;
-  const canReport = !isEditor;   // gestor si reporta; editor no
+  // v5.04: antes era `!isEditor` (rol legacy) y cualquier rol nuevo sin
+  // permisos de reportar veia el boton y cobraba 403 al usarlo. Ahora manda
+  // la matriz: se pinta solo si tiene AL MENOS UN report.* concedido (el
+  // picker que abre muestra unicamente los tipos permitidos).
+  const canReport = !isEditor && canReportAny();
   // Direccion + contacto de la empresa: SOLO superadmin edita; el resto abre
   // el modal en modo consulta (campos disabled, sin boton Guardar).
   const canEditCompany = isSuper;
@@ -6016,7 +6021,7 @@ async function navigate(view, user, fromHistory = false) {
     await ensureCatalog(user);
     if (!CATALOG) return;
   }
-  if (view === 'tiendas') viewTiendas(user);
+  if (view === 'tiendas') await viewTiendas(user);
   else if (view === 'catalogos') viewCatalogos();
   else if (view === 'usuarios') viewUsuarios(user);
   else if (view === 'quincenas') viewPeriods(user);
@@ -6063,66 +6068,79 @@ async function navigate(view, user, fromHistory = false) {
   }
 }
 
+/* ---------- v5.04: PERMISOS DE REPORTAR (matriz de Roles) ----------
+   Los botones de emitir reportes viven en TRES superficies (Empresas ->
+   boton Reportar, el picker que abre, y Mi empresa). El servidor ya gatea
+   de verdad (reports.js: report.marcaje/ausencia/ingreso/egreso/
+   modificacion, gate real desde v4.74), pero la UI los pintaba por ROL
+   LEGACY (canReport = !isEditor) o sin gate alguno: un rol sin ningun
+   report.* (ej. Supervisor Tiendas) veia los botones y cobraba un 403 al
+   usarlos. Mismo patron que v5.01 en Personal: se consulta my-perms una
+   vez por sesion de panel y se cachea en module scope.
+   Fallo de red / respuesta vacia => permisivo (el server protege igual y
+   nadie se queda sin reportar por un error transitorio). */
+const REPORT_CODES = ['report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion'];
+let REPORT_PERMS = null;   // { 'report.marcaje': bool, ... } | null (aun no resuelto)
+
+async function ensureReportPerms(user) {
+  if (REPORT_PERMS) return REPORT_PERMS;
+  const allow = () => { REPORT_PERMS = {}; REPORT_CODES.forEach(c => { REPORT_PERMS[c] = true; }); return REPORT_PERMS; };
+  if (user.kind === 'admin' && user.role === 'superadmin') return allow();
+  try {
+    const r = await fetch('/api/my-perms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null }, codes: REPORT_CODES }),
+    }).then(x => x.json());
+    if (!r || !r.ok) return allow();
+    if (r.super) return allow();
+    REPORT_PERMS = {};
+    REPORT_CODES.forEach(c => { REPORT_PERMS[c] = !!(r.perms && r.perms[c]); });
+    return REPORT_PERMS;
+  } catch (_) { return allow(); }
+}
+function canReportKind(kind) { return !REPORT_PERMS || !!REPORT_PERMS[`report.${kind}`]; }
+function canReportAny() { return !REPORT_PERMS || REPORT_CODES.some(c => REPORT_PERMS[c]); }
+
+/* Definicion de los 5 tiles: un solo sitio para el picker (Empresas) y para
+   Mi empresa, asi no se duplica el HTML ni el gate. */
+const REPORT_TILES = [
+  { kind: 'marcaje', ico: '🕐', title: 'Marcaje Manual', desc: 'Registra entradas y salidas que no quedaron en el biométrico.' },
+  { kind: 'ausencia', ico: '📅', title: 'Ausencia', desc: 'Reposos, permisos y faltas.' },
+  { kind: 'ingreso', ico: '➕', title: 'Ingreso', desc: 'Nuevo trabajador en la tienda.' },
+  { kind: 'egreso', ico: '🔴', title: 'Egreso', desc: 'Trabajador que deja la tienda.' },
+  { kind: 'modificacion', ico: '✏️', title: 'Modificación', desc: 'Corrección de datos de un trabajador.' },
+];
+const REPORT_FN = {
+  marcaje: marcajeReport, ausencia: ausenciaReport, ingreso: ingresoReport,
+  egreso: egresoReport, modificacion: modificacionReport,
+};
+function reportTilesHtml() {
+  return REPORT_TILES.filter(t => canReportKind(t.kind)).map(t => `
+      <button class="report-tile" data-report="${t.kind}">
+        <span class="rt-ico">${t.ico}</span>
+        <span class="rt-body"><span class="rt-title">${t.title}</span>
+          <span class="rt-desc">${t.desc}</span></span>
+      </button>`).join('');
+}
+/* Cablea los tiles visibles de un host contra launchWizard. */
+function wireReportTiles(host, u, onExit) {
+  if (!host) return;
+  REPORT_TILES.forEach(t => {
+    const el = host.querySelector(`[data-report="${t.kind}"]`);
+    if (el) el.addEventListener('click', () => { if (host.id === 'rpGrid') closeModal(); launchWizard(u, REPORT_FN[t.kind], onExit); });
+  });
+}
+
 /* ---------- Selector de tipo de reporte (admin desde Empresas) ----------
    Reusa el wizard existente; el responsable sera la central (el admin).
-   Por ahora solo Marcaje esta activo; los demas quedan "pronto". */
+   v5.04: solo se pintan los tipos que el rol tiene concedidos en la matriz. */
 function openReportPicker(u, onExit) {
   openModal(`
     <div class="modal-head"><span>Reportar por ${u.pickedCompany}</span><button class="modal-x" id="mX">✕</button></div>
     <p class="muted" style="font-size:12.5px;margin:0 0 16px">${u.pickedCompanyName || ''} · el reporte quedará a nombre de la central (Administrador).</p>
-    <div class="report-grid" id="rpGrid" style="grid-template-columns:1fr">
-      <button class="report-tile" data-report="marcaje">
-        <span class="rt-ico">🕐</span>
-        <span class="rt-body"><span class="rt-title">Marcaje Manual</span>
-          <span class="rt-desc">Registra entradas y salidas que no quedaron en el biométrico.</span></span>
-      </button>
-      <button class="report-tile" data-report="ausencia">
-        <span class="rt-ico">📅</span>
-        <span class="rt-body"><span class="rt-title">Ausencia</span>
-          <span class="rt-desc">Reposos, permisos y faltas.</span></span>
-      </button>
-      <button class="report-tile" data-report="ingreso">
-        <span class="rt-ico">➕</span>
-        <span class="rt-body"><span class="rt-title">Ingreso</span>
-          <span class="rt-desc">Nuevo trabajador en la tienda.</span></span>
-      </button>
-      <button class="report-tile" data-report="egreso">
-        <span class="rt-ico">🔴</span>
-        <span class="rt-body"><span class="rt-title">Egreso</span>
-          <span class="rt-desc">Trabajador que deja la tienda.</span></span>
-      </button>
-      <button class="report-tile" data-report="modificacion">
-        <span class="rt-ico">✏️</span>
-        <span class="rt-body"><span class="rt-title">Modificación</span>
-          <span class="rt-desc">Corrección de datos de un trabajador.</span></span>
-      </button>
-    </div>`);
+    <div class="report-grid" id="rpGrid" style="grid-template-columns:1fr">${reportTilesHtml()}</div>`);
   $('#mX').addEventListener('click', closeModal);
-  const tile = document.querySelector('#rpGrid [data-report="marcaje"]');
-  if (tile) tile.addEventListener('click', () => {
-    closeModal();
-    launchWizard(u, marcajeReport, onExit);
-  });
-  const tileAus = document.querySelector('#rpGrid [data-report="ausencia"]');
-  if (tileAus) tileAus.addEventListener('click', () => {
-    closeModal();
-    launchWizard(u, ausenciaReport, onExit);
-  });
-  const tileIng = document.querySelector('#rpGrid [data-report="ingreso"]');
-  if (tileIng) tileIng.addEventListener('click', () => {
-    closeModal();
-    launchWizard(u, ingresoReport, onExit);
-  });
-  const tileEgr = document.querySelector('#rpGrid [data-report="egreso"]');
-  if (tileEgr) tileEgr.addEventListener('click', () => {
-    closeModal();
-    launchWizard(u, egresoReport, onExit);
-  });
-  const tileMod = document.querySelector('#rpGrid [data-report="modificacion"]');
-  if (tileMod) tileMod.addEventListener('click', () => {
-    closeModal();
-    launchWizard(u, modificacionReport, onExit);
-  });
+  wireReportTiles(document.querySelector('#rpGrid'), u, onExit);
 }
 
 /* ---------- VISTA: MI EMPRESA (solo rol tienda) ---------- */
@@ -6130,6 +6148,7 @@ async function viewMiEmpresa(user) {
   $('#pnlMain').innerHTML = `<div class="pnl-loading">Cargando…</div>`;
   // El catálogo (filtrado) trae solo la propia empresa de la tienda
   await ensureCatalog(user);
+  await ensureReportPerms(user);   // v5.04: que tipos puede emitir este rol
   const c = (CATALOG && CATALOG.companies && CATALOG.companies[0]) || null;
   if (!c) {
     $('#pnlMain').innerHTML = `<div class="card"><p class="muted" style="margin:0">No se encontraron los datos de tu empresa. Contacta a Capital Humano.</p></div>`;
@@ -6153,56 +6172,11 @@ async function viewMiEmpresa(user) {
       </div>
     </div>
 
-    <div class="pnl-head" style="margin-top:6px"><div><h2 style="font-size:18px;margin:0">Reportar a Nómina</h2>
+    ${canReportAny() ? `<div class="pnl-head" style="margin-top:6px"><div><h2 style="font-size:18px;margin:0">Reportar a Nómina</h2>
       <p class="muted" style="margin:2px 0 0">Elige el tipo de novedad que quieres reportar.</p></div></div>
-    <div class="report-grid" id="reportGrid">
-      <button class="report-tile" data-report="marcaje">
-        <span class="rt-ico">🕐</span>
-        <span class="rt-body"><span class="rt-title">Marcaje Manual</span>
-          <span class="rt-desc">Registra entradas y salidas que no quedaron en el biométrico.</span></span>
-      </button>
-      <button class="report-tile" data-report="ausencia">
-        <span class="rt-ico">📅</span>
-        <span class="rt-body"><span class="rt-title">Ausencia</span>
-          <span class="rt-desc">Reposos, permisos y faltas.</span></span>
-      </button>
-      <button class="report-tile" data-report="ingreso">
-        <span class="rt-ico">➕</span>
-        <span class="rt-body"><span class="rt-title">Ingreso</span>
-          <span class="rt-desc">Nuevo trabajador en la tienda.</span></span>
-      </button>
-      <button class="report-tile" data-report="egreso">
-        <span class="rt-ico">🔴</span>
-        <span class="rt-body"><span class="rt-title">Egreso</span>
-          <span class="rt-desc">Trabajador que deja la tienda.</span></span>
-      </button>
-      <button class="report-tile" data-report="modificacion">
-        <span class="rt-ico">✏️</span>
-        <span class="rt-body"><span class="rt-title">Modificación</span>
-          <span class="rt-desc">Corrección de datos de un trabajador.</span></span>
-      </button>
-    </div>`;
+    <div class="report-grid" id="reportGrid">${reportTilesHtml()}</div>` : ''}`;
 
-  const tile = $('#reportGrid').querySelector('[data-report="marcaje"]');
-  if (tile) tile.addEventListener('click', () => {
-    launchWizard(user, marcajeReport, () => viewMiEmpresa(user));
-  });
-  const tileAus = $('#reportGrid').querySelector('[data-report="ausencia"]');
-  if (tileAus) tileAus.addEventListener('click', () => {
-    launchWizard(user, ausenciaReport, () => viewMiEmpresa(user));
-  });
-  const tileIng = $('#reportGrid').querySelector('[data-report="ingreso"]');
-  if (tileIng) tileIng.addEventListener('click', () => {
-    launchWizard(user, ingresoReport, () => viewMiEmpresa(user));
-  });
-  const tileEgr = $('#reportGrid').querySelector('[data-report="egreso"]');
-  if (tileEgr) tileEgr.addEventListener('click', () => {
-    launchWizard(user, egresoReport, () => viewMiEmpresa(user));
-  });
-  const tileMod = $('#reportGrid').querySelector('[data-report="modificacion"]');
-  if (tileMod) tileMod.addEventListener('click', () => {
-    launchWizard(user, modificacionReport, () => viewMiEmpresa(user));
-  });
+  wireReportTiles($('#reportGrid'), user, () => viewMiEmpresa(user));
 }
 
 /* ---------- Cajon movil (<=768px) ----------
