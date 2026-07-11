@@ -1027,31 +1027,109 @@ async function publish(env, actor, user, body) {
     return json({ ok: false, error: 'Ningun cambio paso la validacion para enviar a AX.', rejected }, 422);
   }
 
-  // Enviar a AX (POST).
-  let axRes;
-  try {
-    const r = await fetch(HCM_API, {
-      method: 'POST',
-      headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-API-Key': env.canaima_apikey },
-      body: JSON.stringify(clean),
-    });
-    const text = await r.text();
-    let data = null;
-    try { data = text ? JSON.parse(text) : null; } catch { /* no-json */ }
-    axRes = { ok: r.ok, status: r.status, data, text };
-  } catch (e) {
-    return json({ ok: false, error: `No se pudo conectar con AX: ${String(e.message || e)}`, rejected }, 502);
+  /* ===== ENVIO FICHA POR FICHA (v5.11) =====
+     Antes se mandaba UN POST con el array completo. Problema: la API responde
+     un unico status para todo el lote, asi que un solo registro malo tumbaba
+     las 87 fichas y encima el error no decia CUAL fallaba ("La API de AX
+     respondio 500" y nada mas). Peor: quedaba todo sin publicar, incluidas las
+     86 sanas.
+
+     Ahora una llamada por ficha. Cuesta N requests en vez de 1, pero:
+       - una ficha mala no arrastra al resto,
+       - el error queda ATRIBUIDO a su cedula, con el texto que devolvio la API,
+       - se puede publicar parcialmente (lo que entro, entro).
+
+     Pausa entre envios: la API es SOAP+NTLM contra el ERP, no aguanta una
+     rafaga. Se espacian los envios (SEND_GAP_MS) y ademas se corta si hay
+     demasiados errores seguidos (probable caida del ERP: seguir seria golpear
+     al muerto y tardar 87 timeouts en avisar).
+
+     Limite de subrequests de Cloudflare (50/invocacion en el plan gratuito,
+     1000 en el pago): el resto de la funcion ya consume varios. Se acota el
+     lote por invocacion a MAX_PER_CALL y se avisa al front, que reintenta con
+     lo que quedo pendiente. */
+  const SEND_GAP_MS = 250;        // respiro entre fichas
+  const MAX_FAILS_IN_ROW = 5;     // si el ERP se cayo, no seguir golpeando
+  const MAX_PER_CALL = 40;        // margen para los subrequests de Cloudflare
+
+  const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+  const okCedsSent = [];
+  const okSetIdsSent = [];
+  const failed = [];              // { id_number, status, detail }
+  let failsInRow = 0;
+  let aborted = null;             // motivo del corte, si hubo
+  let lastAxResponse = null;
+
+  const batch = clean.slice(0, MAX_PER_CALL);
+  const deferred = clean.length > MAX_PER_CALL ? clean.length - MAX_PER_CALL : 0;
+
+  for (let i = 0; i < batch.length; i++) {
+    const payload = batch[i];
+    const ced = okCeds[i];
+    const setId = okSetIds[i];
+
+    if (i > 0) await sleep(SEND_GAP_MS);
+
+    let r;
+    try {
+      // La API espera un ARRAY aunque sea una sola ficha (mismo contrato).
+      const res = await fetch(HCM_API, {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-API-Key': env.canaima_apikey },
+        body: JSON.stringify([payload]),
+      });
+      const text = await res.text();
+      let data = null;
+      try { data = text ? JSON.parse(text) : null; } catch { /* no-json */ }
+      r = { ok: res.ok, status: res.status, data, text };
+    } catch (e) {
+      r = { ok: false, status: 0, data: null, text: String(e.message || e) };
+    }
+
+    if (r.ok) {
+      okCedsSent.push(ced);
+      okSetIdsSent.push(setId);
+      lastAxResponse = r.data ?? r.text ?? null;
+      failsInRow = 0;
+    } else {
+      failsInRow++;
+      failed.push({
+        id_number: ced,
+        status: r.status,
+        // El texto CRUDO de la API: aca esta la razon real del rechazo. Antes
+        // se perdia (el front solo mostraba "respondio 500").
+        detail: (r.text || '').slice(0, 600) || null,
+      });
+      if (failsInRow >= MAX_FAILS_IN_ROW) {
+        aborted = `Se corto el envio tras ${MAX_FAILS_IN_ROW} errores seguidos: el sistema parece no estar respondiendo. Lo que ya se envio quedo publicado.`;
+        break;
+      }
+    }
   }
-  if (!axRes.ok) {
-    return json({ ok: false, error: `La API de AX respondio ${axRes.status} al enviar.`, detail: axRes.text || null, rejected }, 502);
+
+  // Nada entro y ademas nada se pudo enviar -> error duro (no hay que marcar).
+  if (!okCedsSent.length) {
+    return json({
+      ok: false,
+      error: aborted || 'El sistema rechazo todas las fichas. Ninguna se publico.',
+      failed,
+      failed_count: failed.length,
+      rejected,
+      deferred,
+    }, 502);
   }
+
+  const axRes = { ok: true, data: lastAxResponse, text: null };
+  const okCedsFinal = okCedsSent;
+  const okSetIdsFinal = okSetIdsSent;
 
   // Exito: marcar change_set como published (con resolved_by/at y ax_response),
   // y limpiar ax_pending del master de los enviados.
   const nowIso = new Date().toISOString();
   const rid = await actorAdminId(env, user);
-  if (okSetIds.length) {
-    const setList = okSetIds.join(',');
+  if (okSetIdsFinal.length) {
+    const setList = okSetIdsFinal.join(',');
     await sb(env, `ax_change_set?id=in.(${setList})`, {
       method: 'PATCH', headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -1060,8 +1138,8 @@ async function publish(env, actor, user, body) {
       }),
     });
   }
-  if (okCeds.length) {
-    const okList = okCeds.map(c => `"${c}"`).join(',');
+  if (okCedsFinal.length) {
+    const okList = okCedsFinal.map(c => `"${c}"`).join(',');
     await sb(env, `workers_master?id_number=in.(${okList})`, {
       method: 'PATCH', headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
@@ -1078,7 +1156,7 @@ async function publish(env, actor, user, body) {
   // masterByCed ANTES de la limpieza); si cambio algun nombre se recalcula
   // full_name = primer + segundo + apellidos. Errores aqui no rompen la
   // publicacion (el pull posterior corrige igual).
-  for (const ced of okCeds) {
+  for (const ced of okCedsFinal) {
     const m = masterByCed[ced];
     if (!m) continue;
     const pf = (m.ax_pending_fields && typeof m.ax_pending_fields === 'object') ? Object.keys(m.ax_pending_fields) : [];
@@ -1102,10 +1180,17 @@ async function publish(env, actor, user, body) {
 
   return json({
     ok: true,
-    sent: clean.length,
-    published: okCeds,
+    sent: okCedsFinal.length,
+    published: okCedsFinal,
     rejected,
     rejected_count: rejected.length,
+    /* v5.11: fichas que el SISTEMA rechazo, cada una con su cedula y el texto
+       crudo que devolvio la API. Antes esto no existia: el lote entero moria
+       con un "respondio 500" sin decir de quien. */
+    failed,
+    failed_count: failed.length,
+    aborted,          // motivo del corte, si se corto por errores en cadena
+    deferred,         // fichas que no entraron en esta tanda (reintentar)
     ax_response: axRes.data ?? axRes.text ?? null,
   });
 }

@@ -181,7 +181,7 @@ function ensureStyles() {
   .axr-modal .box.dis{background:var(--danger-bg,#fef2f2);border:1px solid #f3c2c2;color:var(--danger,#b91c1c)}
   .axr-modal .lst{margin:12px 0 0;max-height:200px;overflow:auto}
   .axr-modal .lst .it{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--border-soft,#eef1f5)}
-  .axr-modal .res{margin-top:12px;border-radius:10px;padding:10px 13px;font-size:12.5px;display:none}
+  .axr-modal .res{margin-top:12px;border-radius:10px;padding:10px 13px;font-size:12.5px;display:none;max-height:320px;overflow:auto}
   .axr-modal .res.ok{background:var(--success-bg,#f0fdf4);border:1px solid #bbf7d0;color:var(--success,#15803d);display:block}
   .axr-modal .res.err{background:var(--danger-bg,#fef2f2);border:1px solid #f3c2c2;color:var(--danger,#b91c1c);display:block}
   .axr-modal .foot{display:flex;gap:8px;justify-content:flex-end;margin-top:18px}
@@ -539,6 +539,54 @@ function targetsFor(scope, id) {
   return vis;   // all
 }
 
+/* v5.11: bloque con las fichas que el SISTEMA rechazo, cada una con su cedula
+   y el TEXTO CRUDO que devolvio la API. Antes ese texto se descartaba: el modal
+   solo decia "La API de AX respondio 500", sin decir de quien ni por que, y
+   como el envio era un unico POST con todo el lote adentro, una sola ficha mala
+   tumbaba las 87 y no habia forma de saber cual era.
+   El detalle se muestra en <details> (cerrado) para no gritar: lo normal es no
+   necesitarlo, pero cuando hace falta, esta ahi y se puede copiar. */
+function failedHtml(r) {
+  const failed = (r && r.failed) || [];
+  const rejected = (r && r.rejected) || [];
+  if (!failed.length && !rejected.length) return '';
+
+  let h = '';
+
+  if (failed.length) {
+    h += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(0,0,0,.08)">
+      <b>${failed.length} ficha(s) que el sistema rechazó:</b></div>`;
+    h += failed.map(f => {
+      const det = f.detail ? String(f.detail).trim() : '';
+      return `<div style="margin-top:7px">
+        <div style="font-weight:600">${esc(f.id_number)}${f.status ? ` <span style="font-weight:400;opacity:.75">· error ${esc(f.status)}</span>` : ''}</div>
+        ${det ? `<details style="margin-top:3px">
+            <summary style="cursor:pointer;font-size:11.5px;opacity:.85">Ver lo que respondió el sistema</summary>
+            <pre style="margin:5px 0 0;padding:8px 10px;background:rgba(0,0,0,.04);border-radius:7px;font-size:11px;line-height:1.45;white-space:pre-wrap;word-break:break-word;max-height:170px;overflow:auto">${esc(det)}</pre>
+          </details>`
+          : '<div style="font-size:11.5px;opacity:.75">El sistema no dio ningún detalle.</div>'}
+      </div>`;
+    }).join('');
+    h += `<div style="margin-top:9px;font-size:11.5px;opacity:.85">
+      Las demás fichas sí se publicaron. Estas siguen pendientes: se pueden reintentar.</div>`;
+  }
+
+  // 'rejected' es distinto de 'failed': son las que NI SIQUIERA se enviaron
+  // (no pasaron la validacion local, p.ej. sin eco del sistema). Tambien vale
+  // la pena verlas, pero separadas: el problema esta de este lado.
+  if (rejected.length) {
+    h += `<div style="margin-top:10px;padding-top:10px;border-top:1px solid rgba(0,0,0,.08)">
+        <b>${rejected.length} ficha(s) que no se enviaron:</b>
+        <div style="margin-top:5px;font-size:11.5px">`
+      + rejected.slice(0, 8).map(x =>
+        `<div>${esc(x.id_number || '?')} — ${esc(x.reason || 'sin motivo')}</div>`).join('')
+      + (rejected.length > 8 ? `<div style="opacity:.75">… y ${rejected.length - 8} más</div>` : '')
+      + '</div></div>';
+  }
+
+  return h;
+}
+
 /* Modal de confirmacion (siempre). verb: 'publish' | 'discard'. */
 function confirmAction(verb, scope, id) {
   const targets = targetsFor(scope, id);
@@ -597,22 +645,32 @@ function confirmAction(verb, scope, id) {
 
     if (!r || !r.ok) {
       res.className = 'res err';
-      res.textContent = '⚠ ' + ((r && r.error) || 'No se pudo completar la acción.');
-      goB.disabled = false; goB.textContent = isPub ? 'Reintentar' : 'Reintentar';
+      /* v5.11: el detalle REAL del rechazo. Antes solo se veia "La API de AX
+         respondio 500" y quedabas a ciegas: no sabias que ficha ni por que. */
+      res.innerHTML = '⚠ ' + esc((r && r.error) || 'No se pudo completar la acción.')
+        + failedHtml(r);
+      goB.disabled = false; goB.textContent = 'Reintentar';
       return;
     }
     const done = isPub ? (r.published || []).length : (r.discarded || []).length;
     const rej = (r.rejected_count || 0);
+    const fail = (r.failed_count || 0);
     if (done > 0) {
-      res.className = 'res ok';
-      res.innerHTML = isPub
-        ? `✓ <b>${done}</b> ficha(s) publicada(s)${rej ? ` · ${rej} no se pudo enviar` : ''}.`
-        : `✓ <b>${done}</b> ficha(s) anulada(s).`;
+      /* Exito PARCIAL posible (v5.11): antes era todo-o-nada; ahora cada ficha
+         se envia por separado, asi que puede haber publicadas Y rechazadas en
+         la misma corrida. Se muestran ambas cosas. */
+      res.className = fail ? 'res err' : 'res ok';
+      res.innerHTML = (isPub
+        ? `✓ <b>${done}</b> ficha(s) publicada(s)${rej ? ` · ${rej} sin cambios válidos` : ''}.`
+        : `✓ <b>${done}</b> ficha(s) anulada(s).`)
+        + (r.deferred ? `<div style="margin-top:6px">Quedaron <b>${r.deferred}</b> ficha(s) para una próxima tanda: vuelve a publicar para continuar.</div>` : '')
+        + failedHtml(r);
     } else {
       // Nada que hacer (ej. la fila ya estaba resuelta y la lista de la
       // pantalla estaba desactualizada): mensaje claro, no un check enganoso.
       res.className = 'res err';
-      res.textContent = 'ℹ ' + ((r.message || `Nada para ${isPub ? 'publicar' : 'anular'}: los cambios ya estaban resueltos.`)) + ' La lista se actualizó.';
+      res.innerHTML = 'ℹ ' + esc(r.message || `Nada para ${isPub ? 'publicar' : 'anular'}: los cambios ya estaban resueltos.`)
+        + ' La lista se actualizó.' + failedHtml(r);
     }
     // v4.53 FIX: la lista se recarga DE INMEDIATO (antes solo recargaba el
     // boton principal al cerrar; el boton Cancelar renombrado a "Cerrar"
@@ -994,17 +1052,23 @@ function confirmCompare(verb, rows) {
 
     if (!r || !r.ok) {
       res.className = 'res err';
-      res.textContent = '⚠ ' + ((r && r.error) || 'No se pudo completar la acción.');
+      // v5.11: aca tambien se muestra el detalle real del rechazo (Comparar
+      // publica por el mismo endpoint que Sincronizar).
+      res.innerHTML = '⚠ ' + esc((r && r.error) || 'No se pudo completar la acción.') + failedHtml(r);
       goB.disabled = false; goB.textContent = 'Reintentar';
       return;
     }
     const done = isPub ? (r.published || []).length : (r.adopted || []).length;
-    res.className = 'res ok';
-    res.innerHTML = isPub
+    const fail = (r.failed_count || 0);
+    res.className = fail ? 'res err' : 'res ok';
+    res.innerHTML = (isPub
       ? `✓ <b>${done}</b> ficha(s) publicada(s) al sistema.`
-      : `✓ <b>${done}</b> ficha(s) actualizada(s) con el valor del sistema.`;
-    // Marcar las filas como resueltas en el panel.
-    const doneSet = new Set(ids.map(String));
+      : `✓ <b>${done}</b> ficha(s) actualizada(s) con el valor del sistema.`)
+      + failedHtml(r);
+    // Marcar como resueltas SOLO las que realmente entraron: si una ficha la
+    // rechazo el sistema, sigue pendiente y tiene que quedar a la vista.
+    const okIds = isPub ? (r.published || []) : (r.adopted || []);
+    const doneSet = new Set(okIds.map(String));
     CMP_ROWS.forEach(row => { if (doneSet.has(String(row.id_number))) row._done = verb; });
     goB.textContent = 'Listo';
     goB.disabled = false;
