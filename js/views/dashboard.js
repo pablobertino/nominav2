@@ -124,6 +124,48 @@ async function injectPeriodBanner(user) {
   main.insertBefore(el, main.firstChild);
 }
 
+/* ---------- v5.16: aviso de DOBLE EMPLEO ----------
+   Personas activas en dos tiendas a la vez. Es un ERROR de datos, no una
+   estadistica: cuentan DOBLE en la nomina, en los reportes y en los envios.
+
+   Va en el Inicio porque si nadie entra a la vista, nadie se entera. Al
+   hacer clic lleva a la pantalla con el detalle.
+
+   Solo se pinta si hay casos Y si el usuario tiene el permiso (el endpoint
+   gatea con view.dobleempleo; sin permiso responde 403 y no se pinta nada).
+   Silencioso ante cualquier error: un aviso no puede romper el Inicio. */
+async function injectDoubleEmpCard(user) {
+  try {
+    const r = await fetch('/api/double-employment', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'count', user }),
+    }).then(x => x.json());
+    if (!r || !r.ok || !r.n) return;
+
+    const n = Number(r.n) || 0;
+    if (!n) return;
+
+    const main = document.getElementById('pnlMain');
+    if (!main || document.getElementById('dashDoubleEmp')) return;
+
+    const el = document.createElement('button');
+    el.type = 'button';
+    el.id = 'dashDoubleEmp';
+    el.className = 'dash-pbanner dbl';
+    el.innerHTML = `<span class="ic">⚠️</span>
+      <span class="tx">
+        <span class="tt">${n} persona${n === 1 ? '' : 's'} en dos tiendas a la vez</span>
+        <span class="ds">Figura${n === 1 ? '' : 'n'} activa${n === 1 ? '' : 's'} en dos empresas al mismo tiempo: cuenta${n === 1 ? '' : 'n'} doble en la nómina. Hay que corregirlo en el sistema.</span>
+      </span>
+      <span class="go">Ver casos →</span>`;
+    el.addEventListener('click', () => clickNav('dobleempleo'));
+    // Debajo del banner de periodo (si lo hay), pero arriba de todo lo demas.
+    const first = main.querySelector('.dash-pbanner');
+    if (first) first.insertAdjacentElement('afterend', el);
+    else main.insertBefore(el, main.firstChild);
+  } catch (_) { /* el Inicio sigue igual */ }
+}
+
 /* ---------- estilos (una vez) ---------- */
 function ensureStyles() {
   if (document.getElementById('dashStyles')) return;
@@ -266,6 +308,9 @@ function ensureStyles() {
   .dash-pbanner.cut .ic { background:#dbeafe; color:#1e40af; }
   .dash-pbanner.pay  { background:#ecfdf5; border-color:#a7f3d0; color:#166534; }
   .dash-pbanner.pay .ic { background:#dcfce7; color:#166534; }
+  /* v5.16: aviso de doble empleo (error de datos, no estadistica) */
+  .dash-pbanner.dbl { background:#fef2f2; border-color:#fecaca; color:#991b1b; }
+  .dash-pbanner.dbl .ic { background:#fee2e2; color:#dc2626; font-size:15px; }
   `;
   document.head.appendChild(st);
 }
@@ -590,6 +635,8 @@ async function renderAdminDash(user) {
   $('#dashBdays').innerHTML = bdaysSectionHtml(bdToday, bdUpcoming, true);
 
   injectPeriodTimeline($('#pnlMain'));
+  // v5.16: aviso de doble empleo (solo si hay casos y el rol lo permite).
+  injectDoubleEmpCard({ kind: user.kind, id: user.id || null, companyCode: user.companyCode || null });
 }
 
 /* ===================== demografia (sexo / edades / estado civil) ===================== */

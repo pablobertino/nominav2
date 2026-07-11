@@ -23,6 +23,7 @@ import { renderAvisos, gotoAviso as avisosGoto } from './avisos.js';
 import { renderEgressRatify } from './egress-ratify.js';
 import { renderPersonnelSearch } from './personnel-search.js';
 import { renderPersonnelIncomplete } from './personnel-incomplete.js';
+import { renderDoubleEmployment } from './double-employment.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { renderCertSigners } from './cert-signers.js';
@@ -104,6 +105,8 @@ const I = {
   wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
   pin: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
   trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>',
+  // v5.16: triangulo de alerta (vista Doble empleo).
+  alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
 };
 
 /* ---------- NAVEGACION (admin / superadmin) ----------
@@ -131,6 +134,9 @@ const NAV_GROUPS = [
   { title: 'Personal', items: [
     ['buscar', I.search, 'Buscar'],
     ['datosincompletos', I.bizreport, 'Datos incompletos'],
+    // v5.16: Doble empleo. El badge con el numero de casos lo inyecta
+    // paintDoubleEmpBadge() al cargar el panel (solo si hay casos).
+    ['dobleempleo', I.alert, 'Doble empleo'],
     ['egmotivos', I.check, 'Ratificar egresos'],
     ['rostersync', I.sync, 'Carga de personal'],
   ] },
@@ -434,7 +440,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.15</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.16</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -6361,6 +6367,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'egmotivos') renderEgressRatify(user);
   else if (view === 'buscar') renderPersonnelSearch(user);
   else if (view === 'datosincompletos') renderPersonnelIncomplete(user);
+  else if (view === 'dobleempleo') renderDoubleEmployment(user);
   else if (view === 'documentos') renderPersonnelDocs(user, null);
   else if (view === 'miempresa') viewMiEmpresa(user);
   else if (view === 'fotos') {
@@ -6541,6 +6548,58 @@ function setupMobileDrawer(layout) {
   });
 }
 
+/* ===================== v5.16: BADGE DE DOBLE EMPLEO =====================
+   Pinta un contador rojo junto al item "Doble empleo" del menu, y publica
+   el numero para que el Inicio muestre su tarjeta de aviso.
+
+   Por que un badge: si nadie entra a la vista, nadie se entera. Son
+   personas contando DOBLE en la nomina; tiene que verse sin buscarlo.
+
+   Silencioso ante error: el endpoint gatea con view.dobleempleo, asi que
+   un usuario sin permiso recibe 403 y aca no se pinta nada. Cualquier otra
+   falla (red, backend) tampoco puede romper la carga del panel. */
+let DOUBLE_EMP_N = 0;
+export function getDoubleEmpCount() { return DOUBLE_EMP_N; }
+
+async function paintDoubleEmpBadge(user) {
+  try {
+    const r = await fetch('/api/double-employment', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'count', user }),
+    }).then(x => x.json());
+
+    if (!r || !r.ok || !r.n) return;   // sin permiso o sin casos: nada que mostrar
+    DOUBLE_EMP_N = Number(r.n) || 0;
+    if (!DOUBLE_EMP_N) return;
+
+    const btn = document.querySelector('.pnl-side [data-view="dobleempleo"]');
+    if (!btn || btn.querySelector('.pnl-badge')) return;
+
+    if (!document.getElementById('pnlBadgeCss')) {
+      const st = document.createElement('style');
+      st.id = 'pnlBadgeCss';
+      st.textContent = `
+        .pnl-badge{margin-left:auto;background:#dc2626;color:#fff;border-radius:999px;
+          min-width:19px;height:19px;padding:0 6px;font-size:11px;font-weight:800;
+          display:inline-flex;align-items:center;justify-content:center;flex:none;
+          line-height:1}
+        .rail .pnl-badge{position:absolute;top:3px;right:3px;min-width:16px;height:16px;
+          padding:0 4px;font-size:10px;margin-left:0}
+        .rail [data-view="dobleempleo"]{position:relative}`;
+      document.head.appendChild(st);
+    }
+
+    const b = document.createElement('span');
+    b.className = 'pnl-badge';
+    b.textContent = String(DOUBLE_EMP_N);
+    b.title = `${DOUBLE_EMP_N} persona${DOUBLE_EMP_N === 1 ? '' : 's'} activa${DOUBLE_EMP_N === 1 ? '' : 's'} en dos tiendas a la vez`;
+    btn.appendChild(b);
+
+    // El Inicio puede haberse pintado antes que esta respuesta: se le avisa.
+    document.dispatchEvent(new CustomEvent('doubleemp:count', { detail: { n: DOUBLE_EMP_N } }));
+  } catch (_) { /* un badge no rompe el panel */ }
+}
+
 export function renderPanel() {
   const user = getSession();
   if (!user) { go('/login'); return; }
@@ -6584,6 +6643,7 @@ export function renderPanel() {
       tiendas: 'view.empresas', catalogos: 'view.estructura',
       fotos: 'view.fotos', buscar: 'view.buscar',
       datosincompletos: 'view.datosincompletos', egmotivos: 'view.egmotivos',
+      dobleempleo: 'view.dobleempleo',
       rostersync: 'view.rostersync',
       historial: 'view.historial', estadisticas: 'view.estadisticas',
       misstats: 'view.misstats', reportempresas: 'view.reportempresas',
@@ -6646,6 +6706,11 @@ export function renderPanel() {
   setupMobileDrawer(layout);
   // Campanita de novedades (solo admins; si no existe el boton, no hace nada).
   initBell(user);
+  // v5.16: badge de DOBLE EMPLEO en el menu. Solo pinta si hay casos y si el
+  // usuario tiene el permiso (el endpoint gatea; si no lo tiene, devuelve 403
+  // y no se pinta nada). Silencioso ante cualquier error: un badge no puede
+  // romper la carga del panel.
+  paintDoubleEmpBadge(user);
   // Guardian del boton Atras: convierte el Atras del navegador en "volver a la
   // vista anterior dentro del portal" y evita salirse de la pagina por error.
   VIEW_STACK = [];
