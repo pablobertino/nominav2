@@ -33,6 +33,7 @@ import { renderBankAccounts } from './bank-accounts.js';
 import { renderScopeOverridesEditor, decorateScovBadges } from './scope-overrides.js';
 import { renderWaSend } from './wa-send.js';
 import { renderWaGroups } from './wa-groups.js';
+import { renderWaTemplates } from './wa-templates.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderSyncLog } from './sync-log.js';
 import { renderResetData } from './reset-data.js';
@@ -172,6 +173,7 @@ const NAV_GROUPS = [
   // (catalogo/asignacion) sigue superonly: es gobernanza no delegable.
   { title: 'WhatsApp', items: [
     ['wadifusion', I.megaphone, 'Difusión'],
+    ['wamensajes', I.pencil, 'Mensajes'],
     ['wagrupos', I.team, 'Grupos', 'superonly'],
   ] },
   { title: 'Administración', items: [
@@ -417,7 +419,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.08</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.09</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -6118,6 +6120,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'bankhist') renderAxHistory(user, 'account_number');
   else if (view === 'bankaccounts') renderBankAccounts(user);
   else if (view === 'wadifusion') renderWaSend(user);
+  else if (view === 'wamensajes') renderWaTemplates(user);
   else if (view === 'wagrupos') renderWaGroups(user);
   else if (view === 'erpquery') renderErpQuery(user);
   else if (view === 'synclog') renderSyncLog(user);
@@ -6369,6 +6372,7 @@ export function renderPanel() {
       bankstats: 'view.bankstats', banksync: 'view.banksync', bankhist: 'view.bankhist',
       bankaccounts: 'view.bankaccounts',
       wadifusion: 'view.whatsapp',
+      wamensajes: 'view.wa.templates',
       wagrupos: 'view.whatsapp',
       equipo: 'view.equipo',
     };
