@@ -32,6 +32,7 @@ import { renderBankStats } from './bank-stats.js';
 import { renderBankAccounts } from './bank-accounts.js';
 import { renderScopeOverridesEditor, decorateScovBadges } from './scope-overrides.js';
 import { renderWaSend } from './wa-send.js';
+import { renderWaGroups } from './wa-groups.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderSyncLog } from './sync-log.js';
 import { renderResetData } from './reset-data.js';
@@ -170,6 +171,8 @@ const NAV_GROUPS = [
   // a futuro: constancias PDF por WhatsApp, encuestas, respuestas.
   { title: 'WhatsApp', items: [
     ['wadifusion', I.megaphone, 'Difusión', 'superonly'],
+    // v4.93: catalogo de grupos de la linea (habilitar + alias interno)
+    ['wagrupos', I.team, 'Grupos', 'superonly'],
   ] },
   { title: 'Administración', items: [
     ['equipo', I.team, 'Equipo'],
@@ -394,7 +397,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.92</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.93</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -6055,6 +6058,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'bankhist') renderAxHistory(user, 'account_number');
   else if (view === 'bankaccounts') renderBankAccounts(user);
   else if (view === 'wadifusion') renderWaSend(user);
+  else if (view === 'wagrupos') renderWaGroups(user);
   else if (view === 'erpquery') renderErpQuery(user);
   else if (view === 'synclog') renderSyncLog(user);
   else if (view === 'resetdata') renderResetData(user);
@@ -6322,6 +6326,7 @@ export function renderPanel() {
       bankstats: 'view.bankstats', banksync: 'view.banksync', bankhist: 'view.bankhist',
       bankaccounts: 'view.bankaccounts',
       wadifusion: 'view.whatsapp',
+      wagrupos: 'view.whatsapp',
       equipo: 'view.equipo',
     };
     try {

@@ -122,6 +122,7 @@ const MENU_CATALOG = [
   // wa.send sembrados sin conceder); desde aqui se prenden a otros roles.
   { g: 'WhatsApp', items: [
     { id: 'wadifusion', lbl: 'Difusión', view: 'view.whatsapp', acts: ['wa.send'] },
+    { id: 'wagrupos', lbl: 'Grupos', view: 'view.whatsapp', acts: ['wa.send'] },
   ] },
   { g: 'Administracion', items: [
     { id: 'equipo', lbl: 'Equipo', view: 'view.equipo', acts: ['team.create', 'team.reset', 'team.toggle', 'team.role', 'team.scope', 'team.osticket', 'team.scope_override'] },

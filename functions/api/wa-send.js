@@ -85,6 +85,16 @@ function pickDirectPhone(body) {
   return { raw, ok: digits.length >= 10 };
 }
 
+/* v4.93: grupo habilitado como destinatario. Devuelve la fila de
+   wa_groups solo si existe Y esta enabled; un solo mensaje al chat_id
+   @g.us (sin toChatId). Prioridad: grupo > numero directo > cedula. */
+async function pickGroup(env, body) {
+  const gid = Number(body.group_id || 0);
+  if (!gid) return null;
+  const r = await sb(env, `wa_groups?id=eq.${gid}&enabled=eq.true&select=id,chat_id,wa_name,alias`);
+  return (r && r[0]) || undefined;   // undefined = pedido pero no habilitado
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch (_) { return json({ ok: false, error: 'Cuerpo inválido.' }, 400); }
@@ -112,6 +122,19 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------------- preview: destinatarios ---------------- */
     if (action === 'preview') {
+      const grp = await pickGroup(env, body);
+      if (grp === undefined) return json({ ok: false, error: 'Ese grupo no está habilitado para difusión.' }, 400);
+      if (grp) {
+        return json({
+          ok: true,
+          total: 1, with_phone: 1, without_phone: 0,
+          rows: [{
+            id_number: '—', full_name: `Grupo: ${grp.alias || grp.wa_name || grp.chat_id}`,
+            company_code: '', company_name: '(un solo mensaje al grupo)',
+            phone: grp.chat_id, phone_ok: true,
+          }],
+        });
+      }
       const direct = pickDirectPhone(body);
       if (direct) {
         // Destinatario sintetico: no consulta el roster.
@@ -156,18 +179,23 @@ export async function onRequestPost({ request, env }) {
       if (message.length > MAX_MESSAGE) {
         return json({ ok: false, error: `El mensaje supera los ${MAX_MESSAGE} caracteres.` }, 400);
       }
+      const grp = await pickGroup(env, body);
+      if (grp === undefined) return json({ ok: false, error: 'Ese grupo no está habilitado para difusión.' }, 400);
       const direct = pickDirectPhone(body);
       if (direct && !direct.ok) {
         return json({ ok: false, error: 'El número directo no parece válido (mínimo 10 dígitos).' }, 400);
       }
       const filters = pickFilters(body);
-      const hasFilter = !!direct || Object.values(filters).some(v => v !== null);
+      const hasFilter = !!grp || !!direct || Object.values(filters).some(v => v !== null);
       if (!hasFilter) {
         return json({ ok: false, error: 'Elige al menos un filtro, un trabajador o un número directo: no se permite difusión a todo el grupo sin acotar.' }, 400);
       }
-      // Destinatarios: numero directo (1 fila sintetica) o roster completo.
+      // Destinatarios: grupo (1 mensaje al chat) > numero directo > roster.
       let r, rows;
-      if (direct) {
+      if (grp) {
+        r = { total: 1 };
+        rows = [{ id_number: 'grupo', full_name: `Grupo: ${grp.alias || grp.wa_name || grp.chat_id}`, company_code: '', phone: grp.chat_id, phone_ok: true, chat_id_direct: grp.chat_id }];
+      } else if (direct) {
         r = { total: 1 };
         rows = [{ id_number: 'directo', full_name: 'Número directo (prueba)', company_code: '', phone: direct.raw, phone_ok: true }];
       } else {
@@ -182,7 +210,9 @@ export async function onRequestPost({ request, env }) {
         body: JSON.stringify({
           created_by: actorName,
           message,
-          filters: direct
+          filters: grp
+            ? { group_id: grp.id, group: grp.alias || grp.wa_name || grp.chat_id }
+            : direct
             ? { direct_phone: direct.raw }
             : Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== null)),
           total: (r && r.total) || rows.length,
@@ -202,7 +232,8 @@ export async function onRequestPost({ request, env }) {
           full_name: x.full_name || '',
           company_code: x.company_code || '',
           phone_raw: x.phone,
-          chat_id: toChatId(x.phone),
+          // Grupos ya traen su chat_id @g.us; telefonos se normalizan.
+          chat_id: x.chat_id_direct || toChatId(x.phone),
         }))),
       });
       return json({ ok: true, batch_id: batchId, queued: rows.length });

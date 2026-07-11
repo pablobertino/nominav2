@@ -38,6 +38,17 @@ async function api(user, payload) {
   }).then(x => x.json()).catch(() => null);
 }
 
+/* v4.93: grupos habilitados (catalogo de la pantalla WhatsApp > Grupos) */
+async function apiGroups(user) {
+  return fetch('/api/wa-groups', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null },
+      action: 'list',
+    }),
+  }).then(x => x.json()).catch(() => null);
+}
+
 function ensureStyles() {
   if (document.getElementById('waSendStyles')) return;
   const st = document.createElement('style');
@@ -122,8 +133,11 @@ function syncSubzones() {
 }
 
 function currentFilters() {
+  const grpSel = $('#waFGroup');
+  const grp = grpSel ? grpSel.value : '';
+  if (grp) return { group_id: Number(grp) };     // el grupo manda sobre todo
   const tel = $('#waFTel').value.trim();
-  if (tel) return { direct_phone: tel };         // el numero directo manda sobre todo
+  if (tel) return { direct_phone: tel };         // luego el numero directo
   const ced = $('#waFCed').value.trim();
   if (ced) return { id_number: ced };            // la cédula manda sola
   return {
@@ -231,10 +245,11 @@ export async function renderWaSend(user) {
         <div><label>Concepto / Marca</label><select id="waFConcept"><option value="">Todos</option></select></div>
         <div><label>Empresa</label><select id="waFCompany"><option value="">Todas</option></select></div>
       </div>
-      <div class="wa-orsep">o un trabajador individual · o un número directo</div>
+      <div class="wa-orsep">o un trabajador individual · o un número directo · o un grupo</div>
       <div class="wa-frow">
         <div><label>Cédula</label><input id="waFCed" placeholder="Ej: 12345678 (si la escribes, manda sola)"></div>
-        <div><label>Número directo (pruebas / fuera de nómina)</label><input id="waFTel" placeholder="Ej: 0414-1234567 · manda sobre todo lo demás"></div>
+        <div><label>Número directo (pruebas / fuera de nómina)</label><input id="waFTel" placeholder="Ej: 0414-1234567 · manda sobre cédula y filtros"></div>
+        <div><label>Grupo habilitado (un solo mensaje al grupo)</label><select id="waFGroup"><option value="">— Ninguno —</option></select></div>
         <button class="wa-btn pri" id="waPreview">Ver destinatarios</button>
         <button class="wa-btn" id="waClear">Limpiar</button>
       </div>
@@ -279,6 +294,15 @@ export async function renderWaSend(user) {
     }
   });
 
+  // Grupos habilitados para el combo (catalogo de WhatsApp > Grupos)
+  apiGroups(user).then(r => {
+    const sel = $('#waFGroup');
+    if (!sel || !r || !r.ok) return;
+    const en = (r.groups || []).filter(g => g.enabled);
+    sel.innerHTML = '<option value="">— Ninguno —</option>'
+      + en.map(g => `<option value="${g.id}">${esc(g.alias || g.wa_name || g.chat_id)}</option>`).join('');
+  });
+
   // Facets
   const f = await api(user, { action: 'facets' });
   if (!f || !f.ok) {
@@ -295,11 +319,12 @@ export async function renderWaSend(user) {
     $('#' + id).addEventListener('change', invalidatePreview));
   $('#waFCed').addEventListener('input', invalidatePreview);
   $('#waFTel').addEventListener('input', invalidatePreview);
+  $('#waFGroup').addEventListener('change', invalidatePreview);
   $('#waMsg').addEventListener('input', syncSendState);
 
   $('#waClear').addEventListener('click', () => {
     ['waFZone', 'waFSubzone', 'waFType', 'waFConcept', 'waFCompany'].forEach(id => { $('#' + id).value = ''; });
-    $('#waFCed').value = ''; $('#waFTel').value = ''; $('#waMsg').value = '';
+    $('#waFCed').value = ''; $('#waFTel').value = ''; $('#waFGroup').value = ''; $('#waMsg').value = '';
     syncSubzones(); invalidatePreview();
   });
 

@@ -38,6 +38,16 @@ export function gaClient(env) {
     // Estado de la instancia (authorized / notAuthorized / blocked ...)
     state: () => fetch(`${base}/getStateInstance/${env.GREENAPI_TOKEN}`).then(r => r.json()),
 
+    // Lista de chats de la cuenta (GET). Cada item: {archive, id, name,
+    // type: 'user'|'group', ...}. Grupos: type='group' / id termina @g.us.
+    // La info se actualiza en el proveedor ~1 vez por minuto.
+    getChats: async () => {
+      const r = await fetch(`${base}/getChats/${env.GREENAPI_TOKEN}`);
+      const text = await r.text();
+      if (!r.ok) throw new Error(`GreenAPI getChats ${r.status}: ${text.slice(0, 300)}`);
+      try { return JSON.parse(text); } catch { return []; }
+    },
+
     // Texto simple. Limite: 20000 caracteres.
     sendMessage: (chatId, message, extra = {}) =>
       call('sendMessage', { chatId, message, ...extra }),
