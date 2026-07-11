@@ -240,9 +240,14 @@ function ensureStyles() {
   .axr-hava.haspic{cursor:zoom-in;background:#eef2f7}
   .axr-hava img{width:100%;height:100%;object-fit:cover;display:block}
   /* v5.18: botones de fila del Historial (ver ficha / copiar). Reusa
-     .axr-iconbtn de Sincronizar; solo aporta el contenedor. */
-  .axr-hacts{display:flex;gap:6px;flex:none;align-items:center}
-  .axr-hmain{flex:1;min-width:0}
+     .axr-iconbtn de Sincronizar; solo aporta el contenedor.
+     v5.20: los botones van JUNTO AL NOMBRE (como en Sincronizar), no contra el
+     borde derecho. Para eso .axr-hmain deja de tener flex:1 (si se estira, empuja
+     los botones hasta el final) y el espacio sobrante lo absorbe .axr-hflex, que
+     va DESPUES de los botones. Mismo patron que .axr-flex en la bandeja. */
+  .axr-hacts{display:flex;gap:6px;flex:none;align-items:center;padding-top:2px}
+  .axr-hflex{flex:1}
+  .axr-hmain{flex:0 1 auto;min-width:0;max-width:62%}
   .axr-hnm{font-weight:600;font-size:13.5px}
   .axr-hsub{color:var(--muted);font-size:11.5px;margin-top:1px}
   .axr-hflds{font-size:12px;color:var(--ink-soft,#475569);margin-top:5px;line-height:1.5}
@@ -1391,6 +1396,7 @@ function paintHistory(wrap) {
         <button type="button" class="axr-iconbtn" data-hficha="${r.id}" title="Ver ficha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M15 8h4M15 12h4M5.5 18c.7-1.8 2.1-2.8 3.5-2.8s2.8 1 3.5 2.8"/></svg></button>
         <button type="button" class="axr-iconbtn" data-hcopy="${r.id}" title="Copiar datos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
       </div>
+      <span class="axr-hflex"></span>
       <div class="axr-hside">
         <span class="axr-hst ${esc(r.status)}">${HIST_STATUS_LBL[r.status] || esc(r.status)}</span>
         <span class="axr-hor">${HIST_ORIGIN_LBL[r.origin] || esc(r.origin)}</span>
