@@ -41,6 +41,16 @@ const BIG_THRESHOLD = 20;
 const BIG_BATCH_SIZE = 4;
 const bigDelay = () => 2500 + Math.floor(Math.random() * 1500);
 const MAX_MESSAGE = 4000;      // limite practico del portal (API admite 20000)
+/* v4.98 GUARDIAN DEL DELAY DE LINEA: el "Message sending delay" de la
+   instancia (delaySendMessagesMilliseconds) es la SEGUNDA linea de
+   defensa del estandar (pausa REAL entre salidas hacia WhatsApp). El
+   action 'state' lo verifica en cada carga de Difusion y si esta por
+   debajo del minimo lo corrige solo (auto-reparable: si alguien lo baja
+   en la consola, el portal lo restaura). Idempotente: una vez en 3500ms
+   nunca vuelve a setear (setSettings reinicia la instancia, doc: aplica
+   en ~5 min). */
+const LINE_DELAY_MIN_MS = 3000;
+const LINE_DELAY_SET_MS = 3500;
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -186,11 +196,25 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (action === 'state') {
-      const st = await gaClient(env).state();
-      // v4.94: numero de la linea desde env (GREENAPI_PHONE, opcional)
-      // para mostrarlo en la UI sin hardcodear; si cambia la linea se
-      // actualiza solo en las variables de Cloudflare.
-      return json({ ok: true, state: st, phone: env.GREENAPI_PHONE || null });
+      const ga = gaClient(env);
+      const st = await ga.state();
+      // v4.98: guardian del delay de linea (ver constantes arriba).
+      let delayMs = null, delayFixed = false, delayErr = null;
+      try {
+        const cfg = await ga.getSettings();
+        delayMs = Number(cfg && cfg.delaySendMessagesMilliseconds) || 0;
+        if (delayMs < LINE_DELAY_MIN_MS) {
+          await ga.setSettings({ delaySendMessagesMilliseconds: LINE_DELAY_SET_MS });
+          delayMs = LINE_DELAY_SET_MS;
+          delayFixed = true;
+        }
+      } catch (e) {
+        delayErr = String(e && e.message ? e.message : e).slice(0, 200);
+      }
+      return json({
+        ok: true, state: st, phone: env.GREENAPI_PHONE || null,
+        delay_ms: delayMs, delay_fixed: delayFixed, delay_error: delayErr,
+      });
     }
 
     /* ---------------- send: crear lote + cola ---------------- */

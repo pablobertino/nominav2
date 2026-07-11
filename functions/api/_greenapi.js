@@ -51,6 +51,21 @@ export function gaClient(env) {
       try { return JSON.parse(text); } catch { return []; }
     },
 
+    // Configuracion de la instancia (GET). Incluye
+    // delaySendMessagesMilliseconds (el "Message sending delay" de la
+    // consola: pausa REAL entre mensajes salientes, min 500ms).
+    getSettings: async () => {
+      const r = await fetch(`${base}/getSettings/${env.GREENAPI_TOKEN}`);
+      const text = await r.text();
+      if (!r.ok) throw new Error(`GreenAPI getSettings ${r.status}: ${text.slice(0, 300)}`);
+      try { return JSON.parse(text); } catch { return {}; }
+    },
+
+    // Fija configuracion de la instancia (POST, parcial). OJO doc: al
+    // invocarlo la instancia SE REINICIA y los cambios aplican dentro de
+    // ~5 minutos. Usar solo cuando haga falta corregir (idempotente).
+    setSettings: (partial) => call('setSettings', partial),
+
     // Texto simple. Limite: 20000 caracteres.
     sendMessage: (chatId, message, extra = {}) =>
       call('sendMessage', { chatId, message, ...extra }),

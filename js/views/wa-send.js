@@ -307,12 +307,23 @@ export async function renderWaSend(user) {
     </div>
   </div>`;
 
-  // Estado de la línea (diagnóstico; no bloquea la pantalla si falla)
+  // Estado de la línea (diagnóstico; no bloquea la pantalla si falla).
+  // v4.98: el server ademas verifica el delay de linea (pausa real entre
+  // salidas) y lo corrige solo si esta bajo; aqui solo se informa.
   api(user, { action: 'state' }).then(r => {
     const el = $('#waInst');
     if (r && r.ok && r.state && r.state.stateInstance === 'authorized') {
       el.className = 'wa-inst ok';
       el.innerHTML = '<span class="dot"></span> Línea conectada' + (r.phone ? ' · ' + esc(r.phone) : '');
+      if (r.delay_ms) {
+        el.title = `Ritmo de línea: 1 mensaje cada ${(r.delay_ms / 1000).toLocaleString('es-VE')} s`;
+      }
+      if (r.delay_fixed) {
+        el.insertAdjacentHTML('afterend',
+          `<span class="wa-inst ok" style="margin-left:6px" title="El ritmo de la línea estaba por debajo del mínimo seguro y el portal lo corrigió automáticamente. Aplica en ~5 minutos.">🛡️ Ritmo ajustado a 3,5s</span>`);
+      } else if (r.delay_error) {
+        el.title = 'No se pudo verificar el ritmo de línea: ' + r.delay_error;
+      }
     } else {
       el.className = 'wa-inst bad';
       el.innerHTML = '<span class="dot"></span> ' + esc((r && r.state && r.state.stateInstance) || 'Línea no disponible');
