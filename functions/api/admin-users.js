@@ -43,6 +43,50 @@ function cleanPhone(p) {
   return s || null;
 }
 
+/* Traduce un error interno a un mensaje para la persona. Nunca deja pasar el
+   texto crudo de la base: filtraria el esquema y datos de terceros.
+   Los choques de UNIQUE (23505) son los unicos "esperables" aca: dos miembros
+   no pueden compartir usuario ni correo. */
+function humanError(err) {
+  const raw = String((err && err.message) || err || '');
+
+  if (raw.includes('23505')) {
+    // Que columna choco. El detalle viene como: Key (email)=(x@y.com)
+    const m = /Key \(([a-z_]+)\)/i.exec(raw);
+    const col = m ? m[1] : '';
+    if (col === 'email' || raw.includes('admin_users_email_key')) {
+      return 'Ese correo ya lo tiene otro miembro del equipo. Cada correo puede estar en una sola cuenta.';
+    }
+    if (col === 'username' || raw.includes('admin_users_username_key')) {
+      return 'Ese usuario ya existe. Elige otro nombre de usuario.';
+    }
+    return 'Ese dato ya esta registrado en otra cuenta.';
+  }
+
+  // Sin traduccion conocida: mensaje generico. El detalle queda en los logs
+  // de Cloudflare, que es donde tiene que estar, no en la cara del usuario.
+  console.error('admin-users:', raw);
+  return 'No se pudo completar la accion. Intenta de nuevo.';
+}
+
+/* v5.11: el correo es UNICO entre los miembros. Se comprueba ANTES de tocar la
+   base: si no, PostgREST devuelve un 23505 con el nombre del constraint y el
+   correo del OTRO usuario adentro, y eso terminaba impreso en pantalla.
+   Devuelve el mensaje de error, o null si el correo esta libre.
+   excludeId: al editar, el propio miembro no cuenta como duplicado. */
+async function emailTakenError(env, email, excludeId) {
+  const e = String(email || '').trim().toLowerCase();
+  if (!e) return null;
+  const rows = await sb(env,
+    `admin_users?email=eq.${encodeURIComponent(e)}&select=id,username,is_active`);
+  const clash = (rows || []).find(r => String(r.id) !== String(excludeId ?? ''));
+  if (!clash) return null;
+  // Se nombra al usuario (dato interno del equipo, visible en la misma vista),
+  // pero NO se repite el correo ni se filtra nada del esquema.
+  return `Ese correo ya esta en uso por el miembro "${clash.username}"`
+    + `${clash.is_active ? '' : ' (inactivo)'}. Cada correo puede estar en una sola cuenta.`;
+}
+
 function json(b, s = 200) { return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } }); }
 
 async function hashPassword(pwd) {
@@ -248,6 +292,16 @@ export async function onRequestPost({ request, env }) {
       const r = role;
       const pwd = useTemp ? genTempPassword() : password;
       if (!pwd || pwd.length < 6) return json({ ok: false, error: 'Contraseña inválida (mín. 6).' }, 400);
+
+      // v5.11: duplicados atajados ACA (usuario y correo son unicos). Antes se
+      // dejaba explotar a la base y el 23505 crudo salia a pantalla.
+      const dupU = await sb(env, `admin_users?username=eq.${encodeURIComponent(username)}&select=id`);
+      if (dupU && dupU.length) {
+        return json({ ok: false, error: `El usuario "${username}" ya existe. Elige otro.` }, 400);
+      }
+      const dupE = await emailTakenError(env, email, null);
+      if (dupE) return json({ ok: false, error: dupE }, 400);
+
       const hash = await hashPassword(pwd);
       const created = await sb(env, 'admin_users', {
         method: 'POST', headers: { Prefer: 'return=representation' },
@@ -272,6 +326,10 @@ export async function onRequestPost({ request, env }) {
       const { id, name, email, phone } = body;
       if (!id) return json({ ok: false, error: 'Falta el usuario.' }, 400);
       if (!(await canTouchTarget(id))) return json({ ok: false, error: 'Ese usuario esta fuera de tu alcance.' }, 403);
+      // v5.11: mismo chequeo que en create, excluyendo al propio miembro (si no,
+      // guardar sin tocar el correo chocaria consigo mismo).
+      const dupE = await emailTakenError(env, email, id);
+      if (dupE) return json({ ok: false, error: dupE }, 400);
       await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({
@@ -374,7 +432,9 @@ export async function onRequestPost({ request, env }) {
       const batch = await sb(env, 'wa_batches', {
         method: 'POST', headers: { Prefer: 'return=representation' },
         body: JSON.stringify({
-          created_by: actorName,
+          // v5.11 FIX: 'actorName' no existia (crasheaba el envio con
+          // "actorName is not defined"). El actor ya esta resuelto arriba.
+          created_by: actor.username || actor.name || String(actor.id || ''),
           message: maskSecrets(text, ctx),
           filters: { target: 'credenciales', kind: isOst ? 'osticket' : 'portal',
             template: tplCode, member: u.username },
@@ -597,6 +657,13 @@ export async function onRequestPost({ request, env }) {
 
     return json({ ok: false, error: 'Acción desconocida.' }, 400);
   } catch (err) {
-    return json({ ok: false, error: err.message }, 500);
+    /* v5.11 SEGURIDAD: no devolver el error interno tal cual.
+       Antes esto escupia a la pantalla el texto crudo de la base:
+         Supabase 409: {"code":"23505", ... "Key (email)=(x@y.com) already
+         exists" ... "admin_users_email_key"}
+       Eso filtra el esquema (tabla y constraint) y, peor, el DATO DE OTRO
+       USUARIO (el correo con el que choca, que puede no ser de quien esta
+       mirando). Ahora se traduce a algo humano y se calla el resto. */
+    return json({ ok: false, error: humanError(err) }, 500);
   }
 }
