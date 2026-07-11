@@ -18,6 +18,19 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+/* v5.06: al tocar el catalogo de roles (crear / editar / activar / desactivar)
+   hay que TIRAR el cache de roles del panel (ADMIN_ROLES, module scope), o el
+   combo de Equipo > Nuevo miembro sigue mostrando el catalogo viejo hasta que
+   el usuario recargue con F5. Se usa un hook GLOBAL y no un import de panel.js
+   a proposito: panel.js ya importa esta vista, y un import de vuelta crearia un
+   ciclo ESM justo en el modulo raiz del portal (el tipo de cosa que rompe el
+   build de Pages y no se ve en local). El guard deja la vista funcionando aunque
+   el hook no exista. */
+function dropRolesCache() {
+  if (typeof window !== 'undefined' && typeof window.__invalidateAdminRoles === 'function') {
+    window.__invalidateAdminRoles();
+  }
+}
 
 async function api(payload) {
   const res = await fetch('/api/roles', {
@@ -274,6 +287,7 @@ export async function renderRoles(user) {
 }
 
 async function reload() {
+  dropRolesCache();   // v5.06: el catalogo cambio -> Equipo debe releerlo
   const d = await api({ action: 'matrix', user: userPayload(ST.user) });
   if (d.ok) { ST.roles = d.roles || []; ST.permissions = d.permissions || []; ST.grants = d.grants || {}; }
 }

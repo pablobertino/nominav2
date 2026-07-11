@@ -302,6 +302,14 @@ const ADMIN_ROLES_FALLBACK = [
   { code: 'superadmin', label: 'Superadmin', is_system: true, osticket_kind: 'agent', readonly_scope: false },
 ];
 let ADMIN_ROLES = null;
+/* v5.06: invalidador del cache, expuesto como hook GLOBAL (no export, para no
+   crear un ciclo ESM: panel.js ya importa roles.js). La vista Roles lo llama
+   tras crear / editar / activar / desactivar un rol, para que Equipo vea el
+   catalogo nuevo SIN recargar la pagina (bug: se creaba "Gerente Zona" en Roles
+   y el combo de Nuevo miembro seguia mostrando el catalogo viejo hasta un F5). */
+if (typeof window !== 'undefined') {
+  window.__invalidateAdminRoles = () => { ADMIN_ROLES = null; };
+}
 async function ensureAdminRoles(user) {
   if (ADMIN_ROLES) return ADMIN_ROLES;
   try {
@@ -314,9 +322,21 @@ async function ensureAdminRoles(user) {
   return ADMIN_ROLES || ADMIN_ROLES_FALLBACK;
 }
 function escRoleLbl(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+/* Opciones del combo de rol (Nuevo miembro / Cambiar rol). v5.06: se excluyen
+   los roles de SISTEMA. 'superadmin' no se asigna desde el modal (el server lo
+   rechaza en create y en update_role) y 'tienda' es el login de empresa: si
+   aparecian en el combo, era ofrecer algo que iba a fallar. */
 function adminRoleOptionsHtml(selected) {
-  return (ADMIN_ROLES || ADMIN_ROLES_FALLBACK).map(r =>
-    `<option value="${r.code}"${r.code === selected ? ' selected' : ''}>${escRoleLbl(r.label)}</option>`).join('');
+  return (ADMIN_ROLES || ADMIN_ROLES_FALLBACK)
+    .filter(r => !r.is_system)
+    .map(r => `<option value="${r.code}"${r.code === selected ? ' selected' : ''}>${escRoleLbl(r.label)}</option>`).join('');
+}
+/* Etiqueta visible de un rol (topbar). v5.06: sale del catalogo vivo, asi un
+   rol nuevo no muestra el code crudo ('gerente_zona' -> 'Gerente Zona'). */
+function roleLabelOf(code) {
+  const cat = ADMIN_ROLES || ADMIN_ROLES_FALLBACK;
+  const hit = cat.find(r => r.code === code);
+  return (hit && hit.label) || ROLE_LABELS[code] || code;
 }
 
 /* ---------- shell ---------- */
@@ -330,7 +350,7 @@ function shell(user) {
   // no gestiona el seteo de avisos.
   const showBell = (user.kind === 'company') || (user.kind === 'admin');
   const nameLabel = isCompany ? user.companyCode : (user.name || user.username);
-  const roleLabel = isCompany ? 'tienda' : (ROLE_LABELS[user.role] || user.role);
+  const roleLabel = isCompany ? 'tienda' : roleLabelOf(user.role);   // v5.06: label del catalogo vivo
   const initials = (nameLabel || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   const email = (user.email || '').trim().toLowerCase();
 
@@ -397,7 +417,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.05</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.06</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -6244,6 +6264,20 @@ export function renderPanel() {
   CATALOG = null; CU_ROWS = null; SCOPE = null; USERS_USER = null; TIENDAS_FILTERS = null; currentView = 'dashboard';
   mount(shell(user));
   loadAvatar((user.email || '').trim().toLowerCase());
+  /* v5.06: la etiqueta de rol de la topbar sale del catalogo de Roles, pero
+     shell() se pinta ANTES de que exista (ensureAdminRoles solo corre al entrar
+     a Equipo). Se precarga en segundo plano y se repinta la pastilla: asi un rol
+     nuevo muestra su nombre ('Gerente Zona') y no el code crudo
+     ('gerente_zona'). Si falla, queda el fallback historico. */
+  if (user.kind === 'admin') {
+    (async () => {
+      try {
+        await ensureAdminRoles(user);
+        const el = document.querySelector('.pnl-urole');
+        if (el) el.textContent = roleLabelOf(user.role);
+      } catch (_) { /* queda la etiqueta inicial */ }
+    })();
+  }
   // v4.69: MENU DINAMICO (Etapa 1 del editor visual de roles). Todos los
   // items del nav (menos los superonly) se pintan y luego se PODAN segun la
   // matriz de Roles del propio actor (permisos view.* enforced, via

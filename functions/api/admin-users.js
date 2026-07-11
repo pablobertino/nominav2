@@ -212,8 +212,23 @@ export async function onRequestPost({ request, env }) {
     if (action === 'create') {
       const { username, name, email, role, password, useTemp } = body;
       if (!username) return json({ ok: false, error: 'Falta el usuario.' }, 400);
-      const ALLOWED_ROLES = ['admin', 'superadmin', 'editor_personal', 'gestor_empresa'];
-      const r = ALLOWED_ROLES.includes(role) ? role : 'admin';
+      // v5.06: roles validos DESDE LA TABLA (mismo patron que update_role en
+      // v5.00). Antes habia una lista HARDCODEADA ['admin','superadmin',
+      // 'editor_personal','gestor_empresa'] con una linea venenosa:
+      //    const r = ALLOWED_ROLES.includes(role) ? role : 'admin';
+      // que NO rechazaba el rol desconocido: lo convertia en 'admin' EN
+      // SILENCIO. Crear un miembro con un rol nuevo (Supervisor Tiendas,
+      // Gerente Zona...) lo guardaba como ADMINISTRADOR sin avisar a nadie.
+      // Ahora: catalogo vivo + error explicito. superadmin no se asigna desde
+      // aqui (se nace superadmin, no se crea desde el modal) y tienda es el
+      // login de empresa, no un rol del equipo.
+      const catalog = await sb(env, 'roles?is_active=eq.true&select=code');
+      const allowed = (catalog || []).map(x => x.code)
+        .filter(c => c !== 'superadmin' && c !== 'tienda');
+      if (!role || !allowed.includes(role)) {
+        return json({ ok: false, error: 'Rol no válido. Roles asignables: ' + allowed.join(', ') + '.' }, 400);
+      }
+      const r = role;
       const pwd = useTemp ? genTempPassword() : password;
       if (!pwd || pwd.length < 6) return json({ ok: false, error: 'Contraseña inválida (mín. 6).' }, 400);
       const hash = await hashPassword(pwd);
