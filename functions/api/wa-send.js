@@ -7,10 +7,18 @@
    Acciones (POST { action, user, ... }):
      facets   {}                          -> catalogos para los filtros
                 gate: view.whatsapp
-     preview  { zone, subzone, type, concept, company, id_number }
-                -> { total, with_phone, without_phone, rows[<=100] }
+     preview  { target, filtros..., active, people[], group_id, direct_phone }
+                -> { total, with_phone, without_phone, messages?, rows[<=100] }
                 gate: view.whatsapp
-     send     { filtros..., message }     -> crea lote + cola (pending)
+                v4.99 target: 'companies' (default) = telefonos de las
+                EMPRESAS/TIENDAS segun filtros de estructura + solo
+                activas (1 mensaje POR TELEFONO valido, muchas tienen 2);
+                'people' = lista manual de cedulas armada con el buscador.
+                Grupo y numero directo siguen mandando sobre todo.
+     search_people { q }                  -> buscador de personas (roster
+                activo, por nombre o cedula) para armar la lista manual
+                gate: view.whatsapp (solo superadmin)
+     send     { target, filtros..., message }  -> crea lote + cola (pending)
                 -> { batch_id, queued }   gate: wa.send
      process  { batch_id }                -> envia una TANDA (<=8) con
                 delay entre mensajes; el front repite hasta remaining=0
@@ -86,6 +94,24 @@ function pickFilters(body) {
   };
 }
 
+/* v4.99: filtros para el destino EMPRESAS/TIENDAS (wa_company_recipients).
+   p_active default true = solo empresas activas (checkbox de la vista). */
+function pickCompanyFilters(body) {
+  const nn = v => (v === undefined || v === null || v === '' ? null : String(v));
+  return {
+    p_zone: nn(body.zone), p_subzone: nn(body.subzone),
+    p_type: nn(body.type), p_concept: nn(body.concept),
+    p_company: nn(body.company),
+    p_active: body.active === undefined ? true : !!body.active,
+  };
+}
+
+/* v4.99: lista manual de cedulas (modo Personas). Sanea y dedup. */
+function pickPeople(body) {
+  const arr = Array.isArray(body.people) ? body.people : [];
+  return [...new Set(arr.map(x => String(x || '').replace(/\D/g, '')).filter(Boolean))];
+}
+
 /* v4.91: numero directo (pruebas / destinatario fuera de nomina).
    Valida >=10 digitos tras limpiar; manda solo (ignora filtros). */
 function pickDirectPhone(body) {
@@ -145,6 +171,17 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, zones: zones || [], subzones: subzones || [], concepts: concepts || [], companies: companies || [], types });
     }
 
+    /* ------- search_people: buscador para la lista manual (v4.99) ------- */
+    if (action === 'search_people') {
+      if (!superOk) {
+        return json({ ok: false, error: 'El modo Personas es exclusivo del superadministrador.' }, 403);
+      }
+      const q = String(body.q || '').trim();
+      if (q.length < 2) return json({ ok: true, rows: [] });
+      const rows = await rpc(env, 'wa_people_search', { p_q: q, p_limit: 20 });
+      return json({ ok: true, rows: rows || [] });
+    }
+
     /* ---------------- preview: destinatarios ---------------- */
     if (action === 'preview') {
       if (!superOk && !Number(body.group_id || 0)) {
@@ -176,8 +213,21 @@ export async function onRequestPost({ request, env }) {
           }],
         });
       }
-      const r = await rpc(env, 'wa_recipients', { ...pickFilters(body), p_limit: 100 });
-      return json({ ok: true, ...(r || {}) });
+      // v4.99: destino segun target. 'companies' (default) = telefonos de
+      // las empresas; 'people' = lista manual de cedulas del buscador.
+      // (id_number suelto se conserva por compatibilidad -> roster 1 persona)
+      if (String(body.id_number || '').trim()) {
+        const r = await rpc(env, 'wa_recipients', { ...pickFilters(body), p_limit: 100 });
+        return json({ ok: true, target: 'people', ...(r || {}) });
+      }
+      if ((body.target || 'companies') === 'people') {
+        const ids = pickPeople(body);
+        if (!ids.length) return json({ ok: false, error: 'Agrega al menos una persona a la lista con el buscador.' }, 400);
+        const r = await rpc(env, 'wa_people_by_ids', { p_ids: ids });
+        return json({ ok: true, target: 'people', ...(r || {}) });
+      }
+      const r = await rpc(env, 'wa_company_recipients', { ...pickCompanyFilters(body), p_limit: 100 });
+      return json({ ok: true, target: 'companies', ...(r || {}) });
     }
 
     if (action === 'status') {
@@ -233,22 +283,53 @@ export async function onRequestPost({ request, env }) {
       if (direct && !direct.ok) {
         return json({ ok: false, error: 'El número directo no parece válido (mínimo 10 dígitos).' }, 400);
       }
-      const filters = pickFilters(body);
-      const hasFilter = !!grp || !!direct || Object.values(filters).some(v => v !== null);
-      if (!hasFilter) {
-        return json({ ok: false, error: 'Elige al menos un filtro, un trabajador o un número directo: no se permite difusión a todo el grupo sin acotar.' }, 400);
-      }
-      // Destinatarios: grupo (1 mensaje al chat) > numero directo > roster.
-      let r, rows;
+      // Destinatarios: grupo (1 mensaje al chat) > numero directo >
+      // v4.99: lista manual de personas > EMPRESAS/TIENDAS (default).
+      // Nota: para empresas NO se exige filtro (el universo ya esta acotado
+      // a las empresas del grupo, ~150 mensajes maximo con solo-activas);
+      // para personas se exige lista no vacia.
+      let r, rows, batchFilters;
+      const target = String(body.target || 'companies');
       if (grp) {
         r = { total: 1 };
         rows = [{ id_number: 'grupo', full_name: `Grupo: ${grp.alias || grp.wa_name || grp.chat_id}`, company_code: '', phone: grp.chat_id, phone_ok: true, chat_id_direct: grp.chat_id }];
+        batchFilters = { group_id: grp.id, group: grp.alias || grp.wa_name || grp.chat_id };
       } else if (direct) {
         r = { total: 1 };
         rows = [{ id_number: 'directo', full_name: 'Número directo (prueba)', company_code: '', phone: direct.raw, phone_ok: true }];
-      } else {
+        batchFilters = { direct_phone: direct.raw };
+      } else if (String(body.id_number || '').trim()) {
+        // Compatibilidad: cedula suelta -> roster (1 persona).
+        const filters = pickFilters(body);
         r = await rpc(env, 'wa_recipients', { ...filters, p_limit: 100000 });
         rows = ((r && r.rows) || []).filter(x => x.phone_ok);
+        batchFilters = Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== null));
+      } else if (target === 'people') {
+        const ids = pickPeople(body);
+        if (!ids.length) return json({ ok: false, error: 'Agrega al menos una persona a la lista con el buscador.' }, 400);
+        r = await rpc(env, 'wa_people_by_ids', { p_ids: ids });
+        rows = ((r && r.rows) || []).filter(x => x.phone_ok);
+        batchFilters = { target: 'people', people: ids };
+      } else {
+        const cf = pickCompanyFilters(body);
+        r = await rpc(env, 'wa_company_recipients', { ...cf, p_limit: 100000 });
+        // Expandir: 1 fila de cola POR TELEFONO valido de cada empresa.
+        rows = [];
+        for (const c of ((r && r.rows) || [])) {
+          for (const tel of (c.phones || [])) {
+            rows.push({
+              id_number: c.company_code,
+              full_name: `${c.company_code} · ${c.business_name}`,
+              company_code: c.company_code,
+              phone: tel, phone_ok: true,
+            });
+          }
+        }
+        batchFilters = {
+          target: 'companies', active: cf.p_active,
+          ...Object.fromEntries(Object.entries(cf).filter(([k, v]) => k !== 'p_active' && v !== null)
+            .map(([k, v]) => [k.replace(/^p_/, ''), v])),
+        };
       }
       if (!rows.length) return json({ ok: false, error: 'Ningún destinatario del filtro tiene teléfono válido.' }, 400);
 
@@ -258,11 +339,7 @@ export async function onRequestPost({ request, env }) {
         body: JSON.stringify({
           created_by: actorName,
           message,
-          filters: grp
-            ? { group_id: grp.id, group: grp.alias || grp.wa_name || grp.chat_id }
-            : direct
-            ? { direct_phone: direct.raw }
-            : Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== null)),
+          filters: batchFilters,
           total: (r && r.total) || rows.length,
           with_phone: rows.length,
         }),
