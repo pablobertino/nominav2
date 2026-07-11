@@ -31,7 +31,34 @@ import { shadowCan } from './_auth.js';
 
 const HCM_API = 'https://api2.grupocanaima.com/empleados/datos/v1';
 const TIME_BUDGET_MS = 90000;   // presupuesto total de corrida
-const BATCH = 8;                // tiendas en paralelo
+
+/* ===== TANDAS (v5.14) =====
+   Cloudflare corta en 50 SUBREQUESTS por invocacion. Esta sincronizacion
+   recorre TODAS las tiendas abiertas (hoy 132) y cada tienda cuesta como
+   minimo 2 subrequests (1 GET a la API del sistema + 1 SELECT del roster), sin
+   contar los PATCH/POST de ingresos y egresos. O sea: 264+ subrequests en una
+   sola invocacion, contra un techo de 50.
+
+   Consecuencia: la corrida COMPLETA nunca pudo terminar; moria a mitad con
+   "Too many subrequests" antes de escribir siquiera el log. Por eso la config
+   mostraba last_run_at=null (nunca corrio) pese a estar el codigo entero.
+
+   Arreglo: la corrida se hace por TANDAS de tiendas. Cada invocacion procesa
+   como mucho STORES_PER_CALL y devuelve el offset siguiente; quien llama
+   (el front con su barra de progreso, o el tick del cron) vuelve a invocar
+   hasta terminar. La operacion ya era idempotente, asi que trocearla es
+   seguro: reintentar una tanda no duplica ingresos ni re-egresa a nadie.
+
+   Cuenta por tanda (peor caso realista):
+     10 tiendas x 2 (API + roster)          = 20
+     + movimientos (depto/insert/patch)     ~ 10-15
+     + arranque (config, alcance) + log     ~  5
+                                            = ~40  (cabe en 50, con aire)
+
+   BATCH baja de 8 a 5: el paralelismo no ahorra subrequests (los gasta igual),
+   y en tandas chicas no hace falta apretar tanto a la API del sistema. */
+const STORES_PER_CALL = 10;     // tiendas por invocacion (limite de Cloudflare)
+const BATCH = 5;                // tiendas en paralelo dentro de la tanda
 
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -202,7 +229,7 @@ async function processStore(env, cc) {
   }
 }
 
-export async function onRequestPost({ request, env }) {
+export async function onRequestPost({ request, env, ctx }) {
   const t0 = Date.now();
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'Solicitud invalida.' }, 400); }
@@ -263,14 +290,23 @@ export async function onRequestPost({ request, env }) {
     `companies?company_type=eq.Tienda&is_active=eq.true&select=company_code&order=company_code.asc`) || [];
   const codes = stores.map(s => s.company_code);
 
-  const runId = `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  /* v5.14: TANDA. offset = desde que tienda seguir; run_id se recibe para que
+     todas las tandas de una misma corrida compartan el mismo id en el log (y
+     el Registro las muestre como UNA corrida, no como 14 sueltas). */
+  const offset = Math.max(0, parseInt(body.offset, 10) || 0);
+  const runId = (body.run_id && String(body.run_id).slice(0, 40))
+    || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
+  const slice = codes.slice(offset, offset + STORES_PER_CALL);
+  const nextOffset = offset + slice.length;
+  const done = nextOffset >= codes.length;
+
   const results = [];
   let incomplete = false;
 
   try {
-  for (let i = 0; i < codes.length; i += BATCH) {
+  for (let i = 0; i < slice.length; i += BATCH) {
     if (Date.now() - t0 > TIME_BUDGET_MS) { incomplete = true; break; }
-    const chunk = codes.slice(i, i + BATCH);
+    const chunk = slice.slice(i, i + BATCH);
     const rs = await Promise.all(chunk.map(cc => processStore(env, cc)));
     results.push(...rs);
   }
@@ -292,22 +328,84 @@ export async function onRequestPost({ request, env }) {
     catch (_) { /* el log nunca tumba la corrida */ }
   }
 
+  /* v5.14: el resumen ACUMULA entre tandas. La corrida son N invocaciones; si
+     cada una pisara el resumen con lo suyo, la config terminaria mostrando lo
+     de la ULTIMA tanda ("2 ingresos") en vez del total de la corrida. Los
+     totales llegan del llamador (que los viene sumando) y aca se les agrega lo
+     de esta tanda. */
+  const prevAdded = Math.max(0, parseInt(body.acc_added, 10) || 0);
+  const prevRemoved = Math.max(0, parseInt(body.acc_removed, 10) || 0);
+  const prevAlerts = Math.max(0, parseInt(body.acc_alerts, 10) || 0);
+  const prevStores = Math.max(0, parseInt(body.acc_stores, 10) || 0);
+
+  const totAdded = prevAdded + added;
+  const totRemoved = prevRemoved + removed;
+  const totAlerts = prevAlerts + alerts;
+  const totStores = prevStores + results.length;
+
   const summary = {
-    run_id: runId, stores: results.length, total_stores: codes.length,
-    added, removed, alerts, incomplete,
+    run_id: runId, stores: totStores, total_stores: codes.length,
+    added: totAdded, removed: totRemoved, alerts: totAlerts,
+    incomplete: incomplete || !done,
   };
+
+  /* La config se marca como CORRIDA solo cuando la ultima tanda termina: si se
+     escribiera last_run_at en cada tanda, el tick del cron creeria que la
+     corrida ya se hizo y no dispararia las tandas que faltan. Mientras hay
+     tandas pendientes se refresca last_attempt_at (senal de vida). */
   try {
     await sb(env, 'roster_sync_config?id=eq.1', {
       method: 'PATCH', headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({
-        last_run_at: new Date().toISOString(), last_source: source,
-        last_status: 'ok', last_error: null,
-        last_duration_ms: Date.now() - t0, last_summary: summary,
-      }),
+      body: JSON.stringify(done
+        ? {
+          last_run_at: new Date().toISOString(), last_source: source,
+          last_status: 'ok', last_error: null,
+          last_duration_ms: Date.now() - t0, last_summary: summary,
+        }
+        : { last_attempt_at: new Date().toISOString(), last_source: source }),
     });
   } catch (_) { /* resumen best-effort */ }
 
-  return json({ ok: true, ...summary, duration_ms: Date.now() - t0 });
+  /* v5.14: CADENA DE TANDAS PARA EL CRON.
+     El tick de la base hace UNA sola llamada. Si esa llamada procesa 10 tiendas
+     y termina, las otras 122 se quedan sin sincronizar y nadie las retoma hasta
+     el dia siguiente (que volveria a hacer las primeras 10: las mismas siempre).
+
+     Por eso, cuando la corrida viene del cron y quedan tandas, el Worker se
+     AUTO-INVOCA con el offset siguiente. Cada eslabon es una invocacion nueva,
+     con su propio presupuesto limpio de 50 subrequests.
+
+     waitUntil: la respuesta se devuelve YA; el encadenado sigue en segundo
+     plano. Sin esto, Cloudflare mataria el fetch pendiente al cerrar la
+     respuesta y la cadena se cortaria en el primer eslabon.
+
+     El manual NO se auto-encadena: ahi el front hace el bucle y muestra la
+     barra de progreso (el usuario esta mirando; conviene que vea el avance y
+     pueda ver el resultado). */
+  if (!done && source === 'cron') {
+    const selfUrl = new URL(request.url).origin + '/api/sync-roster';
+    const nextBody = {
+      source: 'cron', adminId,
+      offset: nextOffset, run_id: runId,
+      acc_added: totAdded, acc_removed: totRemoved,
+      acc_alerts: totAlerts, acc_stores: totStores,
+    };
+    const chain = fetch(selfUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(nextBody),
+    }).catch(() => { /* si un eslabon falla, el reintento del tick lo retoma */ });
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(chain);
+  }
+
+  return json({
+    ok: true, ...summary,
+    // v5.14: el llamador usa esto para seguir con la proxima tanda.
+    done,
+    next_offset: done ? null : nextOffset,
+    processed: results.length,     // tiendas de ESTA tanda
+    duration_ms: Date.now() - t0,
+  });
   } catch (e) {
     // v4.58: una falla dura marca la corrida como error en la config para
     // que el tick REINTENTE a los retry_minutes configurados.

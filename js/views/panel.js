@@ -434,7 +434,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.13</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.14</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4631,9 +4631,50 @@ async function viewSync(user) {
     $('#rsRunBtn').addEventListener('click', async () => {
       const b = $('#rsRunBtn'); b.disabled = true;
       const prev = b.innerHTML; b.textContent = 'Ejecutando…';
-      const r = await rsApi({ source: 'manual' });
-      b.disabled = false; b.innerHTML = prev;
       const el = $('#rsLast');
+
+      /* v5.14: la corrida va POR TANDAS de tiendas. Antes era UNA sola llamada
+         que intentaba las 132 tiendas de golpe, y Cloudflare la mataba por
+         exceso de subrequests (tope 50 por invocacion; cada tienda cuesta 2 o
+         mas): la sincronizacion NUNCA pudo completarse, ni a mano ni por cron.
+         Ahora el server hace de a 10 tiendas y devuelve next_offset; aca se
+         encadenan las tandas mostrando el avance. */
+      let offset = 0, runId = null;
+      let acc = { added: 0, removed: 0, alerts: 0, stores: 0 };
+      let total = 0;
+      let r = null;
+      let guard = 0;
+
+      while (guard < 60) {
+        guard++;
+        r = await rsApi({
+          source: 'manual', offset, run_id: runId,
+          acc_added: acc.added, acc_removed: acc.removed,
+          acc_alerts: acc.alerts, acc_stores: acc.stores,
+        });
+        if (!r || !r.ok) break;
+
+        runId = r.run_id || runId;
+        total = r.total_stores || total;
+        // El server devuelve los totales ya acumulados (le pasamos los previos).
+        acc = { added: r.added || 0, removed: r.removed || 0, alerts: r.alerts || 0, stores: r.stores || 0 };
+
+        if (el && total) {
+          const pct = Math.round((acc.stores / total) * 100);
+          el.innerHTML = `<div style="font-size:12.5px;color:var(--muted);margin-bottom:5px">
+              Revisando tiendas… <b style="color:var(--ink)">${acc.stores} / ${total}</b>
+            </div>
+            <div style="height:7px;border-radius:999px;background:var(--border-soft,#eef1f5);overflow:hidden;max-width:340px">
+              <div style="height:100%;width:${pct}%;background:var(--brand,#2563eb);transition:width .25s"></div>
+            </div>`;
+        }
+
+        if (r.done) break;
+        if (r.next_offset == null || r.next_offset <= offset) break;   // nunca bucle infinito
+        offset = r.next_offset;
+      }
+
+      b.disabled = false; b.innerHTML = prev;
       if (!r || !r.ok) {
         if (el) el.innerHTML = `<span style="color:#b91c1c">⚠ ${(r && r.error) || 'No se pudo ejecutar.'}</span>`;
         return;

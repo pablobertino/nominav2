@@ -194,10 +194,10 @@ function ensureStyles() {
   .axr-modal .lst .it.okrow{opacity:.5}
   .axr-modal .lst .it.okrow .nm{text-decoration:line-through;text-decoration-color:#86efac}
   .axr-modal .lst .it.okrow .st{color:var(--success,#16a34a)!important;font-weight:700}
-  .axr-modal .lst .it.okrow .st::after{content:' \2713'}
+  .axr-modal .lst .it.okrow .st::after{content:' ✓'}
   .axr-modal .lst .it.errow{background:var(--danger-bg,#fef2f2)}
   .axr-modal .lst .it.errow .st{color:var(--danger,#dc2626)!important;font-weight:700}
-  .axr-modal .lst .it.errow .st::after{content:' \2715'}
+  .axr-modal .lst .it.errow .st::after{content:' ✕'}
   .axr-modal .res{margin-top:12px;border-radius:10px;padding:10px 13px;font-size:12.5px;display:none;max-height:320px;overflow:auto}
   .axr-modal .res.ok{background:var(--success-bg,#f0fdf4);border:1px solid #bbf7d0;color:var(--success,#15803d);display:block}
   .axr-modal .res.err{background:var(--danger-bg,#fef2f2);border:1px solid #f3c2c2;color:var(--danger,#b91c1c);display:block}
