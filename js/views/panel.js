@@ -324,6 +324,21 @@ async function ensureAdminRoles(user) {
   return ADMIN_ROLES || ADMIN_ROLES_FALLBACK;
 }
 function escRoleLbl(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
+/* v5.10: escape generico (lo usa el modal de credenciales). panel.js solo
+   tenia escRoleLbl, acotado a las etiquetas de rol. */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
+    ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+/* v5.10: error DENTRO del modal (regla del portal: sin alert/confirm nativos).
+   Los modales de Equipo ya lo hacian asi (auRoleModal, auSyncClientOne); el de
+   crear miembro se habia quedado con alert(). */
+function modalErrAu(sel, txt) {
+  const el = document.querySelector(sel);
+  if (!el) return;
+  el.textContent = txt || 'No se pudo completar la accion.';
+  el.style.display = '';
+}
 /* Opciones del combo de rol (Nuevo miembro / Cambiar rol). v5.06: se excluyen
    los roles de SISTEMA. 'superadmin' no se asigna desde el modal (el server lo
    rechaza en create y en update_role) y 'tienda' es el login de empresa: si
@@ -419,7 +434,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.09</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.10</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2036,11 +2051,21 @@ function closeModal() {
 }
 
 /* ---------- bloque de contraseña reutilizable (modal) ---------- */
-function pwdBlockHtml() {
+/* Bloque de contrasena inicial, compartido por varios modales.
+   v5.10: el subtitulo de "Generar temporal" ahora depende del CONTEXTO. Decia
+   siempre "La cambia al entrar por primera vez", y para el PORTAL eso es cierto
+   desde v5.08 (el login intercepta y obliga a cambiarla). Pero el mismo bloque
+   lo reusa el modal del agente de osTicket, donde es FALSO: osTicket no fuerza
+   nada. Estabamos prometiendo algo que no pasaba. */
+function pwdBlockHtml(ctx) {
+  const forced = ctx !== 'osticket';
+  const sub = forced
+    ? 'La cambia al entrar por primera vez'
+    : 'Clave provisional (osTicket no le va a pedir que la cambie)';
   return `
     <p class="flabel" style="margin-bottom:9px">Contraseña inicial</p>
     <label class="radio-row"><input type="radio" name="pwmode" value="temp" checked>
-      <span>Generar temporal<br><span class="muted" style="font-size:12px">La cambia al entrar por primera vez</span></span></label>
+      <span>Generar temporal<br><span class="muted" style="font-size:12px">${sub}</span></span></label>
     <label class="radio-row"><input type="radio" name="pwmode" value="manual">
       <span>Escribir yo la clave<br><span class="muted" style="font-size:12px">Tú defines la contraseña ahora</span></span></label>
     <div id="pwManual" style="display:none;margin-top:4px">
@@ -2901,7 +2926,7 @@ function auRowCommonActs(a, self, isSuper = true) {
      habilita enviarle las credenciales por WhatsApp, y hasta ahora solo se
      podia cargar AL CREAR: los miembros ya existentes no tenian como. */
   const editBtn = `<button class="btn btn-mini" data-act="edit" data-id="${a.id}" data-u="${a.username}" data-name="${(a.name || '').replace(/"/g, '&quot;')}" data-mail="${(a.email || '').replace(/"/g, '&quot;')}" data-tel="${(a.phone || '').replace(/"/g, '&quot;')}" title="Editar nombre, correo y telefono">Editar</button>`;
-  const resetBtn = `<button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>`;
+  const resetBtn = `<button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}" data-name="${(a.name || '').replace(/"/g, '&quot;')}">${I.key} Resetear</button>`;
   const toggleBtn = self ? ''
     : `<button class="btn btn-mini" data-act="toggle" data-id="${a.id}" data-active="${a.is_active}">${a.is_active ? 'Desactivar' : 'Activar'}</button>`;
   return { roleBtn, editBtn, resetBtn, toggleBtn };
@@ -3164,6 +3189,7 @@ function auCreateModal(user) {
     <label class="flabel">Rol</label>
     <select id="auR" style="margin-bottom:14px;width:100%">${adminRoleOptionsHtml('admin')}</select>
     ${pwdBlockHtml()}
+    <p id="auNewErr" style="color:var(--danger);font-size:12.5px;margin:10px 0 0;display:none"></p>
     <div class="modal-actions"><button class="btn" id="mCancel">Cancelar</button><button class="btn btn-primary" id="mOk">Crear</button></div>`);
   wirePwdBlock();
   $('#mX').addEventListener('click', closeModal);
@@ -3174,9 +3200,21 @@ function auCreateModal(user) {
       username: $('#auU').value, name: $('#auN').value, email: $('#auE').value || null,
       phone: $('#auT').value || null,   // v5.07
       role: $('#auR').value, ...pw });
-    if (!d.ok) { alert(d.error); return; }
+    if (!d.ok) { modalErrAu('#auNewErr', d.error); return; }
+    /* v5.10: la clave ya NO se muestra con un alert(). Va al modal de
+       credenciales, que la deja copiar (sola o con el usuario y el link) y
+       ofrece mandarsela por WhatsApp. Al cerrar, se repinta Equipo. */
+    const pwd = d.tempPassword || pw.password;
+    if (d.id && pwd) {
+      credModal(user, {
+        id: d.id, kind: 'portal', password: pwd, useTemp: !!pw.useTemp,
+        title: 'Miembro creado',
+        okText: `Se creó el usuario de ${$('#auN').value.trim() || $('#auU').value.trim()}`,
+        onClose: () => viewEquipo(user),
+      });
+      return;
+    }
     closeModal();
-    if (d.tempPassword) alert('Contraseña temporal: ' + d.tempPassword);
     viewEquipo(user);
   });
 }
@@ -3195,6 +3233,7 @@ function auAction(ds, user) {
     <div class="modal-head"><span>Resetear contraseña</span><button class="modal-x" id="mX">✕</button></div>
     <p class="muted" style="font-size:12.5px;margin:0 0 16px">${ds.u}</p>
     ${pwdBlockHtml()}
+    <p id="auRstErr" style="color:var(--danger);font-size:12.5px;margin:10px 0 0;display:none"></p>
     <div class="modal-actions"><button class="btn" id="mCancel">Cancelar</button><button class="btn btn-primary" id="mOk">Resetear</button></div>`);
   wirePwdBlock();
   $('#mX').addEventListener('click', closeModal);
@@ -3202,9 +3241,19 @@ function auAction(ds, user) {
   $('#mOk').addEventListener('click', async () => {
     const pw = readPwd();
     const d = await auApi({ action: 'reset', adminId: user.id, id: ds.id, ...pw });
-    if (!d.ok) { alert(d.error); return; }
+    if (!d.ok) { modalErrAu('#auRstErr', d.error); return; }
+    // v5.10: la clave nueva va al modal de credenciales, no a un alert().
+    const pwd = d.tempPassword || pw.password;
+    if (pwd) {
+      credModal(user, {
+        id: ds.id, kind: 'portal', password: pwd, useTemp: !!pw.useTemp,
+        title: 'Contraseña reseteada',
+        okText: `Se cambió la clave de ${ds.name || ds.u}`,
+        onClose: () => viewEquipo(user),
+      });
+      return;
+    }
     closeModal();
-    if (d.tempPassword) alert('Contraseña temporal: ' + d.tempPassword);
     viewEquipo(user);
   });
 }
@@ -3232,7 +3281,7 @@ function agentModal(user, meta, onDone) {
     <p class="muted" style="font-size:12.5px;margin:0 0 14px">${who} \u00b7 agente (staff) de osTicket. Con esto ve su bandeja de tickets.</p>
     <label class="flabel">Usuario (osTicket)</label>
     <input type="text" id="agUser" value="${meta.username || ''}" style="margin-bottom:14px">
-    ${pwdBlockHtml()}
+    ${pwdBlockHtml('osticket')}
     <p id="agErr" style="color:var(--danger);font-size:12.5px;margin:10px 0 0;display:none"></p>
     <div class="modal-actions">
       <button class="btn" id="mCancel">Cancelar</button>
@@ -3267,7 +3316,7 @@ function agentModal(user, meta, onDone) {
       if (!r || !r.ok) { err.textContent = (r && r.error) || 'No se pudo guardar.'; err.style.display = 'block'; btn.disabled = false; btn.textContent = orig; return; }
       closeModal();
       // Mostrar credenciales (reusa el modal de resultado, sin conteo de bandeja).
-      agentCredsModal(user, r, meta.username, () => viewEquipo(user));
+      agentCredsModal(user, r, meta.username, () => viewEquipo(user), meta.id);
     } else {
       // Flujo de creacion desde guardar alcance: delega en onDone.
       if (onDone) onDone(creds);
@@ -3275,28 +3324,24 @@ function agentModal(user, meta, onDone) {
   });
 }
 
-/* Modal simple de credenciales del agente (usado por el reset directo). */
-function agentCredsModal(user, r, targetUser, done) {
+/* Credenciales del agente de osTicket (reset directo desde Equipo).
+   v5.10: pasa a usar credModal, la misma pieza que las credenciales del portal.
+   Antes tenia su propio modal, que ademas decia "Debera cambiar la clave al
+   entrar": eso NO es cierto para osTicket (v5.08 solo intercepta el login del
+   PORTAL; osTicket no fuerza nada). credModal avisa lo contrario, que es lo
+   que realmente pasa: esa clave no vence. */
+function agentCredsModal(user, r, targetUser, done, memberId) {
   const credUser = r.agent_username || targetUser;
-  openModal(`
-    <div class="modal-head"><span>Agente osTicket listo</span><button class="modal-x" id="mX">\u2715</button></div>
-    <p style="margin:0 0 4px">\u2705 Agente ${r.agent_created ? 'creado' : 'actualizado'}${r.staff_id ? ` <span class="muted">(#${r.staff_id})</span>` : ''}.</p>
-    <div style="margin-top:12px;padding:14px;border:1px solid var(--border);border-radius:10px;background:var(--bg-soft,#f7f7f9)">
-      ${copyFieldHtml('Usuario', credUser, 'acrUser')}
-      ${copyFieldHtml('Clave', r.temp_password || '', 'acrPass')}
-      <button class="btn" data-copy-all type="button" style="width:100%;margin-top:2px">Copiar usuario y clave</button>
-      <p class="muted" style="font-size:11.5px;margin:10px 0 0;line-height:1.5">Entr\u00e9gaselas al agente. Debera cambiar la clave al entrar. No se vuelve a mostrar.</p>
-    </div>
-    <div class="modal-actions"><button class="btn btn-primary" id="mClose">Listo</button></div>`);
-  const finish = () => { closeModal(); if (done) done(); };
-  $('#mX').addEventListener('click', finish);
-  $('#mClose').addEventListener('click', finish);
-  document.querySelectorAll('[data-copy]').forEach(b =>
-    b.addEventListener('click', () => { const el = document.getElementById(b.dataset.copy); if (el) { el.select(); copyToClipboard(el.value, b); } }));
-  const all = document.querySelector('[data-copy-all]');
-  if (all) all.addEventListener('click', () => {
-    const u = document.getElementById('acrUser'), pw = document.getElementById('acrPass');
-    copyToClipboard(`Usuario: ${u ? u.value : ''}\nClave: ${pw ? pw.value : ''}`, all);
+  credModal(user, {
+    // El id del miembro no viene en la respuesta del reset: lo pasa el llamador
+    // (meta.id). Sin el, credModal no puede resolver el mensaje.
+    id: memberId || r.admin_id || null,
+    kind: 'osticket',
+    password: r.temp_password || '',
+    osticketUser: credUser,
+    title: 'Agente osTicket listo',
+    okText: `Agente ${r.agent_created ? 'creado' : 'actualizado'}${r.staff_id ? ` (#${r.staff_id})` : ''}`,
+    onClose: done,
   });
 }
 
@@ -3369,6 +3414,143 @@ function auEditModal(ds, user) {
     }
     closeModal();
     viewEquipo(user);
+  });
+}
+
+/* ================= v5.10: MODAL DE CREDENCIALES =================
+   Mockup aprobado: _PRUEBAS/equipo_credenciales_mockup.html (v0-mock1).
+
+   Reemplaza los alert() con los que hasta ahora se mostraba la clave recien
+   generada. El alert era pobre de verdad: no se podia copiar comodo, no decia
+   el usuario ni el link, y si lo cerrabas sin anotar la clave, se perdia (habia
+   que resetear de nuevo).
+
+   Ahora: ficha con usuario / clave / enlace (copiables uno a uno o todo junto),
+   el aviso que corresponda segun la clave CADUQUE o no, y el envio por WhatsApp
+   con el texto de WhatsApp > Mensajes, mostrado ANTES de mandarlo.
+
+   opts = { id, kind:'portal'|'osticket', password, useTemp, osticketUser,
+            title, okText, onClose } */
+async function credModal(user, opts) {
+  openModal(`
+    <div class="modal-head"><span>${esc(opts.title || 'Credenciales')}</span><button class="modal-x" id="mX">✕</button></div>
+    <div id="crBody"><p class="muted" style="font-size:12.5px">Cargando…</p></div>`);
+
+  const close = () => { closeModal(); if (opts.onClose) opts.onClose(); };
+  $('#mX').addEventListener('click', close);
+
+  const d = await auApi({
+    action: 'cred_preview', adminId: user.id,
+    id: opts.id, kind: opts.kind, password: opts.password,
+    useTemp: !!opts.useTemp, osticketUser: opts.osticketUser || null,
+  });
+
+  if (!d || !d.ok) {
+    // Si algo falla, al menos NO perder la clave: se muestra igual.
+    $('#crBody').innerHTML = `
+      <p style="color:var(--danger);font-size:12.5px;margin:0 0 12px">${esc((d && d.error) || 'No se pudo preparar el mensaje.')}</p>
+      <p style="font-size:13px;margin:0 0 14px">Clave: <b style="font-family:ui-monospace,monospace">${esc(opts.password || '')}</b></p>
+      <div class="modal-actions"><button class="btn btn-primary" id="crClose">Cerrar</button></div>`;
+    $('#crClose').addEventListener('click', close);
+    return;
+  }
+
+  const m = d.member;
+  const isOst = d.kind === 'osticket';
+  const uname = isOst ? (m.osticket_usuario || m.username) : m.username;
+
+  /* El aviso depende de si la clave CADUCA. Tres situaciones distintas y no
+     conviene mentir en ninguna:
+       - portal + temporal -> caduca al primer ingreso (v5.08). Es el buen caso.
+       - portal + fija     -> no caduca. Ademas el server NO la manda por WA.
+       - osTicket          -> nunca caduca (osTicket no fuerza el cambio). */
+  let note;
+  if (isOst) {
+    note = `<div class="cr-note fija"><span>⚠️</span><div>Esta clave de osTicket <b>no vence</b> y el sistema no le va a pedir que la cambie. Si la enviás por WhatsApp, queda viva en el chat.</div></div>`;
+  } else if (d.temp) {
+    note = `<div class="cr-note temp"><span>🔒</span><div>Es una <b>clave temporal</b>: al entrar por primera vez, el portal le va a exigir que defina una propia. Después de eso, esta deja de servir.</div></div>`;
+  } else {
+    note = `<div class="cr-note fija"><span>⚠️</span><div>Esta clave <b>no caduca</b>: la persona la va a poder usar indefinidamente, y por eso <b>no se puede enviar por WhatsApp</b>. Si querés mandársela, resetea la clave con la opción <b>Generar temporal</b>.</div></div>`;
+  }
+
+  const canWa = d.can_send && (isOst || d.temp);
+  const waBox = !m.phone
+    ? `<div class="cr-nophone"><span>📱</span><div><b>${esc(m.name)} no tiene teléfono cargado.</b> Para enviarle sus datos por WhatsApp, agregáselo con el botón <b>Editar</b> de su fila. Mientras tanto, copiá los datos y pasáselos por otro medio.</div></div>`
+    : !canWa
+      ? ''
+      : `<div class="cr-wa">
+           <div class="cr-wa-h"><span class="t">Se le enviará</span><span class="sp"></span><span class="tel">📱 ${esc(m.phone)}</span></div>
+           <div class="cr-wa-prev">${esc(d.message).replace(/\*([^*\n]+)\*/g, '<b>$1</b>')}</div>
+         </div>`;
+
+  $('#crBody').innerHTML = `
+    <div class="cr-ok">✓ ${esc(opts.okText || 'Listo')}</div>
+
+    <div class="cr-card">
+      <div class="cr-r"><span class="k">Sistema</span><span class="v">${isOst ? '🎫 Sistema de tickets' : '🔑 Portal de Nómina'}</span></div>
+      <div class="cr-r"><span class="k">Nombre</span><span class="v">${esc(m.name)}<span class="muted" style="font-weight:400"> · ${esc(m.rol)}</span></span></div>
+      <div class="cr-r"><span class="k">Enlace</span><span class="v" style="font-size:12.5px">${esc(d.link || '—')}</span>${d.link ? `<button class="cr-cp" data-c="${esc(d.link)}">Copiar</button>` : ''}</div>
+      <div class="cr-r"><span class="k">Usuario</span><span class="v mono">${esc(uname)}</span><button class="cr-cp" data-c="${esc(uname)}">Copiar</button></div>
+      <div class="cr-r pw"><span class="k">Clave</span><span class="v mono">${esc(opts.password || '')}</span><button class="cr-cp" data-c="${esc(opts.password || '')}">Copiar</button></div>
+    </div>
+
+    ${note}
+    ${waBox}
+    <p id="crErr" style="color:var(--danger);font-size:12.5px;margin:12px 0 0;display:none"></p>
+
+    <div class="modal-actions" style="margin-top:16px">
+      <button class="btn" id="crCopyAll">📋 Copiar todo</button>
+      <span style="flex:1"></span>
+      <button class="btn" id="crClose">Cerrar</button>
+      ${canWa && m.phone ? '<button class="btn btn-wa" id="crWa">Enviar por WhatsApp</button>' : ''}
+    </div>`;
+
+  // Copiar todo: incluye nombre y rol (pedido de Pablo), para poder pegarlo
+  // en un correo o un chat y que se entienda de quien es sin escribir nada mas.
+  const allText = [
+    isOst ? 'Sistema de tickets' : 'Portal de Nómina',
+    `${m.name} · ${m.rol}`,
+    `Enlace: ${d.link || ''}`,
+    `Usuario: ${uname}`,
+    `Clave: ${opts.password || ''}`,
+  ].join('\n');
+
+  const flash = (btn, txt) => {
+    const o = btn.textContent;
+    btn.textContent = txt;
+    setTimeout(() => { btn.textContent = o; }, 1400);
+  };
+  document.querySelectorAll('.cr-cp').forEach(b =>
+    b.addEventListener('click', () => {
+      navigator.clipboard.writeText(b.dataset.c).then(() => flash(b, '✓')).catch(() => flash(b, '✗'));
+    }));
+  $('#crCopyAll').addEventListener('click', () => {
+    const b = $('#crCopyAll');
+    navigator.clipboard.writeText(allText).then(() => flash(b, '✓ Copiado')).catch(() => flash(b, 'No se pudo copiar'));
+  });
+  $('#crClose').addEventListener('click', close);
+
+  const wa = $('#crWa');
+  if (wa) wa.addEventListener('click', async () => {
+    const err = $('#crErr');
+    err.style.display = 'none';
+    wa.disabled = true;
+    wa.textContent = 'Enviando…';
+    const r = await auApi({
+      action: 'cred_whatsapp', adminId: user.id,
+      id: opts.id, kind: opts.kind, password: opts.password,
+      useTemp: !!opts.useTemp, osticketUser: opts.osticketUser || null,
+    });
+    if (!r || !r.ok) {
+      wa.disabled = false;
+      wa.textContent = 'Enviar por WhatsApp';
+      err.textContent = (r && r.error) || 'No se pudo enviar.';
+      err.style.display = '';
+      return;
+    }
+    wa.textContent = '✓ Enviado';
+    const box = document.querySelector('.cr-wa');
+    if (box) box.outerHTML = `<div class="cr-sent">✓ Mensaje enviado a ${esc(r.phone || '')}</div>`;
   });
 }
 

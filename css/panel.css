@@ -1594,6 +1594,44 @@ input.needfill:focus, select.needfill:focus {
 .ct-tel { font-size:11.5px; color:var(--ink-soft, #475569); margin-top:3px; white-space:nowrap; }
 .ct-tel.none { color:var(--faint); font-style:italic; }
 
+/* ===== v5.10: modal de credenciales (Equipo) =====
+   Reemplaza los alert() con los que se mostraba la clave. */
+.cr-ok { display:flex; gap:9px; align-items:center; background:#f0fdf4; border:1px solid #bbf7d0;
+  color:#15803d; border-radius:10px; padding:10px 12px; font-size:12.5px; margin-bottom:16px; font-weight:600; }
+.cr-card { border:1px solid var(--border); border-radius:12px; overflow:hidden; margin-bottom:14px; }
+.cr-r { display:flex; align-items:center; gap:10px; padding:10px 13px;
+  border-bottom:1px solid var(--border-soft,#eef0f3); font-size:13px; }
+.cr-r:last-child { border-bottom:0; }
+.cr-r .k { width:82px; flex:none; font-size:11px; color:var(--muted); text-transform:uppercase;
+  letter-spacing:.04em; font-weight:700; }
+.cr-r .v { flex:1; min-width:0; font-weight:600; word-break:break-all; }
+.cr-r .v.mono { font-family:ui-monospace,SFMono-Regular,Menlo,monospace; }
+.cr-r.pw { background:#fffbeb; }
+.cr-r.pw .v { color:#92400e; }
+.cr-cp { border:1px solid var(--border); background:var(--surface); border-radius:7px; padding:3px 8px;
+  font-size:11px; color:var(--muted); cursor:pointer; flex:none; font-family:inherit; }
+.cr-cp:hover { background:var(--border-soft,#eef0f3); color:var(--ink); }
+.cr-note { display:flex; gap:8px; align-items:flex-start; border-radius:10px; padding:9px 12px;
+  font-size:12px; line-height:1.5; margin-bottom:14px; }
+.cr-note.temp { background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; }
+.cr-note.fija { background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; }
+.cr-note b { font-weight:800; }
+.cr-wa { border:1px solid var(--border); border-radius:12px; padding:12px 13px; background:var(--surface2,#f8fafc); }
+.cr-wa-h { display:flex; align-items:center; gap:8px; margin-bottom:9px; }
+.cr-wa-h .t { font-size:11.5px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.04em; }
+.cr-wa-h .sp { flex:1; }
+.cr-wa-h .tel { font-size:12px; color:var(--ink-soft,#334155); font-weight:600; }
+.cr-wa-prev { background:#dcf8c6; border-radius:11px 11px 11px 3px; padding:9px 11px; font-size:12px;
+  line-height:1.55; white-space:pre-wrap; word-break:break-word; color:#0f172a; max-height:170px; overflow:auto; }
+.cr-nophone { display:flex; gap:8px; align-items:flex-start; background:#f8fafc; border:1px dashed var(--border);
+  border-radius:10px; padding:11px 12px; font-size:12px; color:var(--muted); line-height:1.5; }
+.cr-nophone b { color:var(--ink-soft,#334155); font-weight:700; }
+.cr-sent { background:#f0fdf4; border:1px solid #bbf7d0; color:#15803d; border-radius:10px;
+  padding:10px 12px; font-size:12.5px; font-weight:600; }
+.btn-wa { background:#25d366; border-color:#25d366; color:#fff; }
+.btn-wa:hover { background:#128c7e; border-color:#128c7e; }
+.btn-wa:disabled { opacity:.5; }
+
 /* Ultimo acceso al portal (last_login_at): linea gris chica bajo el estado. */
 .cell-lastlogin { font-size:10.5px; color:var(--faint); margin-top:4px; white-space:nowrap; }
 .cell-lastlogin.none { font-style:italic; }

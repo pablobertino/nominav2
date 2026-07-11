@@ -10,6 +10,12 @@
    ===================================================================== */
 
 import { resolveActor, can } from './_auth.js';
+/* v5.10: envio de credenciales por WhatsApp desde Equipo. El motor de
+   plantillas y el enmascarado viven en wa-templates.js (la misma pieza que
+   usa la vista WhatsApp > Mensajes y su preview: si hubiera dos motores,
+   el preview podria mostrar algo distinto de lo que se envia). */
+import { renderTemplate, maskSecrets, buildCtx } from './wa-templates.js';
+import { gaClient, toChatId } from './_greenapi.js';
 
 const SALT = 'nm_salt_2025';
 
@@ -23,6 +29,8 @@ const TEAM_CODE_BY_ACTION = {
   toggle: 'team.toggle',
   update_role: 'team.role',
   update_contact: 'team.create',   // v5.07: editar contacto = mismo gate que alta
+  cred_preview: 'view.equipo',     // v5.10: datos del modal de credenciales
+  cred_whatsapp: 'wa.send',        // v5.10: mandarle las credenciales por WhatsApp
   sync_client: 'team.osticket',
   sync_clients_all: 'team.osticket',
 };
@@ -241,7 +249,7 @@ export async function onRequestPost({ request, env }) {
       const pwd = useTemp ? genTempPassword() : password;
       if (!pwd || pwd.length < 6) return json({ ok: false, error: 'Contraseña inválida (mín. 6).' }, 400);
       const hash = await hashPassword(pwd);
-      await sb(env, 'admin_users', {
+      const created = await sb(env, 'admin_users', {
         method: 'POST', headers: { Prefer: 'return=representation' },
         body: JSON.stringify({
           username, name: name || null, email: email ? email.trim().toLowerCase() : null,
@@ -250,7 +258,10 @@ export async function onRequestPost({ request, env }) {
           role: r, must_change_password: !!useTemp, is_active: true,
         }),
       });
-      return json({ ok: true, tempPassword: useTemp ? pwd : null });
+      // v5.10: el id se devuelve para que el modal de credenciales pueda pedir
+      // el preview del mensaje sin tener que recargar toda la vista Equipo.
+      const newId = created && created[0] && created[0].id;
+      return json({ ok: true, id: newId, tempPassword: useTemp ? pwd : null });
     }
 
     /* v5.07: editar los datos de CONTACTO de un miembro (nombre, correo,
@@ -270,6 +281,128 @@ export async function onRequestPost({ request, env }) {
         }),
       });
       return json({ ok: true });
+    }
+
+    /* ================== v5.10: CREDENCIALES ==================
+       Dos acciones que alimentan el modal de credenciales de Equipo (mockup
+       _PRUEBAS/equipo_credenciales_mockup.html v0-mock1), el que reemplaza
+       los alert() con los que hasta ahora se mostraba la clave.
+
+       La clave NO se guarda en ningun lado: viaja del alta/reset al modal, y
+       de ahi al mensaje. En wa_batches queda el texto ENMASCARADO.
+
+       'kind' distingue las dos plantillas, que corresponden a dos momentos
+       distintos: 'portal' (crear miembro / resetear clave) y 'osticket'
+       (crear o resetear su acceso al sistema de tickets). */
+
+    if (action === 'cred_preview' || action === 'cred_whatsapp') {
+      const { id, kind, password, useTemp, osticketUser } = body;
+      const isOst = kind === 'osticket';
+      if (!id) return json({ ok: false, error: 'Falta el usuario.' }, 400);
+      if (!(await canTouchTarget(id))) return json({ ok: false, error: 'Ese usuario esta fuera de tu alcance.' }, 403);
+
+      const rows = await sb(env,
+        `admin_users?id=eq.${encodeURIComponent(id)}&select=id,username,name,email,phone,role`);
+      if (!rows || !rows.length) return json({ ok: false, error: 'Usuario no encontrado.' }, 404);
+      const u = rows[0];
+
+      const tplCode = isOst ? 'cred_osticket' : 'cred_portal';
+      const tpl = await sb(env,
+        `message_templates?code=eq.${encodeURIComponent(tplCode)}&select=code,label,body,allows_secret,is_active`);
+      if (!tpl || !tpl.length) return json({ ok: false, error: 'Falta el mensaje predeterminado (WhatsApp > Mensajes).' }, 500);
+      const t = tpl[0];
+
+      const ctx = await buildCtx(env, u, isOst
+        ? { osticket_clave: password, osticket_usuario: osticketUser || u.username }
+        : { clave: password });
+
+      const text = renderTemplate(t.body, ctx, !!t.allows_secret);
+
+      if (action === 'cred_preview') {
+        return json({
+          ok: true,
+          member: {
+            id: u.id, username: u.username, name: u.name || u.username,
+            phone: u.phone || null, rol: ctx.rol,
+            osticket_usuario: ctx.osticket_usuario,
+          },
+          kind: isOst ? 'osticket' : 'portal',
+          link: isOst ? ctx.link_osticket : ctx.link_portal,
+          // Aviso de la clave: la del portal caduca (v5.08); la de osTicket NO.
+          // Son situaciones distintas y el modal las muestra distinto.
+          temp: isOst ? false : !!useTemp,
+          can_send: !!u.phone && t.is_active,
+          message: text,
+        });
+      }
+
+      /* ---- envio ---- */
+      if (!u.phone) {
+        return json({ ok: false, error: 'Ese miembro no tiene telefono cargado. Agregalo con el boton Editar de su fila.' }, 400);
+      }
+      if (!t.is_active) {
+        return json({ ok: false, error: 'El mensaje esta desactivado en WhatsApp > Mensajes.' }, 400);
+      }
+      if (!password) {
+        return json({ ok: false, error: 'No hay clave para enviar.' }, 400);
+      }
+      /* REGLA DURA (v5.08 + v5.09): la clave del PORTAL solo se manda si es
+         TEMPORAL. Una clave fija enviada por WhatsApp queda viva en el chat
+         para siempre. Con la temporal, la exposicion dura hasta el primer
+         ingreso: el portal obliga a cambiarla. La de osTicket no tiene esta
+         proteccion (osTicket no fuerza el cambio), y por eso el modal avisa
+         explicitamente antes de mandarla. */
+      if (!isOst && !useTemp) {
+        return json({ ok: false, error:
+          'Esa clave no caduca, asi que no se envia por WhatsApp: quedaria viva en el chat. '
+          + 'Reseteala con la opcion "Generar temporal" y volve a intentar.' }, 400);
+      }
+
+      const chatId = toChatId(u.phone);
+      const ga = gaClient(env);
+      let idMessage = null;
+      let err = null;
+      try {
+        const r = await ga.sendMessage(chatId, text);
+        idMessage = (r && (r.idMessage || r.id)) || null;
+      } catch (e) {
+        err = (e && e.message) || String(e);
+      }
+
+      /* Auditoria: queda registrado QUE se le mando y a quien, con el texto
+         ENMASCARADO. Si alguien lee wa_batches manana, no encuentra claves. */
+      const batch = await sb(env, 'wa_batches', {
+        method: 'POST', headers: { Prefer: 'return=representation' },
+        body: JSON.stringify({
+          created_by: actorName,
+          message: maskSecrets(text, ctx),
+          filters: { target: 'credenciales', kind: isOst ? 'osticket' : 'portal',
+            template: tplCode, member: u.username },
+          total: 1,
+          with_phone: 1,
+        }),
+      });
+      const batchId = batch && batch[0] && batch[0].id;
+      if (batchId) {
+        await sb(env, 'wa_outbox', {
+          method: 'POST', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({
+            batch_id: batchId,
+            id_number: String(u.id),
+            full_name: u.name || u.username,
+            company_code: '',
+            phone_raw: u.phone,
+            chat_id: chatId,
+            status: err ? 'error' : 'sent',
+            id_message: idMessage,
+            error_text: err,
+            sent_at: err ? null : new Date().toISOString(),
+          }),
+        });
+      }
+
+      if (err) return json({ ok: false, error: 'No se pudo enviar: ' + err }, 502);
+      return json({ ok: true, phone: u.phone });
     }
 
     if (action === 'reset') {
