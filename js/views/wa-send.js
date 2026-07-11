@@ -122,6 +122,8 @@ function syncSubzones() {
 }
 
 function currentFilters() {
+  const tel = $('#waFTel').value.trim();
+  if (tel) return { direct_phone: tel };         // el numero directo manda sobre todo
   const ced = $('#waFCed').value.trim();
   if (ced) return { id_number: ced };            // la cédula manda sola
   return {
@@ -229,9 +231,10 @@ export async function renderWaSend(user) {
         <div><label>Concepto / Marca</label><select id="waFConcept"><option value="">Todos</option></select></div>
         <div><label>Empresa</label><select id="waFCompany"><option value="">Todas</option></select></div>
       </div>
-      <div class="wa-orsep">o un trabajador individual</div>
+      <div class="wa-orsep">o un trabajador individual · o un número directo</div>
       <div class="wa-frow">
-        <div><label>Cédula</label><input id="waFCed" placeholder="Ej: 12345678 (si la escribes, manda sola: ignora los filtros de arriba)"></div>
+        <div><label>Cédula</label><input id="waFCed" placeholder="Ej: 12345678 (si la escribes, manda sola)"></div>
+        <div><label>Número directo (pruebas / fuera de nómina)</label><input id="waFTel" placeholder="Ej: 0414-1234567 · manda sobre todo lo demás"></div>
         <button class="wa-btn pri" id="waPreview">Ver destinatarios</button>
         <button class="wa-btn" id="waClear">Limpiar</button>
       </div>
@@ -291,11 +294,12 @@ export async function renderWaSend(user) {
   ['waFSubzone', 'waFType', 'waFConcept', 'waFCompany'].forEach(id =>
     $('#' + id).addEventListener('change', invalidatePreview));
   $('#waFCed').addEventListener('input', invalidatePreview);
+  $('#waFTel').addEventListener('input', invalidatePreview);
   $('#waMsg').addEventListener('input', syncSendState);
 
   $('#waClear').addEventListener('click', () => {
     ['waFZone', 'waFSubzone', 'waFType', 'waFConcept', 'waFCompany'].forEach(id => { $('#' + id).value = ''; });
-    $('#waFCed').value = ''; $('#waMsg').value = '';
+    $('#waFCed').value = ''; $('#waFTel').value = ''; $('#waMsg').value = '';
     syncSubzones(); invalidatePreview();
   });
 

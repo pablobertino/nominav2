@@ -66,6 +66,15 @@ function pickFilters(body) {
   };
 }
 
+/* v4.91: numero directo (pruebas / destinatario fuera de nomina).
+   Valida >=10 digitos tras limpiar; manda solo (ignora filtros). */
+function pickDirectPhone(body) {
+  const raw = String(body.direct_phone || '').trim();
+  if (!raw) return null;
+  const digits = raw.replace(/\D/g, '');
+  return { raw, ok: digits.length >= 10 };
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch (_) { return json({ ok: false, error: 'Cuerpo inválido.' }, 400); }
@@ -93,6 +102,19 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------------- preview: destinatarios ---------------- */
     if (action === 'preview') {
+      const direct = pickDirectPhone(body);
+      if (direct) {
+        // Destinatario sintetico: no consulta el roster.
+        return json({
+          ok: true,
+          total: 1, with_phone: direct.ok ? 1 : 0, without_phone: direct.ok ? 0 : 1,
+          rows: [{
+            id_number: '—', full_name: 'Número directo',
+            company_code: '', company_name: '(fuera de nómina)',
+            phone: direct.raw, phone_ok: direct.ok,
+          }],
+        });
+      }
       const r = await rpc(env, 'wa_recipients', { ...pickFilters(body), p_limit: 100 });
       return json({ ok: true, ...(r || {}) });
     }
@@ -124,14 +146,24 @@ export async function onRequestPost({ request, env }) {
       if (message.length > MAX_MESSAGE) {
         return json({ ok: false, error: `El mensaje supera los ${MAX_MESSAGE} caracteres.` }, 400);
       }
-      const filters = pickFilters(body);
-      const hasFilter = Object.values(filters).some(v => v !== null);
-      if (!hasFilter) {
-        return json({ ok: false, error: 'Elige al menos un filtro o un trabajador: no se permite difusión a todo el grupo sin acotar.' }, 400);
+      const direct = pickDirectPhone(body);
+      if (direct && !direct.ok) {
+        return json({ ok: false, error: 'El número directo no parece válido (mínimo 10 dígitos).' }, 400);
       }
-      // Destinatarios completos (sin limite de muestra)
-      const r = await rpc(env, 'wa_recipients', { ...filters, p_limit: 100000 });
-      const rows = ((r && r.rows) || []).filter(x => x.phone_ok);
+      const filters = pickFilters(body);
+      const hasFilter = !!direct || Object.values(filters).some(v => v !== null);
+      if (!hasFilter) {
+        return json({ ok: false, error: 'Elige al menos un filtro, un trabajador o un número directo: no se permite difusión a todo el grupo sin acotar.' }, 400);
+      }
+      // Destinatarios: numero directo (1 fila sintetica) o roster completo.
+      let r, rows;
+      if (direct) {
+        r = { total: 1 };
+        rows = [{ id_number: 'directo', full_name: 'Número directo (prueba)', company_code: '', phone: direct.raw, phone_ok: true }];
+      } else {
+        r = await rpc(env, 'wa_recipients', { ...filters, p_limit: 100000 });
+        rows = ((r && r.rows) || []).filter(x => x.phone_ok);
+      }
       if (!rows.length) return json({ ok: false, error: 'Ningún destinatario del filtro tiene teléfono válido.' }, 400);
 
       const batch = await sb(env, 'wa_batches', {
@@ -140,7 +172,9 @@ export async function onRequestPost({ request, env }) {
         body: JSON.stringify({
           created_by: actorName,
           message,
-          filters: Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== null)),
+          filters: direct
+            ? { direct_phone: direct.raw }
+            : Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== null)),
           total: (r && r.total) || rows.length,
           with_phone: rows.length,
         }),
