@@ -755,9 +755,14 @@ async function listHistory(env, actor, user, body) {
   const compByCode = {};
   if (codes.length) {
     const inList = codes.map(c => `"${c}"`).join(',');
+    // v5.18: se suma company_type. El boton "Ver ficha" del historial lo
+    // necesita para abrir Personal en el modo correcto (tienda vs empresa);
+    // sin el, toda ficha de Importadora/Administrativa/etc abriria como tienda.
     const comps = await sb(env,
-      `companies?company_code=in.(${inList})&select=company_code,business_name`) || [];
-    comps.forEach(c => { compByCode[c.company_code] = c.business_name || null; });
+      `companies?company_code=in.(${inList})&select=company_code,business_name,company_type`) || [];
+    comps.forEach(c => {
+      compByCode[c.company_code] = { name: c.business_name || null, type: c.company_type || null };
+    });
   }
   const resolverIds = [...new Set(sets.map(s => s.resolved_by).filter(x => x != null))];
   const resolverById = {};
@@ -776,6 +781,7 @@ async function listHistory(env, actor, user, body) {
       new: displayVal(f, ch[f] ? ch[f].new : null),
     }));
     const nm = nameByCed[s.id_number] || {};
+    const cm = compByCode[s.company_code] || {};
     return {
       id: s.id,
       id_number: s.id_number,
@@ -783,7 +789,8 @@ async function listHistory(env, actor, user, body) {
       full_name: nm.full_name || null,
       thumb_url: thumbUrlPub(env, nm.photo_key),
       company_code: s.company_code,
-      company_name: compByCode[s.company_code] || null,
+      company_name: cm.name || null,
+      company_type: cm.type || null,   // v5.18: para gotoFicha (modo de la vista)
       status: s.status,
       origin: s.origin || 'edit',
       fields,

@@ -237,7 +237,11 @@ function ensureStyles() {
   .axr-hctrl input:focus,.axr-hctrl select:focus{outline:none;border-color:var(--brand,#2563eb)}
   .axr-hrow{border:1px solid var(--border);border-radius:12px;margin-bottom:8px;padding:11px 14px;display:flex;gap:12px;align-items:flex-start}
   .axr-hava{width:36px;height:36px;border-radius:9px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;overflow:hidden}
+  .axr-hava.haspic{cursor:zoom-in;background:#eef2f7}
   .axr-hava img{width:100%;height:100%;object-fit:cover;display:block}
+  /* v5.18: botones de fila del Historial (ver ficha / copiar). Reusa
+     .axr-iconbtn de Sincronizar; solo aporta el contenedor. */
+  .axr-hacts{display:flex;gap:6px;flex:none;align-items:center}
   .axr-hmain{flex:1;min-width:0}
   .axr-hnm{font-weight:600;font-size:13.5px}
   .axr-hsub{color:var(--muted);font-size:11.5px;margin-top:1px}
@@ -1206,6 +1210,39 @@ let HIST = { page: 1, size: 50, q: '', status: '', origin: '', dir: 'desc', ftyp
 const HIST_STATUS_LBL = { pending: 'Pendiente', published: 'Publicado', discarded: 'Anulado' };
 const HIST_ORIGIN_LBL = { edit: 'Edición', erp_detect: 'Comparación', auto_sync: 'Automático' };
 
+/* v5.18: ir a la ficha desde el Historial. Misma idea que gotoFicha() de
+   Sincronizar, pero el callback de vuelta trae al HISTORIAL (no a la bandeja)
+   y conserva el modo (general o bancario). */
+function gotoFichaFromHistory(r) {
+  if (!r) return;
+  const mode = NON_STORE_TYPES.has(r.company_type) ? 'enterprise' : 'store';
+  const ff = FIELD_FILTER;
+  renderWorkerPhotos(USER, r.company_code, () => renderAxHistory(USER, ff), { mode, openCed: r.id_number });
+}
+
+/* v5.18: texto del registro del historial para el portapapeles. A diferencia
+   del de Sincronizar (que habla de "cambios pendientes"), este incluye el
+   ESTADO y quien lo resolvio: es un registro ya cerrado. */
+function histCopyText(r) {
+  const L = [];
+  L.push(r.full_name || '(sin nombre)');
+  L.push(`C.I.: ${(r.ced_kind || 'V')}-${r.id_number}`);
+  L.push(`Empresa: ${[r.company_code, r.company_name].filter(Boolean).join(' · ')}`);
+  L.push(`Estado: ${HIST_STATUS_LBL[r.status] || r.status} · Origen: ${HIST_ORIGIN_LBL[r.origin] || r.origin}`);
+  const fields = r.fields || [];
+  L.push(`Cambios (${fields.length}):`);
+  fields.forEach(f => L.push(`- ${f.label}: ${f.old == null ? '(vacio)' : f.old} → ${f.new == null ? '(vacio)' : f.new}`));
+  if (r.changed_by || r.changed_at) {
+    L.push(`Editado${r.changed_by ? ` por ${r.changed_by}` : ''}${r.changed_at ? ` · ${fmtDateTime(r.changed_at)}` : ''}`);
+  }
+  if (r.status !== 'pending' && (r.resolved_by || r.resolved_at)) {
+    const verbo = r.status === 'published' ? 'Publicado' : 'Anulado';
+    L.push(`${verbo}${r.resolved_by ? ` por ${r.resolved_by}` : ''}${r.resolved_at ? ` · ${fmtDateTime(r.resolved_at)}` : ''}`);
+  }
+  L.push(`Ficha: ${String(r.id_number).replace(/[^0-9]/g, '')}`);
+  return L.join('\n');
+}
+
 export async function renderAxHistory(user, fieldFilter) {
   USER = user;
   // v4.80: menu "Datos bancarios · Historial" = este mismo historial con el
@@ -1332,7 +1369,7 @@ function paintHistory(wrap) {
   list.innerHTML = HIST.rows.map(r => {
     const ci = avatarColor(r.id_number);
     const ava = r.thumb_url
-      ? `<div class="axr-hava"><img src="${esc(r.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`
+      ? `<div class="axr-hava haspic" data-hpic="${r.id}" title="Ver foto"><img src="${esc(r.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`
       : `<div class="axr-hava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(r.full_name))}</div>`;
     const flds = (r.fields || []).map(f =>
       `<span class="fl"><b>${esc(f.label)}:</b> ${f.old == null ? '(vacío)' : esc(f.old)} → ${f.new == null ? '(vacío)' : esc(f.new)}</span>`
@@ -1350,12 +1387,38 @@ function paintHistory(wrap) {
         <div class="axr-hflds">${flds}</div>
         ${who.length ? `<div class="axr-hwho">${who.join('  ·  ')}</div>` : ''}
       </div>
+      <div class="axr-hacts">
+        <button type="button" class="axr-iconbtn" data-hficha="${r.id}" title="Ver ficha"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="9" cy="10" r="2"/><path d="M15 8h4M15 12h4M5.5 18c.7-1.8 2.1-2.8 3.5-2.8s2.8 1 3.5 2.8"/></svg></button>
+        <button type="button" class="axr-iconbtn" data-hcopy="${r.id}" title="Copiar datos"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button>
+      </div>
       <div class="axr-hside">
         <span class="axr-hst ${esc(r.status)}">${HIST_STATUS_LBL[r.status] || esc(r.status)}</span>
         <span class="axr-hor">${HIST_ORIGIN_LBL[r.origin] || esc(r.origin)}</span>
       </div>
     </div>`;
   }).join('');
+
+  /* v5.18: los mismos tres gestos que Sincronizar (ver foto / ir a la ficha /
+     copiar datos). El historial es de solo lectura, pero desde aca uno quiere
+     ir a VERIFICAR el cambio en la ficha, no solo leerlo. */
+  list.querySelectorAll('[data-hpic]').forEach(el =>
+    el.addEventListener('click', ev => {
+      ev.stopPropagation();
+      const r = HIST.rows.find(x => x.id === +el.dataset.hpic);
+      if (!r || !r.thumb_url) return;
+      openWorkerLightbox(r.thumb_url, `${r.full_name || ''} · C.I. ${r.id_number}`, `${r.id_number}.jpg`);
+    }));
+  list.querySelectorAll('[data-hficha]').forEach(el =>
+    el.addEventListener('click', ev => {
+      ev.stopPropagation();
+      gotoFichaFromHistory(HIST.rows.find(x => x.id === +el.dataset.hficha));
+    }));
+  list.querySelectorAll('[data-hcopy]').forEach(el =>
+    el.addEventListener('click', ev => {
+      ev.stopPropagation();
+      const r = HIST.rows.find(x => x.id === +el.dataset.hcopy);
+      if (r) copyToClipboard(histCopyText(r), el);
+    }));
 
   const pager = wrap.querySelector('#hPager');
   const from = (HIST.page - 1) * HIST.size + 1;
