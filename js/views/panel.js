@@ -31,6 +31,7 @@ import { renderAxReview, renderAxCompare, renderAxHistory } from './ax-review.js
 import { renderBankStats } from './bank-stats.js';
 import { renderBankAccounts } from './bank-accounts.js';
 import { renderScopeOverridesEditor, decorateScovBadges } from './scope-overrides.js';
+import { renderWaSend } from './wa-send.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderSyncLog } from './sync-log.js';
 import { renderResetData } from './reset-data.js';
@@ -163,6 +164,12 @@ const NAV_GROUPS = [
     // v4.82: Cuentas SIN adminonly: todos los roles del equipo la ven (con
     // su alcance); el permiso view.bankaccounts la gobierna desde Roles.
     ['bankaccounts', I.wallet, 'Cuentas'],
+  ] },
+  // v4.90: grupo WHATSAPP (aprobado por Pablo). Nace con Difusion (texto
+  // masivo/individual, solo superadmin via view.whatsapp sin conceder);
+  // a futuro: constancias PDF por WhatsApp, encuestas, respuestas.
+  { title: 'WhatsApp', items: [
+    ['wadifusion', I.megaphone, 'Difusión', 'superonly'],
   ] },
   { title: 'Administración', items: [
     ['equipo', I.team, 'Equipo'],
@@ -387,7 +394,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.89</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v4.90</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -6047,6 +6054,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'banksync') renderAxReview(user, 'account_number');
   else if (view === 'bankhist') renderAxHistory(user, 'account_number');
   else if (view === 'bankaccounts') renderBankAccounts(user);
+  else if (view === 'wadifusion') renderWaSend(user);
   else if (view === 'erpquery') renderErpQuery(user);
   else if (view === 'synclog') renderSyncLog(user);
   else if (view === 'resetdata') renderResetData(user);
@@ -6313,6 +6321,7 @@ export function renderPanel() {
       axhistory: 'view.axhistory', synclog: 'view.synclog', erpquery: 'view.erpquery',
       bankstats: 'view.bankstats', banksync: 'view.banksync', bankhist: 'view.bankhist',
       bankaccounts: 'view.bankaccounts',
+      wadifusion: 'view.whatsapp',
       equipo: 'view.equipo',
     };
     try {

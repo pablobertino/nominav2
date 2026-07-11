@@ -55,6 +55,7 @@ const VIEW_SUBGROUPS = [
   ['Solicitudes', ['view.solicitudes', 'view.firmantes']],
   ['Sincronizacion', ['view.sync', 'view.syncreview', 'view.axcompare', 'view.axhistory', 'view.synclog', 'view.erpquery']],
   ['Datos bancarios', ['view.bankstats', 'view.banksync', 'view.bankhist', 'view.bankaccounts']],
+  ['WhatsApp', ['view.whatsapp']],
   ['Administracion', ['view.equipo', 'view.permisos', 'view.config', 'view.roles', 'view.resetdata']],
   ['Empresa (tienda)', ['view.miempresa']],
   ['Ver pestañas de Configuracion', ['view.cfg.referencias', 'view.cfg.cargos', 'view.cfg.incidencias', 'view.cfg.calendario', 'view.cfg.sincronizacion', 'view.cfg.osticket', 'view.cfg.ajustes']],
@@ -116,6 +117,11 @@ const MENU_CATALOG = [
     { id: 'bankhist', lbl: 'Historial', view: 'view.bankhist', acts: [] },
     // v4.82: Cuentas, habilitada a todos los roles (grilla de solo lectura).
     { id: 'bankaccounts', lbl: 'Cuentas', view: 'view.bankaccounts', acts: [] },
+  ] },
+  // v4.90: grupo WhatsApp. Difusion nace solo-superadmin (view.whatsapp y
+  // wa.send sembrados sin conceder); desde aqui se prenden a otros roles.
+  { g: 'WhatsApp', items: [
+    { id: 'wadifusion', lbl: 'Difusión', view: 'view.whatsapp', acts: ['wa.send'] },
   ] },
   { g: 'Administracion', items: [
     { id: 'equipo', lbl: 'Equipo', view: 'view.equipo', acts: ['team.create', 'team.reset', 'team.toggle', 'team.role', 'team.scope', 'team.osticket', 'team.scope_override'] },
