@@ -104,6 +104,7 @@ function ensureStyles() {
   .wa-ic{width:30px;height:30px;border-radius:9px;background:#e9fbf0;color:#128c7e;display:grid;place-items:center;flex:none}
   .wa-inst{display:flex;gap:7px;align-items:center;border-radius:999px;padding:5px 13px;font-size:12px;font-weight:700;border:1px solid var(--border);background:var(--surface,#fff);color:var(--muted)}
   .wa-inst.ok{background:#e9fbf0;border-color:#bbf1d2;color:#0f7a4d}
+  .wa-inst.warn{background:var(--warn-bg,#fffbeb);border-color:#fde68a;color:#92400e}
   .wa-inst.bad{background:#fef2f2;border-color:#fecaca;color:#b91c1c}
   .wa-inst .dot{width:8px;height:8px;border-radius:50%;background:currentColor}
   .wa-card{background:var(--card,#fff);border:1px solid var(--border);border-radius:13px;padding:16px 18px;margin-bottom:14px}
@@ -684,13 +685,34 @@ export async function renderWaSend(user) {
   // Estado de la línea (diagnóstico; no bloquea la pantalla si falla).
   // v4.98: el server ademas verifica el delay de linea (pausa real entre
   // salidas) y lo corrige solo si esta bajo; aqui solo se informa.
+  // v5.15: el server manda el estado YA TRADUCIDO (r.line = {level,title,
+  // hint}). Antes esta pildora pintaba el codigo crudo del proveedor: el dia
+  // que la linea se cayo, al usuario le aparecio literalmente "yellowCard".
+  // Ahora dice que pasa y que hacer, y si el estado es grave se avisa arriba
+  // del boton de enviar (no tiene sentido preparar una difusion que no va a
+  // salir).
   api(user, { action: 'state' }).then(r => {
     const el = $('#waInst');
-    if (r && r.ok && r.state && r.state.stateInstance === 'authorized') {
-      el.className = 'wa-inst ok';
-      el.innerHTML = '<span class="dot"></span> Línea conectada' + (r.phone ? ' · ' + esc(r.phone) : '');
+    if (!el) return;
+    const L = (r && r.ok && r.line) ? r.line : null;
+
+    if (!L) {
+      el.className = 'wa-inst bad';
+      el.innerHTML = '<span class="dot"></span> No se pudo verificar la línea';
+      return;
+    }
+
+    const cls = L.level === 'ok' ? 'ok' : (L.level === 'warn' ? 'warn' : 'bad');
+    el.className = 'wa-inst ' + cls;
+    // El telefono solo se muestra cuando la linea esta sana (con la linea
+    // caida, el numero no aporta: lo que importa es el problema).
+    const tel = (L.level === 'ok' && r.phone) ? ' · ' + esc(r.phone) : '';
+    el.innerHTML = '<span class="dot"></span> ' + esc(L.title) + tel;
+    el.title = L.hint || '';
+
+    if (L.level === 'ok') {
       if (r.delay_ms) {
-        el.title = `Ritmo de línea: 1 mensaje cada ${(r.delay_ms / 1000).toLocaleString('es-VE')} s`;
+        el.title = `${L.hint} Ritmo: 1 mensaje cada ${(r.delay_ms / 1000).toLocaleString('es-VE')} s`;
       }
       if (r.delay_fixed) {
         el.insertAdjacentHTML('afterend',
@@ -698,9 +720,21 @@ export async function renderWaSend(user) {
       } else if (r.delay_error) {
         el.title = 'No se pudo verificar el ritmo de línea: ' + r.delay_error;
       }
-    } else {
-      el.className = 'wa-inst bad';
-      el.innerHTML = '<span class="dot"></span> ' + esc((r && r.state && r.state.stateInstance) || 'Línea no disponible');
+      return;
+    }
+
+    // Linea con problemas: aviso visible arriba del boton de enviar. Sin
+    // esto, el usuario arma la difusion completa y recien falla al final.
+    const row = $('#waSendRow');
+    if (row && !$('#waLineWarn')) {
+      const grave = L.level === 'bad';
+      row.insertAdjacentHTML('beforebegin', `
+        <div id="waLineWarn" style="display:flex;gap:9px;align-items:flex-start;border-radius:10px;padding:10px 13px;font-size:12.5px;line-height:1.5;margin-bottom:10px;${grave
+          ? 'background:#fef2f2;border:1px solid #fecaca;color:#991b1b'
+          : 'background:var(--warn-bg,#fffbeb);border:1px solid #fde68a;color:#92400e'}">
+          <span style="flex:none">${grave ? '⛔' : '⚠️'}</span>
+          <div><b>${esc(L.title)}.</b> ${esc(L.hint || '')}</div>
+        </div>`);
     }
   });
 

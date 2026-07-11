@@ -71,6 +71,75 @@ const PREVIEW_LIMIT = 1000;
 const LINE_DELAY_MIN_MS = 3000;
 const LINE_DELAY_SET_MS = 3500;
 
+/* ===================== v5.15: ESTADO DE LA LINEA EN CRISTIANO =====================
+   El proveedor devuelve el estado de la linea como un codigo en ingles
+   (stateInstance). La vista Difusion lo pintaba CRUDO en la pildora del
+   encabezado: cuando la linea se cayo, al usuario le aparecio literalmente
+   "yellowCard" y no habia forma de saber que significaba ni que hacer.
+
+   Aca se traduce a un objeto que el front pinta tal cual:
+     { level, title, hint }
+       level: 'ok' | 'warn' | 'bad'   -> color de la pildora
+       title: texto corto (lo que se ve)
+       hint : que hacer (tooltip)
+
+   Reglas del portal que esto respeta:
+   - Nunca se nombra al proveedor en la UI (se dice "la linea").
+   - Nunca se muestra jerga tecnica cruda en ingles.
+
+   OJO CON yellowCard: la documentacion lo marca como "deprecated, replaced
+   with suspended", PERO la consola del proveedor lo SIGUE devolviendo hoy
+   (visto en produccion 2026-07-11). Por eso se mapean LOS DOS al mismo
+   texto: creerle a la doc y sacar yellowCard dejaria al usuario otra vez
+   frente a un codigo crudo. Cualquier estado desconocido cae en un texto
+   generico y seguro (nunca se filtra el codigo del proveedor). */
+const LINE_STATES = {
+  authorized: {
+    level: 'ok', title: 'Línea conectada',
+    hint: 'La línea está lista para enviar.',
+  },
+  notAuthorized: {
+    level: 'bad', title: 'Línea desconectada',
+    hint: 'Hay que volver a vincular el teléfono de la línea escaneando el código QR. Mientras tanto no sale ningún mensaje.',
+  },
+  // Restriccion temporal de WhatsApp sobre la linea. yellowCard es el
+  // nombre viejo del mismo estado; ambos siguen llegando.
+  suspended: {
+    level: 'warn', title: 'Línea con restricciones',
+    hint: 'WhatsApp le puso restricciones temporales a la línea. Los envíos pueden fallar o llegar con demora. Conviene no hacer difusiones grandes hasta que se normalice.',
+  },
+  yellowCard: {
+    level: 'warn', title: 'Línea con restricciones',
+    hint: 'WhatsApp le puso restricciones temporales a la línea. Los envíos pueden fallar o llegar con demora. Conviene no hacer difusiones grandes hasta que se normalice.',
+  },
+  blocked: {
+    level: 'bad', title: 'Línea bloqueada',
+    hint: 'WhatsApp bloqueó la línea. No se puede enviar. Hay que revisarlo con el proveedor del servicio.',
+  },
+  sleepMode: {
+    level: 'warn', title: 'Línea en reposo',
+    hint: 'El teléfono de la línea está apagado o sin internet. Al encenderlo puede tardar unos minutos en reconectar.',
+  },
+  starting: {
+    level: 'warn', title: 'Línea iniciando',
+    hint: 'La línea se está levantando. Puede tardar unos minutos.',
+  },
+};
+
+/* Traduce el estado crudo. Nunca devuelve el codigo del proveedor: si es
+   desconocido, texto generico (que el usuario no vea jerga jamas). */
+function lineStatus(st) {
+  const code = st && st.stateInstance ? String(st.stateInstance) : '';
+  const known = LINE_STATES[code];
+  if (known) return { ...known, code };
+  return {
+    level: 'bad',
+    title: 'Línea no disponible',
+    hint: 'No se pudo verificar el estado de la línea. Vuelve a intentarlo en unos minutos.',
+    code,
+  };
+}
+
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status, headers: { 'Content-Type': 'application/json' },
@@ -286,6 +355,8 @@ export async function onRequestPost({ request, env }) {
       }
       return json({
         ok: true, state: st, phone: env.GREENAPI_PHONE || null,
+        // v5.15: estado ya traducido (el front no interpreta codigos).
+        line: lineStatus(st),
         delay_ms: delayMs, delay_fixed: delayFixed, delay_error: delayErr,
       });
     }
