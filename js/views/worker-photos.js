@@ -377,7 +377,31 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   // y solo queda el atajo "Asignar Retail" para quien no lo tiene.
   const isGestor = !!(user && user.kind === 'admin' && user.role === 'gestor_empresa');
   const canEditDept = mode === 'enterprise' && !isGestor;
-  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, isSuper, isGestor, canEditDept, departments: [], cargoRanks: [], selMode: false, selected: new Set(),
+
+  // v5.01: permisos FINOS de la propia sesion (matriz de Roles) para gatear
+  // la UI. El server ya rechaza con gates reales (photo.manage / ficha.edit /
+  // hcm.publish / dept.assign); esto evita mostrar botones que darian 403
+  // (ej. rol Supervisor Tiendas con solo view.*). La tienda (rol 'tienda')
+  // tiene photo.manage + ficha.edit en la matriz: su flujo no cambia. Si la
+  // consulta falla, se queda el comportamiento historico y decide el server.
+  let CANP = { photo: true, ficha: true, publish: isAdmin, dept: isAdmin };
+  try {
+    const pr = await fetch('/api/my-perms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null },
+        codes: ['photo.manage', 'ficha.edit', 'hcm.publish', 'dept.assign'],
+      }),
+    }).then(r => r.json());
+    if (pr && pr.ok) {
+      const p = pr.perms || {};
+      CANP = pr.super
+        ? { photo: true, ficha: true, publish: true, dept: true }
+        : { photo: !!p['photo.manage'], ficha: !!p['ficha.edit'], publish: !!p['hcm.publish'], dept: !!p['dept.assign'] };
+    }
+  } catch (_) { /* sin red: UI historica, el server protege */ }
+
+  STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, isSuper, isGestor, canEditDept, can: CANP, departments: [], cargoRanks: [], selMode: false, selected: new Set(),
     sortKey: mode === 'enterprise' ? 'name_az' : 'rank', fPhoto: 'all', fGender: 'all', fCargo: 'ALL', fDept: 'ALL', fStatus: 'all' };
 
   const back = onExit
@@ -394,9 +418,9 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
           <a class="btn wp-guia-link" id="wpGuiaFoto" href="/guias/foto-carnet.html" target="_blank" rel="noopener" title="Guia: como tomar la foto del carnet"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg> ¿Como tomar la foto?</a>
           <button class="btn" id="wpReload" title="Recargar la lista"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg> Recargar</button>
           <button class="btn" id="wpExport" title="Exportar lo que se ve en la lista (respeta los filtros)"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg> Exportar</button>
-          ${isAdmin ? `<button class="btn btn-primary" id="wpAxApi" title="Actualizar: trae lo ultimo de AX (pisa cambios locales)" aria-label="Actualizar desde AX"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg> Actualizar</button>` : ''}
-          ${isAdmin ? `<button class="btn" id="wpPublish" title="Publicar: envia a AX los cambios hechos aqui" aria-label="Publicar cambios en AX" disabled><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar <span id="wpPublishN" class="wp-pubcount">0</span></button>` : ''}
-          ${(isAdmin && mode === 'enterprise') ? `<button class="btn" id="wpAssignDept" title="Seleccionar varias personas y asignarles departamento"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Asignar depto.</button>` : ''}
+          ${(isAdmin && CANP.publish) ? `<button class="btn btn-primary" id="wpAxApi" title="Actualizar: trae lo ultimo de AX (pisa cambios locales)" aria-label="Actualizar desde AX"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M19 12l-7 7-7-7"/></svg> Actualizar</button>` : ''}
+          ${(isAdmin && CANP.publish) ? `<button class="btn" id="wpPublish" title="Publicar: envia a AX los cambios hechos aqui" aria-label="Publicar cambios en AX" disabled><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar <span id="wpPublishN" class="wp-pubcount">0</span></button>` : ''}
+          ${(isAdmin && mode === 'enterprise' && CANP.dept) ? `<button class="btn" id="wpAssignDept" title="Seleccionar varias personas y asignarles departamento"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg> Asignar depto.</button>` : ''}
           ${(isSuper && mode === 'enterprise') ? `<button class="btn" id="wpNewDept" title="Nuevo departamento" aria-label="Nuevo departamento"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Nuevo departamento</button>` : ''}
           ${isSuper ? `<button class="btn wp-btn-danger" id="wpClear" title="Limpiar lista de personal (mantenimiento, solo superadministrador)" aria-label="Limpiar lista de personal"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg> Limpiar lista</button>` : ''}
         </div>
@@ -854,7 +878,7 @@ function paintGrid() {
     let deptBar = '';
     if (w.department_name) {
       deptBar = `<div class="wp-deptbar"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.59 13.41l-7.17 7.17a2 2 0 0 1-2.83 0L2 12V2h10l8.59 8.59a2 2 0 0 1 0 2.82z"/><line x1="7" y1="7" x2="7.01" y2="7"/></svg><span>${esc(w.department_name)}</span></div>`;
-    } else if (STATE.isAdmin && !STATE.isGestor) {
+    } else if (STATE.isAdmin && !STATE.isGestor && STATE.can.photo) {
       const label = STATE.mode === 'enterprise' ? 'Asignar departamento' : 'Asignar Retail';
       deptBar = `<div class="wp-deptbar assign" data-assigndept="${w.id_number}"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg><span>${label}</span></div>`;
     }
@@ -1356,9 +1380,10 @@ function openFicha(ced) {
           ph.insertBefore(img, ph.firstChild);
           ph.classList.add('has');
           ph.addEventListener('click', openBig);
-          // El boton "Quitar foto" en modo edicion depende de w.thumb_url.
+          // El boton "Quitar foto" en modo edicion depende de w.thumb_url
+          // (v5.01: y del permiso photo.manage).
           const del = host.querySelector('#ffDel');
-          if (del && host.querySelector('#wpFicha').classList.contains('editing')) del.style.display = '';
+          if (del && STATE.can.photo && host.querySelector('#wpFicha').classList.contains('editing')) del.style.display = '';
         } else {
           const d = document.createElement('div'); d.className = 'noimg'; d.textContent = 'Sin foto';
           ph.insertBefore(d, ph.firstChild);
@@ -1388,7 +1413,7 @@ function fichaHtml(w, c) {
 
     <div class="ff-card">
       <div class="ff-top">
-        <div class="ff-ph" id="ffPh"><div class="ff-ph-edit" id="ffPhEdit">Cambiar foto</div></div>
+        <div class="ff-ph" id="ffPh">${STATE.can.photo ? '<div class="ff-ph-edit" id="ffPhEdit">Cambiar foto</div>' : ''}</div>
         <div class="ff-id">
           <h2>${esc(w.full_name || '—')}</h2>
           <div class="ced">${w.ced_kind || ''}-${w.id_number}</div>
@@ -1396,9 +1421,9 @@ function fichaHtml(w, c) {
         </div>
         <div class="ff-actions">
           <button class="btn btn-ghost-danger" id="ffDel" style="display:none">Quitar foto</button>
-          ${(STATE.isSuper && w.ax_pending) ? `<button class="btn wp-btn-publish" id="ffPublish" title="Publicar en el sistema los cambios de esta ficha (solo superadministrador)"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar</button>` : ''}
+          ${(STATE.can.publish && w.ax_pending) ? `<button class="btn wp-btn-publish" id="ffPublish" title="Publicar en el sistema los cambios de esta ficha"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar</button>` : ''}
           <button class="btn" id="ffCopy" title="Copiar datos de la ficha"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copiar</button>
-          <button class="btn" id="ffEdit">Editar</button>
+          ${(STATE.can.ficha || STATE.can.photo) ? '<button class="btn" id="ffEdit">Editar</button>' : ''}
           <button class="btn" id="ffCancel" style="display:none">Cancelar</button>
           <button class="btn btn-primary" id="ffSave" style="display:none">Guardar cambios</button>
           <a class="pm-guia" href="/guias/foto-carnet.html" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg> Ver la guía: cómo tomar la foto <span class="pm-guia-arrow">→</span></a>
@@ -1540,7 +1565,9 @@ function wireFicha(host, w) {
   const ficha = host.querySelector('#wpFicha');
   const toView = () => {
     ficha.classList.remove('editing');
-    host.querySelector('#ffEdit').style.display = '';
+    // v5.01: ffEdit puede no existir (rol sin ficha.edit/photo.manage).
+    const eb = host.querySelector('#ffEdit');
+    if (eb) eb.style.display = '';
     host.querySelector('#ffCancel').style.display = 'none';
     host.querySelector('#ffSave').style.display = 'none';
     host.querySelector('#ffDel').style.display = 'none';
@@ -1570,10 +1597,12 @@ function wireFicha(host, w) {
 
   function toEdit() {
     ficha.classList.add('editing');
-    host.querySelector('#ffEdit').style.display = 'none';
+    const eb = host.querySelector('#ffEdit');
+    if (eb) eb.style.display = 'none';
     host.querySelector('#ffCancel').style.display = '';
     host.querySelector('#ffSave').style.display = '';
-    host.querySelector('#ffDel').style.display = w.thumb_url ? '' : 'none';
+    // v5.01: quitar la foto exige photo.manage ademas de que exista foto.
+    host.querySelector('#ffDel').style.display = (w.thumb_url && STATE.can.photo) ? '' : 'none';
     q('#e_first').value = w.first_name || ''; q('#e_second').value = w.second_name || ''; q('#e_last').value = w.last_names || '';
     q('#e_birth').value = w.birth_date || ''; q('#e_gender').value = w.gender || ''; q('#e_marital').value = w.marital_status || '';
     q('#e_account').value = w.account_number || ''; q('#e_phone').value = phoneNat(w.phone);
@@ -1710,10 +1739,13 @@ function wireFicha(host, w) {
   q('#ffBack').addEventListener('click', fichaBack);
   const cpBtn = q('#ffCopy');
   if (cpBtn) cpBtn.addEventListener('click', () => copyWorkerData(w, cpBtn));
-  q('#ffEdit').addEventListener('click', toEdit);
+  // v5.01: botones condicionados por permisos; pueden no existir en el DOM.
+  const edBtn = q('#ffEdit');
+  if (edBtn) edBtn.addEventListener('click', toEdit);
   q('#ffCancel').addEventListener('click', () => openFicha(w.id_number));
   q('#ffSave').addEventListener('click', save);
-  q('#ffPhEdit').addEventListener('click', () => openPhotoModal(w.id_number));
+  const phEditBtn = q('#ffPhEdit');
+  if (phEditBtn) phEditBtn.addEventListener('click', () => openPhotoModal(w.id_number));
   q('#ffDel').addEventListener('click', () => openPhotoModal(w.id_number));
   const pubBtn = q('#ffPublish');
   if (pubBtn) pubBtn.addEventListener('click', () => openPublishModal(String(w.id_number)));

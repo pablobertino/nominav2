@@ -44,7 +44,9 @@ function json(b, s = 200) {
 }
 
 // Shadow de permisos (Fase 3): solo compara y logea; no cambia el flujo.
-import { shadowCan } from './_auth.js';
+// v5.01: create usa GATE REAL cert.request (resolveActor + can), igual que
+// el patron de worker-photo/reports. El resto sigue en shadow.
+import { shadowCan, resolveActor, can } from './_auth.js';
 
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
@@ -269,8 +271,14 @@ export async function onRequestPost({ request, env }) {
       const cc = String(body.company_code || '').trim();
       if (!cc) return json({ ok: false, error: 'Falta la empresa.' }, 400);
       if (!actorCanCompany(act, cc)) return json({ ok: false, error: 'Sin acceso a esa empresa.' }, 403);
-      // Shadow: gate legacy = sesion + alcance (crear solicitud). Code cert.request.
-      await shadowCan(env, body.actor, 'cert-requests', 'create', 'cert.request', true);
+      // v5.01: GATE REAL cert.request (antes shadow). El rol debe tener el
+      // permiso en la matriz de Roles (hoy: admin, gestor de empresa,
+      // tienda). Un rol solo-lectura (ej. Supervisor Tiendas) ve las
+      // solicitudes (view.solicitudes) pero no puede crearlas.
+      const realActor = await resolveActor(env, body.actor);
+      if (!can(realActor, 'cert.request')) {
+        return json({ ok: false, error: 'No tienes permiso para crear solicitudes de constancia.' }, 403);
+      }
 
       // Cedulas elegidas: admite workers:[ced...] o lines:[{id_number}].
       let ceds = [];
