@@ -12,6 +12,9 @@
      GREENAPI_MEDIA_HOST   https://7107.api.greenapi.com     (plain)
      GREENAPI_ID_INSTANCE  710722679864                      (plain)
      GREENAPI_TOKEN        <apiTokenInstance>                (SECRET)
+     GREENAPI_PHONE        +58 414-8011077                   (plain, opcional:
+                           numero de la linea, solo informativo para la UI;
+                           si cambia la linea se actualiza aqui, cero codigo)
    ===================================================================== */
 
 export function gaClient(env) {

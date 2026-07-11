@@ -153,7 +153,7 @@ export async function renderWaGroups(user) {
       <button class="wg-btn wa" id="wgDiscover">🔄 Buscar grupos de la línea</button>
     </div>
     <div class="wg-card">
-      <div class="wg-hint">💡 Solo aparecen grupos donde la línea <b>es miembro</b>. Si falta uno, agrégala al grupo desde WhatsApp y vuelve a buscar. El nombre real se refresca en cada búsqueda; el alias es tuyo y no se toca.</div>
+      <div class="wg-hint">💡 Solo aparecen grupos donde la línea<span id="wgPhone"></span> <b>es miembro</b>. Si falta uno, agrégala al grupo desde WhatsApp y vuelve a buscar. El nombre real se refresca en cada búsqueda; el alias es tuyo y no se toca.</div>
       <div id="wgBody"><div class="wg-empty">Cargando…</div></div>
       <div class="wg-note" id="wgNote"></div>
     </div>
@@ -174,5 +174,9 @@ export async function renderWaGroups(user) {
 
   const r = await api(user, { action: 'list' });
   GROUPS = (r && r.ok && r.groups) || [];
+  if (r && r.ok && r.phone) {
+    const sp = $('#wgPhone');
+    if (sp) sp.textContent = ' (' + r.phone + ')';
+  }
   paintTable(user);
 }

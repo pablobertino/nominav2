@@ -59,7 +59,7 @@ export async function onRequestPost({ request, env }) {
 
     if (action === 'list') {
       const rows = await sb(env, 'wa_groups?select=*&order=enabled.desc,wa_name.asc');
-      return json({ ok: true, groups: rows || [] });
+      return json({ ok: true, groups: rows || [], phone: env.GREENAPI_PHONE || null });
     }
 
     /* ------------- seteo: exige la llave de envio ------------- */
@@ -89,7 +89,7 @@ export async function onRequestPost({ request, env }) {
         upserted = groups.length;
       }
       const rows = await sb(env, 'wa_groups?select=*&order=enabled.desc,wa_name.asc');
-      return json({ ok: true, found: upserted, groups: rows || [] });
+      return json({ ok: true, found: upserted, groups: rows || [], phone: env.GREENAPI_PHONE || null });
     }
 
     /* save: alias interno + habilitado */

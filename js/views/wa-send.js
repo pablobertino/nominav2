@@ -287,7 +287,7 @@ export async function renderWaSend(user) {
     const el = $('#waInst');
     if (r && r.ok && r.state && r.state.stateInstance === 'authorized') {
       el.className = 'wa-inst ok';
-      el.innerHTML = '<span class="dot"></span> Línea conectada';
+      el.innerHTML = '<span class="dot"></span> Línea conectada' + (r.phone ? ' · ' + esc(r.phone) : '');
     } else {
       el.className = 'wa-inst bad';
       el.innerHTML = '<span class="dot"></span> ' + esc((r && r.state && r.state.stateInstance) || 'Línea no disponible');

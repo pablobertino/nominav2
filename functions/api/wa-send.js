@@ -169,7 +169,10 @@ export async function onRequestPost({ request, env }) {
 
     if (action === 'state') {
       const st = await gaClient(env).state();
-      return json({ ok: true, state: st });
+      // v4.94: numero de la linea desde env (GREENAPI_PHONE, opcional)
+      // para mostrarlo en la UI sin hardcodear; si cambia la linea se
+      // actualiza solo en las variables de Cloudflare.
+      return json({ ok: true, state: st, phone: env.GREENAPI_PHONE || null });
     }
 
     /* ---------------- send: crear lote + cola ---------------- */
