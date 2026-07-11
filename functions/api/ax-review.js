@@ -1027,30 +1027,33 @@ async function publish(env, actor, user, body) {
     return json({ ok: false, error: 'Ningun cambio paso la validacion para enviar a AX.', rejected }, 422);
   }
 
-  /* ===== ENVIO FICHA POR FICHA (v5.11) =====
-     Antes se mandaba UN POST con el array completo. Problema: la API responde
-     un unico status para todo el lote, asi que un solo registro malo tumbaba
-     las 87 fichas y encima el error no decia CUAL fallaba ("La API de AX
-     respondio 500" y nada mas). Peor: quedaba todo sin publicar, incluidas las
-     86 sanas.
+  /* ===== ENVIO FICHA POR FICHA, EN TANDAS (v5.13) =====
+     Historia: hasta v5.10 se mandaba UN POST con el array completo. Un solo
+     registro malo tumbaba las 87 fichas y el error no decia cual. v5.11 lo
+     partio en una llamada por ficha... pero puso MAX_PER_CALL=40 sin hacer la
+     cuenta de subrequests, y Cloudflare corta en 50 POR INVOCACION.
 
-     Ahora una llamada por ficha. Cuesta N requests en vez de 1, pero:
-       - una ficha mala no arrastra al resto,
-       - el error queda ATRIBUIDO a su cedula, con el texto que devolvio la API,
-       - se puede publicar parcialmente (lo que entro, entro).
+     La cuenta real de una invocacion de publish:
+       1  alcance (get_admin_companies)
+       1  lista de change_sets pendientes
+       1  maestro de las cedulas
+       E  eco del sistema: 1 GET POR EMPRESA  (con 68 fichas pueden ser 10-15)
+       N  el POST de cada ficha
+       2  PATCH de cierre (change_set + master)
+       2N PATCH del roster local (store_workers + enterprise_workers por ficha)
+     O sea ~5 + E + 3N. Con N=40 eso es 125+: reventaba siempre.
 
-     Pausa entre envios: la API es SOAP+NTLM contra el ERP, no aguanta una
-     rafaga. Se espacian los envios (SEND_GAP_MS) y ademas se corta si hay
-     demasiados errores seguidos (probable caida del ERP: seguir seria golpear
-     al muerto y tardar 87 timeouts en avisar).
+     Con N=12: ~5 + 15 + 36 = 56... todavia justo. Se baja a 12 y ADEMAS el
+     roster local se agrupa (ver mas abajo), quedando ~5 + E + N + 2 = ~34 con
+     E=15. Entra con aire.
 
-     Limite de subrequests de Cloudflare (50/invocacion en el plan gratuito,
-     1000 en el pago): el resto de la funcion ya consume varios. Se acota el
-     lote por invocacion a MAX_PER_CALL y se avisa al front, que reintenta con
-     lo que quedo pendiente. */
-  const SEND_GAP_MS = 250;        // respiro entre fichas
-  const MAX_FAILS_IN_ROW = 5;     // si el ERP se cayo, no seguir golpeando
-  const MAX_PER_CALL = 40;        // margen para los subrequests de Cloudflare
+     El front (ax-review.js) llama en bucle mientras queden pendientes, y va
+     mostrando el progreso: la barra avanza y las fichas publicadas desaparecen
+     de la lista. Esto ademas hace que una tanda que falle no se lleve puesto
+     el trabajo de las anteriores. */
+  const SEND_GAP_MS = 250;        // respiro entre fichas (la API es SOAP+NTLM)
+  const MAX_FAILS_IN_ROW = 5;     // si el sistema se cayo, no seguir golpeando
+  const MAX_PER_CALL = 12;        // tope duro por el limite de subrequests
 
   const sleep = (ms) => new Promise(r => setTimeout(r, ms));
 
@@ -1062,7 +1065,10 @@ async function publish(env, actor, user, body) {
   let lastAxResponse = null;
 
   const batch = clean.slice(0, MAX_PER_CALL);
-  const deferred = clean.length > MAX_PER_CALL ? clean.length - MAX_PER_CALL : 0;
+  // Las que no entraron en esta tanda. El front las vuelve a pedir en la
+  // siguiente llamada (por eso van las CEDULAS, no solo el conteo).
+  const deferredCeds = okCeds.slice(MAX_PER_CALL);
+  const deferred = deferredCeds.length;
 
   for (let i = 0; i < batch.length; i++) {
     const payload = batch[i];
@@ -1117,6 +1123,7 @@ async function publish(env, actor, user, body) {
       failed_count: failed.length,
       rejected,
       deferred,
+      deferred_ceds: deferredCeds,
     }, 502);
   }
 
@@ -1148,14 +1155,19 @@ async function publish(env, actor, user, body) {
     });
   }
 
-  // v4.67: reflejar lo publicado en los ROSTERS LOCALES (store_workers y
-  // enterprise_workers), que son lo que muestran Buscar y los directorios.
-  // Sin esto el portal seguia mostrando el dato viejo hasta el proximo pull
-  // (bug YONATHAN 28321728: master y sistema corregidos, Buscar corrupto).
-  // Solo se tocan los campos PUBLICADOS (ax_pending_fields, leidos en
-  // masterByCed ANTES de la limpieza); si cambio algun nombre se recalcula
-  // full_name = primer + segundo + apellidos. Errores aqui no rompen la
-  // publicacion (el pull posterior corrige igual).
+  /* v4.67: reflejar lo publicado en los ROSTERS LOCALES (store_workers y
+     enterprise_workers), que son lo que muestran Buscar y los directorios.
+     Sin esto el portal seguia mostrando el dato viejo hasta el proximo pull
+     (bug YONATHAN 28321728: master y sistema corregidos, Buscar corrupto).
+
+     v5.13: se AGRUPA por patch identico. Antes eran 2 PATCH por ficha (uno por
+     tabla), o sea 24 subrequests con 12 fichas: gran parte del presupuesto de
+     Cloudflare gastado en el cierre. Como las fichas de una misma tanda suelen
+     compartir los mismos campos publicados (p.ej. todas 'correo+telefono'), se
+     juntan por firma de patch y se manda UN PATCH con id_number=in.(...) por
+     grupo. Caso tipico: 24 requests -> 2.
+     Errores aqui no rompen la publicacion (el proximo pull corrige igual). */
+  const rosterGroups = {};   // firma del patch -> { patch, ceds:[] }
   for (const ced of okCedsFinal) {
     const m = masterByCed[ced];
     if (!m) continue;
@@ -1168,11 +1180,19 @@ async function publish(env, actor, user, body) {
       if (full) patch.full_name = full;
     }
     if (!Object.keys(patch).length) continue;
+    // La firma incluye los VALORES: dos fichas solo se agrupan si el patch es
+    // identico (mismos campos y mismos datos). Distintos valores -> distinto
+    // grupo, y cada uno recibe lo suyo.
+    const sig = JSON.stringify(patch);
+    (rosterGroups[sig] = rosterGroups[sig] || { patch, ceds: [] }).ceds.push(ced);
+  }
+  for (const g of Object.values(rosterGroups)) {
+    const inCeds = g.ceds.map(c => `"${c}"`).join(',');
     for (const tbl of ['store_workers', 'enterprise_workers']) {
       try {
-        await sb(env, `${tbl}?id_number=eq.${encodeURIComponent(ced)}`, {
+        await sb(env, `${tbl}?id_number=in.(${inCeds})`, {
           method: 'PATCH', headers: { Prefer: 'return=minimal' },
-          body: JSON.stringify(patch),
+          body: JSON.stringify(g.patch),
         });
       } catch (_) { /* roster local: el proximo pull lo corrige */ }
     }
@@ -1190,7 +1210,8 @@ async function publish(env, actor, user, body) {
     failed,
     failed_count: failed.length,
     aborted,          // motivo del corte, si se corto por errores en cadena
-    deferred,         // fichas que no entraron en esta tanda (reintentar)
+    deferred,         // cuantas fichas no entraron en esta tanda
+    deferred_ceds: deferredCeds,   // v5.13: cuales, para que el front siga
     ax_response: axRes.data ?? axRes.text ?? null,
   });
 }

@@ -179,8 +179,25 @@ function ensureStyles() {
   .axr-modal .box{border-radius:10px;padding:12px 14px;font-size:13px;line-height:1.5}
   .axr-modal .box.pub{background:var(--warn-bg,#fff7ed);border:1px solid var(--warn-bd,#fed7aa);color:var(--warn,#b45309)}
   .axr-modal .box.dis{background:var(--danger-bg,#fef2f2);border:1px solid #f3c2c2;color:var(--danger,#b91c1c)}
-  .axr-modal .lst{margin:12px 0 0;max-height:200px;overflow:auto}
+  .axr-modal .lst{margin:12px 0 0;max-height:260px;overflow:auto}
   .axr-modal .lst .it{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;padding:4px 0;border-bottom:1px solid var(--border-soft,#eef1f5)}
+  /* v5.13: progreso de publicacion por tandas + estado por ficha.
+     El envio va de a ~12 fichas por llamada (limite de subrequests de
+     Cloudflare), asi que el usuario ve la barra avanzar y cada ficha marcarse
+     a medida que entra (verde) o la rechaza el sistema (rojo, tachada). */
+  .axr-prog{margin:12px 0 0}
+  .axr-prog-top{display:flex;justify-content:space-between;align-items:baseline;font-size:12px;color:var(--muted);margin-bottom:6px}
+  .axr-prog-top #axrProgN{font-weight:700;font-variant-numeric:tabular-nums;color:var(--ink)}
+  .axr-prog-bar{height:7px;border-radius:999px;background:var(--border-soft,#eef1f5);overflow:hidden}
+  .axr-prog-bar #axrProgFill{height:100%;width:0;background:var(--warn,#c2410c);transition:width .25s ease}
+  .axr-modal .lst .it{transition:opacity .25s,background .25s}
+  .axr-modal .lst .it.okrow{opacity:.5}
+  .axr-modal .lst .it.okrow .nm{text-decoration:line-through;text-decoration-color:#86efac}
+  .axr-modal .lst .it.okrow .st{color:var(--success,#16a34a)!important;font-weight:700}
+  .axr-modal .lst .it.okrow .st::after{content:' \2713'}
+  .axr-modal .lst .it.errow{background:var(--danger-bg,#fef2f2)}
+  .axr-modal .lst .it.errow .st{color:var(--danger,#dc2626)!important;font-weight:700}
+  .axr-modal .lst .it.errow .st::after{content:' \2715'}
   .axr-modal .res{margin-top:12px;border-radius:10px;padding:10px 13px;font-size:12.5px;display:none;max-height:320px;overflow:auto}
   .axr-modal .res.ok{background:var(--success-bg,#f0fdf4);border:1px solid #bbf7d0;color:var(--success,#15803d);display:block}
   .axr-modal .res.err{background:var(--danger-bg,#fef2f2);border:1px solid #f3c2c2;color:var(--danger,#b91c1c);display:block}
@@ -600,21 +617,23 @@ function confirmAction(verb, scope, id) {
   const host = document.body;
   const wrap = document.createElement('div');
   wrap.className = 'axr-modal-vp';
-  const listHtml = targets.slice(0, 10).map(t =>
-    `<div class="it"><span>${esc(t.full_name || t.id_number)} <span style="color:var(--muted)">${esc(t.ced_kind || '')}-${esc(t.id_number)}</span></span><span style="color:var(--muted)">${(t.field_count || (t.fields || []).length)} campo(s)</span></div>`
+  const listHtml = targets.map(t =>
+    `<div class="it" data-ced="${esc(t.id_number)}">
+       <span class="nm">${esc(t.full_name || t.id_number)} <span style="color:var(--muted)">${esc(t.ced_kind || '')}-${esc(t.id_number)}</span></span>
+       <span class="st" style="color:var(--muted)">${(t.field_count || (t.fields || []).length)} campo(s)</span>
+     </div>`
   ).join('');
-  const more = n > 10 ? `<div style="color:var(--muted);font-size:12px;margin-top:6px">… y ${n - 10} más</div>` : '';
 
   wrap.innerHTML = `
     <div class="axr-modal">
       <h3>${isPub ? 'Publicar cambios' : 'Anular cambios'}</h3>
       <p class="who">${n} ficha${n === 1 ? '' : 's'} · ${totalFields} campo${totalFields === 1 ? '' : 's'}</p>
-      <div class="box ${isPub ? 'pub' : 'dis'}">
+      <div class="box ${isPub ? 'pub' : 'dis'}" id="axrBox">
         ${isPub
           ? `Se publicarán los cambios de <b>${n} ficha${n === 1 ? '' : 's'}</b>. Solo se envía lo que se editó en cada ficha; el resto de los datos queda intacto.${banky ? '<br><br><b>⚠ Incluye cambio de CUENTA BANCARIA.</b> Verifica los números de cuenta en el detalle antes de publicar: este dato afecta el pago.' : ''}`
           : `Se anularán los cambios de <b>${n} ficha${n === 1 ? '' : 's'}</b>. No se enviarán. El dato en el portal se mantiene hasta que uses <b>Actualizar</b> en Personal, que trae la versión vigente.`}
       </div>
-      <div class="lst">${listHtml}${more}</div>
+      <div class="lst" id="axrLst">${listHtml}</div>
       <div class="res" id="axrRes"></div>
       <div class="foot">
         <button class="axr-btn" id="axrCancel">Cancelar</button>
@@ -630,57 +649,153 @@ function confirmAction(verb, scope, id) {
   wrap.querySelector('#axrCancel').addEventListener('click', close);
 
   const goB = wrap.querySelector('#axrGo');
-  let finished = false;   // v4.53: tras el exito, el boton pasa a ser SOLO Cerrar
+  let finished = false;   // tras el exito, el boton pasa a ser SOLO Cerrar
   goB.addEventListener('click', async () => {
     if (finished) { close(); return; }
-    goB.disabled = true; goB.textContent = isPub ? 'Publicando…' : 'Anulando…';
-    const res = wrap.querySelector('#axrRes');
-    res.className = 'res'; res.textContent = '';
-    const payload = { action: verb, user: sessionUserPayload(USER) };
-    if (scope === 'all') payload.all = true;
-    else payload.id_numbers = ids;
-    let r;
-    try { r = await api(payload); }
-    catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
 
-    if (!r || !r.ok) {
-      res.className = 'res err';
-      /* v5.11: el detalle REAL del rechazo. Antes solo se veia "La API de AX
-         respondio 500" y quedabas a ciegas: no sabias que ficha ni por que. */
-      res.innerHTML = '⚠ ' + esc((r && r.error) || 'No se pudo completar la acción.')
-        + failedHtml(r);
-      goB.disabled = false; goB.textContent = 'Reintentar';
+    const res = wrap.querySelector('#axrRes');
+    const lst = wrap.querySelector('#axrLst');
+    const box = wrap.querySelector('#axrBox');
+    const cancelBtn = wrap.querySelector('#axrCancel');
+
+    /* ---- ANULAR: es una sola llamada, sin tandas (no toca el sistema) ---- */
+    if (!isPub) {
+      goB.disabled = true; goB.textContent = 'Anulando…';
+      res.className = 'res'; res.textContent = '';
+      const payload = { action: verb, user: sessionUserPayload(USER) };
+      if (scope === 'all') payload.all = true; else payload.id_numbers = ids;
+      let r;
+      try { r = await api(payload); }
+      catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
+      if (!r || !r.ok) {
+        res.className = 'res err';
+        res.innerHTML = '⚠ ' + esc((r && r.error) || 'No se pudo completar la acción.') + failedHtml(r);
+        goB.disabled = false; goB.textContent = 'Reintentar';
+        return;
+      }
+      const dn = (r.discarded || []).length;
+      res.className = dn ? 'res ok' : 'res err';
+      res.innerHTML = dn
+        ? `✓ <b>${dn}</b> ficha(s) anulada(s).`
+        : 'ℹ ' + esc(r.message || 'Nada para anular: los cambios ya estaban resueltos.') + ' La lista se actualizó.';
+      finished = true;
+      goB.textContent = 'Cerrar'; goB.disabled = false;
+      if (cancelBtn) cancelBtn.style.display = 'none';
+      load();
       return;
     }
-    const done = isPub ? (r.published || []).length : (r.discarded || []).length;
-    const rej = (r.rejected_count || 0);
-    const fail = (r.failed_count || 0);
-    if (done > 0) {
-      /* Exito PARCIAL posible (v5.11): antes era todo-o-nada; ahora cada ficha
-         se envia por separado, asi que puede haber publicadas Y rechazadas en
-         la misma corrida. Se muestran ambas cosas. */
-      res.className = fail ? 'res err' : 'res ok';
-      res.innerHTML = (isPub
-        ? `✓ <b>${done}</b> ficha(s) publicada(s)${rej ? ` · ${rej} sin cambios válidos` : ''}.`
-        : `✓ <b>${done}</b> ficha(s) anulada(s).`)
-        + (r.deferred ? `<div style="margin-top:6px">Quedaron <b>${r.deferred}</b> ficha(s) para una próxima tanda: vuelve a publicar para continuar.</div>` : '')
-        + failedHtml(r);
-    } else {
-      // Nada que hacer (ej. la fila ya estaba resuelta y la lista de la
-      // pantalla estaba desactualizada): mensaje claro, no un check enganoso.
-      res.className = 'res err';
-      res.innerHTML = 'ℹ ' + esc(r.message || `Nada para ${isPub ? 'publicar' : 'anular'}: los cambios ya estaban resueltos.`)
-        + ' La lista se actualizó.' + failedHtml(r);
+
+    /* ================= PUBLICAR: BUCLE POR TANDAS (v5.13) =================
+       El server publica de a ~12 fichas por invocacion (limite de subrequests
+       de Cloudflare: 50 por llamada). Antes el server intentaba todo de una y
+       Cloudflare lo cortaba con "Too many subrequests", sin publicar NADA y sin
+       que el usuario supiera por que.
+
+       Ahora el FRONT maneja la tanda: llama, espera, y vuelve a llamar con lo
+       que quedo, mientras haya pendientes. Entre medio actualiza la barra y va
+       TACHANDO las fichas que entraron. Beneficio extra: si una tanda falla, lo
+       ya publicado quedo publicado. */
+    goB.disabled = true;
+    goB.textContent = 'Publicando…';
+    if (cancelBtn) cancelBtn.disabled = true;
+    if (box) box.style.display = 'none';   // el aviso previo ya no aplica
+    res.className = 'res'; res.innerHTML = '';
+
+    // Progreso encima de la lista de fichas.
+    const prog = document.createElement('div');
+    prog.className = 'axr-prog';
+    prog.innerHTML = `
+      <div class="axr-prog-top">
+        <span id="axrProgTxt">Enviando al sistema…</span>
+        <span id="axrProgN">0 / ${n}</span>
+      </div>
+      <div class="axr-prog-bar"><div id="axrProgFill"></div></div>`;
+    lst.parentNode.insertBefore(prog, lst);
+
+    const fill = wrap.querySelector('#axrProgFill');
+    const ptxt = wrap.querySelector('#axrProgTxt');
+    const pn = wrap.querySelector('#axrProgN');
+
+    // Estado acumulado de todas las tandas.
+    let pending = ids.slice();       // cedulas que faltan
+    const publishedAll = [];
+    const failedAll = [];
+    const rejectedAll = [];
+    let stopMsg = null;              // corte (sistema caido / error duro)
+
+    // Marca una ficha como resuelta en la lista del modal (se ve avanzar).
+    const markDone = (ced, kind) => {
+      const el = wrap.querySelector(`[data-ced="${CSS.escape(String(ced))}"]`);
+      if (el) el.classList.add(kind);   // 'okrow' | 'errow'
+    };
+
+    let guard = 0;   // por si el server dejara de avanzar: nunca bucle infinito
+    while (pending.length && !stopMsg && guard < 40) {
+      guard++;
+      let r;
+      try {
+        r = await api({ action: 'publish', user: sessionUserPayload(USER), id_numbers: pending });
+      } catch (e) {
+        r = { ok: false, error: String(e && e.message || e) };
+      }
+
+      const okCeds = (r && r.published) || [];
+      const fails = (r && r.failed) || [];
+      const rejs = (r && r.rejected) || [];
+
+      okCeds.forEach(c => { publishedAll.push(c); markDone(c, 'okrow'); });
+      fails.forEach(f => { failedAll.push(f); markDone(f.id_number, 'errow'); });
+      rejs.forEach(x => { rejectedAll.push(x); markDone(x.id_number, 'errow'); });
+
+      // Lo resuelto (bien o mal) sale de la cola: reintentar lo que el sistema
+      // ya rechazo daria el mismo error en bucle.
+      const doneNow = new Set([
+        ...okCeds.map(String),
+        ...fails.map(f => String(f.id_number)),
+        ...rejs.map(x => String(x.id_number)),
+      ]);
+      const before = pending.length;
+      pending = pending.filter(c => !doneNow.has(String(c)));
+
+      // Progreso.
+      const done = n - pending.length;
+      if (fill) fill.style.width = `${Math.round((done / n) * 100)}%`;
+      if (pn) pn.textContent = `${done} / ${n}`;
+      if (ptxt) ptxt.textContent = pending.length
+        ? `Enviando al sistema… (quedan ${pending.length})`
+        : 'Terminando…';
+
+      // Corte duro: el server aborto (sistema caido) o la tanda no avanzo nada
+      // (si no cortamos, el bucle se repite para siempre pidiendo lo mismo).
+      if (r && r.aborted) { stopMsg = r.aborted; break; }
+      if (pending.length === before) {
+        stopMsg = (r && r.error) || 'El sistema dejo de responder. Lo que ya se envio quedo publicado.';
+        break;
+      }
     }
-    // v4.53 FIX: la lista se recarga DE INMEDIATO (antes solo recargaba el
-    // boton principal al cerrar; el boton Cancelar renombrado a "Cerrar"
-    // cerraba SIN recargar y la ficha publicada quedaba pintada como
-    // fantasma, invitando a re-publicar "0"). Ademas queda UN solo Cerrar
-    // y el listener original ya no re-dispara la accion (flag finished).
+
+    prog.remove();
+
+    // ---- Resumen final ----
+    const nOk = publishedAll.length;
+    const nBad = failedAll.length + rejectedAll.length;
+    const agg = { failed: failedAll, rejected: rejectedAll };
+
+    if (!nOk && !nBad) {
+      res.className = 'res err';
+      res.innerHTML = 'ℹ ' + esc(stopMsg || 'Nada para publicar: los cambios ya estaban resueltos.') + ' La lista se actualizó.';
+    } else {
+      res.className = nBad ? 'res err' : 'res ok';
+      res.innerHTML = (nOk
+          ? `✓ <b>${nOk}</b> ficha(s) publicada(s)${nBad ? ` · <b>${nBad}</b> sin publicar` : ''}.`
+          : `⚠ Ninguna ficha se pudo publicar.`)
+        + (stopMsg ? `<div style="margin-top:6px">${esc(stopMsg)}</div>` : '')
+        + failedHtml(agg);
+    }
+
     finished = true;
     goB.textContent = 'Cerrar';
     goB.disabled = false;
-    const cancelBtn = wrap.querySelector('#axrCancel');
     if (cancelBtn) cancelBtn.style.display = 'none';
     load();
   });
