@@ -318,13 +318,18 @@ export async function renderWaSend(user) {
     syncSendState();
   });
 
+  const confirmHtml = () => {
+    const n = PREVIEW.with_phone;
+    const est = n > 20 ? ` Duración estimada: <b>~${Math.max(1, Math.ceil(n * 3.3 / 60))} min</b> — el envío es pausado a propósito para cuidar la línea.` : '';
+    return `<div class="wa-confirm">¿Confirmas la difusión a <b>&nbsp;${nf(n)}&nbsp;</b> destinatario${n === 1 ? '' : 's'}? Esta acción no se puede deshacer.${est}</div>
+      <button class="wa-btn danger" id="waConfNo">Cancelar</button>
+      <button class="wa-btn wa" id="waConfYes">Sí, enviar ahora</button>`;
+  };
+
   $('#waSendBtn').addEventListener('click', () => {
     if (!PREVIEW || SENDING) return;
     // Confirmación inline (sin modales nativos)
-    const row = $('#waSendRow');
-    row.innerHTML = `<div class="wa-confirm">¿Confirmas la difusión a <b>&nbsp;${nf(PREVIEW.with_phone)}&nbsp;</b> destinatario${PREVIEW.with_phone === 1 ? '' : 's'}? Esta acción no se puede deshacer.</div>
-      <button class="wa-btn danger" id="waConfNo">Cancelar</button>
-      <button class="wa-btn wa" id="waConfYes">Sí, enviar ahora</button>`;
+    $('#waSendRow').innerHTML = confirmHtml();
     $('#waConfNo').addEventListener('click', () => renderSendRowIdle(user));
     $('#waConfYes').addEventListener('click', () => doSend(user));
   });
@@ -334,11 +339,8 @@ export async function renderWaSend(user) {
       <span class="wa-note">⚠️ Se enviará desde la línea corporativa del grupo. El envío es espaciado (sin ráfagas) y queda registrado con fecha, autor y filtros usados.</span>
       <button class="wa-btn wa" id="waSendBtn" disabled>📤 Enviar</button>`;
     $('#waSendBtn').addEventListener('click', () => {
-      const row = $('#waSendRow');
       if (!PREVIEW || SENDING) return;
-      row.innerHTML = `<div class="wa-confirm">¿Confirmas la difusión a <b>&nbsp;${nf(PREVIEW.with_phone)}&nbsp;</b> destinatario${PREVIEW.with_phone === 1 ? '' : 's'}? Esta acción no se puede deshacer.</div>
-        <button class="wa-btn danger" id="waConfNo">Cancelar</button>
-        <button class="wa-btn wa" id="waConfYes">Sí, enviar ahora</button>`;
+      $('#waSendRow').innerHTML = confirmHtml();
       $('#waConfNo').addEventListener('click', () => renderSendRowIdle());
       $('#waConfYes').addEventListener('click', () => doSend(user));
     });

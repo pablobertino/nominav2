@@ -28,8 +28,18 @@
 import { resolveActor, can } from './_auth.js';
 import { gaClient, toChatId } from './_greenapi.js';
 
-const BATCH_SIZE = 8;          // mensajes por invocacion de 'process'
-const DELAY_MS = 450;          // pausa entre mensajes dentro de la tanda
+const BATCH_SIZE = 8;          // mensajes por invocacion (lotes chicos)
+const DELAY_MS = 450;          // pausa entre mensajes (lotes chicos)
+/* v4.92 ANTI-BLOQUEO: para difusiones GRANDES (>20 destinatarios) el ritmo
+   baja a la regla 1 del estandar (1 msg cada 3-5s) con JITTER aleatorio
+   (un ritmo metronomico tambien parece bot). Tanda de 4 con 2.5-4s entre
+   mensajes = ~9-13s por invocacion (seguro para el limite de la Function)
+   y ~1 mensaje cada 3.2s promedio. El "Message sending delay" de la
+   consola del proveedor es la SEGUNDA linea de defensa (configurarlo en
+   3000-5000ms). */
+const BIG_THRESHOLD = 20;
+const BIG_BATCH_SIZE = 4;
+const bigDelay = () => 2500 + Math.floor(Math.random() * 1500);
 const MAX_MESSAGE = 4000;      // limite practico del portal (API admite 20000)
 
 function json(data, status = 200) {
@@ -202,12 +212,14 @@ export async function onRequestPost({ request, env }) {
     if (action === 'process') {
       const bid = String(body.batch_id || '');
       if (!bid) return json({ ok: false, error: 'Falta el lote.' }, 400);
-      const batch = await sb(env, `wa_batches?id=eq.${encodeURIComponent(bid)}&select=id,message`);
+      const batch = await sb(env, `wa_batches?id=eq.${encodeURIComponent(bid)}&select=id,message,with_phone`);
       if (!batch || !batch.length) return json({ ok: false, error: 'El lote no existe.' }, 404);
       const message = batch[0].message;
+      const isBig = Number(batch[0].with_phone || 0) > BIG_THRESHOLD;
+      const tanda = isBig ? BIG_BATCH_SIZE : BATCH_SIZE;
 
       const pend = await sb(env,
-        `wa_outbox?batch_id=eq.${encodeURIComponent(bid)}&status=eq.pending&select=id,chat_id&order=id.asc&limit=${BATCH_SIZE}`);
+        `wa_outbox?batch_id=eq.${encodeURIComponent(bid)}&status=eq.pending&select=id,chat_id&order=id.asc&limit=${tanda}`);
       const ga = gaClient(env);
       let sent = 0, errors = 0;
 
@@ -226,7 +238,7 @@ export async function onRequestPost({ request, env }) {
           });
           errors++;
         }
-        await sleep(DELAY_MS);
+        await sleep(isBig ? bigDelay() : DELAY_MS);
       }
 
       const left = await sb(env,
