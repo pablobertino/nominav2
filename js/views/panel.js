@@ -440,7 +440,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.21</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.22</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -942,6 +942,18 @@ async function viewTiendas(user) {
     fName.value = TIENDAS_FILTERS.name || '';
     if ([...fType.options].some(o => o.value === TIENDAS_FILTERS.type)) fType.value = TIENDAS_FILTERS.type;
     if ([...fZone.options].some(o => o.value === TIENDAS_FILTERS.zone)) fZone.value = TIENDAS_FILTERS.zone;
+    // v5.22: el combo de Subzona nace con UNA sola opcion ("Todas"); sus opciones
+    // las llena fillSubs() en funcion de la zona elegida. Al volver de Personal se
+    // restauraba la zona pero NUNCA se repoblaba el combo, asi que el valor guardado
+    // (ej. El Recreo) no encontraba su <option> y el combo quedaba vacio.
+    // Hay que poblar PRIMERO y asignar DESPUES.
+    fillSubs();
+    if (TIENDAS_FILTERS.sub && [...fSub.options].some(o => o.value === TIENDAS_FILTERS.sub)) {
+      fSub.value = TIENDAS_FILTERS.sub;
+    }
+    if (TIENDAS_FILTERS.concept && [...fConcept.options].some(o => o.value === TIENDAS_FILTERS.concept)) {
+      fConcept.value = TIENDAS_FILTERS.concept;
+    }
     if (TIENDAS_FILTERS.sort && [...fSort.options].some(o => o.value === TIENDAS_FILTERS.sort)) fSort.value = TIENDAS_FILTERS.sort;
   }
 
