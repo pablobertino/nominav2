@@ -117,7 +117,7 @@ function scopeArgs(sf) {
    La regla archiva SU aviso anterior (rule_id = su code) y publica el nuevo.
    Los avisos manuales (rule_id NULL) no se tocan JAMAS: es la respuesta a
    "esto no me va a pisar los avisos que ya tengo, no?". No. */
-async function publishAnnouncement(env, tpl, text, periodNo) {
+async function publishAnnouncement(env, tpl, text, periodNo, adminId) {
   const hoy = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Caracas' });
 
   // 1) Archivar el aviso anterior DE ESTA MISMA REGLA (si lo hay).
@@ -127,15 +127,19 @@ async function publishAnnouncement(env, tpl, text, periodNo) {
   });
 
   // 2) Publicar el nuevo, marcado con su dueno.
+  // OJO: created_by es INTEGER (id de admin_users), no texto. El cron corre
+  // como el superadmin que le paso tick_messages(); si no se manda, el aviso
+  // queda huerfano y en la vista Avisos no se sabe quien lo publico.
   const row = await sb(env, 'announcements', {
     method: 'POST', headers: { Prefer: 'return=representation' },
     body: JSON.stringify({
       title: tpl.label,
       body: text,
-      audience: 'everyone',
+      audience: 'everyone',        // el valor que usa el portal (no 'all')
       starts_on: hoy,
       ends_on: null,
       is_active: true,
+      created_by: Number(adminId) || null,
       rule_id: tpl.code,
       rule_period: periodNo || null,
     }),
@@ -190,7 +194,10 @@ export async function onRequestPost({ request, env }) {
     let annId = null;
     if (wantPortal) {
       const text = renderTemplate(tpl.body, { nombre: '', empresa: '', ...cyc }, false);
-      annId = await publishAnnouncement(env, tpl, text, cyc.period_no);
+      // El id del admin: el cron manda adminId; una corrida manual usa el
+      // actor de la sesion. En los dos casos, el aviso queda con autor.
+      const who = isCron ? Number(body.adminId) : Number(user && user.id);
+      annId = await publishAnnouncement(env, tpl, text, cyc.period_no, who);
     }
 
     /* ---------- canal WHATSAPP ---------- */
