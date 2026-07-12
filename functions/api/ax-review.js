@@ -1369,7 +1369,17 @@ async function publish(env, actor, user, body) {
   });
 }
 
-/* ---------- DISCARD: anular (status discarded) + limpiar ax_pending ---------- */
+/* ---------- DISCARD: anular (status discarded) + limpiar ax_pending ----------
+   v5.26: la anulacion tambien tiene ALCANCE (discard_scope), por la misma razon
+   que la publicacion:
+     'only_account' -> anula SOLO la cuenta (menu Datos bancarios). El resto de
+                       los campos pendientes de la ficha SIGUEN pendientes.
+     'no_account'   -> anula todo MENOS la cuenta (Sincronizar). La cuenta queda
+                       pendiente, esperando a Tesoreria.
+     (ausente)      -> anula la ficha entera (comportamiento historico).
+   Sin esto, el boton Anular de Datos bancarios decia "anular" pero se llevaba
+   puesto el correo y el telefono que la tienda habia cargado: el usuario cree
+   que descarta una cuenta y descarta todo el trabajo de la ficha. */
 async function discard(env, actor, user, body) {
   const targets = await resolveTargetSets(env, actor, user, body);
   if (!targets.length) {
@@ -1378,28 +1388,86 @@ async function discard(env, actor, user, body) {
   const nowIso = new Date().toISOString();
   const rid = await actorAdminId(env, user);
 
-  const setIds = targets.map(t => t.id);
+  // Mismo vocabulario que publish: 'only_account' | 'no_account' | null.
+  const scope = PUBLISH_SCOPES.has(String(body.discard_scope || '').trim())
+    ? String(body.discard_scope).trim() : null;
+
+  // Sin alcance: se anula la ficha entera (rapido, en lote).
+  if (!scope) {
+    const setIds = targets.map(t => t.id);
+    const ceds = [...new Set(targets.map(t => String(t.id_number)))];
+    if (setIds.length) {
+      await sb(env, `ax_change_set?id=in.(${setIds.join(',')})`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ status: 'discarded', resolved_by: rid, resolved_at: nowIso }),
+      });
+    }
+    if (ceds.length) {
+      const okList = ceds.map(c => `"${c}"`).join(',');
+      await sb(env, `workers_master?id_number=in.(${okList})`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ ax_pending: false, ax_pending_fields: {}, ax_pending_at: null }),
+      });
+    }
+    return json({ ok: true, discarded: ceds, count: ceds.length });
+  }
+
+  /* Con alcance: hay que recortar campo por campo. Se lee el pendiente actual
+     del maestro, se anulan SOLO los campos del alcance y el resto queda vivo.
+     Igual que en publish, el change_set solo se cierra si no queda nada. */
   const ceds = [...new Set(targets.map(t => String(t.id_number)))];
+  const inList = ceds.map(c => `"${c}"`).join(',');
+  const master = await sb(env,
+    `workers_master?id_number=in.(${inList})&select=id_number,ax_pending_fields`) || [];
+  const pendByCed = {};
+  master.forEach(m => {
+    pendByCed[String(m.id_number)] = (m.ax_pending_fields && typeof m.ax_pending_fields === 'object')
+      ? m.ax_pending_fields : {};
+  });
 
-  // Marcar los change_set como discarded (historial permanente).
-  if (setIds.length) {
-    const setList = setIds.join(',');
-    await sb(env, `ax_change_set?id=in.(${setList})`, {
+  const done = [];
+  for (const t of targets) {
+    const ced = String(t.id_number);
+    const allPend = pendByCed[ced] || {};
+    // 'send' = los que se ANULAN ahora; 'keep' = los que siguen pendientes.
+    const { send, keep } = splitPendingByScope(allPend, scope);
+    if (!send.length) continue;   // esta ficha no tiene nada de ese alcance
+
+    const keepObj = {};
+    for (const f of keep) keepObj[f] = true;
+    const stillPending = keep.length > 0;
+
+    await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
       method: 'PATCH', headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ status: 'discarded', resolved_by: rid, resolved_at: nowIso }),
+      body: JSON.stringify({
+        ax_pending: stillPending,
+        ax_pending_fields: keepObj,
+        ax_pending_at: stillPending ? nowIso : null,
+      }),
     });
-  }
-  // Limpiar ax_pending del master (el dato local NO se toca: se revierte luego
-  // al Actualizar desde AX, que trae la verdad del ERP).
-  if (ceds.length) {
-    const okList = ceds.map(c => `"${c}"`).join(',');
-    await sb(env, `workers_master?id_number=in.(${okList})`, {
-      method: 'PATCH', headers: { Prefer: 'return=minimal' },
-      body: JSON.stringify({ ax_pending: false, ax_pending_fields: {}, ax_pending_at: null }),
-    });
+
+    // change_set: se le quitan los campos anulados. Si queda vacio, se cierra.
+    try {
+      const cur = await sb(env, `ax_change_set?id=eq.${encodeURIComponent(t.id)}&select=changes`);
+      const ch = (cur && cur[0] && cur[0].changes && typeof cur[0].changes === 'object') ? { ...cur[0].changes } : {};
+      for (const f of send) delete ch[f];
+      if (Object.keys(ch).length) {
+        await sb(env, `ax_change_set?id=eq.${encodeURIComponent(t.id)}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ changes: ch }),   // sigue pending con el resto
+        });
+      } else {
+        await sb(env, `ax_change_set?id=eq.${encodeURIComponent(t.id)}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ status: 'discarded', resolved_by: rid, resolved_at: nowIso }),
+        });
+      }
+    } catch (_) { /* el proximo pull reconcilia */ }
+
+    done.push(ced);
   }
 
-  return json({ ok: true, discarded: ceds, count: ceds.length });
+  return json({ ok: true, discarded: done, count: done.length, scope });
 }
 
 /* ===================== Handler ===================== */
@@ -1460,6 +1528,16 @@ export async function onRequestPost({ request, env }) {
       }
       // Sin llave bancaria, ninguna publicacion puede llevar la cuenta.
       body.publish_scope = 'no_account';
+    }
+
+    /* v5.26: el menu Datos bancarios SOLO puede tocar la cuenta, tambien al
+       ANULAR. Se fuerza aca (no se confia en el front): si la llamada viene
+       con field_filter=account_number, cualquier discard se acota a la cuenta.
+       Sin esto, el boton Anular de esa pantalla se llevaba puesto el correo y
+       el telefono que la tienda habia cargado -- campos que esa pantalla ni
+       siquiera muestra. */
+    if (action === 'discard' && fieldFilterOf(body) === 'account_number') {
+      body.discard_scope = 'only_account';
     }
     try { await shadowCan(env, user, 'ax-review', action, NEED, true); } catch (_) { /* bitacora, jamas rompe */ }
 

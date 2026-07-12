@@ -418,16 +418,19 @@ export async function renderAxReview(user, fieldFilter) {
       <span class="axr-spacer"></span>
       <button class="axr-btn" data-synclog="${FIELD_FILTER ? 'banksync' : 'syncreview'}" title="Registro de sincronizaciones (corridas programadas)">Registro</button>
       ${FIELD_FILTER === 'account_number'
-        ? /* v5.23: en Datos bancarios hay UN solo boton, y publica SOLO la
-             cuenta. "Publicar sin cuenta" no tiene sentido aca (seria publicar
-             justo lo que esta pantalla no maneja).
-             v5.24: y solo se pinta con hcm.publish.bank. */
-          (may('hcm.publish.bank')
-            ? `<button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar solo la cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>`
-            : '')
-        : `${may('hcm.publish') ? `<button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>` : ''}
-           ${may('hcm.publish.bank') ? `<button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar con cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>` : ''}`}
-      ${may('hcm.discard') ? `<button class="axr-btn axr-btn-dis" id="axrDisAll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular todo</button>` : ''}
+        ? /* v5.23/v5.26: Datos bancarios SOLO toca la cuenta. Un boton para
+             publicarla y otro para anularla; ninguno de los dos roza los demas
+             campos de la ficha. */
+          `${may('hcm.publish.bank') ? `<button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar solo la cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>` : ''}
+           ${may('hcm.discard') ? `<button class="axr-btn axr-btn-dis" id="axrDisBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular solo la cuenta</button>` : ''}`
+        : /* v5.26: en Sincronizar, CUATRO botones. Publicar y Anular, cada uno
+             con y sin la cuenta. La simetria es a proposito: si se puede
+             publicar sin tocar la cuenta, tambien se tiene que poder anular sin
+             tocarla (antes "Anular todo" se llevaba la cuenta puesta sin avisar). */
+          `${may('hcm.publish') ? `<button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>` : ''}
+           ${may('hcm.publish.bank') ? `<button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar con cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>` : ''}
+           ${may('hcm.discard') ? `<button class="axr-btn axr-btn-dis" id="axrDisSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular sin cuenta</button>` : ''}
+           ${may('hcm.discard') ? `<button class="axr-btn axr-btn-dis" id="axrDisAll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular todo</button>` : ''}`}
     </div>
     <div class="axr-selbar" id="axrSelBar" hidden>
       <b id="axrSelN">0</b> <span>seleccionada(s)</span>
@@ -457,6 +460,11 @@ export async function renderAxReview(user, fieldFilter) {
   if (bSafe) bSafe.addEventListener('click', () => confirmAction('publish', 'nobank'));
   const bBank = $('#axrPubBank');
   if (bBank) bBank.addEventListener('click', () => confirmAction('publish', 'bank'));
+  // v5.26: anular con alcance.
+  const bDisSafe = $('#axrDisSafe');
+  if (bDisSafe) bDisSafe.addEventListener('click', () => confirmAction('discard', 'nobank'));
+  const bDisBank = $('#axrDisBank');
+  if (bDisBank) bDisBank.addEventListener('click', () => confirmAction('discard', 'bank'));
   const bDisAll = $('#axrDisAll');
   if (bDisAll) bDisAll.addEventListener('click', () => confirmAction('discard', 'all'));
 
@@ -637,20 +645,34 @@ function targetsFor(scope, id) {
   return vis;   // all
 }
 
-/* v5.23: alcance de campos que se manda al backend segun el boton.
-   'no_account'   -> se publican todos los campos MENOS la cuenta.
-   'only_account' -> se publica SOLO la cuenta.
-   null           -> todo (botones por ficha / seleccion / Comparar).
+/* v5.23/v5.26: alcance de campos que se manda al backend segun el boton.
+   'no_account'   -> todos los campos MENOS la cuenta.
+   'only_account' -> SOLO la cuenta.
+   null           -> la ficha entera (botones por ficha / seleccion / Comparar).
 
-   En el menu Datos bancarios (FIELD_FILTER activo) CUALQUIER publicacion es
-   'only_account': esa pantalla existe para tocar la cuenta y nada mas. Si
-   desde ahi se publicara la ficha entera, se estaria escribiendo correo,
-   telefono, etc. sin que nadie los haya revisado en esa pantalla. */
-function publishScopeFor(scope) {
+   Sirve para PUBLICAR y para ANULAR: el vocabulario es el mismo, y la simetria
+   es deliberada. Si se puede publicar sin tocar la cuenta, tiene que poder
+   anularse sin tocarla.
+
+   En el menu Datos bancarios (FIELD_FILTER activo) CUALQUIER accion es
+   'only_account': esa pantalla existe para la cuenta y nada mas. Si desde ahi
+   se publicara -- o se ANULARA -- la ficha entera, se estaria escribiendo (o
+   descartando) correo, telefono, etc. sin que nadie los haya visto ahi. */
+function scopeFor(verb, scope) {
+  // Datos bancarios: SIEMPRE solo la cuenta, publique o anule.
   if (FIELD_FILTER === 'account_number') return 'only_account';
   if (scope === 'nobank') return 'no_account';
-  if (scope === 'bank') return null;   // "Publicar con cuenta" = la ficha completa
-  return null;
+  if (scope === 'bank') {
+    // OJO con la asimetria, es deliberada:
+    //  - PUBLICAR "con cuenta" = la ficha COMPLETA (cuenta incluida). Es el
+    //    boton de "mandalo todo", el historico. -> sin scope.
+    //  - ANULAR "solo la cuenta" (Datos bancarios) = solo el campo cuenta.
+    //    Ese caso ya lo tomo el if de arriba (FIELD_FILTER), asi que aca un
+    //    discard con scope 'bank' no deberia llegar; si llegara, lo mas seguro
+    //    es acotarlo a la cuenta y no anular de mas.
+    return verb === 'discard' ? 'only_account' : null;
+  }
+  return null;   // 'one' | 'sel' | 'all' -> la ficha entera
 }
 
 /* v5.11: bloque con las fichas que el SISTEMA rechazo, cada una con su cedula
