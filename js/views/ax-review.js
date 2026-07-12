@@ -557,7 +557,7 @@ function paint() {
           Esta ficha también tiene <b>${nOther} cambio${nOther === 1 ? '' : 's'}</b> en otros campos (correo, teléfono, etc.). No se muestran ni se publican aquí: se resuelven en <b>Sincronizar</b>.
         </div>` : ''}
         <div class="axr-rowfoot">
-          ${may('hcm.discard') ? `<button class="axr-btn axr-btn-dis" data-discard="${r.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular</button>` : ''}
+          ${may('hcm.discard') ? `<button class="axr-btn axr-btn-dis" data-discard="${r.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> ${FIELD_FILTER === 'account_number' ? 'Anular la cuenta' : 'Anular'}</button>` : ''}
           ${(FIELD_FILTER === 'account_number'
               /* v5.24: en Datos bancarios el Publicar de la fila SOLO manda la
                  cuenta -> exige hcm.publish.bank. En Sincronizar manda la ficha
@@ -732,8 +732,8 @@ function confirmAction(verb, scope, id) {
   const n = targets.length;
   const totalFields = targets.reduce((a, t) => a + (t.field_count || (t.fields || []).length), 0);
   const banky = isPub && targets.some(rowHasBank);
-  // v5.23: que CAMPOS viajan (distinto de que FICHAS).
-  const pubScope = isPub ? publishScopeFor(scope) : null;
+  // v5.23/v5.26: que CAMPOS viajan (distinto de que FICHAS).
+  const pubScope = scopeFor(verb, scope);
 
   const host = document.body;
   const wrap = document.createElement('div');
@@ -751,7 +751,9 @@ function confirmAction(verb, scope, id) {
         ? (pubScope === 'no_account' ? 'Publicar sin la cuenta bancaria'
           : pubScope === 'only_account' ? 'Publicar solo la cuenta bancaria'
           : 'Publicar cambios')
-        : 'Anular cambios'}</h3>
+        : (pubScope === 'no_account' ? 'Anular sin la cuenta bancaria'
+          : pubScope === 'only_account' ? 'Anular solo la cuenta bancaria'
+          : 'Anular cambios')}</h3>
       <p class="who">${n} ficha${n === 1 ? '' : 's'} · ${totalFields} campo${totalFields === 1 ? '' : 's'}</p>
       <div class="box ${isPub ? 'pub' : 'dis'}" id="axrBox">
         ${isPub
@@ -760,7 +762,11 @@ function confirmAction(verb, scope, id) {
               : pubScope === 'only_account'
               ? `Se publicará <b>únicamente la cuenta bancaria</b> de <b>${n} ficha${n === 1 ? '' : 's'}</b>.<br><br>Los demás campos de la ficha <b>no se tocan</b>: si tenían cambios pendientes, siguen pendientes y se publican desde <b>Sincronizar</b>.<br><br><b>⚠ Verifica los números de cuenta en el detalle antes de publicar: este dato afecta el pago.</b>`
               : `Se publicarán los cambios de <b>${n} ficha${n === 1 ? '' : 's'}</b>. Solo se envía lo que se editó en cada ficha; el resto de los datos queda intacto.${banky ? '<br><br><b>⚠ Incluye cambio de CUENTA BANCARIA.</b> Verifica los números de cuenta en el detalle antes de publicar: este dato afecta el pago.' : ''}`)
-          : `Se anularán los cambios de <b>${n} ficha${n === 1 ? '' : 's'}</b>. No se enviarán. El dato en el portal se mantiene hasta que uses <b>Actualizar</b> en Personal, que trae la versión vigente.`}
+          : (pubScope === 'no_account'
+              ? `Se anularán los cambios de <b>${n} ficha${n === 1 ? '' : 's'}</b>, <b>menos la cuenta bancaria</b>.<br><br>Si alguna ficha tenía un cambio de cuenta, ese cambio <b>NO se anula</b>: sigue pendiente en <b>Datos bancarios</b>. Lo demás se descarta y no se enviará.`
+              : pubScope === 'only_account'
+              ? `Se anulará <b>únicamente el cambio de cuenta bancaria</b> de <b>${n} ficha${n === 1 ? '' : 's'}</b>.<br><br>Los demás campos de la ficha <b>no se tocan</b>: si tenían cambios pendientes, siguen pendientes y se resuelven en <b>Sincronizar</b>.`
+              : `Se anularán <b>TODOS</b> los cambios de <b>${n} ficha${n === 1 ? '' : 's'}</b>, <b>incluida la cuenta bancaria</b> si la tuvieran. No se enviará nada.<br><br>El dato en el portal se mantiene hasta que uses <b>Actualizar</b> en Personal, que trae la versión vigente.`)}
       </div>
       <div class="lst" id="axrLst">${listHtml}</div>
       <div class="res" id="axrRes"></div>
@@ -793,6 +799,8 @@ function confirmAction(verb, scope, id) {
       res.className = 'res'; res.textContent = '';
       const payload = { action: verb, user: sessionUserPayload(USER) };
       if (scope === 'all') payload.all = true; else payload.id_numbers = ids;
+      // v5.26: la anulacion tambien lleva alcance (solo la cuenta / sin la cuenta).
+      if (pubScope) payload.discard_scope = pubScope;
       let r;
       try { r = await api(payload); }
       catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
