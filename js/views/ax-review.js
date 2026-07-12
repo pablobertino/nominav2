@@ -368,8 +368,8 @@ export async function renderAxReview(user, fieldFilter) {
     <div class="axr-head"><div>
       <h1>${FIELD_FILTER ? 'Datos bancarios · Sincronizar' : 'Sincronizar'}</h1>
       <p>${FIELD_FILTER
-        ? 'Solo los cambios pendientes que tocan la <b>cuenta bancaria</b>. Si una ficha trae la cuenta junto a otros campos, aparece aquí y al publicarla se envía completa.'
-        : 'Revisa los cambios de fichas pendientes y decide qué se <b>publica</b> y qué se <b>anula</b>. Al final, usa <b>Actualizar</b> en Personal para revertir lo anulado.'}</p>
+        ? 'Solo la <b>cuenta bancaria</b>. Al publicar se envía únicamente la cuenta: los demás campos de la ficha no se tocan y se resuelven en <b>Sincronizar</b>.'
+        : 'Revisa los cambios de fichas pendientes y decide qué se <b>publica</b> y qué se <b>anula</b>. La <b>cuenta bancaria</b> se publica aparte, desde <b>Datos bancarios</b>.'}</p>
     </div><span id="axrRefresh"></span></div>
     <div class="axr-stats">
       <div class="axr-stat pend"><div class="k"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg> Fichas pendientes</div><div class="v" id="axrSPend">—</div></div>
@@ -387,8 +387,13 @@ export async function renderAxReview(user, fieldFilter) {
     <div class="axr-toolbar">
       <span class="axr-spacer"></span>
       <button class="axr-btn" data-synclog="${FIELD_FILTER ? 'banksync' : 'syncreview'}" title="Registro de sincronizaciones (corridas programadas)">Registro</button>
-        <button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>
-      <button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar con cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>
+      ${FIELD_FILTER === 'account_number'
+        ? /* v5.23: en Datos bancarios hay UN solo boton, y publica SOLO la
+             cuenta. "Publicar sin cuenta" no tiene sentido aca (seria publicar
+             justo lo que esta pantalla no maneja). */
+          `<button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar solo la cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>`
+        : `<button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>
+           <button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar con cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>`}
       <button class="axr-btn axr-btn-dis" id="axrDisAll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular todo</button>
     </div>
     <div class="axr-selbar" id="axrSelBar" hidden>
@@ -411,7 +416,9 @@ export async function renderAxReview(user, fieldFilter) {
   $('#axrSelClear').addEventListener('click', () => { SELECTED.clear(); paint(); });
   $('#axrPubSel').addEventListener('click', () => confirmAction('publish', 'sel'));
   $('#axrDisSel').addEventListener('click', () => confirmAction('discard', 'sel'));
-  $('#axrPubSafe').addEventListener('click', () => confirmAction('publish', 'nobank'));
+  // v5.23: en modo bancario #axrPubSafe no se pinta (no existe): se protege.
+  const bSafe = $('#axrPubSafe');
+  if (bSafe) bSafe.addEventListener('click', () => confirmAction('publish', 'nobank'));
   $('#axrPubBank').addEventListener('click', () => confirmAction('publish', 'bank'));
   $('#axrDisAll').addEventListener('click', () => confirmAction('discard', 'all'));
 
@@ -456,7 +463,16 @@ function paint() {
     const isSel = SELECTED.has(r.id), isOpen = OPEN.has(r.id);
     const bank = rowHasBank(r);
     const ci = avatarColor(r.id_number);
-    const fields = r.fields || [];
+    const allFields = r.fields || [];
+    /* v5.23: en el menu Datos bancarios se muestra SOLO la fila de la cuenta.
+       Los otros campos de la ficha existen y siguen pendientes, pero no son
+       asunto de esta pantalla: mostrarlos invitaba a pensar que tambien se
+       publican desde aca (y desde v5.23 NO: aca solo viaja la cuenta). Los
+       demas se ven y se publican en Sincronizar. */
+    const fields = FIELD_FILTER === 'account_number'
+      ? allFields.filter(isBankField)
+      : allFields;
+    const nOther = allFields.length - fields.length;
     const chg = fields.map(f => `<tr${isBankField(f) ? ' class="bankrow"' : ''}>
       <td class="fld">${esc(f.label)}${isBankField(f) ? ' ⚠' : ''}</td>
       <td><span class="axr-old ${f.old == null ? 'empty' : ''}">${f.old == null ? '(vacío)' : esc(f.old)}</span></td>
@@ -491,9 +507,12 @@ function paint() {
       </div>
       <div class="axr-detail">
         <table class="axr-tbl"><thead><tr><th>Campo</th><th>Previo</th><th></th><th>Modificado</th></tr></thead><tbody>${chg}</tbody></table>
+        ${nOther > 0 ? `<div style="margin-top:9px;font-size:12px;color:var(--muted);background:var(--bg-soft,#f8fafc);border:1px solid var(--border);border-radius:9px;padding:8px 11px">
+          Esta ficha también tiene <b>${nOther} cambio${nOther === 1 ? '' : 's'}</b> en otros campos (correo, teléfono, etc.). No se muestran ni se publican aquí: se resuelven en <b>Sincronizar</b>.
+        </div>` : ''}
         <div class="axr-rowfoot">
           <button class="axr-btn axr-btn-dis" data-discard="${r.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular</button>
-          <button class="axr-btn axr-btn-pub" data-publish="${r.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar</button>
+          <button class="axr-btn axr-btn-pub" data-publish="${r.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> ${FIELD_FILTER === 'account_number' ? 'Publicar la cuenta' : 'Publicar'}</button>
         </div>
       </div>
     </div>`;
@@ -543,7 +562,9 @@ function paint() {
 function updateBars() {
   const n = SELECTED.size, vis = visibleRows();
   const nBank = vis.filter(rowHasBank).length;
-  const nSafe = vis.length - nBank;
+  // v5.23: "Publicar sin cuenta" ahora alcanza a TODAS las fichas visibles (a
+  // cada una le publica todo menos la cuenta), no solo a las que no la tocan.
+  const nSafe = vis.length;
   const sb = $('#axrSelBar'); if (sb) sb.hidden = n === 0;
   const sn = $('#axrSelN'); if (sn) sn.textContent = n;
   const sfN = $('#axrPubSafeN'); if (sfN) sfN.textContent = nSafe;
@@ -560,9 +581,30 @@ function targetsFor(scope, id) {
   const vis = visibleRows();
   if (scope === 'one') return vis.filter(r => r.id === id);
   if (scope === 'sel') return vis.filter(r => SELECTED.has(r.id));
-  if (scope === 'nobank') return vis.filter(r => !rowHasBank(r));
+  // v5.23: "Publicar sin cuenta" ya no es "las fichas que NO tocan la cuenta":
+  // ahora TODAS las fichas visibles entran, y lo que se recorta es el CAMPO
+  // (la cuenta viaja como eco y no se toca). Asi la ficha de alguien que edito
+  // correo+telefono+cuenta publica sus 2 campos seguros ahora, y la cuenta
+  // queda esperando en Datos bancarios.
+  if (scope === 'nobank') return vis;
   if (scope === 'bank') return vis.filter(r => rowHasBank(r));
   return vis;   // all
+}
+
+/* v5.23: alcance de campos que se manda al backend segun el boton.
+   'no_account'   -> se publican todos los campos MENOS la cuenta.
+   'only_account' -> se publica SOLO la cuenta.
+   null           -> todo (botones por ficha / seleccion / Comparar).
+
+   En el menu Datos bancarios (FIELD_FILTER activo) CUALQUIER publicacion es
+   'only_account': esa pantalla existe para tocar la cuenta y nada mas. Si
+   desde ahi se publicara la ficha entera, se estaria escribiendo correo,
+   telefono, etc. sin que nadie los haya revisado en esa pantalla. */
+function publishScopeFor(scope) {
+  if (FIELD_FILTER === 'account_number') return 'only_account';
+  if (scope === 'nobank') return 'no_account';
+  if (scope === 'bank') return null;   // "Publicar con cuenta" = la ficha completa
+  return null;
 }
 
 /* v5.11: bloque con las fichas que el SISTEMA rechazo, cada una con su cedula
@@ -622,6 +664,8 @@ function confirmAction(verb, scope, id) {
   const n = targets.length;
   const totalFields = targets.reduce((a, t) => a + (t.field_count || (t.fields || []).length), 0);
   const banky = isPub && targets.some(rowHasBank);
+  // v5.23: que CAMPOS viajan (distinto de que FICHAS).
+  const pubScope = isPub ? publishScopeFor(scope) : null;
 
   const host = document.body;
   const wrap = document.createElement('div');
@@ -635,11 +679,19 @@ function confirmAction(verb, scope, id) {
 
   wrap.innerHTML = `
     <div class="axr-modal">
-      <h3>${isPub ? 'Publicar cambios' : 'Anular cambios'}</h3>
+      <h3>${isPub
+        ? (pubScope === 'no_account' ? 'Publicar sin la cuenta bancaria'
+          : pubScope === 'only_account' ? 'Publicar solo la cuenta bancaria'
+          : 'Publicar cambios')
+        : 'Anular cambios'}</h3>
       <p class="who">${n} ficha${n === 1 ? '' : 's'} · ${totalFields} campo${totalFields === 1 ? '' : 's'}</p>
       <div class="box ${isPub ? 'pub' : 'dis'}" id="axrBox">
         ${isPub
-          ? `Se publicarán los cambios de <b>${n} ficha${n === 1 ? '' : 's'}</b>. Solo se envía lo que se editó en cada ficha; el resto de los datos queda intacto.${banky ? '<br><br><b>⚠ Incluye cambio de CUENTA BANCARIA.</b> Verifica los números de cuenta en el detalle antes de publicar: este dato afecta el pago.' : ''}`
+          ? (pubScope === 'no_account'
+              ? `Se publicarán los cambios de <b>${n} ficha${n === 1 ? '' : 's'}</b>, <b>menos la cuenta bancaria</b>.<br><br>Si alguna ficha tenía un cambio de cuenta, ese cambio <b>no se envía</b>: la cuenta en el sistema queda como está, y el cambio sigue pendiente en <b>Datos bancarios</b> hasta que se publique desde allí.`
+              : pubScope === 'only_account'
+              ? `Se publicará <b>únicamente la cuenta bancaria</b> de <b>${n} ficha${n === 1 ? '' : 's'}</b>.<br><br>Los demás campos de la ficha <b>no se tocan</b>: si tenían cambios pendientes, siguen pendientes y se publican desde <b>Sincronizar</b>.<br><br><b>⚠ Verifica los números de cuenta en el detalle antes de publicar: este dato afecta el pago.</b>`
+              : `Se publicarán los cambios de <b>${n} ficha${n === 1 ? '' : 's'}</b>. Solo se envía lo que se editó en cada ficha; el resto de los datos queda intacto.${banky ? '<br><br><b>⚠ Incluye cambio de CUENTA BANCARIA.</b> Verifica los números de cuenta en el detalle antes de publicar: este dato afecta el pago.' : ''}`)
           : `Se anularán los cambios de <b>${n} ficha${n === 1 ? '' : 's'}</b>. No se enviarán. El dato en el portal se mantiene hasta que uses <b>Actualizar</b> en Personal, que trae la versión vigente.`}
       </div>
       <div class="lst" id="axrLst">${listHtml}</div>
@@ -743,7 +795,9 @@ function confirmAction(verb, scope, id) {
       guard++;
       let r;
       try {
-        r = await api({ action: 'publish', user: sessionUserPayload(USER), id_numbers: pending });
+        const payload = { action: 'publish', user: sessionUserPayload(USER), id_numbers: pending };
+        if (pubScope) payload.publish_scope = pubScope;   // v5.23
+        r = await api(payload);
       } catch (e) {
         r = { ok: false, error: String(e && e.message || e) };
       }

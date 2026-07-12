@@ -660,6 +660,59 @@ function fieldFilterOf(body) {
   return FIELD_FILTER_WHITELIST.has(f) ? f : null;
 }
 
+/* ---------- v5.23: ALCANCE DE LA PUBLICACION (que CAMPOS viajan) ----------
+   OJO: es distinto de field_filter, que decide que FICHAS se LISTAN. Esto
+   decide, DENTRO de una ficha, QUE CAMPOS se publican.
+
+   El problema: la cuenta bancaria es delicada (un cambio de banco lo valida
+   Tesoreria), pero suele venir junto a correo/telefono/genero en la misma
+   edicion de la tienda. Hasta v5.22 era todo o nada: o publicabas los 5 campos
+   (pisando la cuenta del sistema) o no publicabas ninguno.
+
+   Modos:
+     'no_account'   -> todo MENOS la cuenta   (menu Sincronizar)
+     'only_account' -> SOLO la cuenta         (menu Datos bancarios)
+     (ausente)      -> todo (comportamiento historico)
+
+   POR QUE NO SE MANDA NADA VACIO:
+   fullHcmPayload() arma SIEMPRE los 10 campos. Los que estan en `pending`
+   llevan el valor del PORTAL; TODOS los demas llevan el ECO de lo que el
+   sistema ya tiene (leido en un GET previo). Entonces, para no tocar la cuenta,
+   NO hay que mandarla vacia: basta con NO marcarla como pendiente. Viaja el
+   eco -- el mismo valor que el sistema ya tenia -- y la API, que compara antes
+   de escribir, no lo toca.
+
+   Mandarla VACIA SERIA DESTRUCTIVO: la API arma
+   <AccountNum>{cuentaBancaria}</AccountNum> sin ningun `if`, asi que un valor
+   vacio viaja como etiqueta vacia y BORRA la cuenta en el sistema. (El unico
+   campo con guarda es BirthDate.) Por eso el camino correcto es el ECO.
+
+   Los campos NO publicados QUEDAN PENDIENTES: la ficha sigue viva en el otro
+   menu, esperando su turno. */
+const PUBLISH_SCOPES = new Set(['no_account', 'only_account']);
+function publishScopeOf(body) {
+  const s = body ? String(body.publish_scope || '').trim() : '';
+  return PUBLISH_SCOPES.has(s) ? s : null;
+}
+
+/* Parte los campos pendientes de una ficha segun el alcance pedido.
+   { send } = los que se publican AHORA (valor del portal).
+   { keep } = los que quedan pendientes para despues. */
+function splitPendingByScope(pendingFields, scope) {
+  const all = (pendingFields && typeof pendingFields === 'object') ? Object.keys(pendingFields) : [];
+  if (!scope) return { send: all, keep: [] };
+  if (scope === 'only_account') {
+    return {
+      send: all.filter(f => f === 'account_number'),
+      keep: all.filter(f => f !== 'account_number'),
+    };
+  }
+  return {   // 'no_account'
+    send: all.filter(f => f !== 'account_number'),
+    keep: all.filter(f => f === 'account_number'),
+  };
+}
+
 /* ---------- HISTORY: bitacora completa del alcance (v4.44) ----------
    Todo lo que paso por Sincronizar: pendientes, publicados y anulados
    (ax_change_set es historial permanente). Paginado SERVER-SIDE con count
@@ -1003,6 +1056,11 @@ async function publish(env, actor, user, body) {
   const okCeds = [];        // cedulas que se enviaran
   const okSetIds = [];      // change_set.id correspondientes
   const rejected = [];      // { id_number, reason }
+  // v5.23: que campos viajan. null = todos (historico).
+  const scope = publishScopeOf(body);
+  // Por ficha: los campos que se publican ahora y los que quedan pendientes.
+  const sentFieldsByCed = {};
+  const keptFieldsByCed = {};
   for (const t of targets) {
     const ced = String(t.id_number);
     const m = masterByCed[ced];
@@ -1019,7 +1077,24 @@ async function publish(env, actor, user, body) {
       rejected.push({ id_number: ced, reason: 'El sistema no devolvio esta ficha (respuesta parcial); no se envia sin el eco.' });
       continue;
     }
-    const fields = (m.ax_pending_fields && typeof m.ax_pending_fields === 'object') ? m.ax_pending_fields : {};
+    const allPend = (m.ax_pending_fields && typeof m.ax_pending_fields === 'object') ? m.ax_pending_fields : {};
+
+    /* v5.23: se recorta el pendiente al alcance pedido. Los campos que quedan
+       FUERA no se marcan como pendientes en el payload -> viajan con el ECO del
+       sistema (su valor actual), o sea que NO se tocan. Nunca se manda vacio. */
+    const { send, keep } = splitPendingByScope(allPend, scope);
+    if (!send.length) {
+      rejected.push({
+        id_number: ced,
+        reason: scope === 'only_account'
+          ? 'Esta ficha no tiene la cuenta bancaria entre sus cambios pendientes.'
+          : 'Esta ficha solo tiene pendiente la cuenta bancaria; se publica desde Datos bancarios.',
+      });
+      continue;
+    }
+    const fields = {};
+    for (const f of send) fields[f] = true;
+
     const { payload, changed } = fullHcmPayload(m, fields, erpRaw);
     if (!changed) {
       rejected.push({ id_number: ced, reason: 'Sin campos validos para enviar (todo quedo vacio).' });
@@ -1028,6 +1103,8 @@ async function publish(env, actor, user, body) {
     clean.push(payload);
     okCeds.push(ced);
     okSetIds.push(t.id);
+    sentFieldsByCed[ced] = send;
+    keptFieldsByCed[ced] = keep;
   }
 
   if (!clean.length) {
@@ -1142,9 +1219,33 @@ async function publish(env, actor, user, body) {
   // y limpiar ax_pending del master de los enviados.
   const nowIso = new Date().toISOString();
   const rid = await actorAdminId(env, user);
-  if (okSetIdsFinal.length) {
-    const setList = okSetIdsFinal.join(',');
-    await sb(env, `ax_change_set?id=in.(${setList})`, {
+
+  /* v5.23: PUBLICACION PARCIAL.
+     Sin scope (historico): la ficha se publico entera -> change_set 'published'
+     y ax_pending limpio.
+     Con scope: solo viajaron ALGUNOS campos. Lo que NO se publico tiene que
+     SEGUIR PENDIENTE, o se perderia el cambio (p.ej. publicas correo+telefono
+     desde Sincronizar y la cuenta se esfuma sin haber llegado nunca al sistema).
+     Entonces, para las fichas con campos remanentes:
+       - el maestro conserva ax_pending=true con SOLO esos campos;
+       - el change_set NO pasa a 'published': se le recortan los campos ya
+         publicados y sigue 'pending' con el resto (la ficha permanece visible
+         en el otro menu).
+     Las fichas que quedaron sin remanente se cierran normal. */
+  const setIdByCed = {};
+  targets.forEach(t => { setIdByCed[String(t.id_number)] = t.id; });
+
+  const cedsFullyDone = [];     // no queda nada pendiente -> cierre normal
+  const cedsPartial = [];       // queda algo -> sigue pendiente
+  for (const ced of okCedsFinal) {
+    const keep = keptFieldsByCed[ced] || [];
+    (keep.length ? cedsPartial : cedsFullyDone).push(ced);
+  }
+
+  // --- Fichas COMPLETAS: change_set published + master limpio (como siempre).
+  const fullSetIds = cedsFullyDone.map(c => setIdByCed[c]).filter(x => x != null);
+  if (fullSetIds.length) {
+    await sb(env, `ax_change_set?id=in.(${fullSetIds.join(',')})`, {
       method: 'PATCH', headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
         status: 'published', resolved_by: rid, resolved_at: nowIso,
@@ -1152,14 +1253,54 @@ async function publish(env, actor, user, body) {
       }),
     });
   }
-  if (okCedsFinal.length) {
-    const okList = okCedsFinal.map(c => `"${c}"`).join(',');
+  if (cedsFullyDone.length) {
+    const okList = cedsFullyDone.map(c => `"${c}"`).join(',');
     await sb(env, `workers_master?id_number=in.(${okList})`, {
       method: 'PATCH', headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
         ax_pending: false, ax_pending_fields: {}, ax_pending_at: null, ax_synced_at: nowIso,
       }),
     });
+  }
+
+  // --- Fichas PARCIALES: se conserva lo no publicado (1 PATCH por ficha; son
+  //     pocas y hay que recortar su jsonb individualmente).
+  for (const ced of cedsPartial) {
+    const keep = keptFieldsByCed[ced] || [];
+    const sent = sentFieldsByCed[ced] || [];
+    const keepObj = {};
+    for (const f of keep) keepObj[f] = true;
+
+    // Maestro: sigue pendiente, pero SOLO con los campos que no viajaron.
+    // ax_synced_at NO se toca: la ficha aun tiene algo sin sincronizar.
+    try {
+      await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ ax_pending: true, ax_pending_fields: keepObj, ax_pending_at: nowIso }),
+      });
+    } catch (_) { /* el proximo pull reconcilia */ }
+
+    // change_set: se le quitan los campos ya publicados y SIGUE 'pending'.
+    const setId = setIdByCed[ced];
+    if (setId == null) continue;
+    try {
+      const cur = await sb(env, `ax_change_set?id=eq.${encodeURIComponent(setId)}&select=changes`);
+      const ch = (cur && cur[0] && cur[0].changes && typeof cur[0].changes === 'object') ? { ...cur[0].changes } : {};
+      for (const f of sent) delete ch[f];
+      if (Object.keys(ch).length) {
+        await sb(env, `ax_change_set?id=eq.${encodeURIComponent(setId)}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ changes: ch }),   // sigue pending
+        });
+      } else {
+        // No deberia pasar (si hay keep, el jsonb tiene algo), pero si el
+        // change_set no tenia esos campos, se cierra en vez de dejarlo vacio.
+        await sb(env, `ax_change_set?id=eq.${encodeURIComponent(setId)}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ status: 'published', resolved_by: rid, resolved_at: nowIso }),
+        });
+      }
+    } catch (_) { /* el proximo pull reconcilia */ }
   }
 
   /* v4.67: reflejar lo publicado en los ROSTERS LOCALES (store_workers y
@@ -1178,7 +1319,12 @@ async function publish(env, actor, user, body) {
   for (const ced of okCedsFinal) {
     const m = masterByCed[ced];
     if (!m) continue;
-    const pf = (m.ax_pending_fields && typeof m.ax_pending_fields === 'object') ? Object.keys(m.ax_pending_fields) : [];
+    // v5.23: SOLO los campos que realmente VIAJARON. Antes se usaba
+    // ax_pending_fields completo; con publicacion parcial eso copiaria al roster
+    // local un campo (la cuenta) que NUNCA se envio al sistema -> el portal
+    // mostraria un dato que el sistema no tiene.
+    const pf = sentFieldsByCed[ced]
+      || ((m.ax_pending_fields && typeof m.ax_pending_fields === 'object') ? Object.keys(m.ax_pending_fields) : []);
     const patch = {};
     for (const f of pf) if (f in AX_FIELD_MAP && f !== 'address') patch[f] = m[f] ?? null;
     if (pf.some(f => f === 'first_name' || f === 'second_name' || f === 'last_names')) {
