@@ -356,7 +356,7 @@ export async function onRequestPost({ request, env }) {
     /* ---------- listar ---------- */
     if (action === 'list') {
       const rows = await sb(env,
-        'message_templates?select=code,label,description,body,scope,allows_secret,is_system,is_active,sort_order,updated_at,updated_by,nature,channel,scope_filters&order=sort_order.asc,code.asc');
+        'message_templates?select=code,label,description,body,scope,allows_secret,is_system,is_active,sort_order,updated_at,updated_by,nature,channel,scope_filters,trigger_kind,cycle_field,cycle_offset,trigger_date,trigger_every_days,trigger_hour,retry_minutes,last_fire_on,last_status,last_error,last_sent&order=sort_order.asc,code.asc');
       const links = {
         portal: portalUrl(env),
         osticket: String(await getSetting(env, 'osticket_url', '') || '').replace(/\/+$/, ''),

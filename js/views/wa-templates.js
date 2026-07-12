@@ -475,11 +475,18 @@ function schedPaneHtml(t) {
       <div class="wt-runbox">
         <button class="wt-btn" id="wtRun">▶ Enviar ahora (probar)</button>
         <span class="wt-runst" id="wtRunSt">${t.last_status
-          ? `Última corrida: <b class="${t.last_status === 'ok' ? 'ok' : 'err'}">${t.last_status === 'ok' ? 'OK' : 'con errores'}</b>`
-            + (t.last_sent != null ? ` · ${t.last_sent} enviado${t.last_sent === 1 ? '' : 's'}` : '')
-            + (t.last_fire_on ? ` · ${esc(String(t.last_fire_on).slice(0, 10))}` : '')
-            + (t.last_error ? ` · ${esc(t.last_error)}` : '')
+          ? (t.last_status === 'running'
+              ? '⏳ Corriendo… (si queda colgada, se reintenta sola)'
+              : `Última corrida: <b class="${t.last_status === 'ok' ? 'ok' : 'err'}">${t.last_status === 'ok' ? 'OK' : 'con errores'}</b>`
+                + (t.last_sent != null ? ` · ${t.last_sent} enviado${t.last_sent === 1 ? '' : 's'}` : '')
+                + (t.last_fire_on ? ` · ${esc(String(t.last_fire_on).slice(0, 10))}` : '')
+                + (t.last_error ? ` · ${esc(t.last_error)}` : ''))
           : 'Todavía no corrió.'}</span>
+      </div>
+      <div class="wt-help" style="margin-top:8px">
+        Si un envío automático falla o queda colgado, el sistema <b>lo reintenta solo</b> a los
+        ${Number(t.retry_minutes) || 20} minutos. Sin esto, un mensaje atado a una fecha del ciclo se
+        saltaría la quincena entera si justo ese día algo fallaba.
       </div>` : ''}
   </div>`;
 }
