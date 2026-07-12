@@ -28,6 +28,33 @@ import { renderWorkerPhotos, openWorkerLightbox } from './worker-photos.js';
 const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
 
 let USER = null;
+/* v5.24: permisos finos de esta vista, resueltos contra la matriz de roles.
+   El backend gatea igual (no se confia en el front), pero un boton que el
+   usuario no puede usar NO se muestra: apretarlo y comerse un 403 es peor que
+   no verlo.
+     hcm.publish       -> publicar todo lo que no es la cuenta
+     hcm.publish.bank  -> publicar la CUENTA BANCARIA
+     hcm.discard       -> anular
+   null = aun no resuelto. Ante error de red se ASUME PERMITIDO: el backend
+   frena igual, y asi un fallo transitorio no deja a nadie sin trabajar. */
+let PERMS = null;
+const PERM_CODES = ['hcm.publish', 'hcm.publish.bank', 'hcm.discard'];
+
+async function ensurePerms(user) {
+  if (PERMS) return PERMS;
+  const allow = () => { PERMS = {}; PERM_CODES.forEach(c => { PERMS[c] = true; }); return PERMS; };
+  if (user.kind === 'admin' && user.role === 'superadmin') return allow();
+  try {
+    const r = await fetch('/api/my-perms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: sessionUserPayload(user), codes: PERM_CODES }),
+    }).then(x => x.json());
+    if (r && r.ok && r.perms) { PERMS = r.perms; return PERMS; }
+  } catch (_) { /* cae al allow() */ }
+  return allow();
+}
+const may = (code) => !PERMS || PERMS[code] !== false;
+
 // v4.79: modo "Datos bancarios": cuando la vista se abre desde ese grupo,
 // TODAS las llamadas al endpoint llevan field_filter='account_number' y la
 // maquinaria (bandeja, publicar/anular todo, historial) queda acotada a los
@@ -364,6 +391,9 @@ export async function renderAxReview(user, fieldFilter) {
   // filtro fijo a la cuenta. Cualquier otro valor se ignora (lista blanca).
   FIELD_FILTER = fieldFilter === 'account_number' ? 'account_number' : null;
   ensureStyles();
+  // v5.24: los permisos se resuelven ANTES de pintar: la barra de botones se
+  // arma con may(), asi que tienen que estar resueltos o se pintarian todos.
+  await ensurePerms(user);
   $('#pnlMain').innerHTML = `
     <div class="axr-head"><div>
       <h1>${FIELD_FILTER ? 'Datos bancarios · Sincronizar' : 'Sincronizar'}</h1>
@@ -390,17 +420,20 @@ export async function renderAxReview(user, fieldFilter) {
       ${FIELD_FILTER === 'account_number'
         ? /* v5.23: en Datos bancarios hay UN solo boton, y publica SOLO la
              cuenta. "Publicar sin cuenta" no tiene sentido aca (seria publicar
-             justo lo que esta pantalla no maneja). */
-          `<button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar solo la cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>`
-        : `<button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>
-           <button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar con cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>`}
-      <button class="axr-btn axr-btn-dis" id="axrDisAll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular todo</button>
+             justo lo que esta pantalla no maneja).
+             v5.24: y solo se pinta con hcm.publish.bank. */
+          (may('hcm.publish.bank')
+            ? `<button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar solo la cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>`
+            : '')
+        : `${may('hcm.publish') ? `<button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>` : ''}
+           ${may('hcm.publish.bank') ? `<button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar con cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>` : ''}`}
+      ${may('hcm.discard') ? `<button class="axr-btn axr-btn-dis" id="axrDisAll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular todo</button>` : ''}
     </div>
     <div class="axr-selbar" id="axrSelBar" hidden>
       <b id="axrSelN">0</b> <span>seleccionada(s)</span>
       <span class="axr-spacer"></span>
-      <button class="axr-btn axr-btn-pub" id="axrPubSel">Publicar seleccionadas</button>
-      <button class="axr-btn axr-btn-dis" id="axrDisSel">Anular seleccionadas</button>
+      ${may('hcm.publish') ? '<button class="axr-btn axr-btn-pub" id="axrPubSel">Publicar seleccionadas</button>' : ''}
+      ${may('hcm.discard') ? '<button class="axr-btn axr-btn-dis" id="axrDisSel">Anular seleccionadas</button>' : ''}
       <button class="axr-btn" id="axrSelClear">Quitar selección</button>
     </div>
     <div class="axr-note" id="axrNote"></div>
@@ -414,13 +447,18 @@ export async function renderAxReview(user, fieldFilter) {
   $('#axrCon').addEventListener('change', e => { C.concept = e.target.value; SELECTED.clear(); paint(); });
   $('#axrClear').addEventListener('click', () => { C = { type: '', company: '', zone: '', subzone: '', concept: '' }; buildFilters(); SELECTED.clear(); paint(); });
   $('#axrSelClear').addEventListener('click', () => { SELECTED.clear(); paint(); });
-  $('#axrPubSel').addEventListener('click', () => confirmAction('publish', 'sel'));
-  $('#axrDisSel').addEventListener('click', () => confirmAction('discard', 'sel'));
-  // v5.23: en modo bancario #axrPubSafe no se pinta (no existe): se protege.
+  /* v5.24: los botones de accion solo existen si el rol los tiene (may()).
+     Cada listener se protege: sin permiso, el nodo no esta en el DOM. */
+  const bPubSel = $('#axrPubSel');
+  if (bPubSel) bPubSel.addEventListener('click', () => confirmAction('publish', 'sel'));
+  const bDisSel = $('#axrDisSel');
+  if (bDisSel) bDisSel.addEventListener('click', () => confirmAction('discard', 'sel'));
   const bSafe = $('#axrPubSafe');
   if (bSafe) bSafe.addEventListener('click', () => confirmAction('publish', 'nobank'));
-  $('#axrPubBank').addEventListener('click', () => confirmAction('publish', 'bank'));
-  $('#axrDisAll').addEventListener('click', () => confirmAction('discard', 'all'));
+  const bBank = $('#axrPubBank');
+  if (bBank) bBank.addEventListener('click', () => confirmAction('publish', 'bank'));
+  const bDisAll = $('#axrDisAll');
+  if (bDisAll) bDisAll.addEventListener('click', () => confirmAction('discard', 'all'));
 
   await load();
   attachRefresh('#axrRefresh', load, 'sincronizar');
@@ -511,8 +549,16 @@ function paint() {
           Esta ficha también tiene <b>${nOther} cambio${nOther === 1 ? '' : 's'}</b> en otros campos (correo, teléfono, etc.). No se muestran ni se publican aquí: se resuelven en <b>Sincronizar</b>.
         </div>` : ''}
         <div class="axr-rowfoot">
-          <button class="axr-btn axr-btn-dis" data-discard="${r.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular</button>
-          <button class="axr-btn axr-btn-pub" data-publish="${r.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> ${FIELD_FILTER === 'account_number' ? 'Publicar la cuenta' : 'Publicar'}</button>
+          ${may('hcm.discard') ? `<button class="axr-btn axr-btn-dis" data-discard="${r.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular</button>` : ''}
+          ${(FIELD_FILTER === 'account_number'
+              /* v5.24: en Datos bancarios el Publicar de la fila SOLO manda la
+                 cuenta -> exige hcm.publish.bank. En Sincronizar manda la ficha
+                 completa -> exige hcm.publish (y el server le recorta la cuenta
+                 si no tiene la llave bancaria). */
+              ? may('hcm.publish.bank')
+              : may('hcm.publish'))
+            ? `<button class="axr-btn axr-btn-pub" data-publish="${r.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> ${FIELD_FILTER === 'account_number' ? 'Publicar la cuenta' : 'Publicar'}</button>`
+            : ''}
         </div>
       </div>
     </div>`;
@@ -897,6 +943,7 @@ export async function renderAxCompare(user) {
   USER = user;
   FIELD_FILTER = null;   // v4.79: Comparar siempre trabaja en modo general
   ensureStyles();
+  await ensurePerms(user);   // v5.24: paintCompare() usa may()
   CMP_RUN_ID++;   // v4.68: entrar a la vista invalida cualquier corrida en curso
   CMP_FILTER = { type: '', company: '', zone: '', subzone: '', concept: '' };
   $('#pnlMain').innerHTML = `
@@ -1130,7 +1177,7 @@ function paintCompare() {
   const pend = CMP_ROWS.filter(r => !r._done);
   const lot = pend.length > 1
     ? `<div class="axr-cmp-lot">
-         <button class="axr-btn axr-btn-pub" id="cmpPubAll">Publicar todas (${pend.length})</button>
+         ${may('hcm.publish') ? `<button class="axr-btn axr-btn-pub" id="cmpPubAll">Publicar todas (${pend.length})</button>` : ''}
          <button class="axr-btn axr-btn-adopt" id="cmpAdoptAll">Adoptar todas (${pend.length})</button>
        </div>` : '';
 
@@ -1144,8 +1191,8 @@ function paintCompare() {
       <td><span class="axr-vpor">${f.portal == null ? '(vacío)' : esc(f.portal)}</span></td>
     </tr>`).join('');
     const acts = r._done ? '' : `<div class="axr-dacts">
-        <button class="axr-btn axr-btn-adopt" data-adopt="${i}">Adoptar (sistema)</button>
-        <button class="axr-btn axr-btn-pub" data-pub="${i}">Publicar (portal)</button>
+        ${may('hcm.publish') ? `<button class="axr-btn axr-btn-adopt" data-adopt="${i}">Adoptar (sistema)</button>
+        <button class="axr-btn axr-btn-pub" data-pub="${i}">Publicar (portal)</button>` : `<button class="axr-btn axr-btn-adopt" data-adopt="${i}">Adoptar (sistema)</button>`}
       </div>`;
     return `<div class="axr-drow ${r._done ? 'done' : ''}">
       <div class="axr-dhead">

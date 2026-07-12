@@ -1422,16 +1422,44 @@ export async function onRequestPost({ request, env }) {
     const AXR_CODE_BY_ACTION = {
       list: 'hcm.view', history: 'hcm.view', detect: 'hcm.view', detect_scope: 'hcm.view',
       detect_commit: 'hcm.sync', adopt: 'hcm.sync',
-      publish: 'hcm.publish', discard: 'hcm.publish',
+      publish: 'hcm.publish',
+      // v5.24: anular tiene su propia llave. Antes usaba la de publicar, y son
+      // cosas distintas: anular DESCARTA el trabajo que hizo la tienda.
+      discard: 'hcm.discard',
     };
     const NEED = AXR_CODE_BY_ACTION[action] || 'hcm.publish';
     if (!can(actor, NEED)) {
       const MSG = {
         'hcm.view': 'No tienes permiso para ver la sincronizacion.',
         'hcm.sync': 'No tienes permiso para adoptar cambios del sistema.',
-        'hcm.publish': 'No tienes permiso para publicar o anular cambios.',
+        'hcm.publish': 'No tienes permiso para publicar cambios.',
+        'hcm.discard': 'No tienes permiso para anular cambios.',
       };
       return json({ ok: false, error: MSG[NEED] || 'Sin permiso.' }, 403);
+    }
+
+    /* v5.24: GATE DE LA CUENTA BANCARIA (hcm.publish.bank).
+       hcm.publish habilita publicar; publicar la CUENTA ademas exige esta
+       segunda llave. Se decide aca, en el handler, y NO se confia en el front:
+       el scope viaja en el body y cualquiera podria mandarlo a mano.
+
+       Que publicacion toca la cuenta:
+         publish_scope 'only_account' -> obvio, solo la cuenta.
+         publish_scope 'no_account'   -> NO la toca. Pasa sin esta llave.
+         sin scope (ficha completa / seleccion / Comparar) -> PUEDE tocarla,
+           porque manda todos los campos pendientes de la ficha. Sin la llave,
+           se degrada a 'no_account' en vez de rechazar: el usuario publica lo
+           que si puede y la cuenta queda pendiente. Es lo mismo que hace el
+           boton "Publicar sin cuenta", solo que decidido en el server.
+       Asi, quitarle hcm.publish.bank a un rol no le rompe el flujo: le recorta
+       lo que envia. */
+    if (action === 'publish' && !can(actor, 'hcm.publish.bank')) {
+      const sc = String(body.publish_scope || '').trim();
+      if (sc === 'only_account') {
+        return json({ ok: false, error: 'No tienes permiso para publicar la cuenta bancaria. Los demas datos si los puedes publicar desde Sincronizar.' }, 403);
+      }
+      // Sin llave bancaria, ninguna publicacion puede llevar la cuenta.
+      body.publish_scope = 'no_account';
     }
     try { await shadowCan(env, user, 'ax-review', action, NEED, true); } catch (_) { /* bitacora, jamas rompe */ }
 

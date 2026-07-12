@@ -122,7 +122,8 @@ const MENU_CATALOG = [
     { id: 'firmantes', lbl: 'Firmantes', view: 'view.firmantes', acts: ['cert.signers'] },
   ] },
   { g: 'Sincronizacion', items: [
-    { id: 'syncreview', lbl: 'Sincronizar', view: 'view.syncreview', acts: ['hcm.publish'] },
+    // v5.24: Sincronizar publica (sin la cuenta) y anula -> dos llaves.
+    { id: 'syncreview', lbl: 'Sincronizar', view: 'view.syncreview', acts: ['hcm.publish', 'hcm.discard'] },
     { id: 'axcompare', lbl: 'Comparar', view: 'view.axcompare', acts: ['hcm.sync', 'hcm.publish'] },
     { id: 'axhistory', lbl: 'Historial', view: 'view.axhistory', acts: [] },
     { id: 'synclog', lbl: 'Registro', view: 'view.synclog', acts: ['hcm.log'] },
@@ -130,10 +131,12 @@ const MENU_CATALOG = [
     { id: 'sync', lbl: 'Configurar (sincronizaciones)', view: 'view.sync', acts: [] },
   ] },
   // v4.81: grupo Datos bancarios (v4.78-4.80) en el editor visual.
-  // banksync publica sets completos: su accion es la misma llave hcm.publish.
+  // v5.23/v5.24: banksync YA NO publica la ficha completa: publica SOLO la
+  // cuenta bancaria. Por eso su llave es hcm.publish.bank (el dato que define
+  // a que cuenta se le paga), no la generica hcm.publish.
   { g: 'Datos bancarios', items: [
     { id: 'bankstats', lbl: 'Estadisticas', view: 'view.bankstats', acts: [] },
-    { id: 'banksync', lbl: 'Sincronizar', view: 'view.banksync', acts: ['hcm.publish'] },
+    { id: 'banksync', lbl: 'Sincronizar', view: 'view.banksync', acts: ['hcm.publish.bank', 'hcm.discard'] },
     { id: 'bankhist', lbl: 'Historial', view: 'view.bankhist', acts: [] },
     // v4.82: Cuentas, habilitada a todos los roles (grilla de solo lectura).
     { id: 'bankaccounts', lbl: 'Cuentas', view: 'view.bankaccounts', acts: [] },
