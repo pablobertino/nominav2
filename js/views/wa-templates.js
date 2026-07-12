@@ -482,6 +482,9 @@ async function doReach() {
   }
   const total = d.total || 0, wp = d.with_phone || 0, np = d.without_phone || 0;
   const pct = total ? Math.round((wp / total) * 1000) / 10 : 0;
+  // Coma decimal: en el resto del portal los numeros van en es-VE ("0,5%"),
+  // y un "0.5%" suelto canta como pegado de otro idioma.
+  const pctTxt = String(pct).replace('.', ',');
   const wa = $('#wtChWa');
   const waOn = wa ? wa.checked : true;
 
@@ -505,7 +508,7 @@ async function doReach() {
            no lo va a recibir nadie. Los teléfonos se cargan en <b>Personal → Editar</b>.</div></div>`
       : (waOn && pct > 0 && pct < 25)
       ? `<div class="wt-banner" style="margin:11px 0 0"><span class="ic">⚠️</span><div>
-           Solo el <b>${pct}%</b> de este alcance tiene teléfono. El resto no se entera por WhatsApp.</div></div>`
+           Solo el <b>${pctTxt}%</b> de este alcance tiene teléfono. El resto no se entera por WhatsApp.</div></div>`
       : ''}`;
 }
 
