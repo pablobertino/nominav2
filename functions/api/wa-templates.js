@@ -6,19 +6,42 @@
    Fuente de verdad: nomina_v2.message_templates.
 
    Acciones (POST { action, user, ... }):
-     list    {}                     -> plantillas + catalogo de comodines
-               gate: view.wa.templates
-     save    { code, label, body }  -> guarda el texto de una plantilla
+     list    {}                     -> plantillas + catalogo de comodines +
+               catalogos de alcance (zonas/subzonas/conceptos/tipos/empresas)
+               + fechas del ciclo vigente.  gate: view.wa.templates
+     save    { code, label, body, [channel, scope_filters] }
+               gate: wa.templates
+     create  { label, body, channel, scope_filters } -> mensaje PUNTUAL nuevo
+               gate: wa.templates
+     delete  { code }               -> borra un puntual (los de sistema no)
                gate: wa.templates
      toggle  { code, is_active }    -> activa/desactiva (no las de sistema)
                gate: wa.templates
-     preview { code, body, sample } -> render con datos de ejemplo (para el
-               editor). NUNCA usa claves reales: las de ejemplo son fijas.
+     preview { code, body, sample, [nature] } -> render con datos de ejemplo.
+               NUNCA usa claves reales: las de ejemplo son fijas.
                gate: view.wa.templates
+     preview_scope { scope } -> cuantas personas caen en el alcance y cuantas
+               tienen telefono (el numero que importa).  gate: view.wa.templates
+
+   NATURALEZA (columna nature). Define la conducta del mensaje:
+     credencial -> los 2 de siempre. Los dispara Equipo, llevan clave, no
+                   tienen alcance (el destinatario es el miembro). is_system.
+     puntual    -> [FASE 1] envio manual con alcance sobre el roster.
+     ciclo      -> [FASE 2] automatico por hito de nomina.
+     cumpleanos -> [FASE 2] automatico el dia del cumple.
+
+   ALCANCE (scope_filters jsonb): las MISMAS 6 claves que toma wa_recipients
+   (zone, subzone, type, concept, company, id_number). No se inventa un
+   vocabulario nuevo: es el de Difusion, y el RPC ya resuelve el roster real
+   (store_workers + enterprise_workers vigentes) con su telefono efectivo.
 
    COMODINES  (sintaxis #Nombre, la MISMA de las plantillas de Avisos):
-     #Nombre #Usuario #Rol #Correo #LinkPortal #Clave
-     #LinkOsticket #UsuarioOsticket #ClaveOsticket
+     Credenciales: #Nombre #Usuario #Rol #Correo #LinkPortal #Clave
+                   #LinkOsticket #UsuarioOsticket #ClaveOsticket
+     Puntuales:    #Nombre #Empresa #Periodo #Fecha_Cierre #Limite_Reportes
+                   #Fecha_Calculo #Fecha_Pago #Fecha_Reclamos
+   Las fechas del ciclo salen de payroll_periods, que el sistema YA calcula:
+   nadie las tipea, y el mensaje sigue siendo cierto la quincena siguiente.
    Bloque condicional:
      #SiOsticket ... #FinSiOsticket   -> solo si el rol del miembro tiene
      osTicket (osticket_kind != 'none'). Para los demas desaparece. Asi un
@@ -71,6 +94,20 @@ export const VARS = {
     { v: '#UsuarioOsticket',  d: 'Usuario de osTicket' },
     { v: '#ClaveOsticket',    d: 'Clave de osTicket', secret: true },
   ],
+  /* FASE 1: comodines de los mensajes PUNTUALES (con alcance). El
+     destinatario ya no es un miembro del equipo sino una PERSONA del roster,
+     asi que no hay usuario/clave: hay nombre, empresa y las fechas del ciclo
+     de nomina vigente (que el sistema ya calcula, nadie las carga). */
+  puntual: [
+    { v: '#Nombre',          d: 'Nombre de la persona' },
+    { v: '#Empresa',         d: 'Razon social de su empresa' },
+    { v: '#Periodo',         d: 'Periodo vigente (ej. 2026-07-Q1)' },
+    { v: '#Fecha_Cierre',    d: 'Cierre de la quincena' },
+    { v: '#Limite_Reportes', d: 'Limite para cargar reportes' },
+    { v: '#Fecha_Calculo',   d: 'Dia del calculo' },
+    { v: '#Fecha_Pago',      d: 'Dia del pago' },
+    { v: '#Fecha_Reclamos',  d: 'Limite de reclamos' },
+  ],
 };
 const SECRET_VARS = ['#Clave', '#ClaveOsticket'];
 
@@ -120,6 +157,16 @@ export function renderTemplate(body, ctx, allowSecret) {
     '#UsuarioOsticket': ctx.osticket_usuario || '',
     '#Clave': allowSecret ? (ctx.clave || '') : '',
     '#ClaveOsticket': allowSecret ? (ctx.osticket_clave || '') : '',
+    // FASE 1: mensajes puntuales (persona del roster + fechas del ciclo).
+    // Ausentes = cadena vacia, igual que el resto: un mensaje de credenciales
+    // que no usa #Periodo no se entera de que existe.
+    '#Empresa': ctx.empresa || '',
+    '#Periodo': ctx.periodo || '',
+    '#Fecha_Cierre': ctx.fecha_cierre || '',
+    '#Limite_Reportes': ctx.limite_reportes || '',
+    '#Fecha_Calculo': ctx.fecha_calculo || '',
+    '#Fecha_Pago': ctx.fecha_pago || '',
+    '#Fecha_Reclamos': ctx.fecha_reclamos || '',
   };
   Object.keys(map)
     .sort((a, b) => b.length - a.length)   // largos primero (#ClaveOsticket antes que #Clave)
@@ -175,6 +222,88 @@ const SAMPLES = {
             osticket_usuario: '' },
 };
 
+/* ============ FASE 1: fechas del CICLO DE NOMINA ============
+   Las 5 fechas clave salen de payroll_periods y el sistema YA las calcula
+   (estan cargadas hasta octubre y mas alla). Nadie las tipea: por eso un
+   mensaje que dice "el cierre es el #Fecha_Cierre" sigue siendo cierto la
+   quincena que viene sin tocar nada.
+
+   Periodo VIGENTE = el que contiene hoy (range_start <= hoy <= range_end).
+   Si no hay (hueco en el calendario), se toma el proximo que arranque: es
+   preferible a mandar un mensaje con las fechas en blanco. */
+const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+                'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+function fmtDate(d) {
+  if (!d) return '';
+  const s = String(d).slice(0, 10).split('-');   // 'YYYY-MM-DD'
+  if (s.length !== 3) return '';
+  const day = Number(s[2]), mon = Number(s[1]);
+  if (!day || !mon) return '';
+  return `${day} de ${MONTHS[mon - 1]}`;         // "15 de julio"
+}
+function fmtDateTime(ts) {
+  if (!ts) return '';
+  const base = fmtDate(String(ts).slice(0, 10));
+  const hh = String(ts).slice(11, 16);           // 'HH:MM'
+  return hh && hh !== '00:00' ? `${base} a las ${hh}` : base;
+}
+
+async function cycleCtx(env) {
+  // Caracas: la fecha "de hoy" se toma en la zona del negocio, no en UTC. Si
+  // no, entre las 20:00 y medianoche el portal ya estaria en el dia siguiente
+  // y podria saltar de periodo antes de tiempo.
+  const hoy = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Caracas' });
+  const sel = 'period_no,name,range_start,range_end,cutoff_date,report_deadline,milestone_date,pay_date,claim_deadline';
+
+  let p = await sb(env,
+    `payroll_periods?range_start=lte.${hoy}&range_end=gte.${hoy}&select=${sel}&limit=1`);
+  if (!p || !p.length) {
+    p = await sb(env,
+      `payroll_periods?range_start=gte.${hoy}&select=${sel}&order=range_start.asc&limit=1`);
+  }
+  const r = (p && p[0]) || {};
+  return {
+    periodo: r.name || '',
+    fecha_cierre: fmtDate(r.cutoff_date),
+    limite_reportes: fmtDateTime(r.report_deadline),
+    fecha_calculo: fmtDate(r.milestone_date),
+    fecha_pago: fmtDate(r.pay_date),
+    fecha_reclamos: fmtDate(r.claim_deadline),
+  };
+}
+
+/* Los 6 filtros de alcance. MISMO vocabulario que wa_recipients y que
+   Difusion: no se inventa uno nuevo. '' / undefined = sin acotar. */
+function pickScope(o) {
+  const nn = v => (v === undefined || v === null || String(v).trim() === '' ? null : String(v).trim());
+  return {
+    zone: nn(o.zone), subzone: nn(o.subzone), type: nn(o.type),
+    concept: nn(o.concept), company: nn(o.company), id_number: nn(o.id_number),
+  };
+}
+
+/* Resuelve el alcance -> destinatarios reales, via el RPC que ya usa Difusion. */
+async function resolveScope(env, scope, limit = 100) {
+  const s = pickScope(scope || {});
+  const res = await fetch(`${env.supabase_url}/rest/v1/rpc/wa_recipients`, {
+    method: 'POST',
+    headers: {
+      apikey: env.supabase_service_role,
+      Authorization: `Bearer ${env.supabase_service_role}`,
+      'Accept-Profile': 'nomina_v2', 'Content-Profile': 'nomina_v2',
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      p_zone: s.zone, p_subzone: s.subzone, p_type: s.type,
+      p_concept: s.concept, p_company: s.company, p_id_number: s.id_number,
+      p_limit: limit,
+    }),
+  });
+  if (!res.ok) throw new Error(`wa_recipients ${res.status}: ${await res.text()}`);
+  return await res.json();   // { total, with_phone, without_phone, rows[] }
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'Solicitud invalida.' }, 400); }
@@ -191,25 +320,70 @@ export async function onRequestPost({ request, env }) {
     /* ---------- listar ---------- */
     if (action === 'list') {
       const rows = await sb(env,
-        'message_templates?select=code,label,description,body,scope,allows_secret,is_system,is_active,sort_order,updated_at,updated_by&order=sort_order.asc,code.asc');
+        'message_templates?select=code,label,description,body,scope,allows_secret,is_system,is_active,sort_order,updated_at,updated_by,nature,channel,scope_filters&order=sort_order.asc,code.asc');
       const links = {
         portal: portalUrl(env),
         osticket: String(await getSetting(env, 'osticket_url', '') || '').replace(/\/+$/, ''),
       };
+      // FASE 1: catalogos para el selector de alcance (los mismos de Difusion)
+      // y las fechas del ciclo vigente (para el preview del editor).
+      const [zones, subzones, concepts, companies, cycle] = await Promise.all([
+        sb(env, 'zones?select=id,name&order=name.asc'),
+        sb(env, 'subzones?select=id,name,zone_id&order=name.asc'),
+        sb(env, 'concepts?select=id,name&order=name.asc'),
+        sb(env, 'companies?is_active=eq.true&select=company_code,business_name,company_type&order=company_code.asc'),
+        cycleCtx(env),
+      ]);
       return json({
         ok: true,
         rows: rows || [],
         vars: VARS,
         links,
+        cycle,
+        catalogs: {
+          zones: zones || [], subzones: subzones || [], concepts: concepts || [],
+          companies: companies || [],
+          types: [...new Set((companies || []).map(c => c.company_type).filter(Boolean))].sort(),
+        },
         can_edit: can(actor, 'wa.templates'),
+        can_send: can(actor, 'wa.send'),
         // Si el secret no esta cargado, el link del portal saldria vacio en el
         // mensaje. Mejor avisarlo en la vista que mandar un texto cojo.
         warn: links.portal ? null : 'Falta configurar la direccion del portal (secret portal_base_url en Cloudflare): el comodin #LinkPortal va a salir vacio.',
       });
     }
 
+    /* ---------- FASE 1: preview del ALCANCE (contador en vivo) ----------
+       Devuelve cuantos caen en el alcance y, sobre todo, CUANTOS TIENEN
+       TELEFONO. Es el numero que importa: hoy solo 233 de 2.676 personas
+       activas lo tienen cargado. Sin este dato a la vista, uno cree que le
+       llego a todos y en realidad le llego al 9%. */
+    if (action === 'preview_scope') {
+      const r = await resolveScope(env, body.scope || {}, 12);
+      return json({
+        ok: true,
+        total: r.total || 0,
+        with_phone: r.with_phone || 0,
+        without_phone: r.without_phone || 0,
+        sample: (r.rows || []).slice(0, 12),
+      });
+    }
+
     /* ---------- preview del editor ---------- */
     if (action === 'preview') {
+      // FASE 1: los mensajes PUNTUALES no le hablan a un miembro del equipo
+      // sino a una persona del roster. El ejemplo es una persona, y las fechas
+      // del ciclo son las REALES del periodo vigente (no inventadas): asi el
+      // preview muestra exactamente lo que va a recibir el destinatario.
+      if (body.nature === 'puntual' || body.nature === 'ciclo' || body.nature === 'cumpleanos') {
+        const cyc = await cycleCtx(env);
+        const ctx = {
+          nombre: 'Maria Chiquinquira',
+          empresa: 'CALZADOS BG 3, C.A.',
+          ...cyc,
+        };
+        return json({ ok: true, text: renderTemplate(body.body || '', ctx, false) });
+      }
       const sample = SAMPLES[body.sample] || SAMPLES.agent;
       const ost = String(await getSetting(env, 'osticket_url', '') || '').replace(/\/+$/, '');
       const ctx = {
@@ -235,7 +409,7 @@ export async function onRequestPost({ request, env }) {
       if (!label) return json({ ok: false, error: 'El mensaje necesita un nombre.' }, 400);
       if (!text.trim()) return json({ ok: false, error: 'El mensaje no puede quedar vacio.' }, 400);
 
-      const cur = await sb(env, `message_templates?code=eq.${encodeURIComponent(code)}&select=code,allows_secret`);
+      const cur = await sb(env, `message_templates?code=eq.${encodeURIComponent(code)}&select=code,allows_secret,nature,is_system`);
       if (!cur || !cur.length) return json({ ok: false, error: 'Ese mensaje no existe.' }, 404);
 
       // Guardia: no se puede meter un comodin de clave en una plantilla que no
@@ -248,15 +422,78 @@ export async function onRequestPost({ request, env }) {
         }
       }
 
+      const patch = {
+        label, body: text,
+        updated_at: new Date().toISOString(),
+        updated_by: actor.username || actor.name || String(actor.id || ''),
+      };
+      /* FASE 1: alcance y canal solo se tocan en los mensajes NO de sistema.
+         Los de credenciales no tienen alcance (su destinatario es el miembro
+         al que se le crea el acceso) y su canal es fijo: dejarlos editables
+         seria ofrecer una perilla que no hace nada. */
+      if (!cur[0].is_system) {
+        if (body.scope_filters !== undefined) patch.scope_filters = pickScope(body.scope_filters || {});
+        if (body.channel !== undefined) {
+          const ch = String(body.channel || 'wa');
+          if (!['wa', 'portal', 'wa+portal'].includes(ch)) {
+            return json({ ok: false, error: 'Canal invalido.' }, 400);
+          }
+          patch.channel = ch;
+        }
+      }
+
       await sb(env, `message_templates?code=eq.${encodeURIComponent(code)}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify(patch),
+      });
+      return json({ ok: true });
+    }
+
+    /* ---------- FASE 1: crear un mensaje PUNTUAL (con alcance) ---------- */
+    if (action === 'create') {
+      const label = String(body.label || '').trim();
+      const text = String(body.body || '');
+      if (label.length < 2) return json({ ok: false, error: 'El mensaje necesita un nombre.' }, 400);
+      if (!text.trim()) return json({ ok: false, error: 'El mensaje no puede quedar vacio.' }, 400);
+
+      const ch = String(body.channel || 'wa');
+      if (!['wa', 'portal', 'wa+portal'].includes(ch)) {
+        return json({ ok: false, error: 'Canal invalido.' }, 400);
+      }
+      // Un mensaje puntual JAMAS lleva claves: su destinatario es una persona
+      // del roster, que no tiene usuario del portal. allows_secret queda en
+      // false y aca se rechaza el comodin, para que no se guarde un texto que
+      // al enviarse saldria con un hueco.
+      const used = SECRET_VARS.filter(v => text.includes(v));
+      if (used.length) {
+        return json({ ok: false, error:
+          `Un mensaje puntual no puede llevar claves (${used.join(', ')}): se enviaria con ese dato en blanco.` }, 400);
+      }
+
+      // code autogenerado desde el nombre (unico, estable, legible en la BD).
+      const slug = label.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+        .replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 24) || 'mensaje';
+      let code = slug;
+      const dup = await sb(env, `message_templates?code=like.${encodeURIComponent(slug + '*')}&select=code`);
+      if (dup && dup.length) code = `${slug}_${Date.now().toString(36).slice(-4)}`;
+
+      const maxRows = await sb(env, 'message_templates?select=sort_order&order=sort_order.desc&limit=1');
+      const nextSort = ((maxRows && maxRows[0] && maxRows[0].sort_order) || 0) + 10;
+
+      await sb(env, 'message_templates', {
+        method: 'POST', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({
-          label, body: text,
+          code, label, body: text,
+          nature: 'puntual', channel: ch,
+          scope_filters: pickScope(body.scope_filters || {}),
+          scope: 'roster', allows_secret: false,
+          is_system: false, is_active: true, sort_order: nextSort,
+          created_by: actor.username || actor.name || String(actor.id || ''),
           updated_at: new Date().toISOString(),
           updated_by: actor.username || actor.name || String(actor.id || ''),
         }),
       });
-      return json({ ok: true });
+      return json({ ok: true, code });
     }
 
     if (action === 'toggle') {
@@ -270,6 +507,21 @@ export async function onRequestPost({ request, env }) {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({ is_active: !!body.is_active }),
       });
+      return json({ ok: true });
+    }
+
+    /* ---------- FASE 1: borrar un mensaje puntual ----------
+       Solo los NO de sistema. Los de credenciales los dispara Equipo desde el
+       codigo: si se borraran, crear un usuario dejaria de avisarle su clave.
+       Por eso no se pueden borrar ni desactivar (arriba), solo editar el texto. */
+    if (action === 'delete') {
+      const code = String(body.code || '').trim();
+      const cur = await sb(env, `message_templates?code=eq.${encodeURIComponent(code)}&select=code,is_system,label`);
+      if (!cur || !cur.length) return json({ ok: false, error: 'Ese mensaje no existe.' }, 404);
+      if (cur[0].is_system) {
+        return json({ ok: false, error: 'Este mensaje lo usa el portal y no se puede borrar. Su texto si se puede editar.' }, 400);
+      }
+      await sb(env, `message_templates?code=eq.${encodeURIComponent(code)}`, { method: 'DELETE' });
       return json({ ok: true });
     }
 
