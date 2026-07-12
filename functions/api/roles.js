@@ -123,6 +123,57 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, rows: rows || [] });
     }
 
+    /* ---------- v5.27: QUIENES tienen este rol ----------
+       La grilla mostraba "7 usuarios" y ahi moria: para saber QUIENES eran
+       habia que ir a Equipo y filtrar a ojo. Ahora el numero se puede tocar
+       y abre la lista.
+
+       Dos universos distintos, segun el rol:
+         'tienda' -> son company_users (el login de cada tienda), no admins.
+         el resto -> admin_users (el equipo).
+       Solo lectura; no expone hashes ni nada sensible. */
+    if (action === 'role_users') {
+      const rc = String(body.role_code || '').trim();
+      if (!rc) return json({ ok: false, error: 'Falta el rol.' }, 400);
+
+      if (rc === 'tienda') {
+        const rows = await sb(env,
+          'company_users?is_active=eq.true&select=id,company_code,email&order=company_code.asc&limit=500') || [];
+        // Razon social de cada tienda (para no mostrar solo el codigo).
+        const codes = [...new Set(rows.map(r => r.company_code).filter(Boolean))];
+        const nameBy = {};
+        if (codes.length) {
+          const inList = codes.map(c => `"${c}"`).join(',');
+          const comps = await sb(env,
+            `companies?company_code=in.(${inList})&select=company_code,business_name`) || [];
+          comps.forEach(c => { nameBy[c.company_code] = c.business_name || null; });
+        }
+        return json({
+          ok: true, kind: 'company', role_code: rc,
+          users: rows.map(r => ({
+            id: r.id,
+            name: nameBy[r.company_code] || r.company_code,
+            username: r.company_code,     // la tienda entra con su codigo
+            sub: r.email || null,
+            is_active: true,
+          })),
+        });
+      }
+
+      const rows = await sb(env,
+        `admin_users?role=eq.${encodeURIComponent(rc)}&select=id,name,username,email,is_active&order=name.asc&limit=500`) || [];
+      return json({
+        ok: true, kind: 'admin', role_code: rc,
+        users: rows.map(r => ({
+          id: r.id,
+          name: r.name || r.username || ('admin#' + r.id),
+          username: r.username || null,
+          sub: r.email || null,
+          is_active: r.is_active !== false,
+        })),
+      });
+    }
+
     /* ---------- escritura: SOLO superadmin ---------- */
     if (!isSuperadmin(actor)) {
       return json({ ok: false, error: 'La gestion de roles esta reservada al superadministrador.' }, 403);

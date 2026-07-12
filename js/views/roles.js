@@ -181,7 +181,27 @@ function ensureStyles() {
   .rl-tablebox tbody tr:hover{background:#fafbfd}
   .rl-rname{font-weight:600;font-size:14px}
   .rl-rdesc{font-size:12px;color:var(--muted,#64748b);margin-top:2px;font-family:ui-monospace,Menlo,monospace}
+  /* v5.27: los numeros se alinean a la derecha en la CELDA y en el HEADER.
+     Antes solo la celda lo hacia -> el titulo quedaba a la izquierda y el
+     numero a la derecha, con ese zigzag. */
   .rl-num{text-align:right;font-variant-numeric:tabular-nums}
+  .rl-tablebox th.rl-num{text-align:right}
+  /* Nota bajo la pildora de Tipo: la particularidad del rol. */
+  .rl-note{font-size:11.5px;color:var(--muted,#64748b);margin-top:5px;line-height:1.35;max-width:230px}
+  /* El conteo de Usuarios es tocable: abre quienes lo tienen. */
+  .rl-ucnt{border:0;background:none;font:inherit;font-variant-numeric:tabular-nums;color:var(--brand,#2563eb);font-weight:650;cursor:pointer;padding:2px 7px;border-radius:7px;text-decoration:underline;text-underline-offset:2px;text-decoration-color:#bfd3f7}
+  .rl-ucnt:hover{background:#eff4ff}
+  .rl-ucnt.zero{color:var(--faint,#94a3b8);cursor:default;text-decoration:none}
+  .rl-ucnt.zero:hover{background:none}
+  /* Lista de usuarios del rol (modal). */
+  .rl-ul{display:flex;flex-direction:column;gap:2px;max-height:46vh;overflow:auto;margin-top:4px}
+  .rl-ur{display:flex;align-items:center;gap:11px;padding:9px 11px;border-radius:9px}
+  .rl-ur:hover{background:var(--border-soft,#f1f4f8)}
+  .rl-uav{width:31px;height:31px;border-radius:50%;background:#eff4ff;color:#1e40af;display:flex;align-items:center;justify-content:center;font-size:11.5px;font-weight:700;flex:none}
+  .rl-ug{flex:1;min-width:0}
+  .rl-un{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rl-us{font-size:11.5px;color:var(--muted,#64748b);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .rl-uoff{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:#fdecec;color:#991b1b;flex:none}
   .rl-pill{display:inline-flex;align-items:center;gap:5px;padding:4px 11px;border-radius:999px;font-size:11.5px;font-weight:600;white-space:nowrap}
   .rl-pill::before{content:'';width:6px;height:6px;border-radius:50%;background:currentColor;opacity:.9}
   .rl-pill-sys{background:#0f172a;color:#fff}.rl-pill-sys::before{background:#93c5fd}
@@ -189,6 +209,8 @@ function ensureStyles() {
   .rl-pill-gray{background:var(--border-soft,#f1f4f8);color:var(--ink-soft,#475569)}.rl-pill-gray::before{display:none}
   .rl-pill-off{background:#fdecec;color:#991b1b}
   .rl-rowacts{display:flex;gap:6px;justify-content:flex-end;align-items:center}
+  /* v5.27: el chevron de la fila se quito (era redundante). .rl-chev sigue
+     definido porque lo usa el boton "Volver" del detalle. */
   .rl-chev{color:var(--faint,#94a3b8)}
   /* v5.25: menu "..." por fila. Desactivar era un boton suelto pegado al
      chevron que abre el detalle: un clic desviado y estabas en un modal
@@ -207,8 +229,8 @@ function ensureStyles() {
   .rl-kitem.danger svg{color:var(--danger,#dc2626)}
   .rl-kitem.danger:hover{background:#fef2f2}
   .rl-ksep{height:1px;background:var(--border-soft,#f1f4f8);margin:4px 6px}
-  /* Franja muerta: separa el menu del chevron para que un clic corto no
-     termine abriendo el detalle (ni al reves). */
+  /* Franja muerta: separaba el menu del chevron. El chevron ya no esta
+     (v5.27), pero el padding sostiene el aire al borde derecho. */
   .rl-chevpad{width:10px;flex:none}
   .rl-back{cursor:pointer;color:var(--muted,#64748b);display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;border:0;background:none;font-family:inherit;padding:4px 0;margin-bottom:6px}
   .rl-back:hover{color:var(--ink,#0f172a)}
@@ -328,17 +350,28 @@ async function reload() {
 }
 
 /* ===================== PANTALLA 1: GRILLA ===================== */
-/* v5.25: la pildora decia "ve todo" y era MENTIRA. La columna real es
-   readonly_scope, y no significa "ve todos los permisos": significa que su
-   ALCANCE DE EMPRESAS no se puede acotar (siempre ve todas las empresas). Que
-   ve DENTRO de ellas sale de sus permisos como cualquier otro rol: el Auditor
-   tiene 24 de 110. Leer "ve todo" invitaba a creer que era un superadmin.
-   Ahora dice "todas las empresas", que es exactamente lo que hace. */
+/* v5.25/v5.27: la columna Tipo dice DOS cosas distintas que antes se pisaban:
+     - la PILDORA: si el rol es de sistema (no se edita ni se desactiva) o
+       estandar (se edita libremente).
+     - la NOTA de abajo: su particularidad real, la que hay que saber.
+   Antes la pildora decia "ve todo" para el Auditor, lo cual era falso (tiene
+   24 de 110 permisos) y ademas ocultaba que ese rol SI era editable. */
 function rolePill(r) {
   if (!r.is_active) return '<span class="rl-pill rl-pill-off">inactivo</span>';
   if (r.is_system) return '<span class="rl-pill rl-pill-sys">sistema</span>';
-  if (r.readonly_scope) return '<span class="rl-pill rl-pill-ro" title="Su alcance no se puede acotar: siempre ve TODAS las empresas. Que ve dentro de ellas depende de sus permisos, como en cualquier rol.">todas las empresas</span>';
+  if (r.readonly_scope) return '<span class="rl-pill rl-pill-ro">todas las empresas</span>';
   return '<span class="rl-pill rl-pill-gray">estandar</span>';
+}
+
+/* Nota bajo la pildora: que tiene de particular ESTE rol. Vacia = nada que
+   aclarar (un rol estandar normal no necesita explicacion). */
+function roleNote(r) {
+  if (!r.is_active) return 'Nadie puede tenerlo mientras este inactivo.';
+  if (r.code === 'superadmin') return 'Tiene todos los permisos por diseño. No se edita.';
+  if (r.code === 'tienda') return 'Es el acceso de cada tienda. No se edita ni se borra.';
+  if (r.is_system) return 'El portal lo necesita para funcionar. No se edita.';
+  if (r.readonly_scope) return 'Su alcance no se puede acotar: siempre ve todas las empresas.';
+  return '';
 }
 // v4.61: tipo de acceso osTicket del rol (que se crea para sus usuarios).
 function okindPill(r) {
@@ -379,19 +412,25 @@ function paintList() {
                   </button>`}
            </div>
          </span>`;
+    const note = roleNote(r);
+    /* v5.27: se saca el chevron ">" del final. Era redundante: la fila entera
+       ya abre el detalle, hay [Editar], y el menu "..." tiene "Ver permisos".
+       Tres caminos a lo mismo + una flecha decorativa era ruido. */
     return `<tr data-open="${esc(r.code)}">
       <td><div class="rl-rname">${esc(r.label || r.code)}</div><div class="rl-rdesc">${esc(r.code)}</div></td>
-      <td>${rolePill(r)}</td>
+      <td>${rolePill(r)}${note ? `<div class="rl-note">${esc(note)}</div>` : ''}</td>
       <td>${okindPill(r)}</td>
       <td class="rl-num">${r.perm_count == null ? 'todos' : r.perm_count}</td>
-      <td class="rl-num">${r.user_count}</td>
-      <td><div class="rl-rowacts">${acts}<span class="rl-chevpad"></span><svg class="rl-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></div></td>
+      <td class="rl-num">${r.user_count
+        ? `<button class="rl-ucnt" data-users="${esc(r.code)}" title="Ver quiénes tienen este rol">${r.user_count}</button>`
+        : '<span class="rl-ucnt zero">0</span>'}</td>
+      <td><div class="rl-rowacts">${acts}</div></td>
     </tr>`;
   }).join('');
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head">
-      <div><h1>Roles</h1><p>Toca un rol para ver o editar sus permisos. El alcance por empresa se configura aparte, en Permisos. Un rol marcado <b>todas las empresas</b> no se puede acotar por empresa: siempre las ve todas (lo que ve dentro depende de sus permisos).</p></div>
+      <div><h1>Roles</h1><p>Toca un rol para ver o editar sus permisos. El alcance por empresa (qué tiendas ve cada usuario) se configura aparte, en <b>Permisos</b>.</p></div>
       <div class="head-actions">
         <button class="btn" id="rlShadow">Registro shadow</button>
         <button class="btn btn-primary" id="rlNew"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Nuevo rol</button>
@@ -414,6 +453,9 @@ function paintList() {
     }));
   document.querySelectorAll('#pnlMain [data-ren]').forEach(b =>
     b.addEventListener('click', (e) => { e.stopPropagation(); openRenameModal(String(b.dataset.ren)); }));
+  // v5.27: el numero de Usuarios abre la lista de quienes tienen el rol.
+  document.querySelectorAll('#pnlMain [data-users]').forEach(b =>
+    b.addEventListener('click', (e) => { e.stopPropagation(); openRoleUsersModal(String(b.dataset.users)); }));
 
   /* v5.25: menu "..." por fila. Un solo menu abierto a la vez; cierra al
      tocar fuera o con Escape. */
@@ -947,6 +989,56 @@ async function openShadowLogModal() {
   };
   q('#slRefresh').addEventListener('click', load);
   load();
+}
+
+/* v5.27: quienes tienen este rol. El conteo de la grilla mostraba "7" y ahi
+   moria: para saber QUIENES eran habia que ir a Equipo y filtrar a ojo.
+   Solo lectura: los cambios de rol se siguen haciendo en Equipo. */
+async function openRoleUsersModal(code) {
+  const r = roleByCode(code);
+  if (!r) return;
+  const host = baseModal(`
+    <button class="wp-x" id="ruX" title="Cerrar">✕</button>
+    <h3>Quién tiene este rol</h3>
+    <p class="wp-who"><b>${esc(r.label || code)}</b> · <span class="wp-ced">${esc(code)}</span></p>
+    <div id="ruBody"><div class="pnl-loading" style="padding:26px">Cargando…</div></div>
+    <div class="wp-foot"><span style="flex:1"></span>
+      <button class="btn btn-primary" id="ruOk">Cerrar</button>
+    </div>`);
+  const q = s => host.querySelector(s);
+  const onKey = ev => { if (ev.key === 'Escape') closeModal(host, onKey); };
+  document.addEventListener('keydown', onKey);
+  q('#ruX').addEventListener('click', () => closeModal(host, onKey));
+  q('#ruOk').addEventListener('click', () => closeModal(host, onKey));
+
+  const ini = s => String(s || '?').trim().split(/\s+/).slice(0, 2).map(w => w[0] || '').join('').toUpperCase() || '?';
+
+  const d = await api({ action: 'role_users', user: userPayload(ST.user), role_code: code });
+  const body = q('#ruBody');
+  if (!body) return;   // el modal se cerro mientras cargaba
+  if (!d.ok) {
+    body.innerHTML = `<div class="wp-prev warn" style="display:block">${esc(d.error || 'No se pudo cargar la lista.')}</div>`;
+    return;
+  }
+  const users = d.users || [];
+  if (!users.length) {
+    body.innerHTML = '<div style="padding:22px;text-align:center;color:var(--muted,#64748b);font-size:13px">Ningún usuario tiene este rol.</div>';
+    return;
+  }
+  const isTienda = d.kind === 'company';
+  body.innerHTML = `
+    <p class="wp-help" style="margin:0 0 2px">${users.length} ${isTienda
+      ? `tienda${users.length === 1 ? '' : 's'} con acceso. Se administran en <b>Usuarios</b>.`
+      : `usuario${users.length === 1 ? '' : 's'}. El rol se cambia en <b>Equipo</b>.`}</p>
+    <div class="rl-ul">${users.map(u => `
+      <div class="rl-ur">
+        <div class="rl-uav">${esc(ini(u.name))}</div>
+        <div class="rl-ug">
+          <div class="rl-un">${esc(u.name)}</div>
+          <div class="rl-us">${esc(u.username || '')}${u.sub ? ` · ${esc(u.sub)}` : ''}</div>
+        </div>
+        ${u.is_active === false ? '<span class="rl-uoff">inactivo</span>' : ''}
+      </div>`).join('')}</div>`;
 }
 
 function openNewRoleModal() {
