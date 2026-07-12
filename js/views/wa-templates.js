@@ -171,6 +171,25 @@ function ensureStyles() {
   .wt-dot{width:8px;height:8px;border-radius:99px;flex:none}
   .wt-names{margin-top:11px;padding-top:10px;border-top:1px solid #cfe0ff;font-size:11.5px;color:#1e40af;line-height:1.6}
 
+  /* ---- FASE 2: programacion ---- */
+  .wt-seg{display:inline-flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);flex-wrap:wrap}
+  .wt-seg button{border:0;background:var(--surface);padding:8px 13px;font:inherit;font-size:12.5px;font-weight:600;color:var(--muted);cursor:pointer;border-right:1px solid var(--border)}
+  .wt-seg button:last-child{border-right:0}
+  .wt-seg button.on{background:var(--brand);color:#fff}
+  .wt-g2{display:grid;grid-template-columns:1fr 1fr;gap:11px}
+  @media(max-width:760px){.wt-g2{grid-template-columns:1fr}}
+  .wt-tl{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:11px}
+  .wt-tl th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint,#94a3b8);padding:7px 9px;border-bottom:1px solid var(--border)}
+  .wt-tl td{padding:8px 9px;border-bottom:1px solid var(--border-soft,#f1f4f8)}
+  .wt-tl tr:last-child td{border-bottom:0}
+  .wt-tl tr.past{opacity:.5}
+  .wt-tl .next{color:var(--brand);font-weight:700}
+  .wt-tag2{font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:999px;background:#dbeafe;color:#1e40af}
+  .wt-runbox{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-top:12px;padding-top:12px;border-top:1px solid var(--border-soft,#f1f4f8)}
+  .wt-runst{font-size:11.5px;color:var(--muted)}
+  .wt-runst b.ok{color:#15803d}
+  .wt-runst b.err{color:var(--danger,#dc2626)}
+
   .wt-pv{position:sticky;top:16px}
   .wt-sel{width:100%;font:inherit;font-size:12px;padding:7px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--ink-soft,#334155);margin-bottom:12px}
   .wt-phone{background:#e5ddd5;border-radius:14px;padding:14px 12px;background-image:radial-gradient(rgba(0,0,0,.03) 1px,transparent 1px);background-size:14px 14px}
@@ -220,10 +239,14 @@ function rowHtml(t) {
           ${isCred
             ? `<span class="wt-tag tag-eq">Equipo</span>`
             : `<span class="wt-tag tag-eq">${esc(CHAN_LBL[t.channel] || t.channel)}</span>
-               <span class="wt-tag tag-sc">${esc(scopeLabel(t.scope_filters))}</span>`}
+               <span class="wt-tag tag-sc">${esc(scopeLabel(t.scope_filters))}</span>
+               ${(t.trigger_kind && t.trigger_kind !== 'manual')
+                 ? `<span class="wt-tag tag-reach">${esc(triggerLabel(t))}</span>` : ''}`}
           ${t.allows_secret ? '<span class="wt-tag tag-sec">🔒 Lleva clave</span>' : ''}
           ${t.is_active ? '' : '<span class="wt-tag tag-off">Inactivo</span>'}
           <span>· ${(t.body || '').length} caracteres</span>
+          ${(t.last_status === 'error')
+            ? '<span class="wt-tag tag-off" style="color:#991b1b;background:#fee2e2">⚠ Última corrida falló</span>' : ''}
           ${t.updated_by ? `<span>· editado por ${esc(t.updated_by)}</span>` : ''}
         </div>
       </div>
@@ -347,6 +370,120 @@ function scopePaneHtml(t) {
   </div>`;
 }
 
+/* ---------- FASE 2: panel "¿Cuándo sale?" ---------- */
+const TRIGGERS = [
+  { k: 'manual',   lbl: 'A mano' },
+  { k: 'cycle',    lbl: 'Fecha del ciclo' },
+  { k: 'date',     lbl: 'Fecha fija' },
+  { k: 'every',    lbl: 'Cada tanto' },
+  { k: 'birthday', lbl: 'Cumpleaños' },
+];
+const CYCLE_FIELDS = [
+  { v: 'cutoff_date',     lbl: 'Cierre de la quincena' },
+  { v: 'report_deadline', lbl: 'Límite para cargar reportes' },
+  { v: 'milestone_date',  lbl: 'Día del cálculo' },
+  { v: 'pay_date',        lbl: 'Día del pago' },
+  { v: 'claim_deadline',  lbl: 'Límite de reclamos' },
+];
+const OFFSETS = [
+  { v: -3, lbl: '3 días antes' }, { v: -2, lbl: '2 días antes' },
+  { v: -1, lbl: '1 día antes' },  { v: 0,  lbl: 'El mismo día' },
+  { v: 1,  lbl: '1 día después' },
+];
+
+function triggerLabel(t) {
+  if (t.trigger_kind === 'cycle') {
+    const f = CYCLE_FIELDS.find(x => x.v === t.cycle_field);
+    const o = OFFSETS.find(x => x.v === t.cycle_offset);
+    return `⚡ ${(o ? o.lbl : t.cycle_offset + ' días')} · ${f ? f.lbl.toLowerCase() : t.cycle_field}`;
+  }
+  if (t.trigger_kind === 'birthday') return '⚡ El día del cumpleaños';
+  if (t.trigger_kind === 'date') return `⚡ El ${esc(String(t.trigger_date || '').slice(0, 10))}`;
+  if (t.trigger_kind === 'every') return `⚡ Cada ${t.trigger_every_days} día${t.trigger_every_days === 1 ? '' : 's'}`;
+  return 'A mano';
+}
+
+function schedPaneHtml(t) {
+  const k = t.trigger_kind || 'manual';
+  const hours = Array.from({ length: 24 }, (_, i) => i);
+  return `
+  <div class="wt-pane">
+    <div class="wt-pane-h">¿Cuándo sale?</div>
+    <p class="wt-pane-s">Puede ser un envío a mano, o repetirse solo.</p>
+
+    <div class="wt-seg" id="wtTrg">
+      ${TRIGGERS.map(x => `<button type="button" data-trg="${x.k}" class="${k === x.k ? 'on' : ''}">${x.lbl}</button>`).join('')}
+    </div>
+
+    <!-- ciclo -->
+    <div id="wtTrgCycle" style="margin-top:14px;${k === 'cycle' ? '' : 'display:none'}">
+      <div class="wt-g2">
+        <div class="wt-field" style="margin-bottom:0">
+          <label>Hito del ciclo de nómina</label>
+          <select id="wtCycField">${CYCLE_FIELDS.map(f =>
+            `<option value="${f.v}"${t.cycle_field === f.v ? ' selected' : ''}>${f.lbl}</option>`).join('')}</select>
+        </div>
+        <div class="wt-field" style="margin-bottom:0">
+          <label>Cuándo, respecto de esa fecha</label>
+          <select id="wtCycOff">${OFFSETS.map(o =>
+            `<option value="${o.v}"${Number(t.cycle_offset || 0) === o.v ? ' selected' : ''}>${o.lbl}</option>`).join('')}</select>
+        </div>
+      </div>
+      <div id="wtSched"></div>
+      <div class="wt-help" style="margin-top:8px">
+        Las fechas salen del calendario de nómina y se recalculan solas cada quincena.
+        <b>No hay que cargarlas a mano nunca.</b>
+      </div>
+      <div class="wt-banner" style="background:#eff4ff;border-color:#cfe0ff;color:#1e3a8a;margin:12px 0 0">
+        <span class="ic">ℹ️</span>
+        <div><b>Al repetirse, reemplaza el anterior.</b> El aviso de la quincena pasada se archiva y queda solo el
+        vigente, para no llenar la cartelera. <b>Los avisos que creaste a mano no se tocan.</b></div>
+      </div>
+    </div>
+
+    <!-- fecha fija -->
+    <div id="wtTrgDate" class="wt-field" style="margin:14px 0 0;${k === 'date' ? '' : 'display:none'}">
+      <label>Día del envío</label>
+      <input type="date" id="wtTrgDateV" value="${esc(String(t.trigger_date || '').slice(0, 10))}">
+    </div>
+
+    <!-- cada tanto -->
+    <div id="wtTrgEvery" class="wt-field" style="margin:14px 0 0;${k === 'every' ? '' : 'display:none'}">
+      <label>Cada cuántos días</label>
+      <input type="number" id="wtTrgEveryV" min="1" max="365" value="${Number(t.trigger_every_days) || 15}">
+      <div class="wt-help">15 = cada quincena aproximada. Para las fechas exactas de nómina, usá <b>Fecha del ciclo</b>.</div>
+    </div>
+
+    <!-- cumpleaños -->
+    <div id="wtTrgBday" style="margin-top:14px;${k === 'birthday' ? '' : 'display:none'}">
+      <div class="wt-banner" style="margin:0">
+        <span class="ic">🎂</span>
+        <div>Se envía a cada persona el día que cumple años. <b>El 93,4% del personal tiene fecha de nacimiento</b>
+        cargada, así que el dato está: el límite es el <b>teléfono</b>.</div>
+      </div>
+    </div>
+
+    <!-- hora (para todos los automáticos) -->
+    <div id="wtTrgHour" class="wt-field" style="margin:14px 0 0;max-width:220px;${k === 'manual' ? 'display:none' : ''}">
+      <label>A partir de qué hora</label>
+      <select id="wtTrgHourV">${hours.map(h =>
+        `<option value="${h}"${Number(t.trigger_hour != null ? t.trigger_hour : 8) === h ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('')}</select>
+      <div class="wt-help">Hora de Venezuela. El sistema revisa cada 15 minutos, así que puede salir hasta 15 min después.</div>
+    </div>
+
+    ${(!ST.isNew && t.trigger_kind !== 'manual') ? `
+      <div class="wt-runbox">
+        <button class="wt-btn" id="wtRun">▶ Enviar ahora (probar)</button>
+        <span class="wt-runst" id="wtRunSt">${t.last_status
+          ? `Última corrida: <b class="${t.last_status === 'ok' ? 'ok' : 'err'}">${t.last_status === 'ok' ? 'OK' : 'con errores'}</b>`
+            + (t.last_sent != null ? ` · ${t.last_sent} enviado${t.last_sent === 1 ? '' : 's'}` : '')
+            + (t.last_fire_on ? ` · ${esc(String(t.last_fire_on).slice(0, 10))}` : '')
+            + (t.last_error ? ` · ${esc(t.last_error)}` : '')
+          : 'Todavía no corrió.'}</span>
+      </div>` : ''}
+  </div>`;
+}
+
 function editorHtml(t) {
   const isCred = t.nature === 'credencial';
   const varsKey = isCred ? t.code : 'puntual';
@@ -403,6 +540,7 @@ function editorHtml(t) {
         <p class="wt-err" id="wtErr" style="display:none"></p>
       </div>
       ${isCred ? '' : scopePaneHtml(t)}
+      ${isCred ? '' : schedPaneHtml(t)}
     </div>
 
     <div class="wt-pv">
@@ -526,9 +664,79 @@ function fillSubs(selected) {
 function curTpl() {
   if (ST.isNew) {
     return { code: null, label: '', body: '', nature: 'puntual', channel: 'wa',
-             scope_filters: {}, allows_secret: false, is_system: false };
+             scope_filters: {}, allows_secret: false, is_system: false,
+             trigger_kind: 'manual', cycle_offset: 0, trigger_hour: 8 };
   }
   return ST.rows.find(r => r.code === ST.cur) || null;
+}
+
+/* FASE 2: la previsión de disparos. Cuando se elige "2 días antes del límite
+   de reportes", muestra CUÁNDO saldría de verdad, quincena por quincena. Sin
+   esto se elige un hito y un offset a ciegas. */
+let schTimer = null;
+function scheduleSched() {
+  clearTimeout(schTimer);
+  schTimer = setTimeout(doSched, 260);
+}
+async function doSched() {
+  const box = $('#wtSched');
+  const f = $('#wtCycField'), o = $('#wtCycOff');
+  if (!box || !f || !o) return;
+  const d = await api({
+    action: 'preview_schedule', user: userPayload(ST.user),
+    cycle_field: f.value, cycle_offset: Number(o.value),
+  });
+  if (!d || !d.ok || !(d.rows || []).length) {
+    box.innerHTML = `<div class="wt-help" style="margin-top:10px">${esc((d && d.error) || 'No hay períodos cargados hacia adelante.')}</div>`;
+    return;
+  }
+  // El primero que NO paso es el proximo disparo real.
+  const nextIx = d.rows.findIndex(r => !r.past);
+  box.innerHTML = `
+    <table class="wt-tl">
+      <thead><tr><th>Período</th><th>Fecha del hito</th><th>Este mensaje saldría</th></tr></thead>
+      <tbody>${d.rows.map((r, i) => `
+        <tr class="${r.past ? 'past' : ''}">
+          <td>${esc(r.period)}</td>
+          <td>${esc(r.target_txt)}</td>
+          <td>${r.past
+            ? `<b>${esc(r.fire_txt)}</b> · ya pasó`
+            : `<b class="${i === nextIx ? 'next' : ''}">${esc(r.fire_txt)}</b>${i === nextIx ? ' <span class="wt-tag2">próximo</span>' : ''}`}</td>
+        </tr>`).join('')}</tbody>
+    </table>`;
+}
+
+/* Correr la regla AHORA. Delega en el mismo endpoint que golpea el cron: no
+   hay un "modo prueba" que se comporte distinto del real. */
+async function runNow() {
+  const btn = $('#wtRun');
+  const st = $('#wtRunSt');
+  if (!btn) return;
+  if (btn.dataset.armed !== '1') {
+    btn.dataset.armed = '1';
+    btn.textContent = '¿Seguro? Envía de verdad';
+    setTimeout(() => {
+      if (btn && btn.dataset.armed === '1') { btn.dataset.armed = '0'; btn.textContent = '▶ Enviar ahora (probar)'; }
+    }, 4000);
+    return;
+  }
+  btn.disabled = true;
+  btn.textContent = 'Enviando…';
+  const d = await api({ action: 'run_now', user: userPayload(ST.user), code: ST.cur });
+  btn.disabled = false;
+  btn.dataset.armed = '0';
+  btn.textContent = '▶ Enviar ahora (probar)';
+  if (!d || !d.ok) {
+    st.innerHTML = `<b class="err">${esc((d && d.error) || 'Falló.')}</b>`;
+    return;
+  }
+  const bits = [];
+  if (d.sent) bits.push(`${d.sent} enviado${d.sent === 1 ? '' : 's'}`);
+  if (d.errors) bits.push(`${d.errors} con error`);
+  if (d.announcement_id) bits.push('aviso publicado en el portal');
+  if (!bits.length) bits.push(d.note || 'no había a quién enviarle');
+  st.innerHTML = `<b class="${d.errors ? 'err' : 'ok'}">${esc(bits.join(' · '))}</b>`;
+  await reload();
 }
 
 function openEditor(code) {
@@ -579,8 +787,66 @@ function openEditor(code) {
       });
       doReach();
     }
+
+    /* FASE 2: el panel "Cuando sale". El segmented muestra/oculta el bloque
+       que corresponde: sin esto se pintan los 5 a la vez y no se entiende
+       cual manda. */
+    const seg = $('#wtTrg');
+    if (seg) {
+      seg.querySelectorAll('[data-trg]').forEach(b =>
+        b.addEventListener('click', () => setTrigger(b.dataset.trg)));
+      const cf = $('#wtCycField'), co = $('#wtCycOff');
+      if (cf) cf.addEventListener('change', scheduleSched);
+      if (co) co.addEventListener('change', scheduleSched);
+      const run = $('#wtRun');
+      if (run) run.addEventListener('click', runNow);
+      // Si abre en modo ciclo, la tabla de prevision ya tiene que estar.
+      if ((tpl.trigger_kind || 'manual') === 'cycle') doSched();
+    }
   }
   doPreview();
+}
+
+/* Cambia el tipo de disparo: pinta el segmented y deja visible SOLO el bloque
+   de ese tipo. La hora aplica a todos los automaticos, pero no a 'manual'. */
+function setTrigger(kind) {
+  const seg = $('#wtTrg');
+  if (!seg) return;
+  seg.querySelectorAll('[data-trg]').forEach(b =>
+    b.classList.toggle('on', b.dataset.trg === kind));
+
+  const show = (id, on) => { const e = $(id); if (e) e.style.display = on ? '' : 'none'; };
+  show('#wtTrgCycle', kind === 'cycle');
+  show('#wtTrgDate',  kind === 'date');
+  show('#wtTrgEvery', kind === 'every');
+  show('#wtTrgBday',  kind === 'birthday');
+  show('#wtTrgHour',  kind !== 'manual');
+
+  if (kind === 'cycle') doSched();
+}
+
+/* Lee el disparo del formulario. Devuelve solo lo que aplica al tipo elegido:
+   mandar una fecha fija cuando el disparo es 'cumpleanos' solo confunde. */
+function readTrigger() {
+  const seg = $('#wtTrg');
+  if (!seg) return { trigger_kind: 'manual' };
+  const on = seg.querySelector('[data-trg].on');
+  const kind = on ? on.dataset.trg : 'manual';
+  const t = { trigger_kind: kind };
+  if (kind === 'manual') return t;
+
+  const h = $('#wtTrgHourV');
+  t.trigger_hour = h ? Number(h.value) : 8;
+
+  if (kind === 'cycle') {
+    t.cycle_field = $('#wtCycField').value;
+    t.cycle_offset = Number($('#wtCycOff').value);
+  } else if (kind === 'date') {
+    t.trigger_date = $('#wtTrgDateV').value;
+  } else if (kind === 'every') {
+    t.trigger_every_days = Number($('#wtTrgEveryV').value);
+  }
+  return t;
 }
 
 function backToList() {
@@ -634,6 +900,7 @@ async function save() {
   if (!isCred) {
     payload.channel = readChannel();
     payload.scope_filters = readScope();
+    Object.assign(payload, readTrigger());   // FASE 2: el disparo
   }
 
   const d = await api(payload);
@@ -655,9 +922,16 @@ async function save() {
   if (row) {
     row.label = $('#wtLabel').value;
     row.body = $('#wtBody').value;
-    if (!isCred) { row.channel = payload.channel; row.scope_filters = payload.scope_filters; }
+    if (!isCred) {
+      row.channel = payload.channel;
+      row.scope_filters = payload.scope_filters;
+      // El disparo cambia la naturaleza (y con eso la seccion de la lista),
+      // asi que se recarga del servidor: es la fuente de verdad.
+      Object.assign(row, readTrigger());
+    }
   }
   ST.orig = $('#wtBody').value;
+  if (!isCred) await reload();   // la seccion pudo cambiar
   const s = $('#wtSaved');
   s.style.display = 'inline';
   setTimeout(() => { s.style.display = 'none'; }, 1800);

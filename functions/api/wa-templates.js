@@ -283,6 +283,42 @@ function pickScope(o) {
   };
 }
 
+/* FASE 2: el disparo. Se sanea aca y la BD ademas lo valida con CHECKs (una
+   regla 'cycle' sin hito, o 'date' sin fecha, no se puede guardar).
+   Devuelve null si el vocabulario es invalido -> el handler responde 400. */
+const CYCLE_FIELDS = ['cutoff_date', 'report_deadline', 'milestone_date', 'pay_date', 'claim_deadline'];
+const TRIGGERS = ['manual', 'cycle', 'date', 'every', 'birthday'];
+
+function pickTrigger(o) {
+  const kind = String(o.trigger_kind || 'manual');
+  if (!TRIGGERS.includes(kind)) return null;
+
+  const t = {
+    trigger_kind: kind,
+    cycle_field: null, cycle_offset: 0,
+    trigger_date: null, trigger_every_days: null,
+    trigger_hour: Math.max(0, Math.min(23, Number(o.trigger_hour) || 8)),
+  };
+
+  if (kind === 'cycle') {
+    const f = String(o.cycle_field || '');
+    if (!CYCLE_FIELDS.includes(f)) return null;
+    t.cycle_field = f;
+    // Rango sano: mas de una quincena de anticipacion no tiene sentido (la
+    // fecha objetivo caeria en el periodo anterior).
+    t.cycle_offset = Math.max(-10, Math.min(10, Number(o.cycle_offset) || 0));
+  } else if (kind === 'date') {
+    const d = String(o.trigger_date || '').slice(0, 10);
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(d)) return null;
+    t.trigger_date = d;
+  } else if (kind === 'every') {
+    const n = Number(o.trigger_every_days) || 0;
+    if (n < 1 || n > 365) return null;
+    t.trigger_every_days = n;
+  }
+  return t;
+}
+
 /* Resuelve el alcance -> destinatarios reales, via el RPC que ya usa Difusion. */
 async function resolveScope(env, scope, limit = 100) {
   const s = pickScope(scope || {});
@@ -369,6 +405,59 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
+    /* ---------- FASE 2: previsión de disparos ----------
+       Cuando se elige "2 dias antes del limite de reportes", esto responde
+       CUANDO saldria de verdad, quincena por quincena. Sin esto, el usuario
+       elige un hito y un offset a ciegas. */
+    if (action === 'preview_schedule') {
+      const field = String(body.cycle_field || '').trim();
+      const off = Number(body.cycle_offset || 0);
+      const OK = ['cutoff_date', 'report_deadline', 'milestone_date', 'pay_date', 'claim_deadline'];
+      if (!OK.includes(field)) return json({ ok: false, error: 'Hito invalido.' }, 400);
+
+      const hoy = new Date().toLocaleDateString('sv-SE', { timeZone: 'America/Caracas' });
+      const rows = await sb(env,
+        `payroll_periods?range_end=gte.${hoy}&select=period_no,name,${field}`
+        + `&order=range_start.asc&limit=4`) || [];
+
+      const out = rows.map(p => {
+        const raw = p[field];
+        if (!raw) return null;
+        // report_deadline es timestamptz; el resto son date.
+        const base = String(raw).slice(0, 10);
+        const d = new Date(base + 'T12:00:00Z');   // mediodia: evita cruces de huso
+        d.setUTCDate(d.getUTCDate() + off);
+        const fireOn = d.toISOString().slice(0, 10);
+        return {
+          period: p.name,
+          target: base,
+          target_txt: fmtDate(base),
+          fire_on: fireOn,
+          fire_txt: fmtDate(fireOn),
+          past: fireOn < hoy,
+        };
+      }).filter(Boolean);
+
+      return json({ ok: true, today: hoy, rows: out });
+    }
+
+    /* ---------- FASE 2: correr una regla AHORA (probarla) ----------
+       Delega en /api/messages-run, el mismo endpoint que golpea el cron. No
+       se duplica la logica de envio: probar es correr de verdad. */
+    if (action === 'run_now') {
+      if (!can(actor, 'wa.send')) {
+        return json({ ok: false, error: 'No tienes permiso para enviar mensajes.' }, 403);
+      }
+      const rc = String(body.code || '').trim();
+      if (!rc) return json({ ok: false, error: 'Falta el mensaje.' }, 400);
+      const base = portalUrl(env) || 'https://nominav2.pages.dev';
+      const res = await fetch(`${base}/api/messages-run`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ source: 'manual', user: body.user, code: rc }),
+      });
+      return json(await res.json(), res.status);
+    }
+
     /* ---------- preview del editor ---------- */
     if (action === 'preview') {
       // FASE 1: los mensajes PUNTUALES no le hablan a un miembro del equipo
@@ -440,6 +529,20 @@ export async function onRequestPost({ request, env }) {
           }
           patch.channel = ch;
         }
+        // FASE 2: el disparo. Cambiar la programacion RESETEA los antifuegos
+        // (last_fire_on / last_period): si no, una regla que ya disparo hoy
+        // con la config vieja no volveria a correr con la nueva, y el usuario
+        // no entenderia por que su cambio "no hace nada".
+        if (body.trigger_kind !== undefined) {
+          const trg = pickTrigger(body);
+          if (!trg) return json({ ok: false, error: 'La programacion esta incompleta o es invalida.' }, 400);
+          Object.assign(patch, trg, { last_fire_on: null, last_period: null });
+          // La naturaleza se deduce del disparo: asi la lista los agrupa sola
+          // y no hay dos fuentes de verdad que puedan contradecirse.
+          patch.nature = trg.trigger_kind === 'birthday' ? 'cumpleanos'
+            : trg.trigger_kind === 'cycle' ? 'ciclo'
+            : 'puntual';
+        }
       }
 
       await sb(env, `message_templates?code=eq.${encodeURIComponent(code)}`, {
@@ -480,11 +583,20 @@ export async function onRequestPost({ request, env }) {
       const maxRows = await sb(env, 'message_templates?select=sort_order&order=sort_order.desc&limit=1');
       const nextSort = ((maxRows && maxRows[0] && maxRows[0].sort_order) || 0) + 10;
 
+      // FASE 2: el disparo decide la naturaleza (y con eso, en que seccion de
+      // la lista aparece). Una sola fuente de verdad.
+      const trg = pickTrigger(body);
+      if (!trg) return json({ ok: false, error: 'La programacion esta incompleta o es invalida.' }, 400);
+      const nature = trg.trigger_kind === 'birthday' ? 'cumpleanos'
+        : trg.trigger_kind === 'cycle' ? 'ciclo'
+        : 'puntual';
+
       await sb(env, 'message_templates', {
         method: 'POST', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({
           code, label, body: text,
-          nature: 'puntual', channel: ch,
+          nature, channel: ch,
+          ...trg,
           scope_filters: pickScope(body.scope_filters || {}),
           scope: 'roster', allows_secret: false,
           is_system: false, is_active: true, sort_order: nextSort,
