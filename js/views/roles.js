@@ -5,8 +5,9 @@
    Mockup aprobado: _PRUEBAS\roles_mockup.html (v0-mock6).
 
    Dos pantallas:
-     1) GRILLA de roles: tipo (sistema / ve todo / estandar), # permisos,
-        # usuarios; Renombrar / Desactivar (solo roles no-sistema); Nuevo rol.
+     1) GRILLA de roles: tipo (sistema / todas las empresas / estandar),
+        # permisos, # usuarios; Editar y, en el menu "...", Desactivar (solo
+        roles no-sistema); Nuevo rol.
      2) DETALLE de un rol: permisos agrupados por dominio (Vistas primero,
         con subgrupos del menu), modo lectura/edicion, buscador, "Todo el
         grupo", copiar desde otro rol, y la regla "USAR IMPLICA VER": los
@@ -163,8 +164,16 @@ function ensureStyles() {
   const st = document.createElement('style');
   st.id = 'rlStyles';
   st.textContent = `
-  .rl-tablebox{border:1px solid var(--border,#e6eaf0);border-radius:14px;overflow:hidden;background:var(--card,#fff);box-shadow:0 1px 3px rgba(15,23,42,.04),0 8px 30px rgba(15,23,42,.05)}
+  /* v5.25: el menu "..." es un absolute dentro de la <td>. Con overflow:hidden
+     en el contenedor, el desplegable de las ultimas filas quedaba CORTADO. Se
+     pasa a overflow:visible; el radius de las esquinas lo sostienen el thead y
+     la ultima fila, asi que visualmente no cambia nada. */
+  .rl-tablebox{border:1px solid var(--border,#e6eaf0);border-radius:14px;overflow:visible;background:var(--card,#fff);box-shadow:0 1px 3px rgba(15,23,42,.04),0 8px 30px rgba(15,23,42,.05)}
   .rl-tablebox table{width:100%;border-collapse:collapse;font-size:13.5px}
+  .rl-tablebox thead tr:first-child th:first-child{border-top-left-radius:13px}
+  .rl-tablebox thead tr:first-child th:last-child{border-top-right-radius:13px}
+  .rl-tablebox tbody tr:last-child td:first-child{border-bottom-left-radius:13px}
+  .rl-tablebox tbody tr:last-child td:last-child{border-bottom-right-radius:13px}
   .rl-tablebox th{background:#fbfcfe;font-weight:600;color:var(--ink-soft,#475569);font-size:12px;text-transform:uppercase;letter-spacing:.03em;text-align:left;padding:13px 18px;border-bottom:1px solid var(--border,#e6eaf0);white-space:nowrap}
   .rl-tablebox td{padding:15px 18px;border-bottom:1px solid var(--border-soft,#f1f4f8);vertical-align:middle}
   .rl-tablebox tbody tr:last-child td{border-bottom:0}
@@ -181,6 +190,26 @@ function ensureStyles() {
   .rl-pill-off{background:#fdecec;color:#991b1b}
   .rl-rowacts{display:flex;gap:6px;justify-content:flex-end;align-items:center}
   .rl-chev{color:var(--faint,#94a3b8)}
+  /* v5.25: menu "..." por fila. Desactivar era un boton suelto pegado al
+     chevron que abre el detalle: un clic desviado y estabas en un modal
+     destructivo. Ahora vive detras del menu, separado del chevron, y ademas
+     hay una franja muerta (.rl-chevpad) entre el menu y la flecha. */
+  .rl-kebab{position:relative;display:inline-flex}
+  .rl-kbtn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;border:1px solid var(--border,#e6eaf0);border-radius:8px;background:var(--card,#fff);color:var(--muted,#64748b);cursor:pointer;padding:0}
+  .rl-kbtn:hover{background:var(--border-soft,#f1f4f8);color:var(--ink,#0f172a)}
+  .rl-kbtn.open{background:var(--border-soft,#f1f4f8);color:var(--ink,#0f172a)}
+  .rl-kmenu{display:none;position:absolute;top:calc(100% + 6px);right:0;min-width:186px;background:var(--card,#fff);border:1px solid var(--border,#e6eaf0);border-radius:11px;box-shadow:0 10px 34px rgba(15,23,42,.16);z-index:40;padding:5px;text-align:left}
+  .rl-kmenu.open{display:block}
+  .rl-kitem{display:flex;align-items:center;gap:9px;width:100%;padding:9px 11px;border:0;background:none;font:inherit;font-size:13px;color:var(--ink,#0f172a);border-radius:7px;cursor:pointer;text-align:left}
+  .rl-kitem:hover{background:var(--border-soft,#f1f4f8)}
+  .rl-kitem svg{width:15px;height:15px;flex:none;color:var(--muted,#64748b)}
+  .rl-kitem.danger{color:var(--danger,#dc2626)}
+  .rl-kitem.danger svg{color:var(--danger,#dc2626)}
+  .rl-kitem.danger:hover{background:#fef2f2}
+  .rl-ksep{height:1px;background:var(--border-soft,#f1f4f8);margin:4px 6px}
+  /* Franja muerta: separa el menu del chevron para que un clic corto no
+     termine abriendo el detalle (ni al reves). */
+  .rl-chevpad{width:10px;flex:none}
   .rl-back{cursor:pointer;color:var(--muted,#64748b);display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:600;border:0;background:none;font-family:inherit;padding:4px 0;margin-bottom:6px}
   .rl-back:hover{color:var(--ink,#0f172a)}
   .rl-viewbadge{font-size:11.5px;font-weight:700;padding:3px 10px;border-radius:999px;background:var(--border-soft,#f1f4f8);color:var(--muted,#64748b);letter-spacing:.03em;vertical-align:middle}
@@ -299,10 +328,16 @@ async function reload() {
 }
 
 /* ===================== PANTALLA 1: GRILLA ===================== */
+/* v5.25: la pildora decia "ve todo" y era MENTIRA. La columna real es
+   readonly_scope, y no significa "ve todos los permisos": significa que su
+   ALCANCE DE EMPRESAS no se puede acotar (siempre ve todas las empresas). Que
+   ve DENTRO de ellas sale de sus permisos como cualquier otro rol: el Auditor
+   tiene 24 de 110. Leer "ve todo" invitaba a creer que era un superadmin.
+   Ahora dice "todas las empresas", que es exactamente lo que hace. */
 function rolePill(r) {
   if (!r.is_active) return '<span class="rl-pill rl-pill-off">inactivo</span>';
   if (r.is_system) return '<span class="rl-pill rl-pill-sys">sistema</span>';
-  if (r.readonly_scope) return '<span class="rl-pill rl-pill-ro">ve todo</span>';
+  if (r.readonly_scope) return '<span class="rl-pill rl-pill-ro" title="Su alcance no se puede acotar: siempre ve TODAS las empresas. Que ve dentro de ellas depende de sus permisos, como en cualquier rol.">todas las empresas</span>';
   return '<span class="rl-pill rl-pill-gray">estandar</span>';
 }
 // v4.61: tipo de acceso osTicket del rol (que se crea para sus usuarios).
@@ -314,25 +349,49 @@ function okindPill(r) {
 }
 function paintList() {
   const rows = ST.roles.map(r => {
+    /* v5.25: la columna de acciones se reformula.
+       Antes: [Editar] [Desactivar] [>]  -> Desactivar quedaba PEGADO al chevron
+       que abre el detalle. Un clic corto y caias en un modal destructivo.
+       Ahora: [Editar] [...] | [>]       -> lo destructivo vive dentro del menu
+       "...", con una franja muerta antes de la flecha. Editar queda a mano
+       porque es inocuo; Desactivar exige dos gestos. */
     const acts = r.is_system
       ? ''
-      : `<button class="btn btn-sm" data-ren="${esc(r.code)}">Editar</button>`
-        + (r.is_active
-          ? `<button class="btn btn-sm" style="color:var(--danger,#dc2626);border-color:#f6cccc" data-tog="${esc(r.code)}" data-to="off">Desactivar</button>`
-          : `<button class="btn btn-sm" data-tog="${esc(r.code)}" data-to="on">Activar</button>`);
+      : `<button class="btn btn-sm" data-ren="${esc(r.code)}">Editar</button>
+         <span class="rl-kebab">
+           <button class="rl-kbtn" data-kb="${esc(r.code)}" title="Más acciones" aria-label="Más acciones">
+             <svg viewBox="0 0 24 24" width="16" height="16" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>
+           </button>
+           <div class="rl-kmenu" data-kmenu="${esc(r.code)}">
+             <button class="rl-kitem" data-open2="${esc(r.code)}">
+               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+               Ver permisos
+             </button>
+             <div class="rl-ksep"></div>
+             ${r.is_active
+               ? `<button class="rl-kitem danger" data-tog="${esc(r.code)}" data-to="off">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M5.6 5.6l12.8 12.8"/></svg>
+                    Desactivar rol
+                  </button>`
+               : `<button class="rl-kitem" data-tog="${esc(r.code)}" data-to="on">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
+                    Activar rol
+                  </button>`}
+           </div>
+         </span>`;
     return `<tr data-open="${esc(r.code)}">
       <td><div class="rl-rname">${esc(r.label || r.code)}</div><div class="rl-rdesc">${esc(r.code)}</div></td>
       <td>${rolePill(r)}</td>
       <td>${okindPill(r)}</td>
       <td class="rl-num">${r.perm_count == null ? 'todos' : r.perm_count}</td>
       <td class="rl-num">${r.user_count}</td>
-      <td><div class="rl-rowacts">${acts}<svg class="rl-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></div></td>
+      <td><div class="rl-rowacts">${acts}<span class="rl-chevpad"></span><svg class="rl-chev" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="m9 18 6-6-6-6"/></svg></div></td>
     </tr>`;
   }).join('');
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head">
-      <div><h1>Roles</h1><p>Toca un rol para ver o editar sus permisos. El alcance por empresa se configura aparte, en Permisos.</p></div>
+      <div><h1>Roles</h1><p>Toca un rol para ver o editar sus permisos. El alcance por empresa se configura aparte, en Permisos. Un rol marcado <b>todas las empresas</b> no se puede acotar por empresa: siempre las ve todas (lo que ve dentro depende de sus permisos).</p></div>
       <div class="head-actions">
         <button class="btn" id="rlShadow">Registro shadow</button>
         <button class="btn btn-primary" id="rlNew"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg> Nuevo rol</button>
@@ -349,12 +408,42 @@ function paintList() {
   document.querySelectorAll('#pnlMain tr[data-open]').forEach(tr =>
     tr.addEventListener('click', (e) => {
       if (e.target.closest('button')) return;
+      // v5.25: un clic dentro del menu "..." no debe abrir el detalle.
+      if (e.target.closest('.rl-kebab')) return;
       openDetail(String(tr.dataset.open));
     }));
   document.querySelectorAll('#pnlMain [data-ren]').forEach(b =>
     b.addEventListener('click', (e) => { e.stopPropagation(); openRenameModal(String(b.dataset.ren)); }));
+
+  /* v5.25: menu "..." por fila. Un solo menu abierto a la vez; cierra al
+     tocar fuera o con Escape. */
+  const closeKebabs = () => {
+    document.querySelectorAll('#pnlMain .rl-kmenu.open').forEach(m => m.classList.remove('open'));
+    document.querySelectorAll('#pnlMain .rl-kbtn.open').forEach(b => b.classList.remove('open'));
+  };
+  document.querySelectorAll('#pnlMain [data-kb]').forEach(b =>
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const menu = document.querySelector(`#pnlMain [data-kmenu="${CSS.escape(b.dataset.kb)}"]`);
+      const wasOpen = menu && menu.classList.contains('open');
+      closeKebabs();
+      if (menu && !wasOpen) { menu.classList.add('open'); b.classList.add('open'); }
+    }));
+  // "Ver permisos" del menu: lo mismo que tocar la fila.
+  document.querySelectorAll('#pnlMain [data-open2]').forEach(b =>
+    b.addEventListener('click', (e) => {
+      e.stopPropagation(); closeKebabs(); openDetail(String(b.dataset.open2));
+    }));
   document.querySelectorAll('#pnlMain [data-tog]').forEach(b =>
-    b.addEventListener('click', (e) => { e.stopPropagation(); openToggleModal(String(b.dataset.tog), b.dataset.to === 'on'); }));
+    b.addEventListener('click', (e) => {
+      e.stopPropagation(); closeKebabs();
+      openToggleModal(String(b.dataset.tog), b.dataset.to === 'on');
+    }));
+  // Clic fuera / Escape cierran el menu. El listener se re-crea en cada
+  // paintList(); como el DOM se reemplaza entero, no se acumulan.
+  document.addEventListener('click', closeKebabs);
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') closeKebabs(); });
+
   const nw = $('#rlNew');
   if (nw) nw.addEventListener('click', openNewRoleModal);
   const sh = $('#rlShadow');
