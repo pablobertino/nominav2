@@ -2,27 +2,29 @@
    functions/api/sync-roster.js  →  POST /api/sync-roster
    SINCRONIZACION AUTOMATICA DE MEMBRESIA en tiendas (v5.31).
 
-   Alcance DELIBERADAMENTE reducido (decision de Pablo 2026-07-09):
+   Alcance (decision de Pablo 2026-07-09, ampliada el 2026-07-13):
    - INGRESA a los trabajadores nuevos que el sistema trae y el portal no
-     tiene (con departamento Retail, regla de tiendas). El ingreso entra con
-     la FICHA COMPLETA: nombre, cargo, y ademas cuenta bancaria, telefono y
-     correo (v5.31 — antes entraban vacios: ver abajo).
+     tiene. Entran con la FICHA COMPLETA: nombre, cargo, cuenta bancaria,
+     telefono y correo.
    - RETIRA (egresa) a los que el sistema marca con fin de contrato.
-   - NO TOCA ningun campo de los que YA ESTAN (nombre, cargo, telefono,
-     ficha completa: todo eso sigue siendo manual via Actualizar/ficha).
+   - RELLENA LOS HUECOS de los que ya estan: si un campo esta VACIO y el
+     sistema trae el dato, se toma. (v5.34)
+   - NO PISA ningun campo que YA TENGA VALOR en el portal. Eso sigue siendo
+     manual via Actualizar/ficha.
 
-   ⚠ LA DISTINCION QUE IMPORTA (v5.31):
-     INSERT   = persona nueva  -> se trae TODO. No hay nada que pisar.
-     REINGRESO/UPDATE = persona que ya existe -> NO se toca su ficha.
-   No es lo mismo "no pisar el dato de alguien" que "crear a alguien con la
-   ficha a medias". Lo primero es la regla; lo segundo era un bug.
+   ⚠ "NO PISAR" NO ES "NO RELLENAR" (Pablo, 2026-07-13):
+     campo CON valor  -> intocable. Alguien lo cargo; es un dato del portal.
+     campo VACIO      -> es un hueco. Nadie lo edito. Si el sistema trae el
+                         valor cierto, tomarlo no pisa a nadie.
+   Sin esta distincion, una ficha que entro incompleta quedaba incompleta PARA
+   SIEMPRE: el dato llegaba en cada corrida y se descartaba, porque el codigo
+   solo miraba a los que NO existen.
 
-   🔴 PENDIENTE — EL UPDATE NO EXISTE TODAVIA. Si un tercero cambia la cuenta
-   en AX de alguien que ya esta en el portal, el portal NO se entera. Traerlo
-   necesita resolver los conflictos: hay fichas con cambios del portal aun sin
-   publicar (`ax_pending`) que un UPDATE ciego pisaria. La API ya da la
-   municion (`auditoria.modificadoPor` dice si el cambio vino del portal o de
-   un tercero). Diseno en _PLANES/PENDIENTE_SYNC_ROSTER_BUGS.md §BUG 3.
+   🔴 PENDIENTE — CONFLICTOS. El relleno solo llena VACIOS, asi que no puede
+   pisar nada. Pero si un campo tiene valor EN LOS DOS LADOS y son distintos,
+   eso es un CONFLICTO y no se resuelve aca: lo resuelve un humano en Comparar.
+   La API ya da la municion (`auditoria.modificadoPor` dice si el cambio vino
+   del portal o de un tercero en AX). Ver _PLANES/PENDIENTE_SYNC_ROSTER_BUGS.md.
 
    🔴 PENDIENTE — EL CRON NO AVANZA DE TANDA. La cadena de auto-invocacion se
    corta en el primer eslabon: cada corrida del cron procesa SIEMPRE las mismas
@@ -80,7 +82,28 @@ const TIME_BUDGET_MS = 90000;   // presupuesto total de corrida
 
    BATCH baja de 8 a 5: el paralelismo no ahorra subrequests (los gasta igual),
    y en tandas chicas no hace falta apretar tanto a la API del sistema. */
-const STORES_PER_CALL = 10;     // tiendas por invocacion (limite de Cloudflare)
+/* ===== TANDAS =====
+   Cloudflare corta en 50 SUBREQUESTS por invocacion. Techo duro.
+
+   v5.34: la cuenta cambio, porque ahora cada tienda ademas RELLENA HUECOS
+   (1 SELECT al maestro + 1 PATCH por persona incompleta). Antes una tienda sin
+   movimiento costaba 2 subrequests; ahora cuesta 3 + los rellenos.
+
+   Cuenta por tanda (peor caso, tienda de 30 personas todas incompletas):
+     5 tiendas x 1 GET a la API                 =  5
+     5 tiendas x 1 SELECT roster                =  5
+     5 tiendas x 1 SELECT maestro (acotado)     =  5
+     rellenos + ingresos + egresos              = ~25
+     arranque (config, alcance) + log           = ~5
+                                                = ~45  (entra, con poco aire)
+
+   La primera corrida despues de este cambio es la mas cara (hay muchos huecos
+   que llenar). Las siguientes son baratas: una vez relleno, no hay nada que
+   escribir y la tienda vuelve a costar 3.
+
+   Baja de 10 a 5: mas tandas, pero ninguna muere. Una tanda que revienta no
+   avanza el offset y la corrida se cuelga entera; mejor ir despacio. */
+const STORES_PER_CALL = 5;      // tiendas por invocacion (limite de Cloudflare)
 const BATCH = 5;                // tiendas en paralelo dentro de la tanda
 
 function json(b, s = 200) {
@@ -202,7 +225,7 @@ async function retailDeptId(env, cc) {
 /* Procesa UNA tienda. Devuelve { company_code, added, removed, skipped,
    alert, detail } sin lanzar (los errores quedan como alerta). */
 async function processStore(env, cc) {
-  const out = { company_code: cc, added: 0, removed: 0, skipped: false, alert: null, detail: {},
+  const out = { company_code: cc, added: 0, removed: 0, filled: 0, skipped: false, alert: null, detail: {},
                 // v5.31: datos que NO se escribieron por venir mal formateados.
                 // No es un error de la sincronizacion: es un dato a corregir en AX.
                 rejected: { account: 0, phone: 0, email: 0 } };
@@ -259,7 +282,11 @@ async function processStore(env, cc) {
       if (w && w.is_active !== false && !w.end_date) toEgress.push([ced, f]);
     }
 
-    if (!toInsert.length && !toReenter.length && !toEgress.length) return out;
+    /* v5.34: ya no se puede cortar aca. Antes, si no habia ingresos ni egresos,
+       la tienda se salteaba entera — y con ella el relleno de huecos, que es lo
+       que arregla a la gente que ya esta cargada pero con la ficha incompleta.
+       El relleno corre SIEMPRE que la tienda tenga gente vigente. */
+    const hayMovimiento = toInsert.length || toReenter.length || toEgress.length;
 
     const deptId = (toInsert.length || toReenter.length) ? await retailDeptId(env, cc) : null;
     const fullNameOf = (r) => String(r.nombreCompleto
@@ -355,6 +382,90 @@ async function processStore(env, cc) {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({ is_active: true, end_date: null, start_date: iso10(r.inicioContrato), source: 'auto_sync' }),
       });
+    }
+
+    /* ===================================================================
+       v5.34 — RELLENO DE HUECOS (decision de Pablo 2026-07-13)
+
+       "NO PISAR" NO ES LO MISMO QUE "NO RELLENAR".
+
+       La regla del 2026-07-09 protege los datos que alguien cargo en el portal:
+       si un campo TIENE valor, la sincronizacion no lo toca. Eso sigue igual.
+
+       Pero un campo VACIO no es un dato que proteger: es un HUECO. Nadie lo
+       edito nunca. Si el sistema trae el valor cierto, tomarlo no pisa a nadie.
+
+       Caso real que lo motivo: EIVAR LUGO (18023148) ingreso por auto_sync con
+       la cuenta vacia (bug del INSERT, ya arreglado). Su cuenta esta en AX y la
+       API la devuelve en cada corrida... pero la sincronizacion no la escribia
+       nunca, porque el codigo solo mira a los que NO existen. Quedaba en un
+       limbo: el dato llegaba, y se descartaba.
+
+       LA REGLA:
+           el campo TIENE valor en el portal  ->  NO SE TOCA
+           el campo esta VACIO                ->  se rellena con lo del sistema
+
+       No hay conflicto posible: un vacio no compite con nada. El conflicto de
+       verdad (los dos lados tienen valor y son distintos) sigue siendo cosa de
+       Comparar, con la auditoria de la API. Esto no lo reemplaza.
+
+       GUARDIA: si la ficha tiene un cambio del portal SIN PUBLICAR (ax_pending)
+       sobre ese campo, no se toca aunque este vacio. Podria ser un borrado
+       deliberado que todavia no viajo a AX; rellenarlo seria deshacerlo.
+       =================================================================== */
+    const toFill = [];
+    if (vig.size) {
+      // Solo se piden las fichas de la gente VIGENTE de esta tienda (acotado:
+      // no se trae el maestro entero, que es lo que reventaba el backfill).
+      const ceds = [...vig.keys()];
+      const inList = ceds.map(c => `"${c}"`).join(',');
+      const master = await sb(env,
+        `workers_master?id_number=in.(${inList})`
+        + `&select=id_number,account_number,phone,email,ax_pending,ax_pending_fields`) || [];
+
+      for (const m of master) {
+        const ced = digits(m.id_number);
+        const r = vig.get(ced);
+        if (!r) continue;
+
+        const pend = m.ax_pending ? (m.ax_pending_fields || {}) : {};
+        const patch = {};
+
+        // CUENTA: solo si esta vacia, el sistema la trae valida, y no hay un
+        // cambio del portal pendiente sobre ese campo.
+        if (!clean(m.account_number) && !pend.account_number) {
+          const v = cleanAccount(r.cuentaBancaria);
+          if (v) patch.account_number = v;
+          else if (clean(r.cuentaBancaria)) out.rejected.account++;
+        }
+        if (!clean(m.phone) && !pend.phone) {
+          const v = cleanPhone(r.telefono);
+          if (v) patch.phone = v;
+          else if (clean(r.telefono)) out.rejected.phone++;
+        }
+        if (!clean(m.email) && !pend.email) {
+          const v = cleanEmail(r.correo);
+          if (v) patch.email = v;
+          else if (clean(r.correo)) out.rejected.email++;
+        }
+
+        if (Object.keys(patch).length) toFill.push([ced, patch]);
+      }
+    }
+
+    /* Los huecos se rellenan en el MAESTRO, que es la ficha de la persona y de
+       donde el portal lee la cuenta (bank_accounts_list hace COALESCE con el
+       maestro primero). Escribir tambien el roster costaria el doble de
+       subrequests sin agregar nada. */
+    for (const [ced, patch] of toFill) {
+      await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify(patch),
+      });
+    }
+    if (toFill.length) {
+      out.filled = toFill.length;
+      out.detail.filled = toFill.map(([c]) => c);
     }
     if (toReenter.length) {
       out.added += toReenter.length;
@@ -463,6 +574,7 @@ export async function onRequestPost({ request, env, ctx }) {
 
   const added = results.reduce((a, r) => a + r.added, 0);
   const removed = results.reduce((a, r) => a + r.removed, 0);
+  const filled = results.reduce((a, r) => a + (r.filled || 0), 0);
   const alerts = results.filter(r => r.alert).length;
 
   /* v5.31 — DATOS RECHAZADOS POR FORMATO.
@@ -478,7 +590,7 @@ export async function onRequestPost({ request, env, ctx }) {
 
   // Log: SOLO tiendas con movimiento o alerta (corridas limpias no ensucian).
   const logRows = results
-    .filter(r => r.added || r.removed || r.skipped)
+    .filter(r => r.added || r.removed || r.filled || r.skipped)
     .map(r => ({
       run_id: runId, source, company_code: r.company_code,
       added: r.added, removed: r.removed, skipped: r.skipped,
@@ -496,6 +608,7 @@ export async function onRequestPost({ request, env, ctx }) {
      de esta tanda. */
   const prevAdded = Math.max(0, parseInt(body.acc_added, 10) || 0);
   const prevRemoved = Math.max(0, parseInt(body.acc_removed, 10) || 0);
+  const prevFilled = Math.max(0, parseInt(body.acc_filled, 10) || 0);
   const prevAlerts = Math.max(0, parseInt(body.acc_alerts, 10) || 0);
   const prevStores = Math.max(0, parseInt(body.acc_stores, 10) || 0);
   // Los rechazos tambien acumulan entre tandas (si no, el resumen mostraria
@@ -508,6 +621,7 @@ export async function onRequestPost({ request, env, ctx }) {
 
   const totAdded = prevAdded + added;
   const totRemoved = prevRemoved + removed;
+  const totFilled = prevFilled + filled;
   const totAlerts = prevAlerts + alerts;
   const totStores = prevStores + results.length;
   const totRej = {
@@ -518,7 +632,7 @@ export async function onRequestPost({ request, env, ctx }) {
 
   const summary = {
     run_id: runId, stores: totStores, total_stores: codes.length,
-    added: totAdded, removed: totRemoved, alerts: totAlerts,
+    added: totAdded, removed: totRemoved, filled: totFilled, alerts: totAlerts,
     rejected: totRej,
     incomplete: incomplete || !done,
   };
@@ -562,6 +676,7 @@ export async function onRequestPost({ request, env, ctx }) {
       source: 'cron', adminId,
       offset: nextOffset, run_id: runId,
       acc_added: totAdded, acc_removed: totRemoved,
+      acc_filled: totFilled,
       acc_alerts: totAlerts, acc_stores: totStores,
       acc_rej_account: totRej.account,
       acc_rej_phone: totRej.phone,
@@ -582,8 +697,9 @@ export async function onRequestPost({ request, env, ctx }) {
     next_offset: done ? null : nextOffset,
     processed: results.length,     // tiendas de ESTA tanda
     duration_ms: Date.now() - t0,
-    // v5.31: los acumuladores viajan al front para la tanda siguiente. Sin
-    // esto, el resumen final solo contaria los rechazos de la ULTIMA tanda.
+    // v5.31/v5.34: los acumuladores viajan al front para la tanda siguiente.
+    // Sin esto, el resumen final solo contaria lo de la ULTIMA tanda.
+    acc_filled: totFilled,
     acc_rej_account: totRej.account,
     acc_rej_phone: totRej.phone,
     acc_rej_email: totRej.email,

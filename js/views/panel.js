@@ -440,7 +440,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.33</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.34</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4663,6 +4663,7 @@ async function viewSync(user) {
       // final solo contaria los de la ULTIMA tanda de 10 tiendas.
       let acc = { added: 0, removed: 0, alerts: 0, stores: 0 };
       let rej = { account: 0, phone: 0, email: 0 };
+      let filled = 0;   // v5.34: fichas incompletas que se completaron solas
       let total = 0;
       let r = null;
       let guard = 0;
@@ -4677,6 +4678,7 @@ async function viewSync(user) {
           acc_rej_account: rej.account,
           acc_rej_phone: rej.phone,
           acc_rej_email: rej.email,
+          acc_filled: filled,   // v5.34
         });
         if (!r || !r.ok) break;
 
@@ -4686,6 +4688,7 @@ async function viewSync(user) {
           phone: Number(r.acc_rej_phone) || 0,
           email: Number(r.acc_rej_email) || 0,
         };
+        filled = Number(r.acc_filled) || 0;
 
         runId = r.run_id || runId;
         total = r.total_stores || total;
@@ -4711,6 +4714,20 @@ async function viewSync(user) {
       if (!r || !r.ok) {
         if (el) el.innerHTML = `<span style="color:#b91c1c">⚠ ${(r && r.error) || 'No se pudo ejecutar.'}</span>`;
         return;
+      }
+
+      /* v5.34 — FICHAS QUE SE COMPLETARON SOLAS.
+         Gente que ya estaba cargada pero con la ficha a medias (cuenta,
+         telefono o correo vacios). El sistema tenia el dato y ahora se tomo.
+         No se piso nada: solo se llenaron huecos. */
+      if (filled > 0 && el) {
+        el.insertAdjacentHTML('beforeend',
+          `<div style="margin-top:10px;padding:11px 13px;background:#f0fdf4;border:1px solid #bbf7d0;`
+          + `border-radius:9px;font-size:12.5px;color:#166534;line-height:1.55">`
+          + `<b>✓ ${filled} ficha${filled === 1 ? '' : 's'} se completó${filled === 1 ? '' : 'aron'} con datos del sistema.</b> `
+          + `Tenían la cuenta bancaria, el teléfono o el correo en blanco, y el sistema `
+          + `sí los tenía. Los datos que ya estaban cargados en el portal no se tocaron.`
+          + `</div>`);
       }
 
       /* v5.31 — DATOS QUE NO SE ESCRIBIERON POR VENIR MAL FORMATEADOS.
