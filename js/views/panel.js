@@ -159,9 +159,10 @@ const NAV_GROUPS = [
     ['constancias', I.docs, 'Constancias'],
     ['firmantes', I.pencil, 'Firmantes', 'superonly'],
   ] },
-  /* v5.40 — EL MENU DE SINCRONIZACION, PARTIDO EN DOS POR DIRECCION.
+  /* v5.42 — EL MENU DE SINCRONIZACION, EN TRES BLOQUES.
 
-     Antes habia UN grupo ("Sincronizacion") con los dos flujos mezclados:
+     ANTES (hasta v5.39) era UN grupo ("Sincronizacion") con los dos flujos
+     mezclados:
 
          Sincronizar    <- portal ESCRIBE en el sistema
          Comparar       <- portal LEE del sistema
@@ -173,12 +174,20 @@ const NAV_GROUPS = [
      distinto, pero el menu los ponia uno al lado del otro como si fueran
      sinonimos.
 
-     Ahora cada grupo tiene SU bandeja y SU bitacora, y la simetria se ve:
+     v5.40 lo partio en dos por DIRECCION. Bien. Pero metio "Consultar API" y
+     "Configurar" dentro de "Recibir", y eso era falso:
+       - Consultar API no recibe ni envia nada: es un banco de pruebas. Se le
+         pregunta algo al sistema y se mira la respuesta. Nada se guarda.
+       - Configurar gobierna las DOS direcciones (el cron que trae y el que
+         empuja). Ponerlo de un solo lado es elegir un lado al azar.
 
-         RECIBIR              ENVIAR
-         Pendientes   (73)    Publicar    (8)   <- lo que espera
-         Comparar                               <- herramienta
-         Registro             Historial         <- lo que ya paso
+     Ahora hay un tercer bloque, HERRAMIENTAS, para lo que no es ni una cosa ni
+     la otra. Cada flujo tiene SU bandeja y SU bitacora, y la simetria se ve:
+
+         RECIBIR              ENVIAR              HERRAMIENTAS
+         Pendientes  (5)      Publicar   (11)     Consultar API
+         Comparar             Historial           Configurar
+         Registro
 
      Ademas "Sincronizar" pasa a llamarse "Publicar", que es lo que hace. Un
      item llamado "Sincronizar" dentro de un grupo llamado "Sincronizacion" no
@@ -191,12 +200,14 @@ const NAV_GROUPS = [
     ['syncpend', I.alert, 'Pendientes', 'adminonly'],
     ['axcompare', I.compare, 'Comparar', 'adminonly'],
     ['synclog', I.docs, 'Registro', 'adminonly'],
-    ['erpquery', I.search, 'Consultar API', 'adminonly'],
-    ['sync', I.cog, 'Configurar', 'superonly'],
   ] },
   { title: 'Enviar al sistema', items: [
     ['syncreview', I.sync, 'Publicar', 'adminonly'],
     ['axhistory', I.history, 'Historial', 'adminonly'],
+  ] },
+  { title: 'Herramientas', items: [
+    ['erpquery', I.search, 'Consultar API', 'adminonly'],
+    ['sync', I.cog, 'Configurar', 'superonly'],
   ] },
   // v4.78: grupo DATOS BANCARIOS (aprobado por Pablo). Nace con Estadisticas;
   // Sincronizar e Historial (clones filtrados a cuentas) llegan en v4.79/80,
@@ -476,7 +487,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.41</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.42</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>

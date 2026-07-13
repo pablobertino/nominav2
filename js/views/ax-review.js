@@ -190,7 +190,13 @@ function ensureStyles() {
   .axr-tbl th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;padding:6px 10px;border-bottom:1px solid var(--border)}
   .axr-tbl td{padding:8px 10px;border-bottom:1px solid var(--border-soft,#eef1f5);vertical-align:top}
   .axr-tbl .fld{font-weight:600;color:var(--ink);width:130px}
-  .axr-old{color:var(--muted);text-decoration:line-through;text-decoration-color:#cbd5e1}
+  /* v5.42: el tachado con color de linea casi blanco (#cbd5e1) sobre texto gris
+     era ilegible. Ahora la linea toma el color del texto y el texto se aclara:
+     se lee QUE decia, y se entiende que ya no vale. */
+  .axr-old{color:#94a3b8;text-decoration:line-through;text-decoration-thickness:1px}
+  /* Valor que NO cambio (mismo dato, distinto formato de guardado). Ni tachado
+     ni verde: gris neutro. No paso nada aqui. */
+  .axr-same{color:var(--muted);font-variant-numeric:tabular-nums}
   .axr-arr{color:var(--faint,#94a3b8);padding:0 8px}
   .axr-new{color:var(--success,#16a34a);font-weight:600}
   .axr-new.empty,.axr-old.empty{color:var(--faint,#94a3b8);font-style:italic;text-decoration:none}
@@ -396,9 +402,9 @@ export async function renderAxReview(user, fieldFilter) {
   await ensurePerms(user);
   $('#pnlMain').innerHTML = `
     <div class="axr-head"><div>
-      <h1>${FIELD_FILTER ? 'Datos bancarios · Sincronizar' : 'Sincronizar'}</h1>
+      <h1>${FIELD_FILTER ? 'Datos bancarios · Publicar' : 'Publicar'}</h1>
       <p>${FIELD_FILTER
-        ? 'Solo la <b>cuenta bancaria</b>. Al publicar se envía únicamente la cuenta: los demás campos de la ficha no se tocan y se resuelven en <b>Sincronizar</b>.'
+        ? 'Solo la <b>cuenta bancaria</b>. Al publicar se envía únicamente la cuenta: los demás campos de la ficha no se tocan y se resuelven en <b>Enviar al sistema · Publicar</b>.'
         : 'Revisa los cambios de fichas pendientes y decide qué se <b>publica</b> y qué se <b>anula</b>. La <b>cuenta bancaria</b> se publica aparte, desde <b>Datos bancarios</b>.'}</p>
     </div><span id="axrRefresh"></span></div>
     <div class="axr-stats">
@@ -519,12 +525,30 @@ function paint() {
       ? allFields.filter(isBankField)
       : allFields;
     const nOther = allFields.length - fields.length;
-    const chg = fields.map(f => `<tr${isBankField(f) ? ' class="bankrow"' : ''}>
+    /* v5.42 — NO TACHAR LO QUE NO CAMBIO.
+
+       El change_set guarda old/new en CRUDO. Cuando el portal migro el telefono
+       a formato internacional, quedaron pendientes con old="04122177028" y
+       new="+584122177028": el MISMO numero, escrito distinto. Como displayVal()
+       traduce los dos a "0412 2177028", en pantalla se veia
+
+           Telefono   ~~04122177028~~  →  04122177028
+
+       o sea, un tachado sobre un valor identico al de al lado. Ruido puro: el
+       ojo se detiene en algo que no cambio.
+
+       La comparacion se hace sobre lo que SE MUESTRA (f.old vs f.new, ya
+       traducidos), no sobre el crudo. Si coinciden, es un no-cambio: se muestra
+       en gris, sin tachar, con un '=' en vez de la flecha. */
+    const chg = fields.map(f => {
+      const same = f.old != null && f.new != null && String(f.old) === String(f.new);
+      return `<tr${isBankField(f) ? ' class="bankrow"' : ''}>
       <td class="fld">${esc(f.label)}${isBankField(f) ? ' ⚠' : ''}</td>
-      <td><span class="axr-old ${f.old == null ? 'empty' : ''}">${f.old == null ? '(vacío)' : esc(f.old)}</span></td>
-      <td class="axr-arr">→</td>
-      <td><span class="axr-new ${f.new == null ? 'empty' : ''}">${f.new == null ? '(vacío)' : esc(f.new)}</span></td>
-    </tr>`).join('');
+      <td><span class="${same ? 'axr-same' : 'axr-old'} ${f.old == null ? 'empty' : ''}">${f.old == null ? '(vacío)' : esc(f.old)}</span></td>
+      <td class="axr-arr">${same ? '=' : '→'}</td>
+      <td><span class="${same ? 'axr-same' : 'axr-new'} ${f.new == null ? 'empty' : ''}">${f.new == null ? '(vacío)' : esc(f.new)}</span></td>
+    </tr>`;
+    }).join('');
     const emeta = [r.zona, r.subzona, r.concepto].filter(Boolean).map(esc).join(' · ');
     const n = fields.length;
     return `<div class="axr-row ${bank ? 'bank ' : ''}${isSel ? 'sel' : ''} ${isOpen ? 'open' : ''}" data-id="${r.id}">
