@@ -1,19 +1,42 @@
 /* =====================================================================
    functions/api/sync-roster.js  →  POST /api/sync-roster
-   SINCRONIZACION AUTOMATICA DE MEMBRESIA en tiendas (v4.55).
+   SINCRONIZACION AUTOMATICA DE MEMBRESIA en tiendas (v5.31).
 
    Alcance DELIBERADAMENTE reducido (decision de Pablo 2026-07-09):
    - INGRESA a los trabajadores nuevos que el sistema trae y el portal no
-     tiene (con departamento Retail, regla de tiendas).
+     tiene (con departamento Retail, regla de tiendas). El ingreso entra con
+     la FICHA COMPLETA: nombre, cargo, y ademas cuenta bancaria, telefono y
+     correo (v5.31 — antes entraban vacios: ver abajo).
    - RETIRA (egresa) a los que el sistema marca con fin de contrato.
-   - NO TOCA ningun campo de los que ya estan (nombre, cargo, telefono,
+   - NO TOCA ningun campo de los que YA ESTAN (nombre, cargo, telefono,
      ficha completa: todo eso sigue siendo manual via Actualizar/ficha).
+
+   ⚠ LA DISTINCION QUE IMPORTA (v5.31):
+     INSERT   = persona nueva  -> se trae TODO. No hay nada que pisar.
+     REINGRESO/UPDATE = persona que ya existe -> NO se toca su ficha.
+   No es lo mismo "no pisar el dato de alguien" que "crear a alguien con la
+   ficha a medias". Lo primero es la regla; lo segundo era un bug.
+
+   🔴 PENDIENTE — EL UPDATE NO EXISTE TODAVIA. Si un tercero cambia la cuenta
+   en AX de alguien que ya esta en el portal, el portal NO se entera. Traerlo
+   necesita resolver los conflictos: hay fichas con cambios del portal aun sin
+   publicar (`ax_pending`) que un UPDATE ciego pisaria. La API ya da la
+   municion (`auditoria.modificadoPor` dice si el cambio vino del portal o de
+   un tercero). Diseno en _PLANES/PENDIENTE_SYNC_ROSTER_BUGS.md §BUG 3.
+
+   🔴 PENDIENTE — EL CRON NO AVANZA DE TANDA. La cadena de auto-invocacion se
+   corta en el primer eslabon: cada corrida del cron procesa SIEMPRE las mismas
+   10 tiendas y nunca llega a `done`, asi que nunca escribe last_run_at y el
+   tick la vuelve a disparar a los 15 min, para siempre. Las tiendas 10-131 no
+   se sincronizan solas nunca. Ver _PLANES/PENDIENTE_SYNC_ROSTER_BUGS.md §BUG 1.
 
    Reglas de seguridad:
    - Egreso SOLO con dato EXPLICITO (finContrato pasada). JAMAS por
      ausencia en la respuesta (una respuesta parcial no egresa a nadie).
    - Umbral anti-vaciado: si la API devuelve menos del 70% de los activos
      de una tienda (y la tienda tiene 5+), esa tienda se SALTA con alerta.
+   - Centinelas: la API devuelve '-' / 'None' / 'No' / '0' cuando no hay dato.
+     Se limpian (clean/cleanAccount) o se guardaria un guion como cuenta.
    - Presupuesto de tiempo: lotes de 8 tiendas en paralelo; si se agota el
      presupuesto, corta limpio y lo dice en el resumen (proxima corrida
      continua de forma natural: es idempotente).
@@ -84,6 +107,35 @@ const digits = (v) => String(v == null ? '' : v).replace(/[^0-9]/g, '');
 const iso10 = (v) => {
   const s = String(v || '').slice(0, 10);
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
+};
+
+/* ===== CENTINELAS DE LA API (v5.31) =====
+   El microservicio Flask usa `campo or '-'` como default, asi que un dato
+   vacio en AX NO llega como null: llega como '-' (o 'None', 'No', '0' segun
+   el campo). Si se guardaran tal cual, la ficha tendria un guion como cuenta
+   bancaria y el portal lo mostraria como si fuera un dato real.
+
+   Doc: _PLANES/API_HCM_EMPLEADOS_INTERNALS_2026-07-10.md §2.
+   La carga manual (ax-roster.js) ya los filtra; el auto_sync tiene que hacer
+   lo mismo o ensucia el maestro. Verificado 2026-07-13: hoy hay 0 centinelas
+   guardados en workers_master. */
+const SENTINELS = new Set(['-', 'none', 'no', '0', 'n/a', 'na', '--']);
+const clean = (v) => {
+  const s = String(v == null ? '' : v).trim();
+  if (!s || SENTINELS.has(s.toLowerCase())) return null;
+  return s;
+};
+
+/* La cuenta bancaria venezolana son 20 digitos. Si viene algo mas corto o mas
+   largo, es basura (o un centinela raro): mejor null que un dato invalido que
+   despues alguien use para pagar. La API ya manda SOLO la cuenta Principal de
+   AX (verificado 2026-07-13 contra el ERP), asi que no hay que elegir entre
+   varias: la que llega es la que vale. */
+const cleanAccount = (v) => {
+  const s = clean(v);
+  if (!s) return null;
+  const d = s.replace(/\D/g, '');
+  return d.length === 20 ? d : null;
 };
 
 /* Departamento Retail de la tienda (cada tienda tiene el suyo); lo crea si
@@ -164,6 +216,21 @@ async function processStore(env, cc) {
         .filter(Boolean).join(' ')).trim();
 
     if (toInsert.length) {
+      /* v5.31 — LA FICHA ENTRA COMPLETA.
+
+         El bug: el INSERT no traia cuenta bancaria, telefono ni correo, aunque
+         la API los devuelve (cuentaBancaria/telefono/correo). Resultado: toda
+         persona ingresada por auto_sync quedaba con la ficha a medias.
+         Verificado 2026-07-13 contra AX: de las 2.689 personas vigentes, 79 no
+         tenian cuenta — y AX SI las tenia. El corte era perfecto por origen:
+           source='ax_api'    2.602 personas,  0 sin cuenta
+           source='auto_sync'    87 personas, 79 sin cuenta  <-- el agujero
+
+         Esto es SOLO el INSERT (persona que el portal no tiene). NO se toca a
+         los que ya estan: esa sigue siendo la regla del 2026-07-09, y ademas
+         hay 8 fichas con cambios del portal aun sin publicar a AX (ax_pending)
+         que un UPDATE ciego se llevaria puesto. El UPDATE necesita la logica de
+         conflictos (auditoria.modificadoPor) y va aparte. */
       const body = toInsert.map(([ced, r]) => ({
         company_code: cc,
         id_number: ced,
@@ -173,6 +240,9 @@ async function processStore(env, cc) {
         last_names: r.apellidos || [r.primerApellido, r.segundoApellido].filter(Boolean).join(' ') || null,
         role: r.idCargo || null,
         start_date: iso10(r.inicioContrato),
+        account_number: cleanAccount(r.cuentaBancaria),
+        phone: clean(r.telefono),
+        email: clean(r.correo),
         is_active: true,
         department_id: deptId,
         source: 'auto_sync',
@@ -182,6 +252,9 @@ async function processStore(env, cc) {
         body: JSON.stringify(body),
       });
       // Maestro global: crear SOLO si no existe (jamas pisar datos/foto).
+      // resolution=ignore-duplicates => si la persona ya existe (viene de otra
+      // empresa), esta fila se descarta entera y NO le pisa nada. Por eso es
+      // seguro mandar aca la ficha completa.
       const masterRows = toInsert.map(([ced, r]) => ({
         id_number: ced,
         full_name: fullNameOf(r) || ced,
@@ -189,6 +262,9 @@ async function processStore(env, cc) {
         second_name: r.segundoNombre || null,
         last_names: r.apellidos || null,
         birth_date: iso10(r.fechaNacimiento),
+        account_number: cleanAccount(r.cuentaBancaria),
+        phone: clean(r.telefono),
+        email: clean(r.correo),
         last_source_company: cc,
       }));
       await sb(env, 'workers_master?on_conflict=id_number', {
@@ -200,6 +276,12 @@ async function processStore(env, cc) {
       out.detail.added = toInsert.map(([c]) => c);
     }
 
+    /* REINGRESO: la persona ya existe en el roster de esta tienda (egresada) y
+       el sistema la trae vigente de nuevo. Se la reactiva y NADA MAS.
+       Deliberadamente NO se tocan cuenta/telefono/correo aca: su ficha ya
+       existe y puede tener datos cargados desde el portal. Reactivar no es
+       excusa para pisar. (El INSERT si los trae, porque ahi no hay nada que
+       pisar: la persona es nueva.) */
     for (const [ced, r] of toReenter) {
       await sb(env, `store_workers?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
