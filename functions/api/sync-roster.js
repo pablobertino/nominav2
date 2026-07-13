@@ -323,10 +323,23 @@ async function processStore(env, cc) {
 
         /* CONTAR LOS DESCARTES: el dato VENIA (no es que falte en AX) pero esta
            mal formado, asi que no se escribe. Esto es lo que despues reporta la
-           sincronizacion para que se corrija en el ERP. */
-        if (clean(r.cuentaBancaria) && !acc) out.rejected.account++;
-        if (clean(r.telefono) && !tel) out.rejected.phone++;
-        if (clean(r.correo) && !mail) out.rejected.email++;
+           sincronizacion para que se corrija en el ERP.
+           v5.34: ademas del contador, se guarda el DETALLE. Sin esto, un ingreso
+           nuevo con el correo roto subia el numero pero NO aparecia en la lista:
+           el aviso decia "5 correos mal escritos" y solo se podian ver 4. */
+        const nomIns = fullNameOf(r) || ced;
+        if (clean(r.cuentaBancaria) && !acc) {
+          out.rejected.account++;
+          out.rejDetail.push({ ced, nom: nomIns, comp: cc, campo: 'cuenta', valor: clean(r.cuentaBancaria) });
+        }
+        if (clean(r.telefono) && !tel) {
+          out.rejected.phone++;
+          out.rejDetail.push({ ced, nom: nomIns, comp: cc, campo: 'telefono', valor: clean(r.telefono) });
+        }
+        if (clean(r.correo) && !mail) {
+          out.rejected.email++;
+          out.rejDetail.push({ ced, nom: nomIns, comp: cc, campo: 'correo', valor: clean(r.correo) });
+        }
 
         r.__acc = acc; r.__tel = tel; r.__mail = mail;   // para el maestro
 
