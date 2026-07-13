@@ -126,16 +126,64 @@ const clean = (v) => {
   return s;
 };
 
-/* La cuenta bancaria venezolana son 20 digitos. Si viene algo mas corto o mas
-   largo, es basura (o un centinela raro): mejor null que un dato invalido que
-   despues alguien use para pagar. La API ya manda SOLO la cuenta Principal de
-   AX (verificado 2026-07-13 contra el ERP), asi que no hay que elegir entre
-   varias: la que llega es la que vale. */
+/* ===== VALIDACION: si esta mal formateado, NO PASA (decision de Pablo 2026-07-13)
+
+   El portal NO arregla datos del ERP. Si un dato viene mal formado, se DESCARTA
+   y la sincronizacion lo REPORTA ("3 correos no se escribieron por formato"),
+   para que se corrija en AX, que es donde vive el dato.
+
+   La alternativa — "normalizar" en el portal — es peor: enmascara el problema,
+   el dato sigue mal en el ERP, y el portal termina con una version distinta de
+   la verdad. Ademas nadie se entera nunca de que hay que arreglarlo.
+
+   Cada validador devuelve el valor limpio, o null si no pasa. */
+
+/* CUENTA: 20 digitos exactos. Ni uno mas ni uno menos.
+   AX manda SOLO la cuenta marcada como Principal (verificado 2026-07-13 contra
+   el ERP: JEAN RODRIGUEZ tiene 2 cuentas en AX y la API manda la Principal),
+   asi que no hay que elegir: la que llega es la que vale. */
 const cleanAccount = (v) => {
   const s = clean(v);
   if (!s) return null;
   const d = s.replace(/\D/g, '');
   return d.length === 20 ? d : null;
+};
+
+/* TELEFONO: se acepta con o sin el 0, con guiones, con +58. Todo eso es el
+   MISMO numero escrito distinto, no un dato malo: se normaliza a 04XXXXXXXXX.
+   Lo que SI se rechaza es un numero que no puede existir: largo equivocado o
+   prefijo de operadora inexistente.
+
+   Prefijos validos (verificado 2026-07-13 contra los 233 telefonos que ya
+   funcionan en la base): 0412 0414 0416 0422 0424 0426.
+   ⚠ OJO: 0422 SI EXISTE — hay 81 numeros +58422 andando. Casi lo descarto por
+   asumir que era un error de carga. */
+const VE_PREFIXES = new Set(['0412', '0414', '0416', '0422', '0424', '0426']);
+const cleanPhone = (v) => {
+  const s = clean(v);
+  if (!s) return null;
+  let d = s.replace(/\D/g, '');
+  if (d.startsWith('58') && d.length === 12) d = '0' + d.slice(2);   // +584121234567
+  if (d.length === 10) d = '0' + d;                                   // 4121234567 (sin el 0)
+  if (d.length !== 11) return null;                                   // no es un movil VE
+  if (!VE_PREFIXES.has(d.slice(0, 4))) return null;                   // operadora inexistente
+  return d;
+};
+
+/* CORREO: tiene que parecer un correo. Nada mas que eso.
+   El motivo real: AX esta devolviendo correos SIN la arroba ni los puntos
+   ("erickmontanezgrupocanaimanet" en vez de "erick.montanez@grupocanaima.net").
+   No se sabe todavia si el dato esta asi en AX o si algo lo rompe en el camino
+   — pero en cualquier caso NO se guarda: quedaria como si fuera un correo
+   valido y nadie lo notaria hasta que un envio falle.
+   Se reporta y se arregla en AX. */
+const cleanEmail = (v) => {
+  const s = clean(v);
+  if (!s) return null;
+  const e = s.toLowerCase();
+  // Minimo indispensable: algo@algo.algo, sin espacios.
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e)) return null;
+  return e;
 };
 
 /* Departamento Retail de la tienda (cada tienda tiene el suyo); lo crea si
@@ -154,7 +202,10 @@ async function retailDeptId(env, cc) {
 /* Procesa UNA tienda. Devuelve { company_code, added, removed, skipped,
    alert, detail } sin lanzar (los errores quedan como alerta). */
 async function processStore(env, cc) {
-  const out = { company_code: cc, added: 0, removed: 0, skipped: false, alert: null, detail: {} };
+  const out = { company_code: cc, added: 0, removed: 0, skipped: false, alert: null, detail: {},
+                // v5.31: datos que NO se escribieron por venir mal formateados.
+                // No es un error de la sincronizacion: es un dato a corregir en AX.
+                rejected: { account: 0, phone: 0, email: 0 } };
   try {
     const today = new Date().toISOString().split('T')[0];
     const apiRes = await fetch(`${HCM_API}?alias=${encodeURIComponent(cc)}&fecha=${today}`, {
@@ -231,22 +282,39 @@ async function processStore(env, cc) {
          hay 8 fichas con cambios del portal aun sin publicar a AX (ax_pending)
          que un UPDATE ciego se llevaria puesto. El UPDATE necesita la logica de
          conflictos (auditoria.modificadoPor) y va aparte. */
-      const body = toInsert.map(([ced, r]) => ({
-        company_code: cc,
-        id_number: ced,
-        full_name: fullNameOf(r) || ced,
-        first_name: r.primerNombre || null,
-        second_name: r.segundoNombre || null,
-        last_names: r.apellidos || [r.primerApellido, r.segundoApellido].filter(Boolean).join(' ') || null,
-        role: r.idCargo || null,
-        start_date: iso10(r.inicioContrato),
-        account_number: cleanAccount(r.cuentaBancaria),
-        phone: clean(r.telefono),
-        email: clean(r.correo),
-        is_active: true,
-        department_id: deptId,
-        source: 'auto_sync',
-      }));
+      const body = toInsert.map(([ced, r]) => {
+        /* Se valida UNA vez por persona y se reusa en las dos tablas (roster y
+           maestro), para que no puedan quedar distintas entre si. */
+        const acc = cleanAccount(r.cuentaBancaria);
+        const tel = cleanPhone(r.telefono);
+        const mail = cleanEmail(r.correo);
+
+        /* CONTAR LOS DESCARTES: el dato VENIA (no es que falte en AX) pero esta
+           mal formado, asi que no se escribe. Esto es lo que despues reporta la
+           sincronizacion para que se corrija en el ERP. */
+        if (clean(r.cuentaBancaria) && !acc) out.rejected.account++;
+        if (clean(r.telefono) && !tel) out.rejected.phone++;
+        if (clean(r.correo) && !mail) out.rejected.email++;
+
+        r.__acc = acc; r.__tel = tel; r.__mail = mail;   // para el maestro
+
+        return {
+          company_code: cc,
+          id_number: ced,
+          full_name: fullNameOf(r) || ced,
+          first_name: r.primerNombre || null,
+          second_name: r.segundoNombre || null,
+          last_names: r.apellidos || [r.primerApellido, r.segundoApellido].filter(Boolean).join(' ') || null,
+          role: r.idCargo || null,
+          start_date: iso10(r.inicioContrato),
+          account_number: acc,
+          phone: tel,
+          email: mail,
+          is_active: true,
+          department_id: deptId,
+          source: 'auto_sync',
+        };
+      });
       await sb(env, 'store_workers', {
         method: 'POST', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify(body),
@@ -262,9 +330,9 @@ async function processStore(env, cc) {
         second_name: r.segundoNombre || null,
         last_names: r.apellidos || null,
         birth_date: iso10(r.fechaNacimiento),
-        account_number: cleanAccount(r.cuentaBancaria),
-        phone: clean(r.telefono),
-        email: clean(r.correo),
+        account_number: r.__acc,
+        phone: r.__tel,
+        email: r.__mail,
         last_source_company: cc,
       }));
       await sb(env, 'workers_master?on_conflict=id_number', {
@@ -397,6 +465,17 @@ export async function onRequestPost({ request, env, ctx }) {
   const removed = results.reduce((a, r) => a + r.removed, 0);
   const alerts = results.filter(r => r.alert).length;
 
+  /* v5.31 — DATOS RECHAZADOS POR FORMATO.
+     El dato VENIA del sistema, pero mal formado, asi que no se escribio. No es
+     un error de la sincronizacion: es un dato a corregir EN AX. Se cuenta y se
+     informa; sin esto, el descarte seria silencioso y nadie sabria que hay algo
+     que arreglar. */
+  const rej = results.reduce((a, r) => ({
+    account: a.account + ((r.rejected && r.rejected.account) || 0),
+    phone:   a.phone   + ((r.rejected && r.rejected.phone)   || 0),
+    email:   a.email   + ((r.rejected && r.rejected.email)   || 0),
+  }), { account: 0, phone: 0, email: 0 });
+
   // Log: SOLO tiendas con movimiento o alerta (corridas limpias no ensucian).
   const logRows = results
     .filter(r => r.added || r.removed || r.skipped)
@@ -419,15 +498,28 @@ export async function onRequestPost({ request, env, ctx }) {
   const prevRemoved = Math.max(0, parseInt(body.acc_removed, 10) || 0);
   const prevAlerts = Math.max(0, parseInt(body.acc_alerts, 10) || 0);
   const prevStores = Math.max(0, parseInt(body.acc_stores, 10) || 0);
+  // Los rechazos tambien acumulan entre tandas (si no, el resumen mostraria
+  // solo los de la ultima tanda de 10 tiendas).
+  const prevRej = {
+    account: Math.max(0, parseInt(body.acc_rej_account, 10) || 0),
+    phone:   Math.max(0, parseInt(body.acc_rej_phone, 10) || 0),
+    email:   Math.max(0, parseInt(body.acc_rej_email, 10) || 0),
+  };
 
   const totAdded = prevAdded + added;
   const totRemoved = prevRemoved + removed;
   const totAlerts = prevAlerts + alerts;
   const totStores = prevStores + results.length;
+  const totRej = {
+    account: prevRej.account + rej.account,
+    phone:   prevRej.phone   + rej.phone,
+    email:   prevRej.email   + rej.email,
+  };
 
   const summary = {
     run_id: runId, stores: totStores, total_stores: codes.length,
     added: totAdded, removed: totRemoved, alerts: totAlerts,
+    rejected: totRej,
     incomplete: incomplete || !done,
   };
 
@@ -471,6 +563,9 @@ export async function onRequestPost({ request, env, ctx }) {
       offset: nextOffset, run_id: runId,
       acc_added: totAdded, acc_removed: totRemoved,
       acc_alerts: totAlerts, acc_stores: totStores,
+      acc_rej_account: totRej.account,
+      acc_rej_phone: totRej.phone,
+      acc_rej_email: totRej.email,
     };
     const chain = fetch(selfUrl, {
       method: 'POST',
@@ -487,6 +582,11 @@ export async function onRequestPost({ request, env, ctx }) {
     next_offset: done ? null : nextOffset,
     processed: results.length,     // tiendas de ESTA tanda
     duration_ms: Date.now() - t0,
+    // v5.31: los acumuladores viajan al front para la tanda siguiente. Sin
+    // esto, el resumen final solo contaria los rechazos de la ULTIMA tanda.
+    acc_rej_account: totRej.account,
+    acc_rej_phone: totRej.phone,
+    acc_rej_email: totRej.email,
   });
   } catch (e) {
     // v4.58: una falla dura marca la corrida como error en la config para

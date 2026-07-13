@@ -75,24 +75,59 @@ async function sb(env, path, opts = {}) {
   return t ? JSON.parse(t) : null;
 }
 
-/* Centinelas de la API: '-' / 'None' / 'No' / '0' = SIN DATO.
-   Sin este filtro, se guardaria un guion como cuenta bancaria.
-   (Doc: _PLANES/API_HCM_EMPLEADOS_INTERNALS_2026-07-10.md §2) */
+/* ===== VALIDACION (decision de Pablo 2026-07-13) =====
+   Si el dato viene MAL FORMATEADO, NO SE ESCRIBE. Se cuenta y se reporta, para
+   que se corrija en AX — que es donde vive el dato. El portal no "arregla"
+   datos del ERP: eso enmascara el problema y deja dos versiones de la verdad.
+
+   Lo que SI se acepta: el mismo numero escrito distinto (con/sin el 0, con
+   guiones, con +58). Eso no es un dato malo, es formato. */
 const SENTINELS = new Set(['-', 'none', 'no', '0', 'n/a', 'na', '--']);
 const clean = (v) => {
   const s = String(v == null ? '' : v).trim();
   if (!s || SENTINELS.has(s.toLowerCase())) return null;
   return s;
 };
-/* Cuenta venezolana = 20 digitos. Cualquier otra cosa es basura: mejor null
-   que un numero invalido que despues alguien use para pagar un sueldo.
-   AX manda SOLO la cuenta marcada como Principal (verificado 2026-07-13). */
+
+/* CUENTA: 20 digitos exactos. AX manda solo la marcada como Principal. */
 const cleanAccount = (v) => {
   const s = clean(v);
   if (!s) return null;
   const d = s.replace(/\D/g, '');
   return d.length === 20 ? d : null;
 };
+
+/* TELEFONO: se normaliza a 04XXXXXXXXX. Se RECHAZA si el largo no da o si el
+   prefijo de operadora no existe.
+   Prefijos validos (verificado contra los 233 telefonos que ya funcionan):
+   0412 0414 0416 0422 0424 0426.
+   ⚠ 0422 SI EXISTE (81 numeros +58422 en la base). Casi lo descarto por asumir
+   que era un error de carga. */
+const VE_PREFIXES = new Set(['0412', '0414', '0416', '0422', '0424', '0426']);
+const cleanPhone = (v) => {
+  const s = clean(v);
+  if (!s) return null;
+  let d = s.replace(/\D/g, '');
+  if (d.startsWith('58') && d.length === 12) d = '0' + d.slice(2);
+  if (d.length === 10) d = '0' + d;
+  if (d.length !== 11) return null;
+  if (!VE_PREFIXES.has(d.slice(0, 4))) return null;
+  return d;
+};
+
+/* CORREO: tiene que parecer un correo.
+   🔴 AX esta devolviendo correos SIN arroba ni puntos
+   ("erickmontanezgrupocanaimanet" en vez de "erick.montanez@grupocanaima.net").
+   Esos NO se escriben: quedarian como si fueran validos y nadie lo notaria
+   hasta que un envio falle. Se reportan para corregir en AX. */
+const cleanEmail = (v) => {
+  const s = clean(v);
+  if (!s) return null;
+  const e = s.toLowerCase();
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e)) return null;
+  return e;
+};
+
 const digits = (v) => String(v == null ? '' : v).replace(/[^0-9]/g, '');
 
 export async function onRequestPost({ request, env }) {
@@ -164,6 +199,11 @@ export async function onRequestPost({ request, env }) {
     const changes = [];      // lo que se va a escribir (o se escribiria)
     const notFound = [];     // en el portal pero la API no los devuelve
     const noData = [];       // la API los devuelve, pero AX tampoco tiene el dato
+    /* RECHAZADOS POR FORMATO: el dato VENIA de AX, pero mal formado. No se
+       escribe. Se guarda el valor crudo para poder reportarlo y que se corrija
+       en el ERP. Esto es lo que pidio Pablo: "si estan mal formateados no pasen,
+       los arreglo desde AX". */
+    const rejected = { account: [], phone: [], email: [] };
 
     for (const cc of slice) {
       const targets = needByComp.get(cc) || [];
@@ -188,13 +228,30 @@ export async function onRequestPost({ request, env }) {
         if (!ax) { notFound.push({ ced: t.ced, company: cc }); continue; }
 
         const patch = {};
-        // Solo se rellena lo que ESTA VACIO. Lo que ya tiene valor, ni se mira.
-        if (t.faltaCuenta) { const v = cleanAccount(ax.cuentaBancaria); if (v) patch.account_number = v; }
-        if (t.faltaTel)    { const v = clean(ax.telefono);              if (v) patch.phone = v; }
-        if (t.faltaMail)   { const v = clean(ax.correo);                if (v) patch.email = v; }
+        /* Solo se rellena lo que ESTA VACIO. Lo que ya tiene valor, ni se mira.
+           Y solo se escribe lo que PASA LA VALIDACION: lo demas se rechaza y se
+           reporta, no se "arregla" aca. */
+        if (t.faltaCuenta) {
+          const crudo = clean(ax.cuentaBancaria);
+          const v = cleanAccount(ax.cuentaBancaria);
+          if (v) patch.account_number = v;
+          else if (crudo) rejected.account.push({ ced: t.ced, company: cc, valor: crudo });
+        }
+        if (t.faltaTel) {
+          const crudo = clean(ax.telefono);
+          const v = cleanPhone(ax.telefono);
+          if (v) patch.phone = v;
+          else if (crudo) rejected.phone.push({ ced: t.ced, company: cc, valor: crudo });
+        }
+        if (t.faltaMail) {
+          const crudo = clean(ax.correo);
+          const v = cleanEmail(ax.correo);
+          if (v) patch.email = v;
+          else if (crudo) rejected.email.push({ ced: t.ced, company: cc, valor: crudo });
+        }
 
         if (!Object.keys(patch).length) {
-          // AX tampoco lo tiene. No es un error: es un dato que falta cargar.
+          // AX tampoco lo tiene (o vino todo mal formado). No es un error.
           noData.push({ ced: t.ced, company: cc });
           continue;
         }
@@ -236,7 +293,7 @@ export async function onRequestPost({ request, env }) {
       ok: true,
       dry_run: dryRun,
       mensaje: dryRun
-        ? 'ENSAYO: no se escribio nada. Revisa "cambios" y volve a llamar con dry_run:false.'
+        ? 'ENSAYO: no se escribio nada. Revisa "cambios" y "rechazados", y volve a llamar con dry_run:false.'
         : `Se rellenaron ${written} fichas.`,
       pendientes_totales: comps.reduce((a, c) => a + (needByComp.get(c) || []).length, 0),
       empresas_con_pendientes: comps.length,
@@ -247,7 +304,22 @@ export async function onRequestPost({ request, env }) {
       // Casos que NO se pudieron rellenar (informativo, no son errores):
       ax_tampoco_tiene: noData.length,
       no_estan_en_la_api: notFound.length,
-      // Muestra para revisar en el ensayo:
+
+      /* RECHAZADOS POR FORMATO — esto es lo que hay que CORREGIR EN AX.
+         El dato existe en el ERP pero esta mal escrito, asi que el portal no lo
+         guarda. Con la lista se puede ir a arreglarlo a la fuente. */
+      rechazados: {
+        cuenta: rejected.account.length,
+        telefono: rejected.phone.length,
+        correo: rejected.email.length,
+      },
+      rechazados_detalle: {
+        cuenta: rejected.account.slice(0, 20),
+        telefono: rejected.phone.slice(0, 20),
+        correo: rejected.email.slice(0, 20),
+      },
+
+      // Muestra de lo que SI se va a escribir:
       muestra: changes.slice(0, 15),
       done,
       next_offset: done ? null : nextOffset,

@@ -4658,7 +4658,11 @@ async function viewSync(user) {
          Ahora el server hace de a 10 tiendas y devuelve next_offset; aca se
          encadenan las tandas mostrando el avance. */
       let offset = 0, runId = null;
+      // v5.31: `rej` acumula los datos que NO se escribieron por venir mal
+      // formateados desde el sistema. Viaja entre tandas: si no, el resumen
+      // final solo contaria los de la ULTIMA tanda de 10 tiendas.
       let acc = { added: 0, removed: 0, alerts: 0, stores: 0 };
+      let rej = { account: 0, phone: 0, email: 0 };
       let total = 0;
       let r = null;
       let guard = 0;
@@ -4669,8 +4673,19 @@ async function viewSync(user) {
           source: 'manual', offset, run_id: runId,
           acc_added: acc.added, acc_removed: acc.removed,
           acc_alerts: acc.alerts, acc_stores: acc.stores,
+          // v5.31: los rechazos por formato tambien viajan entre tandas.
+          acc_rej_account: rej.account,
+          acc_rej_phone: rej.phone,
+          acc_rej_email: rej.email,
         });
         if (!r || !r.ok) break;
+
+        // El server devuelve los totales YA acumulados (no los de la tanda).
+        rej = {
+          account: Number(r.acc_rej_account) || 0,
+          phone: Number(r.acc_rej_phone) || 0,
+          email: Number(r.acc_rej_email) || 0,
+        };
 
         runId = r.run_id || runId;
         total = r.total_stores || total;
@@ -4697,6 +4712,30 @@ async function viewSync(user) {
         if (el) el.innerHTML = `<span style="color:#b91c1c">⚠ ${(r && r.error) || 'No se pudo ejecutar.'}</span>`;
         return;
       }
+
+      /* v5.31 — DATOS QUE NO SE ESCRIBIERON POR VENIR MAL FORMATEADOS.
+         Decision de Pablo: el portal NO arregla datos del ERP. Si un correo
+         viene sin arroba, o un telefono con un prefijo que no existe, NO se
+         guarda — se avisa, y se corrige en el sistema, que es donde vive el dato.
+
+         Sin este aviso el descarte seria SILENCIOSO: el dato no entra, nadie se
+         entera, y el campo queda vacio para siempre sin que nadie sepa por que. */
+      const rejTot = rej.account + rej.phone + rej.email;
+      if (rejTot > 0 && el) {
+        const partes = [];
+        if (rej.account) partes.push(`<b>${rej.account}</b> cuenta${rej.account === 1 ? '' : 's'} bancaria${rej.account === 1 ? '' : 's'}`);
+        if (rej.phone) partes.push(`<b>${rej.phone}</b> teléfono${rej.phone === 1 ? '' : 's'}`);
+        if (rej.email) partes.push(`<b>${rej.email}</b> correo${rej.email === 1 ? '' : 's'}`);
+        el.insertAdjacentHTML('beforeend',
+          `<div style="margin-top:10px;padding:11px 13px;background:#fff7ed;border:1px solid #fed7aa;`
+          + `border-radius:9px;font-size:12.5px;color:#9a3412;line-height:1.55">`
+          + `<b>⚠ Datos que no se pudieron guardar.</b> ${partes.join(', ')} `
+          + `${rejTot === 1 ? 'venía' : 'venían'} mal escrito${rejTot === 1 ? '' : 's'} desde el sistema `
+          + `(por ejemplo, un correo sin arroba). No se guardaron para no dejar un dato inválido `
+          + `en la ficha. <b>Se corrigen en el sistema</b> y entran solos en la próxima sincronización.`
+          + `</div>`);
+      }
+
       loadRs();
     });
     // v4.59: acceso al Registro de sincronizaciones (pagina unificada) con
