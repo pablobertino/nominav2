@@ -69,14 +69,96 @@ function ensureStyles() {
   .sl-st.error{background:var(--danger-bg,#fef2f2);color:var(--danger,#b91c1c);border:1px solid #f3c2c2}
   .sl-st.alerta{background:var(--warn-bg,#fff7ed);color:#b45309;border:1px solid #fed7aa}
   .sl-more{background:none;border:0;color:var(--brand,#2563eb);cursor:pointer;padding:0;font:inherit;font-size:12.5px;text-decoration:underline}
-  .sl-det{background:var(--bg-soft,#f8fafc);border-radius:8px;padding:8px 11px;margin-top:7px;font-size:12px;color:var(--ink-soft,#475569);line-height:1.55;white-space:pre-wrap;word-break:break-word}
+  .sl-det{background:var(--bg-soft,#f8fafc);border-radius:8px;padding:8px 11px;margin-top:7px;font-size:12px;color:var(--ink-soft,#475569);line-height:1.55;word-break:break-word}
   .sl-pager{display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:10px;font-size:12.5px;color:var(--muted)}
-  .sl-empty{padding:40px 16px;text-align:center;color:var(--muted)}`;
+  .sl-empty{padding:40px 16px;text-align:center;color:var(--muted)}
+
+  /* v5.37: pestanas del detalle (Movimientos / Completadas / Diferencias / ...) */
+  .sl-tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:2px 0 0;flex-wrap:wrap}
+  .sl-tab{font:inherit;font-size:12.5px;font-weight:600;color:var(--muted);cursor:pointer;padding:7px 12px;
+          background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
+  .sl-tab:hover{color:var(--ink)}
+  .sl-tab.on{color:var(--brand,#2563eb);border-bottom-color:var(--brand,#2563eb);font-weight:700}
+  .sl-tn{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;background:#eef2f7;
+         color:var(--muted);font-size:10.5px;font-weight:700}
+  .sl-tab.on .sl-tn{background:#e6efff;color:var(--brand,#2563eb)}
+  .sl-pane{padding-top:11px}
+  .sl-pn{font-size:12px;color:var(--ink-soft,#475569);margin:0 0 10px;padding:8px 11px;border-radius:8px;
+         background:var(--bg-soft,#f8fafc);border:1px solid var(--border-soft,#eef1f5);line-height:1.6}
+  .sl-pn b{color:var(--ink)}
+  .sl-mini{width:100%;border-collapse:collapse;font-size:12px;background:var(--card,#fff);
+           border:1px solid var(--border);border-radius:8px;overflow:hidden}
+  .sl-mini th{background:var(--bg-soft,#f8fafc);text-align:left;font-size:10px;text-transform:uppercase;
+              letter-spacing:.04em;color:var(--muted);font-weight:700;padding:7px 9px;
+              border-bottom:1px solid var(--border);white-space:nowrap}
+  .sl-mini td{padding:7px 9px;border-bottom:1px solid var(--border-soft,#eef1f5);color:var(--ink);vertical-align:middle}
+  .sl-mini tr:last-child td{border-bottom:0}
+  .sl-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:11.5px;
+           font-variant-numeric:tabular-nums}
+  .sl-cc{color:var(--brand,#2563eb);font-weight:700;font-size:11.5px}
+  .sl-pill{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:800;white-space:nowrap}
+  .sl-pill.rev{background:#e6efff;color:#1e40af}
+  .sl-pill.fix{background:#fdf3e7;color:#b45309}`;
   document.head.appendChild(st);
 }
 
 /* ---------- EXPORTAR (patron Empresas: xlsx / csv / txt) ---------- */
 function slExportRows() {
+  /* v5.37: en Personal de tiendas, el export deja de ser "una fila por corrida"
+     y pasa a ser UNA FILA POR CASO: cada ficha completada, cada diferencia,
+     cada dato mal escrito. Eso es lo que sirve para trabajar: se abre en Excel,
+     se filtra por estado, y se va a corregir al sistema.
+
+     El resumen por corrida no se pierde: va en las columnas Fecha/Origen. */
+  if (SL.process === 'roster') {
+    const filas = [];
+    for (const r of SL.rows) {
+      const base = {
+        'Fecha': fmtDT(r.run_at),
+        'Origen': r.source === 'cron' ? 'Autom\u00e1tica' : 'Manual',
+      };
+      for (const d of (r.fills || [])) filas.push({
+        ...base, 'Tipo': 'Ficha completada', 'Estado': '',
+        'C\u00e9dula': d.ced || '', 'Colaborador': d.nom || '', 'Empresa': d.comp || '',
+        'Campo': d.campo || '', 'En el portal': '', 'En el sistema': d.valor || '',
+      });
+      for (const d of (r.diffs || [])) filas.push({
+        ...base, 'Tipo': 'Diferencia',
+        'Estado': d.estado === 'dato_roto' ? 'Corregir en el sistema' : 'Revisar',
+        'C\u00e9dula': d.ced || '', 'Colaborador': d.nom || '', 'Empresa': d.comp || '',
+        'Campo': d.campo || '', 'En el portal': d.portal || '', 'En el sistema': d.sistema || '',
+      });
+      for (const d of (r.rejects || [])) filas.push({
+        ...base, 'Tipo': 'Dato mal escrito', 'Estado': 'Corregir en el sistema',
+        'C\u00e9dula': d.ced || '', 'Colaborador': d.nom || '', 'Empresa': d.comp || '',
+        'Campo': d.campo || '', 'En el portal': '', 'En el sistema': d.valor || '',
+      });
+      for (const s of (r.detail || [])) {
+        if (s.added || s.removed) filas.push({
+          ...base, 'Tipo': s.added ? 'Ingreso' : 'Egreso', 'Estado': '',
+          'C\u00e9dula': '', 'Colaborador': '', 'Empresa': s.company_code || '',
+          'Campo': '', 'En el portal': String(s.added || s.removed), 'En el sistema': '',
+        });
+        if (s.skipped || s.alert) filas.push({
+          ...base, 'Tipo': 'Alerta', 'Estado': 'Tienda saltada',
+          'C\u00e9dula': '', 'Colaborador': '', 'Empresa': s.company_code || '',
+          'Campo': '', 'En el portal': '', 'En el sistema': s.alert || '',
+        });
+      }
+    }
+    // Corridas viejas (sin detalle fino): al menos se exporta el resumen.
+    if (!filas.length) {
+      return SL.rows.map(r => ({
+        'Fecha': fmtDT(r.run_at),
+        'Origen': r.source === 'cron' ? 'Autom\u00e1tica' : 'Manual',
+        'Tipo': 'Resumen', 'Estado': r.status === 'ok' ? 'OK' : 'Con alerta',
+        'C\u00e9dula': '', 'Colaborador': '', 'Empresa': '',
+        'Campo': '', 'En el portal': r.summary || '', 'En el sistema': '',
+      }));
+    }
+    return filas;
+  }
+
   return SL.rows.map(r => ({
     'Proceso': PROC_LBL[SL.process],
     'Fecha': fmtDT(r.run_at),
@@ -186,15 +268,117 @@ async function slLoad() {
   SL.note = r.note || '';
   slPaint();
 }
+/* Un panel de pestaña. Solo el primero arranca visible. */
+function pane(idx, key, visible, inner) {
+  return `<div class="sl-pane" id="slPane_${idx}_${key}"${visible ? '' : ' hidden'}>${inner}</div>`;
+}
+
 function detHtml(r, idx) {
   if (!r.detail && !r.error) return '';
   const copyBtn = `<div style="margin-top:7px"><button class="sl-more" data-copy="${idx}">Copiar detalle</button> <span id="slCopied_${idx}" style="display:none;font-size:11px;color:var(--success,#15803d)">✓ copiado</span></div>`;
+
+  /* ===================================================================
+     v5.37 — EL DETALLE, EN PESTAÑAS (mockup aprobado por Pablo).
+
+     Antes esto era una linea de codigos de tienda: "AA01 · AA02 · AA03...".
+     Servia para saber QUE tiendas se tocaron, pero no QUE PASO con la gente.
+     Una corrida que completo 755 fichas y encontro 8 diferencias se veia
+     igual que uno que no hizo nada.
+
+     Cinco pestañas, y solo aparecen las que tienen contenido:
+       Movimientos         — ingresos y egresos por tienda (lo de antes)
+       Completadas         — fichas en blanco que se llenaron con el sistema
+       Diferencias         — lo que no coincide, con su estatus
+       Datos mal escritos  — lo que el sistema mando roto y no se guardo
+       Alertas             — tiendas que se saltaron
+     =================================================================== */
   if (Array.isArray(r.detail)) {
-    return r.detail.map(st => st.skipped
-      ? `<span style="color:#b45309">${esc(st.company_code)} ⚠ ${esc(st.alert || '')}</span>`
-      : `${esc(st.company_code)} ${st.added ? '+' + st.added : ''}${st.removed ? '−' + st.removed : ''}`
-    ).join(' · ') + copyBtn;
+    const diffs   = Array.isArray(r.diffs)   ? r.diffs   : [];
+    const fills   = Array.isArray(r.fills)   ? r.fills   : [];
+    const rejects = Array.isArray(r.rejects) ? r.rejects : [];
+    const movs    = r.detail.filter(s => s.added || s.removed);
+    const alertas = r.detail.filter(s => s.skipped || s.alert);
+
+    const tabs = [];
+    if (movs.length)    tabs.push(['mov',  'Movimientos', movs.length]);
+    if (fills.length)   tabs.push(['fill', 'Completadas', fills.length]);
+    if (diffs.length)   tabs.push(['diff', 'Diferencias', diffs.length]);
+    if (rejects.length) tabs.push(['rej',  'Datos mal escritos', rejects.length]);
+    if (alertas.length) tabs.push(['alr',  'Alertas', alertas.length]);
+
+    // Corrida vieja (sin las columnas nuevas): se cae al detalle de antes.
+    if (!tabs.length) {
+      return r.detail.map(st => esc(st.company_code)).join(' · ') + copyBtn;
+    }
+
+    const tabsHtml = tabs.map(([k, lbl, n], i) =>
+      `<button class="sl-tab${i === 0 ? ' on' : ''}" data-tab="${idx}" data-key="${k}">`
+      + `${esc(lbl)} <span class="sl-tn">${n}</span></button>`).join('');
+
+    const panes = [];
+    const first = (k) => tabs[0][0] === k;
+
+    if (movs.length) panes.push(pane(idx, 'mov', first('mov'),
+      `<table class="sl-mini"><thead><tr><th>Empresa</th><th>Ingresos</th><th>Egresos</th></tr></thead><tbody>`
+      + movs.map(s => `<tr><td class="sl-cc">${esc(s.company_code)}</td>`
+        + `<td>${s.added ? '<b style="color:#15803d">+' + s.added + '</b>' : '—'}</td>`
+        + `<td>${s.removed ? '<b style="color:#b91c1c">−' + s.removed + '</b>' : '—'}</td></tr>`).join('')
+      + `</tbody></table>`));
+
+    if (fills.length) panes.push(pane(idx, 'fill', first('fill'),
+      `<p class="sl-pn">Fichas que estaban <b>en blanco</b> en el portal y que el sistema sí tenía. `
+      + `Se completaron solas. <b>Ningún dato ya cargado fue modificado.</b></p>`
+      + `<table class="sl-mini"><thead><tr><th>Cédula</th><th>Colaborador</th><th>Empresa</th><th>Campo</th><th>Dato que se tomó</th></tr></thead><tbody>`
+      + fills.slice(0, 300).map(d => `<tr>`
+        + `<td class="sl-mono">${esc(d.ced || '')}</td>`
+        + `<td>${esc(d.nom || '')}</td>`
+        + `<td class="sl-cc">${esc(d.comp || '')}</td>`
+        + `<td>${esc(d.campo || '')}</td>`
+        + `<td class="sl-mono" style="color:#15803d">${esc(d.valor || '')}</td></tr>`).join('')
+      + `</tbody></table>`
+      + (fills.length > 300 ? `<p class="sl-pn">Mostrando 300 de ${fills.length}. Usá Exportar para la lista completa.</p>` : '')));
+
+    if (diffs.length) panes.push(pane(idx, 'diff', first('diff'),
+      `<p class="sl-pn">El portal <b>no modificó</b> ninguno de estos datos: ya tenían valor, así que solo los señaló.<br>`
+      + `<span class="sl-pill rev">Revisar</span> los dos lados tienen dato y no coinciden: hay que decidir cuál vale. `
+      + `<span class="sl-pill fix">Corregir en el sistema</span> el portal lo tiene bien y el sistema lo tiene mal escrito.</p>`
+      + `<table class="sl-mini"><thead><tr><th>Estado</th><th>Cédula</th><th>Colaborador</th><th>Empresa</th><th>Campo</th><th>En el portal</th><th>En el sistema</th></tr></thead><tbody>`
+      + diffs.map(d => `<tr>`
+        + `<td>${d.estado === 'dato_roto'
+            ? '<span class="sl-pill fix">Corregir en el sistema</span>'
+            : '<span class="sl-pill rev">Revisar</span>'}</td>`
+        + `<td class="sl-mono">${esc(d.ced || '')}</td>`
+        + `<td>${esc(d.nom || '')}</td>`
+        + `<td class="sl-cc">${esc(d.comp || '')}</td>`
+        + `<td>${esc(d.campo || '')}</td>`
+        + `<td class="sl-mono" style="color:#15803d">${esc(d.portal || '')}</td>`
+        + `<td class="sl-mono" style="color:#9a3412">${esc(d.sistema || '')}</td></tr>`).join('')
+      + `</tbody></table>`));
+
+    if (rejects.length) panes.push(pane(idx, 'rej', first('rej'),
+      `<p class="sl-pn">El sistema mandó estos datos <b>mal escritos</b>, así que <b>no se guardaron</b>. `
+      + `El portal no arregla datos del sistema: hay que corregirlos allá.</p>`
+      + `<table class="sl-mini"><thead><tr><th>Cédula</th><th>Colaborador</th><th>Empresa</th><th>Campo</th><th>Vino así</th></tr></thead><tbody>`
+      + rejects.slice(0, 300).map(d => `<tr>`
+        + `<td class="sl-mono">${esc(d.ced || '')}</td>`
+        + `<td>${esc(d.nom || '')}</td>`
+        + `<td class="sl-cc">${esc(d.comp || '')}</td>`
+        + `<td>${esc(d.campo || '')}</td>`
+        + `<td class="sl-mono" style="color:#9a3412">${esc(d.valor || '')}</td></tr>`).join('')
+      + `</tbody></table>`
+      + (rejects.length > 300 ? `<p class="sl-pn">Mostrando 300 de ${rejects.length}. Usá Exportar para la lista completa.</p>` : '')));
+
+    if (alertas.length) panes.push(pane(idx, 'alr', first('alr'),
+      `<p class="sl-pn">Estas tiendas <b>se saltaron</b>: el sistema devolvió una lista sospechosamente corta `
+      + `y el portal prefirió no tocar nada antes que dar de baja a gente que sigue trabajando.</p>`
+      + `<table class="sl-mini"><thead><tr><th>Empresa</th><th>Motivo</th></tr></thead><tbody>`
+      + alertas.map(s => `<tr><td class="sl-cc">${esc(s.company_code)}</td>`
+        + `<td style="color:#b45309">${esc(s.alert || 'Sin detalle')}</td></tr>`).join('')
+      + `</tbody></table>`));
+
+    return `<div class="sl-tabs">${tabsHtml}</div>${panes.join('')}${copyBtn}`;
   }
+
   // v4.63: detalle LEGIBLE para no-programadores (nunca JSON crudo en
   // pantalla); el boton Copiar entrega el detalle tecnico completo.
   const LBL = {
@@ -248,6 +432,19 @@ function slPaint() {
       b.addEventListener('click', () => {
         const el = $('#slDet_' + b.dataset.det);
         if (el) el.hidden = !el.hidden;
+      }));
+    /* v5.37: cambiar de pestaña dentro del detalle. Se apaga el panel visible
+       y se prende el elegido; los paneles viven en el mismo detalle, asi que
+       el filtro por data-tab evita pisar los de OTRA corrida abierta. */
+    body.querySelectorAll('[data-tab]').forEach(b =>
+      b.addEventListener('click', () => {
+        const idx = b.dataset.tab;
+        const key = b.dataset.key;
+        body.querySelectorAll(`[data-tab="${idx}"]`).forEach(t => t.classList.remove('on'));
+        b.classList.add('on');
+        body.querySelectorAll(`[id^="slPane_${idx}_"]`).forEach(p => { p.hidden = true; });
+        const pane = $(`#slPane_${idx}_${key}`);
+        if (pane) pane.hidden = false;
       }));
     // v4.63: Copiar el detalle tecnico completo (JSON) al portapapeles.
     body.querySelectorAll('[data-copy]').forEach(b =>

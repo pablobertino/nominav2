@@ -101,26 +101,64 @@ export async function onRequestPost({ request, env }) {
     const parts = [];
     if (from) parts.push(`run_at=gte.${from}T00:00:00`);
     if (to) parts.push(`run_at=lte.${to}T23:59:59`);
+    /* v5.37: se traen tambien los rellenos y las diferencias. Sin esto el
+       Registro solo sabia de ingresos/egresos: una corrida que completo 755
+       fichas y encontro 8 diferencias figuraba como "0 ingresos, 0 egresos",
+       o sea, como si no hubiera hecho nada. */
     const logs = await sb(env,
-      `roster_sync_log?select=run_id,run_at,source,company_code,added,removed,skipped,alert,detail`
+      `roster_sync_log?select=run_id,run_at,source,company_code,added,removed,skipped,alert,detail,`
+      + `filled,diff_review,diff_broken,diff_detail,fill_detail,rej_detail`
       + (parts.length ? '&' + parts.join('&') : '')
       + `&order=run_at.desc&limit=3000`) || [];
     const byRun = new Map();
     for (const r of logs) {
       const k = r.run_id || r.run_at;
-      if (!byRun.has(k)) byRun.set(k, { run_at: r.run_at, source: r.source, added: 0, removed: 0, alerts: 0, stores: [] });
+      if (!byRun.has(k)) byRun.set(k, {
+        run_at: r.run_at, source: r.source,
+        added: 0, removed: 0, filled: 0, alerts: 0,
+        diff_review: 0, diff_broken: 0,
+        stores: [],
+        // El detalle fino, juntado de todas las tiendas de la corrida.
+        diffs: [], fills: [], rejects: [],
+      });
       const g = byRun.get(k);
-      g.added += r.added || 0; g.removed += r.removed || 0; if (r.alert) g.alerts++;
-      g.stores.push({ company_code: r.company_code, added: r.added, removed: r.removed, skipped: r.skipped, alert: r.alert, detail: r.detail });
+      g.added   += r.added   || 0;
+      g.removed += r.removed || 0;
+      g.filled  += r.filled  || 0;
+      g.diff_review += r.diff_review || 0;
+      g.diff_broken += r.diff_broken || 0;
+      if (r.alert) g.alerts++;
+      g.stores.push({ company_code: r.company_code, added: r.added, removed: r.removed, filled: r.filled, skipped: r.skipped, alert: r.alert, detail: r.detail });
+      if (Array.isArray(r.diff_detail)) g.diffs.push(...r.diff_detail);
+      if (Array.isArray(r.fill_detail)) g.fills.push(...r.fill_detail);
+      if (Array.isArray(r.rej_detail))  g.rejects.push(...r.rej_detail);
     }
-    let groups = [...byRun.values()].map(g => ({
-      run_at: g.run_at, source: g.source,
-      status: g.alerts ? 'alerta' : 'ok',
-      duration_ms: null,
-      summary: `${g.added} ingreso(s) \u00b7 ${g.removed} egreso(s)${g.alerts ? ` \u00b7 ${g.alerts} alerta(s)` : ''}`,
-      error: null,
-      detail: g.stores,
-    }));
+    let groups = [...byRun.values()].map(g => {
+      /* El resumen cuenta TODO lo que hizo la corrida, no solo el alta y la
+         baja. Los dos estatus de diferencia van separados porque no son lo
+         mismo: "por revisar" lo decide un humano; "a corregir en el sistema"
+         ya sabemos que el portal tiene razon. */
+      const bits = [`${g.added} ingreso(s)`, `${g.removed} egreso(s)`];
+      if (g.filled)      bits.push(`${g.filled} ficha(s) completada(s)`);
+      if (g.diff_review) bits.push(`${g.diff_review} por revisar`);
+      if (g.diff_broken) bits.push(`${g.diff_broken} a corregir en el sistema`);
+      if (g.alerts)      bits.push(`${g.alerts} alerta(s)`);
+      return {
+        run_at: g.run_at, source: g.source,
+        status: g.alerts ? 'alerta' : 'ok',
+        duration_ms: null,
+        summary: bits.join(' \u00b7 '),
+        error: null,
+        detail: g.stores,
+        // Las pestanas del detalle (Completadas / Diferencias / Alertas).
+        filled: g.filled,
+        diff_review: g.diff_review,
+        diff_broken: g.diff_broken,
+        diffs: g.diffs,
+        fills: g.fills,
+        rejects: g.rejects,
+      };
+    });
     if (status === 'error') groups = groups.filter(g => g.status === 'alerta');
     if (status === 'ok') groups = groups.filter(g => g.status === 'ok');
     const total = groups.length;
