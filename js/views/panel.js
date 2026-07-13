@@ -37,6 +37,7 @@ import { renderWaGroups } from './wa-groups.js';
 import { renderWaTemplates } from './wa-templates.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderSyncLog } from './sync-log.js';
+import { renderSyncPending } from './sync-pending.js';   // v5.40
 import { renderResetData } from './reset-data.js';
 import { renderRoles } from './roles.js';
 import { injectPeriodTimeline } from './period-timeline.js';
@@ -158,13 +159,44 @@ const NAV_GROUPS = [
     ['constancias', I.docs, 'Constancias'],
     ['firmantes', I.pencil, 'Firmantes', 'superonly'],
   ] },
-  { title: 'Sincronización', items: [
-    ['syncreview', I.sync, 'Sincronizar', 'adminonly'],
+  /* v5.40 — EL MENU DE SINCRONIZACION, PARTIDO EN DOS POR DIRECCION.
+
+     Antes habia UN grupo ("Sincronizacion") con los dos flujos mezclados:
+
+         Sincronizar    <- portal ESCRIBE en el sistema
+         Comparar       <- portal LEE del sistema
+         Historial      <- que escribimos
+         Registro       <- que leimos
+
+     Las flechas van en direcciones contrarias y estaban intercaladas. Por eso
+     "Historial" y "Registro" se confundian: cada uno es la bitacora de un flujo
+     distinto, pero el menu los ponia uno al lado del otro como si fueran
+     sinonimos.
+
+     Ahora cada grupo tiene SU bandeja y SU bitacora, y la simetria se ve:
+
+         RECIBIR              ENVIAR
+         Pendientes   (73)    Publicar    (8)   <- lo que espera
+         Comparar                               <- herramienta
+         Registro             Historial         <- lo que ya paso
+
+     Ademas "Sincronizar" pasa a llamarse "Publicar", que es lo que hace. Un
+     item llamado "Sincronizar" dentro de un grupo llamado "Sincronizacion" no
+     le decia nada a nadie.
+
+     Los `view` (data-view) NO cambian: son los identificadores que enruta
+     navigate() y los que gobierna la matriz de permisos. Solo cambian las
+     etiquetas y la agrupacion. `syncpend` es el unico view nuevo. */
+  { title: 'Recibir del sistema', items: [
+    ['syncpend', I.alert, 'Pendientes', 'adminonly'],
     ['axcompare', I.compare, 'Comparar', 'adminonly'],
-    ['axhistory', I.history, 'Historial', 'adminonly'],
     ['synclog', I.docs, 'Registro', 'adminonly'],
     ['erpquery', I.search, 'Consultar API', 'adminonly'],
     ['sync', I.cog, 'Configurar', 'superonly'],
+  ] },
+  { title: 'Enviar al sistema', items: [
+    ['syncreview', I.sync, 'Publicar', 'adminonly'],
+    ['axhistory', I.history, 'Historial', 'adminonly'],
   ] },
   // v4.78: grupo DATOS BANCARIOS (aprobado por Pablo). Nace con Estadisticas;
   // Sincronizar e Historial (clones filtrados a cuentas) llegan en v4.79/80,
@@ -444,7 +476,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.39</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.40</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -6684,6 +6716,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'wagrupos') renderWaGroups(user);
   else if (view === 'erpquery') renderErpQuery(user);
   else if (view === 'synclog') renderSyncLog(user);
+  else if (view === 'syncpend') renderSyncPending(user);   // v5.40
   else if (view === 'resetdata') renderResetData(user);
   else if (view === 'roles') renderRoles(user);
   else if (view === 'rostersync') viewRosterSync(user);
@@ -6916,7 +6949,12 @@ async function paintDoubleEmpBadge(user) {
           line-height:1}
         .rail .pnl-badge{position:absolute;top:3px;right:3px;min-width:16px;height:16px;
           padding:0 4px;font-size:10px;margin-left:0}
-        .rail [data-view="dobleempleo"]{position:relative}`;
+        .rail [data-view="dobleempleo"]{position:relative}
+        .rail [data-view="syncpend"]{position:relative}
+        /* v5.40: el badge de Pendientes es AMBAR, no rojo. Doble empleo es una
+           alarma (gente cobrando dos veces); Pendientes es trabajo por hacer.
+           Si todo es rojo, nada es rojo. */
+        .pnl-badge.warn{background:#d97706}`;
       document.head.appendChild(st);
     }
 
@@ -6928,6 +6966,47 @@ async function paintDoubleEmpBadge(user) {
 
     // El Inicio puede haberse pintado antes que esta respuesta: se le avisa.
     document.dispatchEvent(new CustomEvent('doubleemp:count', { detail: { n: DOUBLE_EMP_N } }));
+  } catch (_) { /* un badge no rompe el panel */ }
+}
+
+/* ===================== v5.40: BADGE DE PENDIENTES =====================
+   Contador ambar junto a "Pendientes" (Recibir del sistema).
+
+   Misma razon que el de Doble empleo: si nadie entra a la vista, nadie se
+   entera. Las 3 cuentas bancarias en conflicto llevaban semanas ahi porque
+   vivian dentro de una fila expandible del Registro. Un numero en el menu
+   convierte "algo que hay que ir a mirar" en "algo que te esta esperando".
+
+   Ambar, no rojo: Doble empleo es una ALARMA (gente cobrando dos veces);
+   esto es TRABAJO POR HACER. Si todo es rojo, nada es rojo.
+
+   Cuenta SOLO los conflictos (los que necesitan una decision). Los datos mal
+   escritos y las tiendas saltadas no van al badge: no se resuelven desde el
+   portal, asi que un numero que no baja nunca es ruido.
+
+   Silencioso ante error: un badge no puede romper la carga del panel. */
+async function paintSyncPendBadge(user) {
+  try {
+    const r = await fetch('/api/sync-pending', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        adminId: user.id,
+        user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null },
+      }),
+    }).then(x => x.json());
+
+    if (!r || !r.ok || !r.counts) return;
+    const n = Number(r.counts.conflicts) || 0;
+    if (!n) return;   // nada pendiente: sin badge
+
+    const btn = document.querySelector('.pnl-side [data-view="syncpend"]');
+    if (!btn || btn.querySelector('.pnl-badge')) return;
+
+    const b = document.createElement('span');
+    b.className = 'pnl-badge warn';
+    b.textContent = String(n);
+    b.title = `${n} dato${n === 1 ? '' : 's'} que necesita${n === 1 ? '' : 'n'} una decisi\u00f3n`;
+    btn.appendChild(b);
   } catch (_) { /* un badge no rompe el panel */ }
 }
 
@@ -6983,6 +7062,11 @@ export function renderPanel() {
       constancias: 'view.solicitudes',
       syncreview: 'view.syncreview', axcompare: 'view.axcompare',
       axhistory: 'view.axhistory', synclog: 'view.synclog', erpquery: 'view.erpquery',
+      // v5.40: Pendientes reusa el permiso del Registro (view.synclog). Son la
+      // misma informacion vista de dos formas: el Registro la cuenta por corrida
+      // y Pendientes la junta por caso. Quien puede ver una, puede ver la otra;
+      // crear un permiso nuevo solo agregaria un lugar mas donde equivocarse.
+      syncpend: 'view.synclog',
       bankstats: 'view.bankstats', banksync: 'view.banksync', bankhist: 'view.bankhist',
       bankaccounts: 'view.bankaccounts',
       wadifusion: 'view.whatsapp',
@@ -7042,6 +7126,9 @@ export function renderPanel() {
   // y no se pinta nada). Silencioso ante cualquier error: un badge no puede
   // romper la carga del panel.
   paintDoubleEmpBadge(user);
+  // v5.40: badge de PENDIENTES (conflictos que esperan una decision). Mismo
+  // criterio: silencioso, y solo pinta si hay algo.
+  if (user.kind === 'admin') paintSyncPendBadge(user);
   // Guardian del boton Atras: convierte el Atras del navegador en "volver a la
   // vista anterior dentro del portal" y evita salirse de la pagina por error.
   VIEW_STACK = [];
