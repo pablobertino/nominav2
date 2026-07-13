@@ -225,7 +225,7 @@ async function retailDeptId(env, cc) {
 /* Procesa UNA tienda. Devuelve { company_code, added, removed, skipped,
    alert, detail } sin lanzar (los errores quedan como alerta). */
 async function processStore(env, cc) {
-  const out = { company_code: cc, added: 0, removed: 0, filled: 0, skipped: false, alert: null, detail: {},
+  const out = { company_code: cc, added: 0, removed: 0, filled: 0, diffs: 0, skipped: false, alert: null, detail: {},
                 // v5.31: datos que NO se escribieron por venir mal formateados.
                 // No es un error de la sincronizacion: es un dato a corregir en AX.
                 rejected: { account: 0, phone: 0, email: 0 },
@@ -233,7 +233,11 @@ async function processStore(env, cc) {
                    campo, valor crudo). Sin esto, el aviso dice "4 correos mal
                    escritos" y no hay forma de saber CUALES. Pablo tiene que
                    poder ver la lista para ir a corregirlos en AX. */
-                rejDetail: [] };
+                rejDetail: [],
+                /* v5.35: las DIFERENCIAS con el sistema en campos que el portal
+                   YA TIENE llenos. No se tocan (esa es la regla), pero antes
+                   tampoco se avisaban: quedaban invisibles para siempre. */
+                diffDetail: [] };
   try {
     const today = new Date().toISOString().split('T')[0];
     const apiRes = await fetch(`${HCM_API}?alias=${encodeURIComponent(cc)}&fecha=${today}`, {
@@ -444,6 +448,7 @@ async function processStore(env, cc) {
        el problema y deja dos versiones de la verdad.
        =================================================================== */
     const toFill = [];
+    const toDiff = [];      // v5.35: fichas con diferencia (se marcan, no se tocan)
     if (vig.size) {
       // Solo se piden las fichas de la gente VIGENTE de esta tienda (acotado:
       // no se trae el maestro entero, que es lo que reventaba el backfill).
@@ -451,7 +456,7 @@ async function processStore(env, cc) {
       const inList = ceds.map(c => `"${c}"`).join(',');
       const master = await sb(env,
         `workers_master?id_number=in.(${inList})`
-        + `&select=id_number,full_name,account_number,phone,email`) || [];
+        + `&select=id_number,full_name,account_number,phone,email,ax_diff`) || [];
 
       for (const m of master) {
         const ced = digits(m.id_number);
@@ -459,40 +464,84 @@ async function processStore(env, cc) {
         if (!r) continue;
 
         const patch = {};
-        // Nombre para el reporte de rechazados (que se pueda ver de quien es).
         const nom = m.full_name || '';
+        /* v5.35: diferencias detectadas en ESTA ficha (campos llenos que no
+           coinciden con el sistema). No se tocan; se MARCAN. */
+        const diffs = {};
 
-        /* Cada campo: se rellena SOLO si esta vacio en el portal. Si el sistema
-           lo trae mal formateado, se rechaza CON DETALLE para corregir en AX. */
-        if (!clean(m.account_number)) {
-          const crudo = clean(r.cuentaBancaria);
-          const v = cleanAccount(r.cuentaBancaria);
-          if (v) patch.account_number = v;
-          else if (crudo) {
-            out.rejected.account++;
-            out.rejDetail.push({ ced, nom, comp: cc, campo: 'cuenta', valor: crudo });
+        /* Un campo se procesa de UNA de estas dos formas, nunca las dos:
+
+           VACIO en el portal  -> es un HUECO. Se rellena (o se rechaza si el
+                                  sistema lo manda mal formateado).
+           LLENO en el portal  -> es un DATO DE ALGUIEN. No se toca JAMAS. Pero
+                                  si el sistema tiene otra cosa, se MARCA para
+                                  que un humano lo mire. Antes ni se miraba: la
+                                  diferencia quedaba invisible para siempre. */
+        const revisar = (campoUI, valPortal, crudoSistema, validador, contador) => {
+          const portal = clean(valPortal);
+          const crudo  = clean(crudoSistema);
+          const valido = validador(crudoSistema);
+
+          // --- HUECO: el portal no tiene nada ---
+          if (!portal) {
+            if (valido) return { fill: valido };                 // se rellena
+            if (crudo) {                                          // vino mal formateado
+              out.rejected[contador]++;
+              out.rejDetail.push({ ced, nom, comp: cc, campo: campoUI, valor: crudo });
+            }
+            return null;                                          // el sistema tampoco lo tiene
           }
-        }
-        if (!clean(m.phone)) {
-          const crudo = clean(r.telefono);
-          const v = cleanPhone(r.telefono);
-          if (v) patch.phone = v;
-          else if (crudo) {
-            out.rejected.phone++;
-            out.rejDetail.push({ ced, nom, comp: cc, campo: 'telefono', valor: crudo });
+
+          // --- EL PORTAL TIENE EL DATO: no se toca. Solo se compara. ---
+          if (!crudo) return null;              // el sistema no lo tiene: no hay nada que comparar
+
+          if (!valido) {
+            /* DATO ROTO: el portal lo tiene BIEN, el sistema lo tiene MAL.
+               No es un conflicto: sabemos cual es el bueno (el del portal).
+               Es un dato a CORREGIR EN EL SISTEMA. Sin esta marca, un correo
+               roto en AX se quedaba roto y NADIE lo veia (el validador solo
+               miraba campos vacios). */
+            diffs[campoUI] = { estado: 'dato_roto', portal, sistema: crudo };
+            return null;
           }
-        }
-        if (!clean(m.email)) {
-          const crudo = clean(r.correo);
-          const v = cleanEmail(r.correo);
-          if (v) patch.email = v;
-          else if (crudo) {
-            out.rejected.email++;
-            out.rejDetail.push({ ced, nom, comp: cc, campo: 'correo', valor: crudo });
+          if (valido !== portal) {
+            /* CONFLICTO: los dos tienen valor y son distintos. Nadie sabe cual
+               es el bueno. Lo decide un humano en Comparar (la API trae
+               auditoria.modificadoPor, que dice si el cambio salio del portal
+               o de un tercero en AX). */
+            diffs[campoUI] = { estado: 'conflicto', portal, sistema: valido };
           }
-        }
+          return null;   // coinciden: nada que hacer
+        };
+
+        const fAcc  = revisar('cuenta',   m.account_number, r.cuentaBancaria, cleanAccount, 'account');
+        const fTel  = revisar('telefono', m.phone,          r.telefono,       cleanPhone,   'phone');
+        const fMail = revisar('correo',   m.email,          r.correo,         cleanEmail,   'email');
+        if (fAcc)  patch.account_number = fAcc.fill;
+        if (fTel)  patch.phone          = fTel.fill;
+        if (fMail) patch.email          = fMail.fill;
 
         if (Object.keys(patch).length) toFill.push([ced, patch]);
+
+        /* La marca de diferencia se escribe SIEMPRE que cambie: si aparece una
+           nueva, se marca; si se resolvio (en AX o en el portal), se limpia
+           sola. Asi la bandeja no acumula fantasmas. */
+        const teniaDiff = !!m.ax_diff;
+        const tieneDiff = Object.keys(diffs).length > 0;
+        if (tieneDiff) {
+          toDiff.push([ced, {
+            ax_diff: true,
+            ax_diff_fields: diffs,
+            ax_diff_at: new Date().toISOString(),
+          }]);
+          out.diffs++;
+          for (const [campo, d] of Object.entries(diffs)) {
+            out.diffDetail.push({ ced, nom, comp: cc, campo, ...d });
+          }
+        } else if (teniaDiff) {
+          // Ya no hay diferencia: se limpia la marca (alguien la resolvio).
+          toDiff.push([ced, { ax_diff: false, ax_diff_fields: null, ax_diff_at: null }]);
+        }
       }
     }
 
@@ -509,6 +558,15 @@ async function processStore(env, cc) {
     if (toFill.length) {
       out.filled = toFill.length;
       out.detail.filled = toFill.map(([c]) => c);
+    }
+
+    /* v5.35: marcar (o limpiar) las diferencias. Esto NO toca el dato: solo
+       escribe la bandera para que la ficha y Comparar lo muestren. */
+    for (const [ced, patch] of toDiff) {
+      await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify(patch),
+      });
     }
     if (toReenter.length) {
       out.added += toReenter.length;
@@ -618,6 +676,7 @@ export async function onRequestPost({ request, env, ctx }) {
   const added = results.reduce((a, r) => a + r.added, 0);
   const removed = results.reduce((a, r) => a + r.removed, 0);
   const filled = results.reduce((a, r) => a + (r.filled || 0), 0);
+  const diffs  = results.reduce((a, r) => a + (r.diffs || 0), 0);
   const alerts = results.filter(r => r.alert).length;
 
   /* v5.31 — DATOS RECHAZADOS POR FORMATO.
@@ -638,6 +697,8 @@ export async function onRequestPost({ request, env, ctx }) {
      Se junta el detalle de las tiendas de esta tanda; mas abajo se acumula con
      el de las tandas anteriores y viaja al front. */
   const rejDetail = results.reduce((a, r) => a.concat(r.rejDetail || []), []);
+  // v5.35: las diferencias con el sistema (campos llenos que no coinciden).
+  const diffDetail = results.reduce((a, r) => a.concat(r.diffDetail || []), []);
 
   // Log: SOLO tiendas con movimiento o alerta (corridas limpias no ensucian).
   const logRows = results
@@ -680,6 +741,10 @@ export async function onRequestPost({ request, env, ctx }) {
      AX, y evita inflar el payload si un dia el ERP devuelve basura masiva. */
   const prevDetail = Array.isArray(body.acc_rej_detail) ? body.acc_rej_detail : [];
   const totDetail = prevDetail.concat(rejDetail).slice(0, 300);
+  const prevDiffs = Math.max(0, parseInt(body.acc_diffs, 10) || 0);
+  const totDiffs = prevDiffs + diffs;
+  const prevDiffDetail = Array.isArray(body.acc_diff_detail) ? body.acc_diff_detail : [];
+  const totDiffDetail = prevDiffDetail.concat(diffDetail).slice(0, 300);
   const totRej = {
     account: prevRej.account + rej.account,
     phone:   prevRej.phone   + rej.phone,
@@ -738,6 +803,8 @@ export async function onRequestPost({ request, env, ctx }) {
       acc_rej_phone: totRej.phone,
       acc_rej_email: totRej.email,
       acc_rej_detail: totDetail,
+      acc_diffs: totDiffs,
+      acc_diff_detail: totDiffDetail,
     };
     const chain = fetch(selfUrl, {
       method: 'POST',
@@ -763,6 +830,11 @@ export async function onRequestPost({ request, env, ctx }) {
     // v5.34: el detalle de los rechazos, para poder VER cuales son y corregir en AX.
     acc_rej_detail: totDetail,
     rechazados_detalle: totDetail,
+    // v5.35: diferencias con el sistema (campos llenos que no coinciden).
+    acc_diffs: totDiffs,
+    acc_diff_detail: totDiffDetail,
+    diferencias: totDiffs,
+    diferencias_detalle: totDiffDetail,
   });
   } catch (e) {
     // v4.58: una falla dura marca la corrida como error en la config para

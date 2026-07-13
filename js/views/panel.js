@@ -440,7 +440,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.34</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.35</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4665,6 +4665,8 @@ async function viewSync(user) {
       let rej = { account: 0, phone: 0, email: 0 };
       let filled = 0;          // v5.34: fichas incompletas que se completaron solas
       let rejDetail = [];      // v5.34: QUIENES vienen mal del sistema (para corregir en AX)
+      let diffs = 0;           // v5.35: fichas con diferencia contra el sistema
+      let diffDetail = [];     // v5.35: el detalle de cada diferencia
       let total = 0;
       let r = null;
       let guard = 0;
@@ -4681,6 +4683,8 @@ async function viewSync(user) {
           acc_rej_email: rej.email,
           acc_filled: filled,          // v5.34
           acc_rej_detail: rejDetail,   // v5.34
+          acc_diffs: diffs,            // v5.35
+          acc_diff_detail: diffDetail, // v5.35
         });
         if (!r || !r.ok) break;
 
@@ -4692,6 +4696,8 @@ async function viewSync(user) {
         };
         filled = Number(r.acc_filled) || 0;
         if (Array.isArray(r.acc_rej_detail)) rejDetail = r.acc_rej_detail;
+        diffs = Number(r.acc_diffs) || 0;
+        if (Array.isArray(r.acc_diff_detail)) diffDetail = r.acc_diff_detail;
 
         runId = r.run_id || runId;
         total = r.total_stores || total;
@@ -4808,6 +4814,92 @@ async function viewSync(user) {
 
       /* (El aviso de datos rechazados vive ARRIBA, junto con la lista de casos
          que Pablo pidio para poder ir a corregirlos en el sistema.) */
+
+      /* ===================================================================
+         v5.35 — DIFERENCIAS CON EL SISTEMA (pedido de Pablo 2026-07-13)
+
+         Estos son los campos que el portal YA TIENE LLENOS y que NO COINCIDEN
+         con lo que trae el sistema. La sincronizacion NO LOS TOCA (esa regla no
+         se rompe), pero antes tampoco los AVISABA: la diferencia quedaba
+         invisible y los dos sistemas se separaban en silencio, para siempre.
+
+         DOS ESTATUS, y la distincion importa:
+
+         🔵 PENDIENTE DE REVISAR (conflicto)
+            Los dos lados tienen valor y son distintos. NADIE sabe cual es el
+            bueno. Lo tiene que decidir una persona.
+            ej: portal 0414-1234567 / sistema 0424-1234567
+
+         🟠 PENDIENTE DE CORREGIR EN EL SISTEMA (dato roto)
+            El portal lo tiene BIEN y el sistema lo tiene MAL FORMATEADO.
+            Aca SI sabemos cual es el bueno: el del portal. No hay nada que
+            decidir; hay que ir a arreglarlo en el sistema.
+            ej: portal erick@grupocanaima.net / sistema erickgrupocanaimanet
+
+         Sin el segundo estatus, un correo roto en el sistema se quedaba roto y
+         NADIE lo veia: el validador solo miraba los campos VACIOS. Los 4 que se
+         corrigieron hoy aparecieron de pura suerte, porque estaban vacios en el
+         portal. Si hubieran tenido correo cargado, seguirian rotos. */
+      if (diffs > 0 && el) {
+        const rotos  = (diffDetail || []).filter(d => d.estado === 'dato_roto');
+        const confl  = (diffDetail || []).filter(d => d.estado === 'conflicto');
+
+        const pill = (est) => est === 'dato_roto'
+          ? '<span style="display:inline-block;padding:1px 7px;border-radius:99px;background:#fef3c7;color:#92400e;font-size:10.5px;font-weight:800;white-space:nowrap">Corregir en el sistema</span>'
+          : '<span style="display:inline-block;padding:1px 7px;border-radius:99px;background:#dbeafe;color:#1e40af;font-size:10.5px;font-weight:800;white-space:nowrap">Revisar</span>';
+
+        const filas = (diffDetail || []).map(d => `
+          <tr>
+            <td style="padding:5px 8px;border-bottom:1px solid #dbe6f5">${pill(d.estado)}</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #dbe6f5;white-space:nowrap">${esc(d.ced || '')}</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #dbe6f5">${esc(d.nom || '')}</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #dbe6f5;white-space:nowrap">${esc(d.comp || '')}</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #dbe6f5;white-space:nowrap">${esc(d.campo || '')}</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #dbe6f5;font-family:ui-monospace,monospace;font-size:11.5px;color:#166534">${esc(d.portal || '')}</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #dbe6f5;font-family:ui-monospace,monospace;font-size:11.5px;color:#9a3412">${esc(d.sistema || '')}</td>
+          </tr>`).join('');
+
+        const resumen = [];
+        if (confl.length) resumen.push(`<b>${confl.length}</b> por revisar`);
+        if (rotos.length) resumen.push(`<b>${rotos.length}</b> por corregir en el sistema`);
+
+        el.insertAdjacentHTML('beforeend',
+          `<div style="margin-top:10px;padding:11px 13px;background:#eff6ff;border:1px solid #bfdbfe;`
+          + `border-radius:9px;font-size:12.5px;color:#1e40af;line-height:1.55">`
+          + `<b>◈ ${diffs} ficha${diffs === 1 ? '' : 's'} con diferencias.</b> `
+          + `${resumen.join(' · ')}. `
+          + `El portal <b>no tocó</b> ninguno de estos datos: solo los marcó.`
+          + `<details style="margin-top:9px">`
+          + `<summary style="cursor:pointer;font-weight:700;font-size:12px;color:#1e40af;user-select:none">`
+          + `Ver las ${(diffDetail || []).length} diferencia${(diffDetail || []).length === 1 ? '' : 's'}</summary>`
+          + `<div style="margin-top:8px;max-height:300px;overflow:auto;border:1px solid #bfdbfe;border-radius:7px;background:#fff">`
+          + `<table style="width:100%;border-collapse:collapse;font-size:12px">`
+          + `<thead><tr style="background:#eff6ff;position:sticky;top:0">`
+          + `<th style="padding:6px 8px;text-align:left;font-size:11px;color:#1e40af">Estado</th>`
+          + `<th style="padding:6px 8px;text-align:left;font-size:11px;color:#1e40af">Cédula</th>`
+          + `<th style="padding:6px 8px;text-align:left;font-size:11px;color:#1e40af">Colaborador</th>`
+          + `<th style="padding:6px 8px;text-align:left;font-size:11px;color:#1e40af">Empresa</th>`
+          + `<th style="padding:6px 8px;text-align:left;font-size:11px;color:#1e40af">Campo</th>`
+          + `<th style="padding:6px 8px;text-align:left;font-size:11px;color:#1e40af">En el portal</th>`
+          + `<th style="padding:6px 8px;text-align:left;font-size:11px;color:#1e40af">En el sistema</th>`
+          + `</tr></thead><tbody>${filas}</tbody></table></div>`
+          + `<button class="btn btn-sm" id="rsCopyDiff" style="margin-top:8px">Copiar la lista</button>`
+          + `</details></div>`);
+
+        const cd = document.getElementById('rsCopyDiff');
+        if (cd) cd.addEventListener('click', () => {
+          const txt = ['Estado\tCedula\tColaborador\tEmpresa\tCampo\tEn el portal\tEn el sistema']
+            .concat((diffDetail || []).map(d =>
+              `${d.estado === 'dato_roto' ? 'Corregir en el sistema' : 'Revisar'}`
+              + `\t${d.ced || ''}\t${d.nom || ''}\t${d.comp || ''}\t${d.campo || ''}`
+              + `\t${d.portal || ''}\t${d.sistema || ''}`))
+            .join('\n');
+          navigator.clipboard.writeText(txt).then(() => {
+            cd.textContent = '✓ Copiada';
+            setTimeout(() => { cd.textContent = 'Copiar la lista'; }, 1800);
+          });
+        });
+      }
 
       loadRs();
     });
