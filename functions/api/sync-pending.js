@@ -59,6 +59,14 @@ async function sb(env, path) {
   return t ? JSON.parse(t) : null;
 }
 
+/* Miniatura publica de la foto (mismo bucket y criterio que Publicar: URL
+   directa, cacheable, sin firmar). null si la ficha no tiene foto. */
+const PUBLIC_THUMB_BUCKET = 'worker-thumbs';
+function thumbUrlPub(env, photoKey) {
+  if (!photoKey) return null;
+  return `${env.supabase_url}/storage/v1/object/public/${PUBLIC_THUMB_BUCKET}/${photoKey}.jpg`;
+}
+
 /* Empresas del alcance del actor. null = todas (superadmin). Mismo criterio
    que el resto del portal: un admin no-super solo ve lo suyo. */
 async function allowedCompanies(env, actor) {
@@ -166,12 +174,53 @@ export async function onRequestPost({ request, env }) {
   try {
     /* ---------- 1. HAY QUE DECIDIR (estado acumulado) ----------
        Sale del maestro, no de una corrida: la marca vive hasta que alguien la
-       resuelve. `last_source_company` dice de que empresa vino la persona (es
-       lo que usa el alcance y lo que necesita `adopt` para re-detectar). */
+       resuelve. */
     const marked = await sb(env,
       'workers_master?ax_diff=eq.true'
-      + '&select=id_number,full_name,last_source_company,ax_diff_fields,ax_diff_at'
+      + '&select=id_number,ced_kind,full_name,photo_key,last_source_company,'
+      + 'ax_diff_fields,ax_diff_at,ax_pending,ax_pending_at'
       + '&order=ax_diff_at.desc&limit=500') || [];
+
+    /* v5.44: la ficha tiene que decir DE DONDE es y QUE PASO, igual que en
+       Publicar. Antes solo mostraba "BG04" — un codigo que no dice ni la razon
+       social, ni la zona, ni el concepto. Con 195 empresas, eso no alcanza para
+       decidir nada.
+
+       Se resuelven en bloque (no una consulta por ficha): las empresas de las
+       fichas marcadas, y los nombres de sus zonas/subzonas/conceptos. */
+    const ccs = [...new Set(marked.map(m => m.last_source_company).filter(Boolean))];
+    const compMeta = {};
+    if (ccs.length) {
+      const inList = ccs.map(c => `"${c}"`).join(',');
+      const comps = await sb(env,
+        `companies?company_code=in.(${inList})`
+        + '&select=company_code,business_name,company_type,zone_id,subzone_id,concept_id') || [];
+
+      const nameMap = async (tbl, ids) => {
+        if (!ids.length) return {};
+        const q = ids.map(i => `"${i}"`).join(',');
+        const rows = await sb(env, `${tbl}?id=in.(${q})&select=id,name`) || [];
+        const m = {};
+        rows.forEach(r => { m[String(r.id)] = r.name; });
+        return m;
+      };
+      const zoneIds = [...new Set(comps.map(c => c.zone_id).filter(x => x != null))];
+      const subIds  = [...new Set(comps.map(c => c.subzone_id).filter(x => x != null))];
+      const conIds  = [...new Set(comps.map(c => c.concept_id).filter(x => x != null))];
+      const [zoneN, subN, conN] = await Promise.all([
+        nameMap('zones', zoneIds), nameMap('subzones', subIds), nameMap('concepts', conIds),
+      ]);
+
+      comps.forEach(c => {
+        compMeta[c.company_code] = {
+          name: c.business_name || null,
+          type: c.company_type || null,
+          zona:     c.zone_id    != null ? (zoneN[String(c.zone_id)]    || null) : null,
+          subzona:  c.subzone_id != null ? (subN[String(c.subzone_id)]  || null) : null,
+          concepto: c.concept_id != null ? (conN[String(c.concept_id)] || null) : null,
+        };
+      });
+    }
 
     const conflicts = [];
     for (const m of marked) {
@@ -189,12 +238,26 @@ export async function onRequestPost({ request, env }) {
         });
       }
       if (!fields.length) continue;
+      const cm = compMeta[cc] || {};
       conflicts.push({
         id_number: String(m.id_number),
+        ced_kind: m.ced_kind || null,
         full_name: m.full_name || String(m.id_number),
+        thumb_url: m.photo_key ? thumbUrlPub(env, m.photo_key) : null,
         company_code: cc,
+        company_name: cm.name || null,
+        company_type: cm.type || null,
+        zona: cm.zona || null,
+        subzona: cm.subzona || null,
+        concepto: cm.concepto || null,
         fields,
+        // Cuando el portal detecto la diferencia (no cuando el dato cambio: eso
+        // no lo sabemos del lado del sistema).
         at: m.ax_diff_at || null,
+        // Si la ficha ADEMAS tiene un cambio del portal esperando publicarse.
+        // Es informacion importante: significa que alguien ya edito esto.
+        pending: !!m.ax_pending,
+        pending_at: m.ax_pending_at || null,
       });
     }
 

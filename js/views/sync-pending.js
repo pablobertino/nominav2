@@ -1,6 +1,6 @@
 /* =====================================================================
-   js/views/sync-pending.js  →  vista "Pendientes" (v5.40)
-   Menu: Recibir del sistema → Pendientes
+   js/views/sync-pending.js  →  vista "Pendientes" (v5.44)
+   Menu: Sincronizacion → Recibir del sistema → Pendientes
 
    LA BANDEJA DE LO QUE HAY QUE RESOLVER.
 
@@ -10,22 +10,43 @@
    llevaban semanas sin que nadie las mirara. Eso es plata que puede estar
    yendo a la cuenta equivocada.
 
-   Aca estan las tres cosas, en una pantalla, con los botones al lado:
+   ---------------------------------------------------------------------
+   v5.44 — SE ADOPTA EL LENGUAJE VISUAL DE PUBLICAR.
+
+   v5.40/41 construyeron esta pagina con un estilo propio: dos cajas de color
+   saturado, botones enormes, y como toda identificacion "BG04". Al lado de
+   Publicar parecian dos portales distintos — y el de Publicar era mejor:
+   informacion densa, colores discretos, y todo lo necesario para decidir.
+
+   Publicar tiene, en el ancho de una fila: foto, nombre, cedula, razon social,
+   zona · subzona · concepto, quien edito y cuando. Aca habia un codigo de 4
+   letras. Con 195 empresas, "BG04" no dice ni de que ciudad es la tienda.
+
+   Entonces:
+     - La ficha es una FILA (axr-row), no una tarjeta. Misma cabecera, misma
+       foto o iniciales, mismo bloque de identidad, mismo pie de metadatos.
+     - La comparacion es una TABLA de campos, como el detalle de Publicar:
+       CAMPO | EN EL PORTAL | EN EL SISTEMA. Verde y naranja quedan como COLOR
+       DE TEXTO, no como fondo de una caja gigante.
+     - Los botones son chicos y van al pie, a la derecha. Los mismos tres de
+       siempre: Publicar (ambar, como en Publicar), Adoptar (naranja), Anular.
+     - Se agregan las fechas: cuando el portal DETECTO la diferencia, y si la
+       ficha ademas tiene un cambio del portal esperando publicarse.
+
+   ---------------------------------------------------------------------
+   LAS TRES SECCIONES
 
      1. HAY QUE DECIDIR — los dos lados tienen dato y no coinciden.
-        Dos botones POR CAMPO, uno debajo de cada valor. El usuario no elige
-        "adoptar" o "publicar": elige CUAL DATO ES EL CORRECTO. Lo demas es
-        plomeria.
-          el del sistema  -> Adoptar   (/api/ax-review action:adopt)
-          el del portal   -> Publicar  (/api/ax-review action:detect_commit)
+        el del portal   -> Publicar  (/api/ax-review action:detect_commit)
+        el del sistema  -> Adoptar   (/api/ax-review action:adopt)
+        ninguno         -> Anular    (/api/sync-pending action:dismiss)
 
-        ⚠ Los dos endpoints RE-DETECTAN en el servidor antes de escribir (van y
-        le preguntan al sistema). Por eso el boton tarda unos segundos. Es lo
-        que queremos: si alguien ya lo arreglo alla mientras tanto, no hace
-        nada. Idempotente.
+        ⚠ Publicar y Adoptar RE-DETECTAN en el servidor antes de escribir (van
+        y le preguntan al sistema). Por eso tardan unos segundos. Es lo que
+        queremos: si alguien ya lo arreglo alla, no hacen nada. Idempotente.
 
-     2. MAL ESCRITOS EN EL SISTEMA — solo lectura. No hay nada que decidir: el
-        dato esta roto y se arregla en el sistema. Se ven y se exportan.
+     2. MAL ESCRITOS EN EL SISTEMA — solo lectura. El dato esta roto y se
+        arregla en el sistema. Se ven y se exportan.
 
      3. TIENDAS SALTADAS — solo lectura. El sistema devolvio una lista corta y
         el portal no toco nada.
@@ -42,22 +63,27 @@ let SP = { conflicts: [], rejected: [], skipped: [], last_run: null, counts: nul
 
 /* Etiqueta legible del campo. El backend manda la clave interna. */
 const CAMPO_LBL = {
-  cuenta: 'Cuenta bancaria',
-  telefono: 'Tel\u00e9fono',
-  correo: 'Correo',
-  account_number: 'Cuenta bancaria',
-  phone: 'Tel\u00e9fono',
-  email: 'Correo',
+  cuenta: 'Cuenta bancaria', telefono: 'Tel\u00e9fono', correo: 'Correo',
+  account_number: 'Cuenta bancaria', phone: 'Tel\u00e9fono', email: 'Correo',
 };
+
+/* Mismos colores de avatar que Publicar (identidad visual compartida). */
+const AVATAR_BG = ['#dbeafe', '#dcfce7', '#fef3c7', '#fce7f3', '#e0e7ff', '#ccfbf1'];
+const AVATAR_FG = ['#1e40af', '#166534', '#92400e', '#9d174d', '#3730a3', '#115e59'];
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
 
-/* Cuenta bancaria de 20 digitos: se muestra en grupos de 4 para que se pueda
-   LEER y comparar de un vistazo. Comparar dos cadenas de 20 digitos pegados es
-   imposible; en grupos de 4 la diferencia salta. */
+function initialsOf(name) {
+  const p = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!p.length) return '?';
+  return ((p[0][0] || '') + (p.length > 1 ? (p[p.length - 1][0] || '') : '')).toUpperCase();
+}
+
+/* Cuenta de 20 digitos en grupos de 4: comparar dos cadenas de 20 digitos
+   pegados es imposible; en grupos de 4 la diferencia salta a la vista. */
 function fmtValor(campo, v) {
   const s = String(v == null ? '' : v);
   if (!s) return '\u2014';
@@ -67,7 +93,6 @@ function fmtValor(campo, v) {
     if (d.length === 20) return d.replace(/(\d{4})(?=\d)/g, '$1 ');
   }
   if (c.includes('tel') || c === 'phone') {
-    // +584248494408 -> 0424 8494408 (formato nacional, legible)
     let d = s.replace(/[^\d+]/g, '');
     if (d.startsWith('+58')) d = '0' + d.slice(3);
     else if (d.startsWith('58') && d.length === 12) d = '0' + d.slice(2);
@@ -76,13 +101,14 @@ function fmtValor(campo, v) {
   return s;
 }
 
+/* Fecha y hora en Caracas (GMT-4), formato del portal. */
 function fmtDT(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d)) return '';
-  const c = new Date(d.getTime() - 4 * 3600 * 1000);   // Caracas GMT-4
+  const c = new Date(d.getTime() - 4 * 3600 * 1000);
   const z = n => String(n).padStart(2, '0');
-  return `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)} ${z(c.getUTCHours())}:${z(c.getUTCMinutes())}`;
+  return `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${c.getUTCFullYear()} ${z(c.getUTCHours())}:${z(c.getUTCMinutes())}`;
 }
 
 async function api(payload) {
@@ -96,7 +122,7 @@ async function api(payload) {
   }).then(x => x.json()).catch(() => null);
 }
 
-/* Las acciones van al endpoint que YA EXISTE. No se reimplementa nada. */
+/* Las acciones van a /api/ax-review, que YA las tenia. No se reimplementa nada. */
 async function axReview(payload) {
   return fetch('/api/ax-review', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -111,234 +137,249 @@ function ensureStyles() {
   if (document.getElementById('spStyles')) return;
   const st = document.createElement('style');
   st.id = 'spStyles';
+  /* Las clases replican las de ax-review.js (axr-*) a proposito: si algun dia
+     se unifican en una hoja comun, el cambio es mecanico. */
   st.textContent = `
   .sp-head h1{margin:0;font-size:21px;font-weight:700;color:var(--ink)}
   .sp-head p{margin:3px 0 0;color:var(--muted);font-size:13px}
-  .sp-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0 22px}
-  .sp-stat{border-radius:13px;padding:14px 16px;border:1px solid transparent}
-  .sp-stat .k{font-size:12px;font-weight:600}
-  .sp-stat .v{font-size:27px;font-weight:700;margin-top:4px;line-height:1}
-  .sp-stat .h{font-size:11.5px;margin-top:3px}
-  .sp-stat.dec{background:#eff6ff;border-color:#bfdbfe}
-  .sp-stat.dec .k,.sp-stat.dec .v,.sp-stat.dec .h{color:#1e40af}
-  .sp-stat.rot{background:#fff7ed;border-color:#fed7aa}
-  .sp-stat.rot .k,.sp-stat.rot .v,.sp-stat.rot .h{color:#b45309}
-  .sp-stat.slt{background:var(--bg-soft,#f8fafc);border-color:var(--border)}
-  .sp-stat.slt .k,.sp-stat.slt .h{color:var(--muted)}
-  .sp-stat.slt .v{color:var(--ink)}
 
-  .sp-sec{margin:0 0 26px}
+  /* Tarjetas de conteo: mismo peso visual que las de Publicar (borde suave,
+     numero grande, sin fondos saturados). */
+  .sp-stats{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin:18px 0 20px}
+  .sp-stat{border:1px solid var(--border);border-radius:12px;padding:13px 16px;background:var(--card,#fff)}
+  .sp-stat .k{font-size:12px;color:var(--muted);font-weight:600;display:flex;align-items:center;gap:6px}
+  .sp-stat .v{font-size:26px;font-weight:700;margin-top:3px;line-height:1.15;color:var(--ink)}
+  .sp-stat .h{font-size:11.5px;color:var(--faint,#94a3b8);margin-top:1px}
+  .sp-stat.dec .v{color:#1d4ed8}
+  .sp-stat.rot .v{color:#b45309}
+
+  .sp-sec{margin:0 0 24px}
   .sp-sec h2{margin:0 0 3px;font-size:15px;font-weight:700;color:var(--ink)}
-  .sp-sec .lead{margin:0 0 12px;font-size:13px;color:var(--muted);line-height:1.6}
+  .sp-sec .lead{margin:0 0 12px;font-size:12.5px;color:var(--muted);line-height:1.6}
 
-  .sp-card{border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);
-           padding:13px 15px;margin-bottom:9px}
-  .sp-ctop{display:flex;justify-content:space-between;align-items:baseline;gap:10px;margin-bottom:11px}
-  .sp-nom{font-size:14px;font-weight:700;color:var(--ink)}
-  .sp-meta{font-size:12px;color:var(--muted);white-space:nowrap}
-  .sp-cc{color:var(--brand,#2563eb);font-weight:700}
+  /* ---- LA FILA (clon de axr-row) ---- */
+  .sp-row{border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);
+          margin-bottom:8px;overflow:hidden}
+  .sp-rowhead{display:flex;align-items:center;gap:11px;padding:11px 14px}
+  .sp-ava{width:38px;height:38px;border-radius:50%;flex:none;display:flex;align-items:center;
+          justify-content:center;font-size:13px;font-weight:700;overflow:hidden}
+  .sp-ava img{width:100%;height:100%;object-fit:cover}
+  .sp-who{flex:1;min-width:0}
+  .sp-nm{font-size:14px;font-weight:700;color:var(--ink);line-height:1.3}
+  .sp-sub{font-size:12px;color:var(--muted);margin-top:1px}
+  .sp-edit{font-size:11.5px;color:var(--faint,#94a3b8);margin-top:2px}
+  .sp-rmeta{text-align:right;flex:none;font-size:11.5px;color:var(--muted);line-height:1.5}
+  .sp-cc{color:var(--brand,#2563eb);font-weight:700;font-size:12px}
+  .sp-emeta{color:var(--faint,#94a3b8)}
+  .sp-chip{display:inline-block;margin-top:3px;padding:1px 7px;border-radius:20px;font-size:10.5px;
+           font-weight:700;background:#fef3c7;color:#92400e}
 
-  .sp-vs{display:grid;grid-template-columns:1fr 1fr;gap:9px}
-  .sp-side{border:1px solid var(--border);border-radius:9px;padding:10px 12px;
-           display:flex;flex-direction:column;gap:8px}
-  /* v5.40 — MISMO CODIGO DE COLOR QUE COMPARAR: el portal es VERDE y el
-     sistema es NARANJA. Es el par de colores que Pablo ya lee sin pensar. Dos
-     cajas grises identicas obligan a leer la etiqueta cada vez. */
-  .sp-side.pt{border-color:#bbf7d0;background:#f0fdf4}
-  .sp-side.sy{border-color:#fed7aa;background:#fff7ed}
-  .sp-side .lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
-  .sp-side.pt .lbl{color:#15803d}
-  .sp-side.sy .lbl{color:#b45309}
-  .sp-side .val{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-                font-size:13.5px;color:var(--ink);word-break:break-all;line-height:1.4;
-                font-variant-numeric:tabular-nums;font-weight:600}
-  .sp-side .val.na{color:var(--muted);font-style:italic;font-family:inherit;font-weight:400}
-
-  /* El boton lleva el NOMBRE DE LA ACCION (Adoptar / Publicar), no una frase.
-     Son las palabras que ya se usan en el resto del portal. */
-  .sp-pick{font:inherit;font-size:12.5px;font-weight:700;padding:8px 10px;border-radius:8px;
-           border:1px solid transparent;cursor:pointer;margin-top:auto;color:#fff}
-  .sp-pick.pt{background:#16a34a}
-  .sp-pick.pt:hover:not(:disabled){background:#15803d}
-  .sp-pick.sy{background:#ea580c}
-  .sp-pick.sy:hover:not(:disabled){background:#c2410c}
-  .sp-pick:disabled{background:var(--bg-soft,#f1f5f9);color:var(--muted);cursor:default}
-  .sp-pick .sub{display:block;font-size:10.5px;font-weight:500;opacity:.9;margin-top:1px}
-
-  /* Anular: gris, discreto, ancho completo abajo. No compite con los dos de
-     arriba: es la salida, no una opcion mas. */
-  .sp-null{width:100%;margin-top:10px;font:inherit;font-size:12.5px;font-weight:600;
-           padding:7px 10px;border-radius:8px;border:1px dashed var(--border);
-           background:transparent;color:var(--muted);cursor:pointer}
-  .sp-null:hover:not(:disabled){background:var(--bg-soft,#f1f5f9);color:var(--ink);
-                                border-style:solid}
-  .sp-null:disabled{opacity:.5;cursor:default}
-
-  .sp-fld{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;
-          letter-spacing:.04em;margin:0 0 7px}
-  .sp-fld+.sp-vs{margin-bottom:11px}
-  .sp-vs:last-child{margin-bottom:0}
-
-  .sp-done{padding:9px 12px;border-radius:9px;background:#f0fdf4;border:1px solid #bbf7d0;
-           color:#15803d;font-size:12.5px;font-weight:600}
-  .sp-fail{padding:9px 12px;border-radius:9px;background:#fef2f2;border:1px solid #f3c2c2;
-           color:#b91c1c;font-size:12.5px}
-
-  .sp-tbl{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--card,#fff);
-          border:1px solid var(--border);border-radius:12px;overflow:hidden}
-  .sp-tbl th{background:var(--bg-soft,#f8fafc);text-align:left;font-size:10.5px;text-transform:uppercase;
-             letter-spacing:.04em;color:var(--muted);font-weight:700;padding:9px 11px;
-             border-bottom:1px solid var(--border);white-space:nowrap}
-  .sp-tbl td{padding:8px 11px;border-bottom:1px solid var(--border-soft,#eef1f5);color:var(--ink);
-             vertical-align:middle}
+  /* ---- LA TABLA DE CAMPOS (clon de axr-tbl) ----
+     El color va en el TEXTO, no en un fondo. Verde = portal, naranja = sistema:
+     los mismos que Comparar, pero sin gritar. */
+  .sp-body{padding:0 14px 12px}
+  .sp-tbl{width:100%;border-collapse:collapse;font-size:13px}
+  .sp-tbl th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;
+             color:var(--muted);font-weight:700;padding:6px 10px;border-bottom:1px solid var(--border)}
+  .sp-tbl td{padding:9px 10px;border-bottom:1px solid var(--border-soft,#eef1f5);vertical-align:middle}
   .sp-tbl tr:last-child td{border-bottom:0}
+  .sp-tbl .fld{font-weight:600;color:var(--ink);width:140px}
+  .sp-pv{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;
+         font-variant-numeric:tabular-nums;color:#15803d;font-weight:600}
+  .sp-sv{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px;
+         font-variant-numeric:tabular-nums;color:#b45309;font-weight:600}
+  .sp-na{color:var(--faint,#94a3b8);font-style:italic;font-family:inherit;font-weight:400}
+  .sp-warn{font-size:11px;color:#b45309;font-weight:600;white-space:nowrap}
+
+  /* ---- BOTONES (mismo tamaño y peso que los de Publicar) ---- */
+  .sp-foot{display:flex;gap:8px;justify-content:flex-end;align-items:center;
+           margin-top:11px;flex-wrap:wrap}
+  .sp-b{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12.5px;font-weight:600;
+        padding:7px 13px;border-radius:8px;cursor:pointer;border:1px solid var(--border);
+        background:var(--surface,#fff);color:var(--ink);white-space:nowrap}
+  .sp-b:hover:not(:disabled){background:var(--bg-soft,#f1f5f9)}
+  .sp-b:disabled{opacity:.5;cursor:default}
+  /* Publicar: ambar, EL MISMO de la pagina Publicar (es la misma accion). */
+  .sp-b.pub{background:#fffbeb;border-color:#fcd34d;color:#92400e}
+  .sp-b.pub:hover:not(:disabled){background:#fef3c7;border-color:#d97706}
+  /* Adoptar: naranja, el color del sistema en todo el portal. */
+  .sp-b.ado{background:#fff7ed;border-color:#fdba74;color:#9a3412}
+  .sp-b.ado:hover:not(:disabled){background:#ffedd5;border-color:#ea580c}
+  /* Anular: gris. Es la salida, no una opcion mas. */
+  .sp-b.nul{color:var(--muted)}
+  .sp-b.nul:hover:not(:disabled){color:#b91c1c;border-color:#fca5a5;background:#fef2f2}
+
+  .sp-msg{margin-top:10px;padding:8px 12px;border-radius:8px;font-size:12.5px}
+  .sp-msg.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;font-weight:600}
+  .sp-msg.err{background:#fef2f2;border:1px solid #fecaca;color:#b91c1c}
+  .sp-msg.wait{background:var(--bg-soft,#f8fafc);border:1px solid var(--border);color:var(--muted)}
+
+  /* ---- TABLAS DE SOLO LECTURA (secciones 2 y 3) ---- */
+  .sp-flat{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--card,#fff);
+           border:1px solid var(--border);border-radius:12px;overflow:hidden}
+  .sp-flat th{background:var(--bg-soft,#f8fafc);text-align:left;font-size:10.5px;text-transform:uppercase;
+              letter-spacing:.04em;color:var(--muted);font-weight:700;padding:9px 11px;
+              border-bottom:1px solid var(--border);white-space:nowrap}
+  .sp-flat td{padding:8px 11px;border-bottom:1px solid var(--border-soft,#eef1f5);color:var(--ink)}
+  .sp-flat tr:last-child td{border-bottom:0}
   .sp-mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12px}
   .sp-bad{color:#9a3412}
 
-  .sp-btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:13px;font-weight:600;
-          padding:8px 14px;border:1px solid var(--border);border-radius:9px;background:var(--surface);
+  .sp-btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12.5px;font-weight:600;
+          padding:7px 13px;border:1px solid var(--border);border-radius:8px;background:var(--surface,#fff);
           color:var(--ink);cursor:pointer}
   .sp-btn:hover{background:var(--bg-soft,#f1f5f9)}
-  .sp-empty{padding:30px 16px;text-align:center;color:var(--muted);font-size:13px;
+  .sp-empty{padding:28px 16px;text-align:center;color:var(--muted);font-size:13px;
             border:1px dashed var(--border);border-radius:12px}
   .sp-ok{padding:26px 16px;text-align:center;color:#15803d;font-size:14px;font-weight:600;
          background:#f0fdf4;border:1px solid #bbf7d0;border-radius:12px}
-  @media(max-width:640px){
+  @media(max-width:720px){
     .sp-stats{grid-template-columns:1fr}
-    .sp-vs{grid-template-columns:1fr}
+    .sp-rmeta{display:none}
+    .sp-tbl .fld{width:auto}
   }`;
   document.head.appendChild(st);
 }
 
 /* ---------- UNA FICHA EN CONFLICTO ----------
-   Un bloque por CAMPO. Dos columnas: el portal y el sistema. Un boton debajo de
-   cada valor. El usuario elige CUAL ES EL BUENO; el portal traduce esa eleccion
-   a adopt (si eligio el del sistema) o a detect_commit (si eligio el del portal).
+   Estructura calcada de Publicar: cabecera con foto e identidad completa, tabla
+   de campos, botones chicos al pie.
 
-   Se muestran los dos valores TAL CUAL estan en cada lado. Nada de "normalizar
-   para mostrar": lo que el usuario tiene que ver es lo que hay. */
-function conflictCard(c, i) {
-  const bloques = c.fields.map((f, j) => {
-    const lbl = CAMPO_LBL[f.campo] || f.campo;
+   Que se ve de cada ficha (y antes NO se veia):
+     - foto (o iniciales con el color del portal)
+     - cedula con su tipo (V-28166758)
+     - RAZON SOCIAL, no solo el alias
+     - zona · subzona · concepto  <- sin esto, "BG04" no dice de donde es
+     - cuando se detecto la diferencia
+     - si ademas hay un cambio del portal esperando publicarse */
+function conflictRow(c, i) {
+  const ci = i % AVATAR_BG.length;
+  const emeta = [c.zona, c.subzona, c.concepto].filter(Boolean).map(esc).join(' \u00b7 ');
+  const ced = `${c.ced_kind ? esc(c.ced_kind) + '-' : ''}${esc(c.id_number)}`;
+
+  const filas = c.fields.map((f, j) => {
     const roto = f.estado === 'dato_roto';
-    // dato_roto: el portal lo tiene BIEN y el sistema MAL. No hay eleccion que
-    // hacer (ya se sabe cual vale) -> no se ofrece "adoptar" un dato roto.
-    return `
-      <p class="sp-fld">${esc(lbl)}${roto ? ' \u00b7 el sistema lo tiene mal escrito' : ''}</p>
-      <div class="sp-vs">
-        <div class="sp-side pt">
-          <span class="lbl">En el portal</span>
-          <span class="val${f.portal ? '' : ' na'}">${f.portal ? esc(fmtValor(f.campo, f.portal)) : 'sin dato'}</span>
-          <button class="sp-pick pt" data-pick="portal" data-i="${i}" data-j="${j}">Publicar<span class="sub">se envía al sistema</span></button>
-        </div>
-        <div class="sp-side sy">
-          <span class="lbl">En el sistema</span>
-          <span class="val${f.sistema ? '' : ' na'}">${f.sistema ? esc(fmtValor(f.campo, f.sistema)) : 'sin dato'}</span>
-          ${roto
-            ? '<button class="sp-pick" disabled title="Este dato est\u00e1 mal escrito: hay que corregirlo en el sistema">Mal escrito</button>'
-            : `<button class="sp-pick sy" data-pick="sistema" data-i="${i}" data-j="${j}">Adoptar<span class="sub">entra al portal</span></button>`}
-        </div>
-      </div>`;
+    return `<tr>
+      <td class="fld">${esc(CAMPO_LBL[f.campo] || f.campo)}</td>
+      <td><span class="sp-pv ${f.portal ? '' : 'sp-na'}">${f.portal ? esc(fmtValor(f.campo, f.portal)) : 'sin dato'}</span></td>
+      <td><span class="sp-sv ${f.sistema ? '' : 'sp-na'}">${f.sistema ? esc(fmtValor(f.campo, f.sistema)) : 'sin dato'}</span>
+          ${roto ? '<div class="sp-warn">\u26a0 mal escrito</div>' : ''}</td>
+    </tr>`;
   }).join('');
 
+  // Si TODOS los campos son dato_roto, no hay nada que adoptar: el sistema los
+  // tiene mal. Adoptar un dato roto seria romper el portal a proposito.
+  const todoRoto = c.fields.every(f => f.estado === 'dato_roto');
+
   return `
-    <div class="sp-card" id="spCard_${i}">
-      <div class="sp-ctop">
-        <span class="sp-nom">${esc(c.full_name)}</span>
-        <span class="sp-meta"><span class="sp-cc">${esc(c.company_code)}</span> \u00b7 ${esc(c.id_number)}</span>
+    <div class="sp-row" id="spRow_${i}">
+      <div class="sp-rowhead">
+        ${c.thumb_url
+          ? `<div class="sp-ava"><img src="${esc(c.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`
+          : `<div class="sp-ava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(c.full_name))}</div>`}
+        <div class="sp-who">
+          <div class="sp-nm">${esc(c.full_name)}</div>
+          <div class="sp-sub">${ced} \u00b7 ${esc(c.company_name || c.company_code)}</div>
+          ${c.at ? `<div class="sp-edit">Diferencia detectada el ${esc(fmtDT(c.at))}</div>` : ''}
+        </div>
+        <div class="sp-rmeta">
+          <div class="sp-cc">${esc(c.company_code)}</div>
+          ${emeta ? `<div class="sp-emeta">${emeta}</div>` : ''}
+          ${c.pending ? `<div class="sp-chip" title="Alguien edit\u00f3 esta ficha en el portal y el cambio a\u00fan no se envi\u00f3">Ya editada</div>` : ''}
+        </div>
       </div>
-      ${bloques}
-      <button class="sp-null" data-null="${i}">Anular · dejar los dos como están</button>
-      <div id="spMsg_${i}" style="margin-top:10px" hidden></div>
+      <div class="sp-body">
+        <table class="sp-tbl">
+          <thead><tr><th>Campo</th><th>En el portal</th><th>En el sistema</th></tr></thead>
+          <tbody>${filas}</tbody>
+        </table>
+        <div class="sp-foot">
+          <button class="sp-b nul" data-act="null" data-i="${i}">Anular</button>
+          <button class="sp-b ado" data-act="sistema" data-i="${i}"${todoRoto ? ' disabled title="El sistema tiene estos datos mal escritos: no hay nada que adoptar"' : ''}>Adoptar</button>
+          <button class="sp-b pub" data-act="portal" data-i="${i}">Publicar</button>
+        </div>
+        <div class="sp-msg" id="spMsg_${i}" hidden></div>
+      </div>
     </div>`;
 }
 
 /* ---------- RESOLVER ----------
-   El usuario eligio un lado. Se traduce a la accion que corresponde y se llama
-   al endpoint que YA EXISTE (/api/ax-review). Los dos re-detectan en el server
-   antes de escribir: por eso tarda, y por eso es seguro. */
+   El usuario eligio un lado. Se traduce a la accion de /api/ax-review, que ya
+   existia. Los dos endpoints re-detectan en el server antes de escribir: por eso
+   tardan, y por eso son seguros. */
 async function resolve(i, lado) {
   const c = SP.conflicts[i];
   if (!c) return;
-  const card = $('#spCard_' + i);
+  const row = $('#spRow_' + i);
   const msg = $('#spMsg_' + i);
-  if (!card || !msg) return;
+  if (!row || !msg) return;
 
-  card.querySelectorAll('.sp-pick').forEach(b => { b.disabled = true; });
+  row.querySelectorAll('.sp-b').forEach(b => { b.disabled = true; });
   msg.hidden = false;
-  msg.className = '';
-  msg.innerHTML = '<span style="font-size:12.5px;color:var(--muted)">Comprobando contra el sistema\u2026</span>';
+  msg.className = 'sp-msg wait';
+  msg.textContent = 'Comprobando contra el sistema\u2026';
 
-  /* eligio el del SISTEMA -> ADOPTAR  (el valor del sistema entra al portal)
-     eligio el del PORTAL  -> PUBLICAR (el valor del portal se manda al sistema;
-                                        aparece en "Enviar al sistema → Publicar") */
+  /* portal  -> PUBLICAR (el valor del portal se manda; aparece en Publicar)
+     sistema -> ADOPTAR  (el valor del sistema entra al portal) */
   const action = lado === 'sistema' ? 'adopt' : 'detect_commit';
   const r = await axReview({
-    action,
-    id_numbers: [c.id_number],
-    company_codes: [c.company_code],
+    action, id_numbers: [c.id_number], company_codes: [c.company_code],
   });
 
   if (!r || !r.ok) {
-    msg.className = 'sp-fail';
+    msg.className = 'sp-msg err';
     msg.textContent = (r && r.error) || 'No se pudo completar. Prob\u00e1 de nuevo.';
-    card.querySelectorAll('.sp-pick').forEach(b => { b.disabled = false; });
+    row.querySelectorAll('.sp-b').forEach(b => { b.disabled = false; });
     return;
   }
 
   const n = (r.count != null) ? r.count : ((r.adopted || r.marked || []).length);
   if (!n) {
-    /* Re-detecto y ya no hay diferencia: alguien lo resolvio antes (en el
-       sistema o en la ficha). No es un error; la marca se limpia sola en la
-       proxima corrida. */
-    msg.className = 'sp-done';
+    // Re-detecto y ya no hay diferencia: alguien lo resolvio antes. No es error.
+    msg.className = 'sp-msg ok';
     msg.textContent = '\u2713 Ya estaba resuelto. La marca se limpia en la pr\u00f3xima sincronizaci\u00f3n.';
     return;
   }
 
-  msg.className = 'sp-done';
+  msg.className = 'sp-msg ok';
   msg.textContent = lado === 'sistema'
     ? '\u2713 Listo. El portal tom\u00f3 el dato del sistema.'
     : '\u2713 Listo. El dato del portal qued\u00f3 para enviar: lo vas a ver en Publicar.';
 }
 
 /* ---------- ANULAR ----------
-   No toca ningun dato: solo apaga el aviso. Los dos valores quedan como estan,
-   cada uno en su lado.
+   No toca ningun dato: solo apaga el aviso. Los dos valores quedan como estan.
 
    Para que sirve: cuando LOS DOS estan mal, o cuando el del portal esta bien
    pero no se quiere escribir en el sistema ahora. Sin esto, esas fichas se
-   quedaban en la bandeja para siempre, porque la unica salida era elegir un
-   lado.
+   quedaban en la bandeja para siempre.
 
-   ⚠ NO confundir con el Anular de Publicar: aquel descarta un cambio que
-   estaba por enviarse al sistema. Este solo silencia una etiqueta.
-
-   La diferencia sigue existiendo. Si el dato cambia de algun lado, la proxima
-   sincronizacion la vuelve a marcar — y esta bien: seria otro conflicto. */
+   ⚠ NO es el Anular de Publicar. Aquel descarta un cambio que iba a enviarse;
+   este solo silencia una etiqueta. Si el dato cambia de algun lado, la proxima
+   sincronizacion lo vuelve a marcar — y esta bien: seria otro conflicto. */
 async function dismiss(i) {
   const c = SP.conflicts[i];
   if (!c) return;
-  const card = $('#spCard_' + i);
+  const row = $('#spRow_' + i);
   const msg = $('#spMsg_' + i);
-  if (!card || !msg) return;
+  if (!row || !msg) return;
 
-  card.querySelectorAll('.sp-pick, .sp-null').forEach(b => { b.disabled = true; });
+  row.querySelectorAll('.sp-b').forEach(b => { b.disabled = true; });
   msg.hidden = false;
-  msg.className = '';
-  msg.innerHTML = '<span style="font-size:12.5px;color:var(--muted)">Anulando…</span>';
+  msg.className = 'sp-msg wait';
+  msg.textContent = 'Anulando\u2026';
 
   const r = await api({ action: 'dismiss', id_number: c.id_number });
 
   if (!r || !r.ok) {
-    msg.className = 'sp-fail';
+    msg.className = 'sp-msg err';
     msg.textContent = (r && r.error) || 'No se pudo anular. Prob\u00e1 de nuevo.';
-    card.querySelectorAll('.sp-pick, .sp-null').forEach(b => { b.disabled = false; });
+    row.querySelectorAll('.sp-b').forEach(b => { b.disabled = false; });
     return;
   }
 
-  msg.className = 'sp-done';
-  msg.textContent = '\u2713 Aviso anulado. No se cambi\u00f3 ning\u00fan dato; los dos quedaron como estaban.';
+  msg.className = 'sp-msg ok';
+  msg.textContent = '\u2713 Aviso anulado. No se cambi\u00f3 ning\u00fan dato.';
 }
 
 function paint() {
@@ -349,8 +390,6 @@ function paint() {
   const nR = SP.rejected.length;
   const nS = SP.skipped.length;
 
-  // Nada pendiente: se dice y punto. Una pantalla vacia con tres tablas vacias
-  // es peor que un mensaje claro.
   if (!nC && !nR && !nS) {
     host.innerHTML = '<div class="sp-ok">\u2713 No hay nada pendiente. Todo al d\u00eda.</div>';
     return;
@@ -362,9 +401,9 @@ function paint() {
   partes.push(`<div class="sp-sec">
     <h2>Hay que decidir</h2>
     <p class="lead">Los dos lados tienen un dato y no coinciden. El portal <b>no toc\u00f3 nada</b>: solo los se\u00f1al\u00f3.
-       Eleg\u00ed cu\u00e1l vale.</p>
+       Eleg\u00ed cu\u00e1l vale, o anul\u00e1 el aviso para dejar los dos como est\u00e1n.</p>
     ${nC
-      ? SP.conflicts.map((c, i) => conflictCard(c, i)).join('')
+      ? SP.conflicts.map((c, i) => conflictRow(c, i)).join('')
       : '<div class="sp-empty">Nada que decidir.</div>'}
   </div>`);
 
@@ -385,7 +424,7 @@ function paint() {
       <p class="lead">El sistema mand\u00f3 estos datos mal escritos, as\u00ed que <b>no se guardaron</b>.
          El portal no arregla datos del sistema: hay que corregirlos all\u00e1.
          Cuando se corrijan, dejan de aparecer solos.</p>
-      <table class="sp-tbl">
+      <table class="sp-flat">
         <thead><tr><th>C\u00e9dula</th><th>Colaborador</th><th>Empresa</th><th>Campo</th><th>Vino as\u00ed</th></tr></thead>
         <tbody>${filas}</tbody>
       </table>
@@ -403,7 +442,7 @@ function paint() {
       <h2>Tiendas saltadas</h2>
       <p class="lead">El sistema devolvi\u00f3 una lista sospechosamente corta para estas tiendas.
          El portal prefiri\u00f3 <b>no tocar nada</b> antes que dar de baja a gente que sigue trabajando.</p>
-      <table class="sp-tbl">
+      <table class="sp-flat">
         <thead><tr><th style="width:120px">Empresa</th><th>Motivo</th></tr></thead>
         <tbody>${filas}</tbody>
       </table>
@@ -412,12 +451,12 @@ function paint() {
 
   host.innerHTML = partes.join('');
 
-  // Botones de resolucion.
-  host.querySelectorAll('[data-pick]').forEach(b =>
-    b.addEventListener('click', () => resolve(+b.dataset.i, b.dataset.pick)));
-  // Anular: apaga el aviso sin tocar ningun dato.
-  host.querySelectorAll('[data-null]').forEach(b =>
-    b.addEventListener('click', () => dismiss(+b.dataset.null)));
+  host.querySelectorAll('[data-act]').forEach(b =>
+    b.addEventListener('click', () => {
+      const i = +b.dataset.i;
+      if (b.dataset.act === 'null') dismiss(i);
+      else resolve(i, b.dataset.act);
+    }));
 
   const exp = $('#spExp');
   if (exp) exp.addEventListener('click', () => openExportMenu(exp));
@@ -426,11 +465,8 @@ function paint() {
 /* ---------- EXPORTAR (patron del portal: xlsx / csv / txt) ---------- */
 function exportRows() {
   return SP.rejected.map(d => ({
-    'C\u00e9dula': d.ced,
-    'Colaborador': d.nom,
-    'Empresa': d.comp,
-    'Campo': CAMPO_LBL[d.campo] || d.campo,
-    'Vino as\u00ed': d.valor,
+    'C\u00e9dula': d.ced, 'Colaborador': d.nom, 'Empresa': d.comp,
+    'Campo': CAMPO_LBL[d.campo] || d.campo, 'Vino as\u00ed': d.valor,
   }));
 }
 function downloadBlob(content, filename, mime) {
@@ -546,7 +582,7 @@ function paintStats() {
       <div class="v">${c.rejected}</div>
       <div class="h">se corrigen all\u00e1</div>
     </div>
-    <div class="sp-stat slt">
+    <div class="sp-stat">
       <div class="k">Tiendas saltadas</div>
       <div class="v">${c.skipped}</div>
       <div class="h">respuesta corta del sistema</div>

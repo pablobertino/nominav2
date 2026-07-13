@@ -159,53 +159,45 @@ const NAV_GROUPS = [
     ['constancias', I.docs, 'Constancias'],
     ['firmantes', I.pencil, 'Firmantes', 'superonly'],
   ] },
-  /* v5.42 — EL MENU DE SINCRONIZACION, EN TRES BLOQUES.
+  /* v5.44 — UN SOLO GRUPO "SINCRONIZACION", CON TRES DIVISIONES ADENTRO.
 
-     ANTES (hasta v5.39) era UN grupo ("Sincronizacion") con los dos flujos
-     mezclados:
+     Historia corta: hasta v5.39 era un grupo plano donde "Historial" y
+     "Registro" parecian sinonimos (son la bitacora de flujos OPUESTOS, pero el
+     menu los ponia uno al lado del otro). v5.40 lo partio en dos grupos por
+     direccion, y v5.42 sumo un tercero para lo que no era ni una cosa ni la
+     otra. El problema: tres grupos hermanos en el menu principal hacen parecer
+     que son tres areas distintas del portal, cuando son UNA.
 
-         Sincronizar    <- portal ESCRIBE en el sistema
-         Comparar       <- portal LEE del sistema
-         Historial      <- que escribimos
-         Registro       <- que leimos
+     Ahora es un grupo con SUBTITULOS. Se colapsa entero (una cosa), pero por
+     dentro se lee la simetria de los dos flujos:
 
-     Las flechas van en direcciones contrarias y estaban intercaladas. Por eso
-     "Historial" y "Registro" se confundian: cada uno es la bitacora de un flujo
-     distinto, pero el menu los ponia uno al lado del otro como si fueran
-     sinonimos.
+         SINCRONIZACION
+           ─ Recibir del sistema
+             Pendientes  (5)
+             Comparar
+             Registro
+           ─ Enviar al sistema
+             Publicar
+             Historial
+           ─ Herramientas
+             Consultar API      <- ni recibe ni envia: banco de pruebas
+             Configurar         <- gobierna LAS DOS direcciones
 
-     v5.40 lo partio en dos por DIRECCION. Bien. Pero metio "Consultar API" y
-     "Configurar" dentro de "Recibir", y eso era falso:
-       - Consultar API no recibe ni envia nada: es un banco de pruebas. Se le
-         pregunta algo al sistema y se mira la respuesta. Nada se guarda.
-       - Configurar gobierna las DOS direcciones (el cron que trae y el que
-         empuja). Ponerlo de un solo lado es elegir un lado al azar.
+     Un item con la forma ['--', 'Texto'] es un SUBTITULO, no un boton: no
+     navega, no tiene permiso, y no cuenta para decidir si el grupo esta vacio
+     (un grupo con solo subtitulos no se pinta).
 
-     Ahora hay un tercer bloque, HERRAMIENTAS, para lo que no es ni una cosa ni
-     la otra. Cada flujo tiene SU bandeja y SU bitacora, y la simetria se ve:
-
-         RECIBIR              ENVIAR              HERRAMIENTAS
-         Pendientes  (5)      Publicar   (11)     Consultar API
-         Comparar             Historial           Configurar
-         Registro
-
-     Ademas "Sincronizar" pasa a llamarse "Publicar", que es lo que hace. Un
-     item llamado "Sincronizar" dentro de un grupo llamado "Sincronizacion" no
-     le decia nada a nadie.
-
-     Los `view` (data-view) NO cambian: son los identificadores que enruta
-     navigate() y los que gobierna la matriz de permisos. Solo cambian las
-     etiquetas y la agrupacion. `syncpend` es el unico view nuevo. */
-  { title: 'Recibir del sistema', items: [
+     Los `view` (data-view) NO cambian: son los que enruta navigate() y los que
+     gobierna la matriz de permisos. */
+  { title: 'Sincronización', items: [
+    ['--', 'Recibir del sistema'],
     ['syncpend', I.alert, 'Pendientes', 'adminonly'],
     ['axcompare', I.compare, 'Comparar', 'adminonly'],
     ['synclog', I.docs, 'Registro', 'adminonly'],
-  ] },
-  { title: 'Enviar al sistema', items: [
+    ['--', 'Enviar al sistema'],
     ['syncreview', I.sync, 'Publicar', 'adminonly'],
     ['axhistory', I.history, 'Historial', 'adminonly'],
-  ] },
-  { title: 'Herramientas', items: [
+    ['--', 'Herramientas'],
     ['erpquery', I.search, 'Consultar API', 'adminonly'],
     ['sync', I.cog, 'Configurar', 'superonly'],
   ] },
@@ -449,17 +441,27 @@ function shell(user) {
   // Filtro por ITEM: 'superonly' solo el super; 'adminonly' cualquier usuario
   // administrativo (v4.57: los endpoints aplican la matriz de permisos, asi
   // que el menu abre la puerta y el permiso decide adentro).
-  const itemVisible = (it) => it[3] === 'superonly' ? isSuper
+  /* v5.44: un item ['--', 'Texto'] es un SUBTITULO dentro del grupo, no un
+     boton. Siempre visible (no navega ni tiene permiso), pero no cuenta para
+     saber si el grupo tiene contenido: un grupo con solo subtitulos no se
+     pinta. */
+  const isSubtitle = (it) => it[0] === '--';
+  const itemVisible = (it) => isSubtitle(it) ? true
+    : it[3] === 'superonly' ? isSuper
     : it[3] === 'adminonly' ? user.kind === 'admin'
     : true;
   const navHtml = `<div class="nav-loose">${navLoose.filter(itemVisible).map(navBtn).join('')}</div>`
     + navGroups.map((g, gi) => {
         const items = g.items.filter(itemVisible);
-        if (!items.length) return '';
+        // Un grupo que solo tiene subtitulos (todos sus botones cayeron por
+        // permisos) no se pinta: seria una cabecera con encabezados adentro.
+        if (!items.some(it => !isSubtitle(it))) return '';
         return `
         <div class="nav-group" data-group="${gi}">
           <button type="button" class="nav-ghead" data-group-toggle="${gi}"><span class="gh-label">${g.title}</span>${chev}</button>
-          <div class="nav-gitems">${items.map(navBtn).join('')}</div>
+          <div class="nav-gitems">${items.map(it => isSubtitle(it)
+            ? `<div class="nav-sub">${it[1]}</div>`
+            : navBtn(it)).join('')}</div>
         </div>`;
       }).join('');
 
@@ -487,7 +489,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.43</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.44</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>

@@ -49,8 +49,23 @@
 .nav-ghead-chev { width:13px; height:13px; flex-shrink:0; transition:transform .18s; }
 .nav-group.collapsed .nav-ghead-chev { transform:rotate(-90deg); }
 .nav-gitems { display:flex; flex-direction:column; gap:1px; overflow:hidden;
-  transition:max-height .2s ease, opacity .15s ease; max-height:600px; opacity:1; }
+  transition:max-height .2s ease, opacity .15s ease; max-height:900px; opacity:1; }
 .nav-group.collapsed .nav-gitems { max-height:0; opacity:0; }
+
+/* v5.44 — SUBTITULO DENTRO DE UN GRUPO.
+   Sincronizacion es UN area del portal, pero tiene tres partes que no se
+   mezclan: lo que se recibe, lo que se envia, y las herramientas. Antes eran
+   tres grupos hermanos (parecian tres areas distintas); ahora son divisiones
+   de una sola.
+   Mas chico y mas apagado que el titulo del grupo: tiene que leerse como una
+   division interna, no competir con la cabecera. */
+.nav-sub { font-size:10px; font-weight:700; letter-spacing:.06em; text-transform:uppercase;
+  color:var(--faint,#94a3b8); padding:9px 12px 3px; user-select:none; }
+.nav-sub:first-child { padding-top:2px; }
+/* En modo riel (solo iconos) no hay lugar para texto: se convierte en una
+   linea divisoria, que cumple la misma funcion de separar. */
+.rail .nav-sub { font-size:0; padding:0; margin:6px 10px; height:1px;
+  background:var(--border); letter-spacing:0; }
 
 /* --- Modo RIEL (solo iconos) ---
    El boton de la marca (#pnlRail) SIGUE visible en riel para poder volver
