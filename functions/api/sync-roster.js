@@ -103,8 +103,8 @@ const TIME_BUDGET_MS = 90000;   // presupuesto total de corrida
 
    Baja de 10 a 5: mas tandas, pero ninguna muere. Una tanda que revienta no
    avanza el offset y la corrida se cuelga entera; mejor ir despacio. */
-const STORES_PER_CALL = 5;      // tiendas por invocacion (limite de Cloudflare)
-const BATCH = 5;                // tiendas en paralelo dentro de la tanda
+const STORES_PER_CALL = 3;      // tiendas por invocacion (limite de Cloudflare)
+const BATCH = 3;                // tiendas en paralelo dentro de la tanda
 
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -228,7 +228,12 @@ async function processStore(env, cc) {
   const out = { company_code: cc, added: 0, removed: 0, filled: 0, skipped: false, alert: null, detail: {},
                 // v5.31: datos que NO se escribieron por venir mal formateados.
                 // No es un error de la sincronizacion: es un dato a corregir en AX.
-                rejected: { account: 0, phone: 0, email: 0 } };
+                rejected: { account: 0, phone: 0, email: 0 },
+                /* v5.34: el DETALLE de cada rechazo (cedula, nombre, empresa,
+                   campo, valor crudo). Sin esto, el aviso dice "4 correos mal
+                   escritos" y no hay forma de saber CUALES. Pablo tiene que
+                   poder ver la lista para ir a corregirlos en AX. */
+                rejDetail: [] };
   try {
     const today = new Date().toISOString().split('T')[0];
     const apiRes = await fetch(`${HCM_API}?alias=${encodeURIComponent(cc)}&fecha=${today}`, {
@@ -409,9 +414,21 @@ async function processStore(env, cc) {
        verdad (los dos lados tienen valor y son distintos) sigue siendo cosa de
        Comparar, con la auditoria de la API. Esto no lo reemplaza.
 
-       GUARDIA: si la ficha tiene un cambio del portal SIN PUBLICAR (ax_pending)
-       sobre ese campo, no se toca aunque este vacio. Podria ser un borrado
-       deliberado que todavia no viajo a AX; rellenarlo seria deshacerlo.
+       LA UNICA GUARDIA ES EL FORMATO (Pablo, 2026-07-13).
+
+       Se saco la guardia de `ax_pending`: protegia el caso "cambio del portal
+       sin publicar + campo vacio", que es IMPOSIBLE. La ficha de edicion tiene
+       BLOQUEO DE VACIADO desde v4.43 (`ORIG_PROT` en worker-photos.js): un
+       campo que TENIA valor no se puede guardar vacio, solo reemplazar. Y se
+       midio: 0 ocurrencias en la base. La guardia protegia un imposible, y a
+       cambio condenaba ese hueco a no llenarse nunca.
+
+       Lo que SI se guarda: el dato mal formateado. Si el sistema manda un
+       correo sin arroba o un telefono con un prefijo que no existe, NO se
+       escribe. Se cuenta, se avisa en Sincronizar, y se guarda el DETALLE
+       (cedula + empresa + valor crudo) para poder ir a corregirlo en AX, que
+       es donde vive el dato. El portal no arregla datos del ERP: eso enmascara
+       el problema y deja dos versiones de la verdad.
        =================================================================== */
     const toFill = [];
     if (vig.size) {
@@ -421,32 +438,45 @@ async function processStore(env, cc) {
       const inList = ceds.map(c => `"${c}"`).join(',');
       const master = await sb(env,
         `workers_master?id_number=in.(${inList})`
-        + `&select=id_number,account_number,phone,email,ax_pending,ax_pending_fields`) || [];
+        + `&select=id_number,full_name,account_number,phone,email`) || [];
 
       for (const m of master) {
         const ced = digits(m.id_number);
         const r = vig.get(ced);
         if (!r) continue;
 
-        const pend = m.ax_pending ? (m.ax_pending_fields || {}) : {};
         const patch = {};
+        // Nombre para el reporte de rechazados (que se pueda ver de quien es).
+        const nom = m.full_name || '';
 
-        // CUENTA: solo si esta vacia, el sistema la trae valida, y no hay un
-        // cambio del portal pendiente sobre ese campo.
-        if (!clean(m.account_number) && !pend.account_number) {
+        /* Cada campo: se rellena SOLO si esta vacio en el portal. Si el sistema
+           lo trae mal formateado, se rechaza CON DETALLE para corregir en AX. */
+        if (!clean(m.account_number)) {
+          const crudo = clean(r.cuentaBancaria);
           const v = cleanAccount(r.cuentaBancaria);
           if (v) patch.account_number = v;
-          else if (clean(r.cuentaBancaria)) out.rejected.account++;
+          else if (crudo) {
+            out.rejected.account++;
+            out.rejDetail.push({ ced, nom, comp: cc, campo: 'cuenta', valor: crudo });
+          }
         }
-        if (!clean(m.phone) && !pend.phone) {
+        if (!clean(m.phone)) {
+          const crudo = clean(r.telefono);
           const v = cleanPhone(r.telefono);
           if (v) patch.phone = v;
-          else if (clean(r.telefono)) out.rejected.phone++;
+          else if (crudo) {
+            out.rejected.phone++;
+            out.rejDetail.push({ ced, nom, comp: cc, campo: 'telefono', valor: crudo });
+          }
         }
-        if (!clean(m.email) && !pend.email) {
+        if (!clean(m.email)) {
+          const crudo = clean(r.correo);
           const v = cleanEmail(r.correo);
           if (v) patch.email = v;
-          else if (clean(r.correo)) out.rejected.email++;
+          else if (crudo) {
+            out.rejected.email++;
+            out.rejDetail.push({ ced, nom, comp: cc, campo: 'correo', valor: crudo });
+          }
         }
 
         if (Object.keys(patch).length) toFill.push([ced, patch]);
@@ -588,6 +618,14 @@ export async function onRequestPost({ request, env, ctx }) {
     email:   a.email   + ((r.rejected && r.rejected.email)   || 0),
   }), { account: 0, phone: 0, email: 0 });
 
+  /* v5.34 — EL DETALLE, no solo el numero.
+     El contador dice "4 correos mal escritos" y ahi se acaba: no hay forma de
+     saber CUALES ni de ir a corregirlos. Pablo lo pidio explicito: "la
+     sincronizacion debe advertirlo y debo poder ver cuales son los casos".
+     Se junta el detalle de las tiendas de esta tanda; mas abajo se acumula con
+     el de las tandas anteriores y viaja al front. */
+  const rejDetail = results.reduce((a, r) => a.concat(r.rejDetail || []), []);
+
   // Log: SOLO tiendas con movimiento o alerta (corridas limpias no ensucian).
   const logRows = results
     .filter(r => r.added || r.removed || r.filled || r.skipped)
@@ -624,6 +662,11 @@ export async function onRequestPost({ request, env, ctx }) {
   const totFilled = prevFilled + filled;
   const totAlerts = prevAlerts + alerts;
   const totStores = prevStores + results.length;
+  /* v5.34: el DETALLE de los rechazos acumula entre tandas, igual que los
+     contadores. Se corta en 300 filas: alcanza de sobra para ir a corregir en
+     AX, y evita inflar el payload si un dia el ERP devuelve basura masiva. */
+  const prevDetail = Array.isArray(body.acc_rej_detail) ? body.acc_rej_detail : [];
+  const totDetail = prevDetail.concat(rejDetail).slice(0, 300);
   const totRej = {
     account: prevRej.account + rej.account,
     phone:   prevRej.phone   + rej.phone,
@@ -681,6 +724,7 @@ export async function onRequestPost({ request, env, ctx }) {
       acc_rej_account: totRej.account,
       acc_rej_phone: totRej.phone,
       acc_rej_email: totRej.email,
+      acc_rej_detail: totDetail,
     };
     const chain = fetch(selfUrl, {
       method: 'POST',
@@ -703,6 +747,9 @@ export async function onRequestPost({ request, env, ctx }) {
     acc_rej_account: totRej.account,
     acc_rej_phone: totRej.phone,
     acc_rej_email: totRej.email,
+    // v5.34: el detalle de los rechazos, para poder VER cuales son y corregir en AX.
+    acc_rej_detail: totDetail,
+    rechazados_detalle: totDetail,
   });
   } catch (e) {
     // v4.58: una falla dura marca la corrida como error en la config para

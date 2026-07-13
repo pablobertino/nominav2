@@ -4663,7 +4663,8 @@ async function viewSync(user) {
       // final solo contaria los de la ULTIMA tanda de 10 tiendas.
       let acc = { added: 0, removed: 0, alerts: 0, stores: 0 };
       let rej = { account: 0, phone: 0, email: 0 };
-      let filled = 0;   // v5.34: fichas incompletas que se completaron solas
+      let filled = 0;          // v5.34: fichas incompletas que se completaron solas
+      let rejDetail = [];      // v5.34: QUIENES vienen mal del sistema (para corregir en AX)
       let total = 0;
       let r = null;
       let guard = 0;
@@ -4678,7 +4679,8 @@ async function viewSync(user) {
           acc_rej_account: rej.account,
           acc_rej_phone: rej.phone,
           acc_rej_email: rej.email,
-          acc_filled: filled,   // v5.34
+          acc_filled: filled,          // v5.34
+          acc_rej_detail: rejDetail,   // v5.34
         });
         if (!r || !r.ok) break;
 
@@ -4689,6 +4691,7 @@ async function viewSync(user) {
           email: Number(r.acc_rej_email) || 0,
         };
         filled = Number(r.acc_filled) || 0;
+        if (Array.isArray(r.acc_rej_detail)) rejDetail = r.acc_rej_detail;
 
         runId = r.run_id || runId;
         total = r.total_stores || total;
@@ -4730,28 +4733,81 @@ async function viewSync(user) {
           + `</div>`);
       }
 
-      /* v5.31 — DATOS QUE NO SE ESCRIBIERON POR VENIR MAL FORMATEADOS.
+      /* v5.34 — LOS DATOS QUE VIENEN MAL, CON NOMBRE Y APELLIDO.
          Decision de Pablo: el portal NO arregla datos del ERP. Si un correo
          viene sin arroba, o un telefono con un prefijo que no existe, NO se
          guarda — se avisa, y se corrige en el sistema, que es donde vive el dato.
 
-         Sin este aviso el descarte seria SILENCIOSO: el dato no entra, nadie se
-         entera, y el campo queda vacio para siempre sin que nadie sepa por que. */
-      const rejTot = rej.account + rej.phone + rej.email;
-      if (rejTot > 0 && el) {
+         Pero avisar "4 correos mal escritos" y nada mas es inutil: no hay forma
+         de saber CUALES ni de ir a arreglarlos. Pablo lo pidio explicito: "debo
+         poder ver cuales son los casos". Asi que el aviso ahora TRAE LA LISTA
+         (cedula, nombre, empresa, campo, y el valor crudo tal cual vino), se
+         puede desplegar, y se puede copiar para trabajarla en AX. */
+      const totalRej = rej.account + rej.phone + rej.email;
+      if (totalRej > 0 && el) {
         const partes = [];
-        if (rej.account) partes.push(`<b>${rej.account}</b> cuenta${rej.account === 1 ? '' : 's'} bancaria${rej.account === 1 ? '' : 's'}`);
-        if (rej.phone) partes.push(`<b>${rej.phone}</b> teléfono${rej.phone === 1 ? '' : 's'}`);
-        if (rej.email) partes.push(`<b>${rej.email}</b> correo${rej.email === 1 ? '' : 's'}`);
+        if (rej.email) partes.push(`${rej.email} correo${rej.email === 1 ? '' : 's'}`);
+        if (rej.phone) partes.push(`${rej.phone} teléfono${rej.phone === 1 ? '' : 's'}`);
+        if (rej.account) partes.push(`${rej.account} cuenta${rej.account === 1 ? '' : 's'} bancaria${rej.account === 1 ? '' : 's'}`);
+
+        // La lista, si el server la mando (puede venir vacia si algo fallo).
+        const filas = (rejDetail || []).map(d => `
+          <tr>
+            <td style="padding:5px 8px;border-bottom:1px solid #f3e4cf;white-space:nowrap">${esc(d.ced || '')}</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #f3e4cf">${esc(d.nom || '')}</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #f3e4cf;white-space:nowrap">${esc(d.comp || '')}</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #f3e4cf;white-space:nowrap">${esc(d.campo || '')}</td>
+            <td style="padding:5px 8px;border-bottom:1px solid #f3e4cf;font-family:ui-monospace,monospace;font-size:11.5px;color:#9a3412">${esc(d.valor || '')}</td>
+          </tr>`).join('');
+
+        const tabla = filas ? `
+          <details style="margin-top:9px">
+            <summary style="cursor:pointer;font-weight:700;font-size:12px;color:#92400e;user-select:none">
+              Ver los ${rejDetail.length} caso${rejDetail.length === 1 ? '' : 's'} · corregir en el sistema
+            </summary>
+            <div style="margin-top:8px;max-height:280px;overflow:auto;border:1px solid #f3ddc0;border-radius:7px;background:#fff">
+              <table style="width:100%;border-collapse:collapse;font-size:12px">
+                <thead>
+                  <tr style="background:#fdf3e7;position:sticky;top:0">
+                    <th style="padding:6px 8px;text-align:left;font-size:11px;color:#92400e">Cédula</th>
+                    <th style="padding:6px 8px;text-align:left;font-size:11px;color:#92400e">Colaborador</th>
+                    <th style="padding:6px 8px;text-align:left;font-size:11px;color:#92400e">Empresa</th>
+                    <th style="padding:6px 8px;text-align:left;font-size:11px;color:#92400e">Campo</th>
+                    <th style="padding:6px 8px;text-align:left;font-size:11px;color:#92400e">Valor que llegó</th>
+                  </tr>
+                </thead>
+                <tbody>${filas}</tbody>
+              </table>
+            </div>
+            <button class="btn btn-sm" id="rsCopyRej" style="margin-top:8px">Copiar la lista</button>
+          </details>` : '';
+
         el.insertAdjacentHTML('beforeend',
-          `<div style="margin-top:10px;padding:11px 13px;background:#fff7ed;border:1px solid #fed7aa;`
-          + `border-radius:9px;font-size:12.5px;color:#9a3412;line-height:1.55">`
-          + `<b>⚠ Datos que no se pudieron guardar.</b> ${partes.join(', ')} `
-          + `${rejTot === 1 ? 'venía' : 'venían'} mal escrito${rejTot === 1 ? '' : 's'} desde el sistema `
-          + `(por ejemplo, un correo sin arroba). No se guardaron para no dejar un dato inválido `
-          + `en la ficha. <b>Se corrigen en el sistema</b> y entran solos en la próxima sincronización.`
+          `<div style="margin-top:10px;padding:11px 13px;background:#fdf3e7;border:1px solid #f3ddc0;`
+          + `border-radius:9px;font-size:12.5px;color:#92400e;line-height:1.55">`
+          + `<b>⚠ ${totalRej} dato${totalRej === 1 ? '' : 's'} no se pudo${totalRej === 1 ? '' : 'ieron'} guardar.</b> `
+          + `${partes.join(', ')} ${totalRej === 1 ? 'venía' : 'venían'} mal escrito${totalRej === 1 ? '' : 's'} desde el sistema `
+          + `(por ejemplo, un correo sin arroba). El portal no los corrige por su cuenta: `
+          + `se arreglan en el sistema y entran solos en la próxima sincronización.`
+          + tabla
           + `</div>`);
+
+        // Copiar la lista al portapapeles (para trabajarla en AX).
+        const cp = document.getElementById('rsCopyRej');
+        if (cp) cp.addEventListener('click', () => {
+          const txt = ['Cedula\tColaborador\tEmpresa\tCampo\tValor que llego']
+            .concat((rejDetail || []).map(d =>
+              `${d.ced || ''}\t${d.nom || ''}\t${d.comp || ''}\t${d.campo || ''}\t${d.valor || ''}`))
+            .join('\n');
+          navigator.clipboard.writeText(txt).then(() => {
+            cp.textContent = '✓ Copiada';
+            setTimeout(() => { cp.textContent = 'Copiar la lista'; }, 1800);
+          });
+        });
       }
+
+      /* (El aviso de datos rechazados vive ARRIBA, junto con la lista de casos
+         que Pablo pidio para poder ir a corregirlos en el sistema.) */
 
       loadRs();
     });
