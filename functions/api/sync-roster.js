@@ -846,44 +846,24 @@ export async function onRequestPost({ request, env, ctx }) {
     });
   } catch (_) { /* resumen best-effort */ }
 
-  /* v5.14: CADENA DE TANDAS PARA EL CRON.
-     El tick de la base hace UNA sola llamada. Si esa llamada procesa 10 tiendas
-     y termina, las otras 122 se quedan sin sincronizar y nadie las retoma hasta
-     el dia siguiente (que volveria a hacer las primeras 10: las mismas siempre).
+  /* v5.38 — LA CADENA DE TANDAS LA HACE EL TICK, NO EL WORKER.
 
-     Por eso, cuando la corrida viene del cron y quedan tandas, el Worker se
-     AUTO-INVOCA con el offset siguiente. Cada eslabon es una invocacion nueva,
-     con su propio presupuesto limpio de 50 subrequests.
+     Aca habia una auto-invocacion: el Worker se llamaba a si mismo con el
+     offset siguiente (`ctx.waitUntil(fetch(selfUrl, ...))`). NO FUNCIONABA.
+     Se cortaba en el primer eslabon y el `.catch(() => {})` se tragaba el
+     error, asi que no quedaba rastro.
 
-     waitUntil: la respuesta se devuelve YA; el encadenado sigue en segundo
-     plano. Sin esto, Cloudflare mataria el fetch pendiente al cerrar la
-     respuesta y la cadena se cortaria en el primer eslabon.
+     El efecto medido: el cron procesaba SIEMPRE las mismas 10 tiendas, cada
+     15 minutos, sin avanzar jamas. Como nunca llegaba a `done`, nunca escribia
+     last_run_at, y el tick lo volvia a disparar desde la tienda 1. Las tiendas
+     10-131 (122 de 132) no se sincronizaron nunca de forma automatica.
 
-     El manual NO se auto-encadena: ahi el front hace el bucle y muestra la
-     barra de progreso (el usuario esta mirando; conviene que vea el avance y
-     pueda ver el resultado). */
-  if (!done && source === 'cron') {
-    const selfUrl = new URL(request.url).origin + '/api/sync-roster';
-    const nextBody = {
-      source: 'cron', adminId,
-      offset: nextOffset, run_id: runId,
-      acc_added: totAdded, acc_removed: totRemoved,
-      acc_filled: totFilled,
-      acc_alerts: totAlerts, acc_stores: totStores,
-      acc_rej_account: totRej.account,
-      acc_rej_phone: totRej.phone,
-      acc_rej_email: totRej.email,
-      acc_rej_detail: totDetail,
-      acc_diffs: totDiffs,
-      acc_diff_detail: totDiffDetail,
-    };
-    const chain = fetch(selfUrl, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(nextBody),
-    }).catch(() => { /* si un eslabon falla, el reintento del tick lo retoma */ });
-    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(chain);
-  }
+     Ahora el bucle lo hace `tick_roster_sync()` desde la base: pide una tanda,
+     ESPERA la respuesta, lee `done`/`next_offset`, y sigue. Es el mismo patron
+     que usa el front en "Ejecutar ahora" — el camino que si funciona.
+
+     El Worker vuelve a ser lo que debe ser: procesa SU tanda y contesta. Quien
+     encadena es quien llama (el tick, o el front). */
 
   return json({
     ok: true, ...summary,
