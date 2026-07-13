@@ -695,7 +695,28 @@ export async function onRequestPost({ request, env, ctx }) {
   // Alcance: tiendas abiertas.
   const stores = await sb(env,
     `companies?company_type=eq.Tienda&is_active=eq.true&select=company_code&order=company_code.asc`) || [];
-  const codes = stores.map(s => s.company_code);
+  let codes = stores.map(s => s.company_code);
+
+  /* v5.39 — SUBCONJUNTO OPCIONAL (`only`).
+
+     El boton de Empresas ("Sincronizar personal") manda la lista de empresas
+     VISIBLES con el filtro que el usuario tiene puesto. Sin `only`, el endpoint
+     se comporta igual que siempre: TODAS las tiendas abiertas. Asi el cron y
+     "Ejecutar ahora" (Configurar) no cambian en nada.
+
+     Se INTERSECTA contra la lista real: lo que llega del front es una sugerencia,
+     no una orden. Si mandan una empresa cerrada, una que no es tienda, o uno
+     inventado, se cae solo. El alcance de verdad lo sigue decidiendo el backend.
+
+     Ojo: el `only` viaja en CADA tanda (igual que run_id y los acumuladores), o
+     la tanda 2 volveria a las 132 tiendas y el offset apuntaria a otra lista. */
+  if (Array.isArray(body.only) && body.only.length) {
+    const want = new Set(body.only.map(c => String(c || '').trim().toUpperCase()).filter(Boolean));
+    codes = codes.filter(c => want.has(String(c).toUpperCase()));
+    if (!codes.length) {
+      return json({ ok: false, error: 'Ninguna de las empresas seleccionadas es una tienda abierta.' }, 400);
+    }
+  }
 
   /* v5.14: TANDA. offset = desde que tienda seguir; run_id se recibe para que
      todas las tandas de una misma corrida compartan el mismo id en el log (y

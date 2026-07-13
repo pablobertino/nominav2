@@ -42,7 +42,11 @@ import { renderRoles } from './roles.js';
 import { injectPeriodTimeline } from './period-timeline.js';
 import { renderPayGrid } from './pay-grid.js';
 import { renderDepartments } from './departments.js';
-import { axRosterPull, rosterCooldownMessage } from '../reports/shared/roster-ax.js';
+/* v5.39: se quito el import de roster-ax.js. El boton "Sincronizar personal"
+   dejo de usar /api/ax-roster (el motor que pisaba datos y descartaba los
+   cambios pendientes) y ahora llama a /api/sync-roster, el mismo motor que la
+   sincronizacion automatica. Con eso quedaron sin uso `axRosterPull` y
+   `rosterCooldownMessage` (sync-roster no tiene cooldown por empresa). */
 
 /* Tipos de empresa que NO son tienda: pueden tener departamentos y usuarios
    de empresa. (companies.company_type) */
@@ -440,7 +444,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.38</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.39</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -883,7 +887,7 @@ async function viewTiendas(user) {
     <div class="pnl-head">
       <div><h1>Empresas</h1><p id="tCount"></p></div>
       <div style="display:flex;gap:8px;align-items:center">
-        ${canSyncAll ? `<button class="btn btn-primary" id="syncAllBtn">${I.sync} Sincronizar todo</button>` : ''}
+        ${canSyncAll ? `<button class="btn btn-primary" id="syncAllBtn">${I.sync} Sincronizar personal</button>` : ''}
         <div class="export-wrap">
           <button class="btn" id="exportBtn">Exportar ▾</button>
           <div class="export-menu" id="exportMenu" hidden>
@@ -1457,19 +1461,38 @@ async function companyEditModal(user, c, canEdit) {
   }
 }
 
-/* ---------- Sincronizar todo (admin): recorre las empresas visibles ----------
-   La API de AX exige alias, asi que no hay un llamado masivo: se itera empresa
-   por empresa (axRosterPull por alias) en secuencia, con barra de progreso y
-   bitacora. "El ultimo reporte manda": la lista de AX reemplaza el roster de
-   cada empresa; fotos y contacto se conservan. Al cerrar, refresca la grilla. */
+/* ---------- Sincronizar personal (admin): las TIENDAS visibles ----------
+   v5.39 — REAPUNTADO AL MOTOR BUENO.
+
+   Antes este boton llamaba a /api/ax-roster, un motor de otra era cuya regla
+   era "el ultimo reporte manda": PISABA los datos del portal con los de AX
+   (vaciando cuentas que AX no tiene) y DESCARTABA los cambios pendientes de
+   publicar. Era el unico lugar del portal que hacia eso.
+
+   Ahora llama a /api/sync-roster, el mismo motor que "Ejecutar ahora" y que el
+   cron: rellena huecos, marca las diferencias, y NO PISA NADA que ya tenga
+   valor. Un solo motor, una sola verdad.
+
+   Lo que este boton sigue aportando (y "Ejecutar ahora" no): el parametro
+   `only` — sincroniza SOLO las empresas visibles con el filtro actual, en vez
+   de las 132 tiendas. Sin eso seria un duplicado.
+
+   Va por TANDAS (limite de 50 subrequests de Cloudflare): cada llamada procesa
+   unas pocas tiendas y devuelve next_offset. Los acumuladores (acc_*) y el
+   `only` viajan en CADA tanda, o la siguiente volveria a la lista completa. */
 function openSyncAllModal(user, rows) {
-  const list = (rows || []).slice();
-  const total = list.length;
+  /* Solo TIENDAS: el motor sincroniza tiendas abiertas. Si el filtro trae
+     Importadoras o Externas, el backend las descarta igual — pero el contador
+     del modal tiene que decir la verdad de entrada. */
+  const stores = (rows || []).filter(c => c.type === 'Tienda');
+  const only = stores.map(c => c.code);
+  const total = only.length;
+  const dropped = (rows || []).length - total;
 
   openModal(`
-    <div class="modal-head"><span>Sincronizar personal desde AX</span><button class="modal-x" id="mX">✕</button></div>
-    <p class="muted" style="font-size:12.5px;margin:0 0 12px">Trae el personal de AX para las <b>${total}</b> empresa(s) visibles (según el filtro actual), una por una. Tip: ordená por “Sinc.: antigua / nunca primero” y filtrá para actualizar solo las pendientes.</p>
-    <div class="sa-okbox">✓ <b>El último reporte manda:</b> la lista de AX reemplaza el roster de cada empresa. Las fotos y los datos de contacto (teléfono/correo/dirección) se conservan.</div>
+    <div class="modal-head"><span>Sincronizar personal</span><button class="modal-x" id="mX">✕</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 12px">Trae el personal de las <b>${total}</b> tienda(s) visibles con el filtro actual.${dropped ? ` <span style="color:var(--muted)">(${dropped} empresa(s) del filtro no son tiendas y no se sincronizan aquí.)</span>` : ''}</p>
+    <div class="sa-okbox">✓ <b>No se pisa ningún dato.</b> Se completan los campos vacíos con lo que trae el sistema, se ingresan los trabajadores nuevos y se retiran los que tienen fecha de egreso. Lo que ya tiene valor en el portal queda intacto; si hay diferencias, se marcan para revisar.</div>
     <div id="saProg" style="display:none;margin-top:14px">
       <div class="sa-bar"><div class="sa-fill" id="saFill"></div></div>
       <p id="saStat" class="muted" style="font-size:12.5px;margin:8px 0 6px"></p>
@@ -1486,13 +1509,11 @@ function openSyncAllModal(user, rows) {
 
   const fillEl = $('#saFill'), statEl = $('#saStat'), logEl = $('#saLog');
   const setFill = p => { if (fillEl) fillEl.style.width = Math.round(p) + '%'; };
-  const logRow = (code, ok, info) => {
+  const logRow = (txt, cls) => {
     if (!logEl) return;
     const row = document.createElement('div');
-    const cls = ok === 'skip' ? 'skip' : (ok ? 'ok' : 'fail');
-    const icon = ok === 'skip' ? '–' : (ok ? '✓' : '✕');
-    row.className = 'sa-row ' + cls;
-    row.innerHTML = `<span class="c">${code}</span><span class="r">${icon} ${info}</span>`;
+    row.className = 'sa-row ' + (cls || 'ok');
+    row.innerHTML = txt;
     logEl.appendChild(row); logEl.scrollTop = logEl.scrollHeight;
   };
   const closeAndMaybeRefresh = () => {
@@ -1512,34 +1533,95 @@ function openSyncAllModal(user, rows) {
     $('#saStart').style.display = 'none';
     $('#saCancel').textContent = 'Detener';
     $('#saProg').style.display = 'block';
-    const uploadedBy = user.name || user.username || 'admin';
-    let ok = 0, fail = 0, skipped = 0;
-    for (let i = 0; i < list.length; i++) {
-      if (stopped) break;
-      const c = list[i];
-      if (statEl) statEl.textContent = `(${i + 1}/${total}) ${c.code} — ${c.name || ''}…`;
-      setFill(i / total * 100);
-      let r;
-      try { r = await axRosterPull(c.code, { uploadedBy, adminId: user.id, source: 'bulk' }); }
-      catch (e) { r = { ok: false, error: String(e && e.message || e) }; }
-      if (r && r.ok) {
-        ok++; anySynced = true;
-        const s = r.summary || {};
-        const chg = s.changes ? ` · ${s.changes} cambio${s.changes === 1 ? '' : 's'}` : '';
-        logRow(c.code, true, `${s.total != null ? s.total : '?'} personas${chg}`);
-      } else if (r && r.error === 'cooldown') {
-        skipped++; logRow(c.code, 'skip', rosterCooldownMessage(r));
-      } else {
-        fail++; logRow(c.code, false, (r && r.error) || 'error');
+
+    /* El estado de la corrida viaja de tanda en tanda. Sin esto, cada tanda
+       arrancaria de cero: el resumen final solo contaria la ULTIMA. */
+    let acc = { offset: 0, run_id: null };
+    let last = null;
+
+    while (!stopped) {
+      if (statEl) {
+        const hechas = Math.min(acc.offset, total);
+        statEl.textContent = `Sincronizando… (${hechas}/${total} tiendas)`;
       }
-      setFill((i + 1) / total * 100);
+      setFill(Math.min(acc.offset, total) / total * 100);
+
+      let r;
+      try {
+        r = await fetch('/api/sync-roster', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            source: 'manual',
+            adminId: user.id,
+            only,                  // <- las tiendas del filtro. Va en CADA tanda.
+            offset: acc.offset,
+            run_id: acc.run_id,
+            // acumuladores de las tandas anteriores
+            acc_filled: acc.acc_filled, acc_diffs: acc.acc_diffs,
+            acc_rej_account: acc.acc_rej_account,
+            acc_rej_phone: acc.acc_rej_phone,
+            acc_rej_email: acc.acc_rej_email,
+            acc_rej_detail: acc.acc_rej_detail,
+            acc_diff_detail: acc.acc_diff_detail,
+          }),
+        }).then(x => x.json());
+      } catch (e) {
+        r = { ok: false, error: String(e && e.message || e) };
+      }
+
+      if (!r || !r.ok) {
+        logRow(`<span class="r">✕ ${(r && r.error) || 'Error de red'}</span>`, 'fail');
+        phase = 'done';
+        if (statEl) statEl.innerHTML = 'La sincronización se detuvo por un error.';
+        const b = $('#saCancel'); b.disabled = false; b.textContent = 'Cerrar';
+        return;
+      }
+
+      anySynced = true;
+      last = r;
+      acc = {
+        offset: r.next_offset || 0,
+        run_id: r.run_id,
+        acc_filled: r.acc_filled, acc_diffs: r.acc_diffs,
+        acc_rej_account: r.acc_rej_account,
+        acc_rej_phone: r.acc_rej_phone,
+        acc_rej_email: r.acc_rej_email,
+        acc_rej_detail: r.acc_rej_detail,
+        acc_diff_detail: r.acc_diff_detail,
+      };
+
+      if (r.done) break;
     }
+
     phase = 'done';
     setFill(100);
-    const omit = skipped ? `, <b>${skipped}</b> omitida(s) por limite` : '';
-    if (statEl) statEl.innerHTML = stopped
-      ? `Detenido · <b>${ok}</b> sincronizada(s), <b>${fail}</b> con error${omit}.`
-      : `Listo · <b>${ok}</b> sincronizada(s), <b>${fail}</b> con error${omit} de ${total}.`;
+
+    const s = last || {};
+    const partes = [];
+    if (s.added)    partes.push(`<b>${s.added}</b> ingreso(s)`);
+    if (s.removed)  partes.push(`<b>${s.removed}</b> egreso(s)`);
+    if (s.filled)   partes.push(`<b>${s.filled}</b> dato(s) completado(s)`);
+    if (s.diff_review) partes.push(`<b>${s.diff_review}</b> por revisar`);
+    if (s.diff_broken) partes.push(`<b>${s.diff_broken}</b> a corregir en el sistema`);
+    if (s.alerts)   partes.push(`<b>${s.alerts}</b> alerta(s)`);
+
+    logRow(partes.length
+      ? partes.join(' · ')
+      : 'Sin cambios: todo estaba al día.', partes.length ? 'ok' : 'skip');
+
+    if (statEl) {
+      statEl.innerHTML = stopped
+        ? `Detenido · <b>${s.stores || 0}</b> de ${total} tienda(s) procesada(s).`
+        : `Listo · <b>${s.stores || 0}</b> tienda(s) sincronizada(s).`;
+    }
+    logRow('<a href="#" id="saGoLog">Ver el detalle en el Registro →</a>', 'skip');
+    const goLog = document.getElementById('saGoLog');
+    if (goLog) goLog.addEventListener('click', (e) => {
+      e.preventDefault();
+      closeModal();
+      navigate('synclog', user);
+    });
+
     const b = $('#saCancel'); b.disabled = false; b.textContent = 'Cerrar';
   });
 }
