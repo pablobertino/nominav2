@@ -73,7 +73,17 @@ function ensureStyles() {
   .sl-pager{display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:10px;font-size:12.5px;color:var(--muted)}
   .sl-empty{padding:40px 16px;text-align:center;color:var(--muted)}
 
-  /* v5.37: pestanas del detalle (Movimientos / Completadas / Diferencias / ...) */
+  /* v5.43: la franja "esta corrida dejo N cosas por resolver → Ir a Pendientes".
+     Reemplaza a las pestañas Diferencias y Datos mal escritos, que se mudaron
+     a Pendientes (alli tienen botones; aca solo se miraban). */
+  .sl-topend{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
+             margin-top:10px;padding:9px 12px;border-radius:9px;
+             background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:12.5px}
+  .sl-golink{font:inherit;font-size:12.5px;font-weight:700;padding:6px 12px;border-radius:8px;
+             border:1px solid #d97706;background:#d97706;color:#fff;cursor:pointer;white-space:nowrap}
+  .sl-golink:hover{background:#b45309;border-color:#b45309}
+
+  /* v5.37: pestanas del detalle (Movimientos / Completadas / Alertas) */
   .sl-tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:2px 0 0;flex-wrap:wrap}
   .sl-tab{font:inherit;font-size:12.5px;font-weight:600;color:var(--muted);cursor:pointer;padding:7px 12px;
           background:none;border:0;border-bottom:2px solid transparent;margin-bottom:-1px;white-space:nowrap}
@@ -278,19 +288,30 @@ function detHtml(r, idx) {
   const copyBtn = `<div style="margin-top:7px"><button class="sl-more" data-copy="${idx}">Copiar detalle</button> <span id="slCopied_${idx}" style="display:none;font-size:11px;color:var(--success,#15803d)">✓ copiado</span></div>`;
 
   /* ===================================================================
-     v5.37 — EL DETALLE, EN PESTAÑAS (mockup aprobado por Pablo).
+     v5.43 — EL DETALLE, SIN LO QUE YA VIVE EN PENDIENTES.
 
-     Antes esto era una linea de codigos de tienda: "AA01 · AA02 · AA03...".
-     Servia para saber QUE tiendas se tocaron, pero no QUE PASO con la gente.
-     Una corrida que completo 755 fichas y encontro 8 diferencias se veia
-     igual que uno que no hizo nada.
+     v5.37 metio CINCO pestañas aca (mockup aprobado). Estuvo bien en su
+     momento: antes el detalle era una linea de codigos de tienda y no decia
+     nada de la gente.
 
-     Cinco pestañas, y solo aparecen las que tienen contenido:
-       Movimientos         — ingresos y egresos por tienda (lo de antes)
-       Completadas         — fichas en blanco que se llenaron con el sistema
-       Diferencias         — lo que no coincide, con su estatus
-       Datos mal escritos  — lo que el sistema mando roto y no se guardo
-       Alertas             — tiendas que se saltaron
+     Pero v5.40 creo la pagina PENDIENTES, y dos de esas pestañas — Diferencias
+     y Datos mal escritos — pasaron a vivir alli, con botones para resolverlas.
+     Dejarlas tambien aca las DUPLICA: el mismo dato en dos lugares, uno donde
+     se puede actuar y otro donde no. Y peor: el de aca esta CONGELADO en la
+     corrida que estas mirando, mientras el de Pendientes es el estado de HOY.
+     Dos numeros distintos para la misma pregunta.
+
+     Regla: el Registro cuenta QUE PASO en una corrida (historia, inmutable).
+     Pendientes muestra QUE FALTA HOY (estado, vivo). Una cosa por lugar.
+
+     Quedan las pestañas que SON historia de la corrida:
+       Movimientos   — ingresos y egresos de ese dia
+       Completadas   — fichas en blanco que se llenaron con el sistema
+       Alertas       — tiendas que se saltaron esa vez
+
+     Y en su lugar, un enlace a Pendientes con el conteo de la corrida. Ver el
+     numero sigue siendo util (te dice que ESA corrida encontro 5); actuar sobre
+     el se hace donde corresponde.
      =================================================================== */
   if (Array.isArray(r.detail)) {
     const diffs   = Array.isArray(r.diffs)   ? r.diffs   : [];
@@ -302,8 +323,6 @@ function detHtml(r, idx) {
     const tabs = [];
     if (movs.length)    tabs.push(['mov',  'Movimientos', movs.length]);
     if (fills.length)   tabs.push(['fill', 'Completadas', fills.length]);
-    if (diffs.length)   tabs.push(['diff', 'Diferencias', diffs.length]);
-    if (rejects.length) tabs.push(['rej',  'Datos mal escritos', rejects.length]);
     if (alertas.length) tabs.push(['alr',  'Alertas', alertas.length]);
 
     // Corrida vieja (sin las columnas nuevas): se cae al detalle de antes.
@@ -338,36 +357,6 @@ function detHtml(r, idx) {
       + `</tbody></table>`
       + (fills.length > 300 ? `<p class="sl-pn">Mostrando 300 de ${fills.length}. Usá Exportar para la lista completa.</p>` : '')));
 
-    if (diffs.length) panes.push(pane(idx, 'diff', first('diff'),
-      `<p class="sl-pn">El portal <b>no modificó</b> ninguno de estos datos: ya tenían valor, así que solo los señaló.<br>`
-      + `<span class="sl-pill rev">Revisar</span> los dos lados tienen dato y no coinciden: hay que decidir cuál vale. `
-      + `<span class="sl-pill fix">Corregir en el sistema</span> el portal lo tiene bien y el sistema lo tiene mal escrito.</p>`
-      + `<table class="sl-mini"><thead><tr><th>Estado</th><th>Cédula</th><th>Colaborador</th><th>Empresa</th><th>Campo</th><th>En el portal</th><th>En el sistema</th></tr></thead><tbody>`
-      + diffs.map(d => `<tr>`
-        + `<td>${d.estado === 'dato_roto'
-            ? '<span class="sl-pill fix">Corregir en el sistema</span>'
-            : '<span class="sl-pill rev">Revisar</span>'}</td>`
-        + `<td class="sl-mono">${esc(d.ced || '')}</td>`
-        + `<td>${esc(d.nom || '')}</td>`
-        + `<td class="sl-cc">${esc(d.comp || '')}</td>`
-        + `<td>${esc(d.campo || '')}</td>`
-        + `<td class="sl-mono" style="color:#15803d">${esc(d.portal || '')}</td>`
-        + `<td class="sl-mono" style="color:#9a3412">${esc(d.sistema || '')}</td></tr>`).join('')
-      + `</tbody></table>`));
-
-    if (rejects.length) panes.push(pane(idx, 'rej', first('rej'),
-      `<p class="sl-pn">El sistema mandó estos datos <b>mal escritos</b>, así que <b>no se guardaron</b>. `
-      + `El portal no arregla datos del sistema: hay que corregirlos allá.</p>`
-      + `<table class="sl-mini"><thead><tr><th>Cédula</th><th>Colaborador</th><th>Empresa</th><th>Campo</th><th>Vino así</th></tr></thead><tbody>`
-      + rejects.slice(0, 300).map(d => `<tr>`
-        + `<td class="sl-mono">${esc(d.ced || '')}</td>`
-        + `<td>${esc(d.nom || '')}</td>`
-        + `<td class="sl-cc">${esc(d.comp || '')}</td>`
-        + `<td>${esc(d.campo || '')}</td>`
-        + `<td class="sl-mono" style="color:#9a3412">${esc(d.valor || '')}</td></tr>`).join('')
-      + `</tbody></table>`
-      + (rejects.length > 300 ? `<p class="sl-pn">Mostrando 300 de ${rejects.length}. Usá Exportar para la lista completa.</p>` : '')));
-
     if (alertas.length) panes.push(pane(idx, 'alr', first('alr'),
       `<p class="sl-pn">Estas tiendas <b>se saltaron</b>: el sistema devolvió una lista sospechosamente corta `
       + `y el portal prefirió no tocar nada antes que dar de baja a gente que sigue trabajando.</p>`
@@ -376,7 +365,23 @@ function detHtml(r, idx) {
         + `<td style="color:#b45309">${esc(s.alert || 'Sin detalle')}</td></tr>`).join('')
       + `</tbody></table>`));
 
-    return `<div class="sl-tabs">${tabsHtml}</div>${panes.join('')}${copyBtn}`;
+    /* Lo que ESTA corrida encontro y quedo esperando una decision. No se lista
+       aca (vive en Pendientes, con botones): se dice CUANTO fue y se ofrece el
+       camino. El numero es de la corrida (historia); el de Pendientes es de hoy
+       (estado). Pueden diferir, y esta bien: si alguien resolvio algo desde
+       entonces, el de hoy es menor. */
+    const nPend = diffs.length + rejects.length;
+    const linkPend = nPend
+      ? `<div class="sl-topend">`
+        + `<span>Esta corrida dejó <b>${nPend}</b> ${nPend === 1 ? 'cosa' : 'cosas'} por resolver`
+        + (diffs.length ? ` · ${diffs.length} por decidir` : '')
+        + (rejects.length ? ` · ${rejects.length} mal ${rejects.length === 1 ? 'escrito' : 'escritos'} en el sistema` : '')
+        + `</span>`
+        + `<button class="sl-golink" data-gopend="1">Ir a Pendientes →</button>`
+        + `</div>`
+      : '';
+
+    return `<div class="sl-tabs">${tabsHtml}</div>${panes.join('')}${linkPend}${copyBtn}`;
   }
 
   // v4.63: detalle LEGIBLE para no-programadores (nunca JSON crudo en
@@ -445,6 +450,13 @@ function slPaint() {
         body.querySelectorAll(`[id^="slPane_${idx}_"]`).forEach(p => { p.hidden = true; });
         const pane = $(`#slPane_${idx}_${key}`);
         if (pane) pane.hidden = false;
+      }));
+    // v5.43: "Ir a Pendientes". El detalle ya no lista las diferencias ni los
+    // datos rotos (viven alli, con botones); solo dice cuantos fueron y lleva.
+    body.querySelectorAll('[data-gopend]').forEach(b =>
+      b.addEventListener('click', () => {
+        const nav = document.querySelector('.pnl-side [data-view="syncpend"]');
+        if (nav) nav.click();
       }));
     // v4.63: Copiar el detalle tecnico completo (JSON) al portapapeles.
     body.querySelectorAll('[data-copy]').forEach(b =>
