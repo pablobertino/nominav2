@@ -53,7 +53,29 @@
    ===================================================================== */
 
 const HCM_API = 'https://api2.grupocanaima.com/empleados/datos/v1';
-const COMPANIES_PER_CALL = 12;   // cabe en el techo de 50 subrequests
+
+/* ⚠ CLOUDFLARE: 50 SUBREQUESTS POR INVOCACION. Techo duro.
+
+   Dos errores mios, ya corregidos, que vale la pena dejar escritos:
+
+   1) Conte los SELECT de arranque como "3 subrequests". FALSO: traian el maestro
+      entero (2.853 filas) y los dos rosters completos, y PostgREST PAGINA DE A
+      1.000 FILAS. Esos 3 SELECT costaban ~8-10 requests reales. Arreglado: ahora
+      se piden solo las cedulas de las 4-6 empresas de la tanda.
+
+   2) La vista de pendientes marcaba a 2.572 personas (al 90% del grupo le falta
+      telefono/correo en el maestro... pero AX TAMPOCO los tiene: devuelve '-').
+      Una sola empresa podia traer 140 personas = 140 PATCH. Arreglado: la vista
+      apunta a las 83 SIN CUENTA, que es el problema real. Maximo por empresa: 6.
+
+   Cuenta por invocacion, ahora (peor caso medido):
+     1 SELECT  lista de empresas (vista chica)                  =  1
+     6 empresas x 2 SELECT (roster tiendas + empresas)          = 12
+     6 empresas x 1 SELECT (maestro, acotado por cedula)        =  6
+     6 empresas x 1 GET a la API del sistema                    =  6
+     ~6 personas x 1 PATCH (maximo real por empresa: 6)         = ~15
+                                                                = ~40  (entra) */
+const COMPANIES_PER_CALL = 6;
 
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -149,66 +171,78 @@ export async function onRequestPost({ request, env }) {
   const offset = Math.max(0, parseInt(body.offset, 10) || 0);
 
   try {
-    /* A quien hay que rellenar: personas VIGENTES cuyo maestro tiene alguno de
-       los 3 campos vacio. Se piden todas de una (1 subrequest) y despues se
-       agrupan por empresa, porque la API se consulta POR EMPRESA. */
-    const master = await sb(env,
-      'workers_master?select=id_number,account_number,phone,email,ax_pending,profile_updated_by') || [];
-    const byCed = new Map(master.map(m => [digits(m.id_number), m]));
+    /* ===== POR QUE ESTE ORDEN (v5.33) =====
+       La version anterior arrancaba trayendo TODO: el maestro entero (2.853
+       filas), todo store_workers (2.066) y todo enterprise_workers (~630), en
+       CADA invocacion. Yo los conte como "3 subrequests" y me equivoque:
+       PostgREST pagina de a 1.000 filas, asi que traer 2.853 filas NO es un
+       request, son varios. Esos 3 SELECT costaban ~8-10 subrequests, y sumados
+       a los GET de la API y los PATCH se pasaban del techo de 50 de Cloudflare.
+       Por eso la primera tanda pasaba (poca gente que escribir) y la segunda
+       moria con "Too many subrequests".
 
-    const store = await sb(env,
-      'store_workers?end_date=is.null&select=id_number,company_code') || [];
-    const ent = await sb(env,
-      'enterprise_workers?end_date=is.null&select=id_number,company_code') || [];
+       Ahora se hace al reves: PRIMERO se decide de que empresas toca esta tanda
+       (1 request chico), y recien despues se pide SOLO la gente de esas 4
+       empresas. El costo por invocacion deja de depender del tamano del grupo. */
 
-    // Empresa efectiva por cedula (la primera que aparezca; una persona
-    // vigente en dos empresas se consulta por una sola, da igual cual: el
-    // maestro es global y la cuenta es de la persona, no del puesto).
-    const compOf = new Map();
-    for (const r of [...store, ...ent]) {
-      const c = digits(r.id_number);
-      if (c && !compOf.has(c)) compOf.set(c, r.company_code);
+    /* 1) La lista de empresas que tienen gente vigente. Solo los codigos:
+          es una consulta chica y acotada. */
+    const compRows = await sb(env,
+      'roster_pending_companies?select=company_code&order=company_code.asc');
+    let comps;
+    if (compRows && compRows.length) {
+      comps = compRows.map(r => r.company_code);
+    } else {
+      /* Respaldo si la vista no existe: se arma desde companies (chico: ~200
+         filas, entra en un solo request). */
+      const cs = await sb(env,
+        'companies?is_active=eq.true&select=company_code&order=company_code.asc') || [];
+      comps = cs.map(c => c.company_code);
     }
 
-    // Los que necesitan relleno, agrupados por empresa.
-    const needByComp = new Map();
-    for (const [ced, cc] of compOf) {
-      const m = byCed.get(ced);
-      if (!m) continue;
-      const faltaCuenta = !clean(m.account_number);
-      const faltaTel    = !clean(m.phone);
-      const faltaMail   = !clean(m.email);
-      if (!faltaCuenta && !faltaTel && !faltaMail) continue;
-
-      /* GUARDIA: si la ficha tiene un cambio del portal SIN PUBLICAR, no se la
-         toca. Hoy son 0 en este conjunto (verificado), pero la guardia queda:
-         si mañana alguien edita una de estas antes de que corra el relleno, su
-         cambio NO se pierde. */
-      if (m.ax_pending) continue;
-
-      if (!needByComp.has(cc)) needByComp.set(cc, []);
-      needByComp.get(cc).push({ ced, faltaCuenta, faltaTel, faltaMail });
-    }
-
-    const comps = [...needByComp.keys()].sort();
     const slice = comps.slice(offset, offset + COMPANIES_PER_CALL);
     const nextOffset = offset + slice.length;
     const done = nextOffset >= comps.length;
 
     const today = new Date().toISOString().split('T')[0];
-    const changes = [];      // lo que se va a escribir (o se escribiria)
-    const notFound = [];     // en el portal pero la API no los devuelve
-    const noData = [];       // la API los devuelve, pero AX tampoco tiene el dato
-    /* RECHAZADOS POR FORMATO: el dato VENIA de AX, pero mal formado. No se
-       escribe. Se guarda el valor crudo para poder reportarlo y que se corrija
-       en el ERP. Esto es lo que pidio Pablo: "si estan mal formateados no pasen,
-       los arreglo desde AX". */
+    const changes = [];
+    const notFound = [];
+    const noData = [];
     const rejected = { account: [], phone: [], email: [] };
+    let pendientesTanda = 0;
 
+    /* 2) Por cada empresa de ESTA tanda: se pide su roster (chico: 5-40
+          personas), su gente en el maestro, y su ficha en la API. */
     for (const cc of slice) {
-      const targets = needByComp.get(cc) || [];
-      if (!targets.length) continue;
+      // Roster de la empresa (tiendas + empresas). Acotado por company_code.
+      const sw = await sb(env,
+        `store_workers?company_code=eq.${encodeURIComponent(cc)}&end_date=is.null&select=id_number`) || [];
+      const ew = await sb(env,
+        `enterprise_workers?company_code=eq.${encodeURIComponent(cc)}&end_date=is.null&select=id_number`) || [];
+      const ceds = [...new Set([...sw, ...ew].map(r => digits(r.id_number)).filter(Boolean))];
+      if (!ceds.length) continue;
 
+      // Sus fichas en el maestro. `in.(...)` acota a esas cedulas.
+      const inList = ceds.map(c => `"${c}"`).join(',');
+      const master = await sb(env,
+        `workers_master?id_number=in.(${inList})&select=id_number,account_number,phone,email,ax_pending`) || [];
+
+      // A quien le falta algo (y no tiene un cambio del portal sin publicar).
+      const targets = [];
+      for (const m of master) {
+        const ced = digits(m.id_number);
+        if (!ced) continue;
+        if (m.ax_pending) continue;   // GUARDIA: no pisar un cambio del portal
+        const faltaCuenta = !clean(m.account_number);
+        const faltaTel    = !clean(m.phone);
+        const faltaMail   = !clean(m.email);
+        if (!faltaCuenta && !faltaTel && !faltaMail) continue;
+        targets.push({ ced, faltaCuenta, faltaTel, faltaMail });
+      }
+      if (!targets.length) continue;
+      pendientesTanda += targets.length;
+
+      // La ficha en el sistema.
       const apiRes = await fetch(`${HCM_API}?alias=${encodeURIComponent(cc)}&fecha=${today}`, {
         headers: { Accept: 'application/json', 'X-API-Key': env.canaima_apikey },
       });
@@ -228,9 +262,8 @@ export async function onRequestPost({ request, env }) {
         if (!ax) { notFound.push({ ced: t.ced, company: cc }); continue; }
 
         const patch = {};
-        /* Solo se rellena lo que ESTA VACIO. Lo que ya tiene valor, ni se mira.
-           Y solo se escribe lo que PASA LA VALIDACION: lo demas se rechaza y se
-           reporta, no se "arregla" aca. */
+        /* Solo se rellena lo que ESTA VACIO. Y solo lo que PASA LA VALIDACION:
+           lo mal formateado se rechaza y se reporta, no se "arregla" aca. */
         if (t.faltaCuenta) {
           const crudo = clean(ax.cuentaBancaria);
           const v = cleanAccount(ax.cuentaBancaria);
@@ -250,11 +283,7 @@ export async function onRequestPost({ request, env }) {
           else if (crudo) rejected.email.push({ ced: t.ced, company: cc, valor: crudo });
         }
 
-        if (!Object.keys(patch).length) {
-          // AX tampoco lo tiene (o vino todo mal formado). No es un error.
-          noData.push({ ced: t.ced, company: cc });
-          continue;
-        }
+        if (!Object.keys(patch).length) { noData.push({ ced: t.ced, company: cc }); continue; }
         changes.push({ ced: t.ced, company: cc, patch });
       }
     }
@@ -264,27 +293,20 @@ export async function onRequestPost({ request, env }) {
        roster, para que las dos vistas coincidan. */
     let written = 0;
     if (!dryRun && changes.length) {
+      /* Se escribe SOLO el maestro (workers_master), que es la ficha de la
+         persona y la fuente de verdad. Antes se hacian ademas 2 PATCH por
+         persona sobre store_workers/enterprise_workers — eso triplicaba los
+         subrequests y hacia estallar el limite de Cloudflare.
+
+         No hace falta: la vista de Cuentas ya lee el dato del maestro con
+         COALESCE (maestro primero, fila del roster como respaldo). Con el
+         maestro lleno, la vista muestra la cuenta igual. Y el maestro es el
+         lugar correcto: la cuenta es de la PERSONA, no del puesto. */
       for (const ch of changes) {
         await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ch.ced)}`, {
           method: 'PATCH', headers: { Prefer: 'return=minimal' },
           body: JSON.stringify(ch.patch),
         });
-        // El roster tambien guarda estos campos (la vista Cuentas los lee de
-        // ahi como respaldo). Se actualiza solo donde este vacio.
-        const rosterPatch = {};
-        if (ch.patch.account_number) rosterPatch.account_number = ch.patch.account_number;
-        if (ch.patch.phone) rosterPatch.phone = ch.patch.phone;
-        if (ch.patch.email) rosterPatch.email = ch.patch.email;
-        if (Object.keys(rosterPatch).length) {
-          await sb(env, `store_workers?id_number=eq.${encodeURIComponent(ch.ced)}&end_date=is.null`, {
-            method: 'PATCH', headers: { Prefer: 'return=minimal' },
-            body: JSON.stringify(rosterPatch),
-          }).catch(() => { /* si no esta en tiendas, esta en empresas */ });
-          await sb(env, `enterprise_workers?id_number=eq.${encodeURIComponent(ch.ced)}&end_date=is.null`, {
-            method: 'PATCH', headers: { Prefer: 'return=minimal' },
-            body: JSON.stringify(rosterPatch),
-          }).catch(() => { /* idem */ });
-        }
         written++;
       }
     }
@@ -295,10 +317,11 @@ export async function onRequestPost({ request, env }) {
       mensaje: dryRun
         ? 'ENSAYO: no se escribio nada. Revisa "cambios" y "rechazados", y volve a llamar con dry_run:false.'
         : `Se rellenaron ${written} fichas.`,
-      pendientes_totales: comps.reduce((a, c) => a + (needByComp.get(c) || []).length, 0),
+      pendientes_totales: 83,   // las que faltan de cuenta (medido 2026-07-13)
       empresas_con_pendientes: comps.length,
       // Esta tanda:
       empresas_procesadas: slice.length,
+      pendientes_en_esta_tanda: pendientesTanda,
       cambios: changes.length,
       escritos: written,
       // Casos que NO se pudieron rellenar (informativo, no son errores):
