@@ -141,17 +141,38 @@ function ensureStyles() {
   .sp-vs{display:grid;grid-template-columns:1fr 1fr;gap:9px}
   .sp-side{border:1px solid var(--border);border-radius:9px;padding:10px 12px;
            display:flex;flex-direction:column;gap:8px}
-  .sp-side .lbl{font-size:11px;color:var(--muted);font-weight:600}
+  /* v5.40 — MISMO CODIGO DE COLOR QUE COMPARAR: el portal es VERDE y el
+     sistema es NARANJA. Es el par de colores que Pablo ya lee sin pensar. Dos
+     cajas grises identicas obligan a leer la etiqueta cada vez. */
+  .sp-side.pt{border-color:#bbf7d0;background:#f0fdf4}
+  .sp-side.sy{border-color:#fed7aa;background:#fff7ed}
+  .sp-side .lbl{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.04em}
+  .sp-side.pt .lbl{color:#15803d}
+  .sp-side.sy .lbl{color:#b45309}
   .sp-side .val{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
-                font-size:13px;color:var(--ink);word-break:break-all;line-height:1.4;
-                font-variant-numeric:tabular-nums}
-  .sp-side .val.na{color:var(--muted);font-style:italic;font-family:inherit}
-  .sp-pick{font:inherit;font-size:12.5px;font-weight:600;padding:7px 10px;border-radius:8px;
-           border:1px solid var(--border);background:var(--surface);color:var(--ink);cursor:pointer;
-           margin-top:auto}
-  .sp-pick:hover:not(:disabled){background:var(--bg-soft,#f1f5f9);border-color:var(--brand,#2563eb);
-                                color:var(--brand,#2563eb)}
-  .sp-pick:disabled{opacity:.55;cursor:default}
+                font-size:13.5px;color:var(--ink);word-break:break-all;line-height:1.4;
+                font-variant-numeric:tabular-nums;font-weight:600}
+  .sp-side .val.na{color:var(--muted);font-style:italic;font-family:inherit;font-weight:400}
+
+  /* El boton lleva el NOMBRE DE LA ACCION (Adoptar / Publicar), no una frase.
+     Son las palabras que ya se usan en el resto del portal. */
+  .sp-pick{font:inherit;font-size:12.5px;font-weight:700;padding:8px 10px;border-radius:8px;
+           border:1px solid transparent;cursor:pointer;margin-top:auto;color:#fff}
+  .sp-pick.pt{background:#16a34a}
+  .sp-pick.pt:hover:not(:disabled){background:#15803d}
+  .sp-pick.sy{background:#ea580c}
+  .sp-pick.sy:hover:not(:disabled){background:#c2410c}
+  .sp-pick:disabled{background:var(--bg-soft,#f1f5f9);color:var(--muted);cursor:default}
+  .sp-pick .sub{display:block;font-size:10.5px;font-weight:500;opacity:.9;margin-top:1px}
+
+  /* Anular: gris, discreto, ancho completo abajo. No compite con los dos de
+     arriba: es la salida, no una opcion mas. */
+  .sp-null{width:100%;margin-top:10px;font:inherit;font-size:12.5px;font-weight:600;
+           padding:7px 10px;border-radius:8px;border:1px dashed var(--border);
+           background:transparent;color:var(--muted);cursor:pointer}
+  .sp-null:hover:not(:disabled){background:var(--bg-soft,#f1f5f9);color:var(--ink);
+                                border-style:solid}
+  .sp-null:disabled{opacity:.5;cursor:default}
 
   .sp-fld{font-size:11.5px;font-weight:700;color:var(--muted);text-transform:uppercase;
           letter-spacing:.04em;margin:0 0 7px}
@@ -205,17 +226,17 @@ function conflictCard(c, i) {
     return `
       <p class="sp-fld">${esc(lbl)}${roto ? ' \u00b7 el sistema lo tiene mal escrito' : ''}</p>
       <div class="sp-vs">
-        <div class="sp-side">
+        <div class="sp-side pt">
           <span class="lbl">En el portal</span>
           <span class="val${f.portal ? '' : ' na'}">${f.portal ? esc(fmtValor(f.campo, f.portal)) : 'sin dato'}</span>
-          <button class="sp-pick" data-pick="portal" data-i="${i}" data-j="${j}">Este es el bueno</button>
+          <button class="sp-pick pt" data-pick="portal" data-i="${i}" data-j="${j}">Publicar<span class="sub">se envía al sistema</span></button>
         </div>
-        <div class="sp-side">
+        <div class="sp-side sy">
           <span class="lbl">En el sistema</span>
           <span class="val${f.sistema ? '' : ' na'}">${f.sistema ? esc(fmtValor(f.campo, f.sistema)) : 'sin dato'}</span>
           ${roto
             ? '<button class="sp-pick" disabled title="Este dato est\u00e1 mal escrito: hay que corregirlo en el sistema">Mal escrito</button>'
-            : `<button class="sp-pick" data-pick="sistema" data-i="${i}" data-j="${j}">Este es el bueno</button>`}
+            : `<button class="sp-pick sy" data-pick="sistema" data-i="${i}" data-j="${j}">Adoptar<span class="sub">entra al portal</span></button>`}
         </div>
       </div>`;
   }).join('');
@@ -227,6 +248,7 @@ function conflictCard(c, i) {
         <span class="sp-meta"><span class="sp-cc">${esc(c.company_code)}</span> \u00b7 ${esc(c.id_number)}</span>
       </div>
       ${bloques}
+      <button class="sp-null" data-null="${i}">Anular · dejar los dos como están</button>
       <div id="spMsg_${i}" style="margin-top:10px" hidden></div>
     </div>`;
 }
@@ -278,6 +300,45 @@ async function resolve(i, lado) {
   msg.textContent = lado === 'sistema'
     ? '\u2713 Listo. El portal tom\u00f3 el dato del sistema.'
     : '\u2713 Listo. El dato del portal qued\u00f3 para enviar: lo vas a ver en Publicar.';
+}
+
+/* ---------- ANULAR ----------
+   No toca ningun dato: solo apaga el aviso. Los dos valores quedan como estan,
+   cada uno en su lado.
+
+   Para que sirve: cuando LOS DOS estan mal, o cuando el del portal esta bien
+   pero no se quiere escribir en el sistema ahora. Sin esto, esas fichas se
+   quedaban en la bandeja para siempre, porque la unica salida era elegir un
+   lado.
+
+   ⚠ NO confundir con el Anular de Publicar: aquel descarta un cambio que
+   estaba por enviarse al sistema. Este solo silencia una etiqueta.
+
+   La diferencia sigue existiendo. Si el dato cambia de algun lado, la proxima
+   sincronizacion la vuelve a marcar — y esta bien: seria otro conflicto. */
+async function dismiss(i) {
+  const c = SP.conflicts[i];
+  if (!c) return;
+  const card = $('#spCard_' + i);
+  const msg = $('#spMsg_' + i);
+  if (!card || !msg) return;
+
+  card.querySelectorAll('.sp-pick, .sp-null').forEach(b => { b.disabled = true; });
+  msg.hidden = false;
+  msg.className = '';
+  msg.innerHTML = '<span style="font-size:12.5px;color:var(--muted)">Anulando…</span>';
+
+  const r = await api({ action: 'dismiss', id_number: c.id_number });
+
+  if (!r || !r.ok) {
+    msg.className = 'sp-fail';
+    msg.textContent = (r && r.error) || 'No se pudo anular. Prob\u00e1 de nuevo.';
+    card.querySelectorAll('.sp-pick, .sp-null').forEach(b => { b.disabled = false; });
+    return;
+  }
+
+  msg.className = 'sp-done';
+  msg.textContent = '\u2713 Aviso anulado. No se cambi\u00f3 ning\u00fan dato; los dos quedaron como estaban.';
 }
 
 function paint() {
@@ -354,6 +415,9 @@ function paint() {
   // Botones de resolucion.
   host.querySelectorAll('[data-pick]').forEach(b =>
     b.addEventListener('click', () => resolve(+b.dataset.i, b.dataset.pick)));
+  // Anular: apaga el aviso sin tocar ningun dato.
+  host.querySelectorAll('[data-null]').forEach(b =>
+    b.addEventListener('click', () => dismiss(+b.dataset.null)));
 
   const exp = $('#spExp');
   if (exp) exp.addEventListener('click', () => openExportMenu(exp));

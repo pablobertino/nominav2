@@ -97,7 +97,64 @@ export async function onRequestPost({ request, env }) {
   if (!can(actor, 'hcm.log')) {
     return json({ ok: false, error: 'No tienes permiso para ver los pendientes de sincronizacion.' }, 403);
   }
-  try { await shadowCan(env, body.user || { kind: 'admin', id: adminId }, 'sync-pending', 'list', 'hcm.log', true); } catch (_) { /* bitacora */ }
+  try { await shadowCan(env, body.user || { kind: 'admin', id: adminId }, 'sync-pending', body.action || 'list', 'hcm.log', true); } catch (_) { /* bitacora */ }
+
+  /* ---------- ANULAR (v5.40) ----------
+     Limpia la marca de diferencia SIN TOCAR NINGUN DATO. Ni el del portal ni el
+     del sistema: los dos quedan como estan.
+
+     Por que hace falta: hoy la unica salida de un conflicto era elegir un lado.
+     Pero a veces LOS DOS estan mal, o el del portal esta bien y no se quiere
+     escribir en el sistema ahora. Sin Anular, esas fichas se quedaban en la
+     bandeja para siempre.
+
+     ⚠ NO es lo mismo que el Anular de Publicar. Aquel descarta un cambio que
+     estaba por enviarse al sistema (ax_change_set). Este solo apaga una
+     ETIQUETA (ax_diff): el portal ya no te avisa de esa diferencia.
+
+     La diferencia SIGUE EXISTIENDO. Si el dato cambia de alguno de los dos
+     lados, la proxima sincronizacion la vuelve a marcar — y esta bien que asi
+     sea: seria un conflicto distinto.
+
+     Requiere hcm.publish: apagar un aviso de un dato que no coincide es una
+     decision, no una consulta. Quien solo puede MIRAR el registro no deberia
+     poder silenciarlo. */
+  if (body.action === 'dismiss') {
+    if (!can(actor, 'hcm.publish')) {
+      return json({ ok: false, error: 'No tienes permiso para anular avisos de diferencias.' }, 403);
+    }
+    const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
+    if (!ced) return json({ ok: false, error: 'Falta la cedula.' }, 400);
+
+    // Alcance: no se puede anular el aviso de alguien de otra empresa.
+    const allowedD = await allowedCompanies(env, actor);
+    if (allowedD !== null) {
+      const w = await sb(env,
+        `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=last_source_company`);
+      const cc = w && w[0] ? String(w[0].last_source_company || '') : '';
+      if (!allowedD.has(cc)) {
+        return json({ ok: false, error: 'No tienes alcance sobre esa ficha.' }, 403);
+      }
+    }
+
+    const res = await fetch(
+      `${env.supabase_url}/rest/v1/workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
+        method: 'PATCH',
+        headers: {
+          apikey: env.supabase_service_role,
+          Authorization: `Bearer ${env.supabase_service_role}`,
+          'Content-Profile': 'nomina_v2',
+          'Content-Type': 'application/json',
+          Prefer: 'return=minimal',
+        },
+        // Solo la etiqueta. Los datos (phone/email/account_number) NO se tocan.
+        body: JSON.stringify({ ax_diff: false, ax_diff_fields: null, ax_diff_at: null }),
+      });
+    if (!res.ok) {
+      return json({ ok: false, error: `No se pudo anular: ${res.status}` }, 500);
+    }
+    return json({ ok: true, dismissed: ced });
+  }
 
   const allowed = await allowedCompanies(env, actor);
   if (allowed !== null && !allowed.size) {
