@@ -237,7 +237,11 @@ async function processStore(env, cc) {
                 /* v5.35: las DIFERENCIAS con el sistema en campos que el portal
                    YA TIENE llenos. No se tocan (esa es la regla), pero antes
                    tampoco se avisaban: quedaban invisibles para siempre. */
-                diffDetail: [] };
+                diffDetail: [],
+                /* v5.36: QUE se completo, no solo cuantos. El Registro lo muestra
+                   en su propia pestana: "a EIVAR se le tomo el telefono del
+                   sistema". Sin esto solo habria un numero. */
+                fillDetail: [] };
   try {
     const today = new Date().toISOString().split('T')[0];
     const apiRes = await fetch(`${HCM_API}?alias=${encodeURIComponent(cc)}&fecha=${today}`, {
@@ -477,10 +481,26 @@ async function processStore(env, cc) {
                                   si el sistema tiene otra cosa, se MARCA para
                                   que un humano lo mire. Antes ni se miraba: la
                                   diferencia quedaba invisible para siempre. */
+        /* ⚠ HAY QUE COMPARAR MANZANAS CON MANZANAS.
+
+           El portal guarda los telefonos en formato internacional (+584128585089)
+           y cleanPhone() devuelve el formato nacional (04128585089). Comparar los
+           dos strings crudos da SIEMPRE distinto, aunque sea EL MISMO NUMERO.
+
+           Medido: de 117 "conflictos" de telefono detectados en la primera
+           corrida, 115 eran esto — el mismo numero escrito distinto. Solo 2 eran
+           diferencias de verdad. Sin esto, la bandeja de revision nace con 98%
+           de ruido y nadie la mira nunca.
+
+           Por eso los dos lados pasan por el MISMO validador antes de comparar:
+           el validador es la forma canonica. Si el validador no puede con el
+           valor del portal (ej: un correo viejo raro), se cae al valor crudo. */
         const revisar = (campoUI, valPortal, crudoSistema, validador, contador) => {
           const portal = clean(valPortal);
           const crudo  = clean(crudoSistema);
           const valido = validador(crudoSistema);
+          // Forma canonica del lado del PORTAL, para poder compararla de igual a igual.
+          const portalCanon = portal ? (validador(portal) || portal) : null;
 
           // --- HUECO: el portal no tiene nada ---
           if (!portal) {
@@ -504,22 +524,28 @@ async function processStore(env, cc) {
             diffs[campoUI] = { estado: 'dato_roto', portal, sistema: crudo };
             return null;
           }
-          if (valido !== portal) {
-            /* CONFLICTO: los dos tienen valor y son distintos. Nadie sabe cual
-               es el bueno. Lo decide un humano en Comparar (la API trae
-               auditoria.modificadoPor, que dice si el cambio salio del portal
-               o de un tercero en AX). */
+          if (valido !== portalCanon) {
+            /* CONFLICTO DE VERDAD: los dos tienen valor, los dos son validos, y
+               una vez normalizados SIGUEN siendo distintos. Nadie sabe cual es
+               el bueno. Lo decide un humano (la API trae auditoria.modificadoPor,
+               que dice si el cambio salio del portal o de un tercero en AX).
+
+               Se muestran los valores TAL CUAL estan en cada lado (no los
+               normalizados): lo que el usuario tiene que ver es lo que hay. */
             diffs[campoUI] = { estado: 'conflicto', portal, sistema: valido };
           }
-          return null;   // coinciden: nada que hacer
+          return null;   // el mismo dato (aunque escrito distinto): nada que hacer
         };
 
         const fAcc  = revisar('cuenta',   m.account_number, r.cuentaBancaria, cleanAccount, 'account');
         const fTel  = revisar('telefono', m.phone,          r.telefono,       cleanPhone,   'phone');
         const fMail = revisar('correo',   m.email,          r.correo,         cleanEmail,   'email');
-        if (fAcc)  patch.account_number = fAcc.fill;
-        if (fTel)  patch.phone          = fTel.fill;
-        if (fMail) patch.email          = fMail.fill;
+        if (fAcc)  { patch.account_number = fAcc.fill;
+                     out.fillDetail.push({ ced, nom, comp: cc, campo: 'cuenta',   valor: fAcc.fill }); }
+        if (fTel)  { patch.phone          = fTel.fill;
+                     out.fillDetail.push({ ced, nom, comp: cc, campo: 'telefono', valor: fTel.fill }); }
+        if (fMail) { patch.email          = fMail.fill;
+                     out.fillDetail.push({ ced, nom, comp: cc, campo: 'correo',   valor: fMail.fill }); }
 
         if (Object.keys(patch).length) toFill.push([ced, patch]);
 
@@ -626,16 +652,35 @@ export async function onRequestPost({ request, env, ctx }) {
     return json({ ok: true });
   }
   if (body.action === 'runs') {
-    // Ultimas corridas: agrupadas por run_id (las filas del log son por tienda).
+    /* Ultimas corridas: agrupadas por run_id (las filas del log son por tienda).
+       v5.36: ademas de ingresos/egresos, se agregan los rellenos y las
+       diferencias, con su detalle. El Registro los muestra en pestanas. */
     const rows = await sb(env,
-      'roster_sync_log?select=run_id,run_at,source,company_code,added,removed,skipped,alert&order=run_at.desc&limit=200') || [];
+      'roster_sync_log?select=run_id,run_at,source,company_code,added,removed,skipped,alert,detail,'
+      + 'filled,diff_review,diff_broken,diff_detail,fill_detail,rej_detail'
+      + '&order=run_at.desc&limit=400') || [];
     const byRun = new Map();
     for (const r of rows) {
       const k = r.run_id || r.run_at;
-      if (!byRun.has(k)) byRun.set(k, { run_id: k, run_at: r.run_at, source: r.source, added: 0, removed: 0, alerts: 0, stores: [] });
+      if (!byRun.has(k)) byRun.set(k, {
+        run_id: k, run_at: r.run_at, source: r.source,
+        added: 0, removed: 0, filled: 0,
+        diff_review: 0, diff_broken: 0, alerts: 0,
+        stores: [],
+        // El detalle fino, juntado de todas las tiendas de la corrida.
+        diff_detail: [], fill_detail: [], rej_detail: [],
+      });
       const g = byRun.get(k);
-      g.added += r.added || 0; g.removed += r.removed || 0; if (r.alert) g.alerts++;
-      g.stores.push({ company_code: r.company_code, added: r.added, removed: r.removed, skipped: r.skipped, alert: r.alert });
+      g.added += r.added || 0;
+      g.removed += r.removed || 0;
+      g.filled += r.filled || 0;
+      g.diff_review += r.diff_review || 0;
+      g.diff_broken += r.diff_broken || 0;
+      if (r.alert) g.alerts++;
+      g.stores.push({ company_code: r.company_code, added: r.added, removed: r.removed, filled: r.filled, skipped: r.skipped, alert: r.alert });
+      if (Array.isArray(r.diff_detail)) g.diff_detail.push(...r.diff_detail);
+      if (Array.isArray(r.fill_detail)) g.fill_detail.push(...r.fill_detail);
+      if (Array.isArray(r.rej_detail))  g.rej_detail.push(...r.rej_detail);
     }
     return json({ ok: true, runs: [...byRun.values()].slice(0, 12) });
   }
@@ -700,14 +745,26 @@ export async function onRequestPost({ request, env, ctx }) {
   // v5.35: las diferencias con el sistema (campos llenos que no coinciden).
   const diffDetail = results.reduce((a, r) => a.concat(r.diffDetail || []), []);
 
-  // Log: SOLO tiendas con movimiento o alerta (corridas limpias no ensucian).
+  /* Log: SOLO tiendas con movimiento o alerta (corridas limpias no ensucian).
+     v5.36: ahora tambien guarda el DETALLE de los rellenos y las diferencias.
+     Antes viajaba solo en la respuesta HTTP y se perdia al cerrar la pantalla;
+     el Registro no tenia de donde leerlo. */
   const logRows = results
-    .filter(r => r.added || r.removed || r.filled || r.skipped)
-    .map(r => ({
-      run_id: runId, source, company_code: r.company_code,
-      added: r.added, removed: r.removed, skipped: r.skipped,
-      alert: r.alert, detail: r.detail && Object.keys(r.detail).length ? r.detail : null,
-    }));
+    .filter(r => r.added || r.removed || r.filled || r.diffs || r.skipped)
+    .map(r => {
+      const dd = r.diffDetail || [];
+      return {
+        run_id: runId, source, company_code: r.company_code,
+        added: r.added, removed: r.removed, skipped: r.skipped,
+        filled: r.filled || 0,
+        diff_review: dd.filter(d => d.estado === 'conflicto').length,
+        diff_broken: dd.filter(d => d.estado === 'dato_roto').length,
+        diff_detail: dd.length ? dd : null,
+        rej_detail: (r.rejDetail && r.rejDetail.length) ? r.rejDetail : null,
+        fill_detail: (r.fillDetail && r.fillDetail.length) ? r.fillDetail : null,
+        alert: r.alert, detail: r.detail && Object.keys(r.detail).length ? r.detail : null,
+      };
+    });
   if (logRows.length) {
     try { await sb(env, 'roster_sync_log', { method: 'POST', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(logRows) }); }
     catch (_) { /* el log nunca tumba la corrida */ }
@@ -751,9 +808,23 @@ export async function onRequestPost({ request, env, ctx }) {
     email:   prevRej.email   + rej.email,
   };
 
+  /* v5.36: el resumen que se guarda en la config (y que Configurar muestra al
+     entrar) tiene que contar TODO lo que hizo la corrida. Antes solo guardaba
+     ingresos/egresos: la corrida de las 15:35 escribio 888 telefonos y el
+     resumen decia "0 y 0", como si no hubiera hecho nada.
+
+     Los dos estatus de diferencia van SEPARADOS a proposito: no son lo mismo.
+       diff_review = los dos lados tienen dato y no coinciden -> decide un humano
+       diff_broken = el portal lo tiene bien, el sistema lo tiene mal escrito */
+  const diffReview = totDiffDetail.filter(d => d.estado === 'conflicto').length;
+  const diffBroken = totDiffDetail.filter(d => d.estado === 'dato_roto').length;
+
   const summary = {
     run_id: runId, stores: totStores, total_stores: codes.length,
     added: totAdded, removed: totRemoved, filled: totFilled, alerts: totAlerts,
+    diffs: totDiffs,
+    diff_review: diffReview,
+    diff_broken: diffBroken,
     rejected: totRej,
     incomplete: incomplete || !done,
   };

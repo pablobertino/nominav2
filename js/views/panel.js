@@ -440,7 +440,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.35</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.36</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4590,9 +4590,23 @@ async function viewSync(user) {
       const okPill = c.last_status === 'ok'
         ? '<span class="pill pill-open">✅ OK</span>'
         : '<span class="pill" style="background:#fef2f2;color:#b91c1c">⚠ Error</span>';
+      /* v5.36: el resumen cuenta TODO lo que hizo la corrida. Antes decia solo
+         "132 tiendas · 0 ingresos · 0 egresos": la corrida de las 15:35 escribio
+         888 telefonos y no lo dijo, parecia que no habia hecho nada. */
+      const bits = [`${s.stores != null ? s.stores : 0} tiendas revisadas`,
+                    `<b>${s.added || 0}</b> ingreso(s)`,
+                    `<b>${s.removed || 0}</b> egreso(s)`];
+      if (s.filled) bits.push(`<span style="color:#0e9f6e"><b>${s.filled}</b> ficha(s) completada(s)</span>`);
+      // Los dos estatus de diferencia van separados: no son lo mismo.
+      //   por revisar = los dos lados tienen dato distinto -> lo decide un humano
+      //   a corregir  = el portal lo tiene bien, el sistema lo tiene mal escrito
+      if (s.diff_review) bits.push(`<span style="color:#1e40af"><b>${s.diff_review}</b> por revisar</span>`);
+      if (s.diff_broken) bits.push(`<span style="color:#b45309"><b>${s.diff_broken}</b> a corregir en el sistema</span>`);
+      if (s.alerts) bits.push(`<span style="color:#b45309">${s.alerts} con alerta</span>`);
+      if (s.incomplete) bits.push(`<span style="color:#b45309">corrida parcial (continúa en la próxima)</span>`);
+
       el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${okPill}<b>${fmtDT(c.last_run_at)}</b><span class="muted">${c.last_source === 'cron' ? 'automática' : 'manual'} · ${(((c.last_duration_ms || 0)) / 1000).toFixed(1)} s</span></div>`
-        + `<div style="margin-top:8px">${s.stores != null ? s.stores : 0} tiendas revisadas · <b>${s.added || 0}</b> ingreso(s) · <b>${s.removed || 0}</b> egreso(s)`
-        + `${s.alerts ? ` · <span style="color:#b45309">${s.alerts} con alerta</span>` : ''}${s.incomplete ? ' · <span style="color:#b45309">corrida parcial (continúa en la próxima)</span>' : ''}</div>`;
+        + `<div style="margin-top:8px">${bits.join(' · ')}</div>`;
     };
     const paintRuns = (runs) => {
       const el = $('#rsRuns'); if (!el) return;
@@ -4898,6 +4912,25 @@ async function viewSync(user) {
             cd.textContent = '✓ Copiada';
             setTimeout(() => { cd.textContent = 'Copiar la lista'; }, 1800);
           });
+        });
+      }
+
+      /* v5.36 — ENLACE AL REGISTRO.
+         Los avisos de arriba se pierden al recargar la pantalla. El Registro
+         guarda el detalle y se puede volver a mirar manana. */
+      if (el && (filled || diffs || acc.added || acc.removed || acc.alerts)) {
+        el.insertAdjacentHTML('beforeend',
+          `<div style="margin-top:12px"><a href="#" id="rsToReg" `
+          + `style="display:inline-flex;align-items:center;gap:5px;font-size:12.5px;`
+          + `font-weight:700;color:var(--brand);text-decoration:none">`
+          + `Ver el detalle en el Registro `
+          + `<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" `
+          + `stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">`
+          + `<path d="M5 12h14M12 5l7 7-7 7"/></svg></a></div>`);
+        const toReg = document.getElementById('rsToReg');
+        if (toReg) toReg.addEventListener('click', (ev) => {
+          ev.preventDefault();
+          renderSyncLog(user, 'roster', 'sync');
         });
       }
 
