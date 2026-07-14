@@ -824,6 +824,13 @@ export async function onRequestPost({ request, env, ctx }) {
       enabled: !!c.enabled,
       frequency: ['hourly', '6h', '12h', 'daily', '2d'].includes(c.frequency) ? c.frequency : 'daily',
       daily_hour: Math.min(23, Math.max(0, parseInt(c.daily_hour, 10) || 6)),
+      // v5.69: el minuto de la hora ancla. Sin esto, el front lo manda y el
+      // endpoint lo descarta en silencio (la whitelist no lo dejaba pasar).
+      // parseInt(...) || 0 no sirve para el 0: se valida aparte.
+      daily_minute: (() => {
+        const m = parseInt(c.daily_minute, 10);
+        return Number.isFinite(m) ? Math.min(59, Math.max(0, m)) : 0;
+      })(),
       retry_minutes: Math.min(720, Math.max(0, parseInt(c.retry_minutes, 10) || 0)),
       endpoint_url: (c.endpoint_url || '').trim() || null,
     };
