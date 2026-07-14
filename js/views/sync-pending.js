@@ -640,9 +640,26 @@ function confirmarPisada(c) {
 }
 
 /* La ficha resuelta se apaga en el lugar (no se saca de la lista de golpe: si
-   desapareciera, el usuario perderia la referencia de lo que acaba de hacer). */
+   desapareciera, el usuario perderia la referencia de lo que acaba de hacer).
+
+   ⚠ v5.54 — PERO LOS NUMEROS SI TIENEN QUE BAJAR (Pablo, 2026-07-14: "no
+   deberia cambiar en este momento el conteo?").
+
+   Antes esto solo apagaba la fila. El "1 para decidir" de arriba y el badge del
+   menu se quedaban con el numero VIEJO hasta que alguien recargara la pagina.
+   Una ficha resuelta seguia contandose como pendiente: el numero mentia.
+
+   La fila se queda (a proposito, es el recibo de lo que acabas de hacer), pero
+   el CONTEO baja: ya no hay nada que decidir ahi. */
 function marcarResuelta(row) {
   row.classList.add('done');
+
+  // Una ficha menos que decidir. El estado local manda hasta la proxima carga.
+  if (SP.counts && SP.counts.conflicts > 0) SP.counts.conflicts--;
+  paintStats();
+
+  // Y el menu sigue a la pagina.
+  try { paintSyncPendBadge(USER); } catch (_) { /* un badge no rompe la pagina */ }
 }
 
 /* ---------- ANULAR ----------
