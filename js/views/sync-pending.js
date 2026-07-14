@@ -165,6 +165,11 @@ function ensureStyles() {
   /* ---- LA FILA (clon de axr-row) ---- */
   .sp-row{border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);
           margin-bottom:8px;overflow:hidden}
+  /* Ficha ya resuelta en esta sesion: se apaga, pero NO se saca de la lista.
+     Si desapareciera de golpe, el usuario perderia la referencia de lo que
+     acaba de decidir. Se va sola en la proxima carga. */
+  .sp-row.done{opacity:.5}
+  .sp-row.done .sp-foot{display:none}
   .sp-rowhead{display:flex;align-items:center;gap:13px;padding:12px 14px}
   /* v5.45: MISMO avatar que Publicar. Estaba redondo (border-radius:50%) y en el
      resto del portal es un cuadrado con esquinas redondeadas. Un circulo en una
@@ -173,7 +178,12 @@ function ensureStyles() {
           justify-content:center;font-weight:700;font-size:14px;overflow:hidden}
   .sp-ava.haspic{cursor:zoom-in;background:#eef2f7}
   .sp-ava img{width:100%;height:100%;object-fit:cover;display:block}
-  .sp-who{flex:1;min-width:0}
+  /* v5.47: los botones de icono van PEGADOS AL NOMBRE, como en Publicar y en
+     el Historial. Para eso .sp-who NO puede tener flex:1 (si se estira, empuja
+     los botones contra el borde derecho): el espacio sobrante lo absorbe
+     .sp-flex, que va DESPUES de los botones. Mismo patron que .axr-flex. */
+  .sp-who{flex:0 1 auto;min-width:0;max-width:46%}
+  .sp-flex{flex:1}
   .sp-nm{font-size:14px;font-weight:700;color:var(--ink);line-height:1.3}
   .sp-sub{font-size:12px;color:var(--muted);margin-top:1px}
   .sp-edit{font-size:11.5px;color:var(--faint,#94a3b8);margin-top:2px}
@@ -214,6 +224,9 @@ function ensureStyles() {
      vistazo cual es el mas nuevo. */
   .sp-by{font-size:10.5px;color:var(--faint,#94a3b8);margin-top:3px;line-height:1.4}
   .sp-by b{font-weight:700;color:var(--muted)}
+  /* AX registro el cambio pero no quien: se muestra en cursiva para que se lea
+     como una aclaracion, no como el nombre de una persona. */
+  .sp-by.anon span{font-style:italic}
   /* El lado mas RECIENTE se marca. No decide por vos, pero es el dato mas duro
      que hay para elegir. */
   .sp-by.new{color:#0f766e}
@@ -221,9 +234,23 @@ function ensureStyles() {
   .sp-eco{font-size:10px;color:#92400e;background:#fef3c7;border-radius:4px;padding:0 4px;
           display:inline-block;margin-top:2px;font-weight:600}
 
-  /* ---- BOTONES (mismo tamaño y peso que los de Publicar) ---- */
-  .sp-foot{display:flex;gap:8px;justify-content:flex-end;align-items:center;
-           margin-top:11px;flex-wrap:wrap}
+  /* ---- BOTONES ----
+     v5.47: EL ORDEN IMPORTA. Cada boton se alinea con LA COLUMNA DE DONDE SACA
+     EL DATO:
+
+         EN EL PORTAL          EN EL SISTEMA
+         0424 8494408          0412 3570189
+              └─ Publicar →         └─ ← Adoptar
+
+     Antes estaban al reves (Adoptar antes que Publicar) y era contradictorio:
+     el boton que trae el dato de la DERECHA estaba a la IZQUIERDA del que lo
+     manda desde la izquierda. Las flechas apuntaban bien y el orden cruzaba los
+     cables.
+
+     Anular va aparte, contra el borde izquierdo: no es una tercera opcion del
+     mismo tipo, es la salida. */
+  .sp-foot{display:flex;gap:8px;align-items:center;margin-top:11px;flex-wrap:wrap}
+  .sp-fspace{flex:1}
   .sp-b{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12.5px;font-weight:600;
         padding:7px 13px;border-radius:8px;cursor:pointer;border:1px solid var(--border);
         background:var(--surface,#fff);color:var(--ink);white-space:nowrap}
@@ -298,10 +325,35 @@ const IC_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stro
    los usuarios con los que el portal escribe en el sistema. */
 const ECO_USERS = new Set(['PABLO']);
 
+/* ===== EL "?" DEL SISTEMA =====
+   AX devuelve `"modificadoPor": "?"` cuando NO GUARDO quien hizo el cambio. No
+   es un usuario llamado "?": es un hueco en la auditoria del ERP.
+
+   Hay que decirlo con todas las letras, porque son TRES estados distintos y
+   antes se veian igual (la linea simplemente no aparecia):
+
+     (nada)                  -> todavia no lo consultamos
+     ISMAEL.M · 17/11/2025   -> una persona lo toco
+     sin autor registrado    -> AX perdio el rastro
+
+   Mostrar el "?" crudo seria peor que no mostrar nada: parece un usuario. */
+const SIN_AUTOR = new Set(['?', '', '-', 'none', 'null']);
+const esSinAutor = (by) => SIN_AUTOR.has(String(by == null ? '' : by).trim().toLowerCase());
+
 /* Linea "quien · cuando" debajo de un valor. mas=true lo marca como el mas
    reciente de los dos lados. */
 function byLine(by, at, mas) {
   if (!by && !at) return '';
+
+  // El sistema tiene la fecha pero no el autor: se dice, no se disfraza.
+  if (esSinAutor(by)) {
+    const cuando = at ? esc(fmtDT(at)) : '';
+    return `<div class="sp-by anon${mas ? ' new' : ''}">`
+      + '<span title="El sistema registr\u00f3 el cambio pero no qui\u00e9n lo hizo">sin autor registrado</span>'
+      + (cuando ? ` \u00b7 ${cuando}` : '')
+      + '</div>';
+  }
+
   const eco = by && ECO_USERS.has(String(by).toUpperCase());
   const partes = [];
   if (by) partes.push(`<b>${esc(by)}</b>`);
@@ -357,6 +409,7 @@ function conflictRow(c, i) {
           <button class="sp-iconbtn" data-ficha="${i}" title="Ver ficha">${IC_FICHA}</button>
           <button class="sp-iconbtn" data-copy="${i}" title="Copiar datos">${IC_COPY}</button>
         </div>
+        <span class="sp-flex"></span>
         <div class="sp-rmeta">
           <div class="sp-cc">${esc(c.company_code)}</div>
           ${emeta ? `<div class="sp-emeta">${emeta}</div>` : ''}
@@ -370,8 +423,9 @@ function conflictRow(c, i) {
         </table>
         <div class="sp-foot">
           <button class="sp-b nul" data-act="null" data-i="${i}">Anular</button>
+          <span class="sp-fspace"></span>
+          <button class="sp-b pub" data-act="portal" data-i="${i}">Publicar ${ARR_R}</button>
           <button class="sp-b ado" data-act="sistema" data-i="${i}"${todoRoto ? ' disabled title="El sistema tiene estos datos mal escritos: no hay nada que adoptar"' : ''}>${ARR_L} Adoptar</button>
-          <button class="sp-b pub" data-act="portal" data-i="${i}">${ARR_R} Publicar</button>
         </div>
         <div class="sp-msg" id="spMsg_${i}" hidden></div>
       </div>
@@ -379,9 +433,20 @@ function conflictRow(c, i) {
 }
 
 /* ---------- RESOLVER ----------
-   El usuario eligio un lado. Se traduce a la accion de /api/ax-review, que ya
-   existia. Los dos endpoints re-detectan en el server antes de escribir: por eso
-   tardan, y por eso son seguros. */
+   El usuario eligio un lado.
+
+   ADOPTAR (v5.47) va a /api/sync-pending y escribe EL VALOR QUE MUESTRA LA
+   PANTALLA, tomado de la base (ax_diff_fields). NO le pregunta al sistema.
+   Es instantaneo, y ademas es lo correcto: escribe lo que el usuario aprobo.
+
+   Antes llamaba a /api/ax-review action:adopt, que RE-DETECTABA contra el
+   sistema antes de escribir. Tardaba segundos — y podia escribir un valor que
+   el usuario nunca vio (si el dato cambiaba en el sistema entre la corrida y el
+   clic). En una cuenta bancaria eso es plata a una cuenta que nadie aprobo.
+
+   PUBLICAR sigue yendo a /api/ax-review (detect_commit): no escribe en el
+   sistema, arma el change_set que despues se envia desde la pagina Publicar.
+   Ese circuito ya existe y funciona; no hay razon para duplicarlo. */
 async function resolve(i, lado) {
   const c = SP.conflicts[i];
   if (!c) return;
@@ -392,14 +457,21 @@ async function resolve(i, lado) {
   row.querySelectorAll('.sp-b').forEach(b => { b.disabled = true; });
   msg.hidden = false;
   msg.className = 'sp-msg wait';
-  msg.textContent = 'Comprobando contra el sistema\u2026';
 
-  /* portal  -> PUBLICAR (el valor del portal se manda; aparece en Publicar)
-     sistema -> ADOPTAR  (el valor del sistema entra al portal) */
-  const action = lado === 'sistema' ? 'adopt' : 'detect_commit';
-  const r = await axReview({
-    action, id_numbers: [c.id_number], company_codes: [c.company_code],
-  });
+  let r;
+  if (lado === 'sistema') {
+    // ADOPTAR: directo contra la base. Sin vueltas.
+    msg.textContent = 'Adoptando\u2026';
+    r = await api({ action: 'adopt', id_number: c.id_number });
+  } else {
+    // PUBLICAR: arma el envio (aparece en la pagina Publicar).
+    msg.textContent = 'Preparando el env\u00edo\u2026';
+    r = await axReview({
+      action: 'detect_commit',
+      id_numbers: [c.id_number],
+      company_codes: [c.company_code],
+    });
+  }
 
   if (!r || !r.ok) {
     msg.className = 'sp-msg err';
@@ -408,18 +480,34 @@ async function resolve(i, lado) {
     return;
   }
 
-  const n = (r.count != null) ? r.count : ((r.adopted || r.marked || []).length);
+  if (lado === 'sistema') {
+    if (r.already) {
+      msg.className = 'sp-msg ok';
+      msg.textContent = '\u2713 Ya estaba resuelto.';
+      return;
+    }
+    msg.className = 'sp-msg ok';
+    msg.textContent = '\u2713 Listo. El portal tom\u00f3 el dato del sistema.'
+      + (r.skipped_broken ? ` (${r.skipped_broken} campo${r.skipped_broken === 1 ? '' : 's'} mal escrito${r.skipped_broken === 1 ? '' : 's'} qued\u00f3 sin tocar)` : '');
+    marcarResuelta(row);
+    return;
+  }
+
+  const n = (r.count != null) ? r.count : ((r.marked || []).length);
   if (!n) {
-    // Re-detecto y ya no hay diferencia: alguien lo resolvio antes. No es error.
     msg.className = 'sp-msg ok';
     msg.textContent = '\u2713 Ya estaba resuelto. La marca se limpia en la pr\u00f3xima sincronizaci\u00f3n.';
     return;
   }
-
   msg.className = 'sp-msg ok';
-  msg.textContent = lado === 'sistema'
-    ? '\u2713 Listo. El portal tom\u00f3 el dato del sistema.'
-    : '\u2713 Listo. El dato del portal qued\u00f3 para enviar: lo vas a ver en Publicar.';
+  msg.textContent = '\u2713 Listo. El dato del portal qued\u00f3 para enviar: lo vas a ver en Publicar.';
+  marcarResuelta(row);
+}
+
+/* La ficha resuelta se apaga en el lugar (no se saca de la lista de golpe: si
+   desapareciera, el usuario perderia la referencia de lo que acaba de hacer). */
+function marcarResuelta(row) {
+  row.classList.add('done');
 }
 
 /* ---------- ANULAR ----------
@@ -455,6 +543,7 @@ async function dismiss(i) {
 
   msg.className = 'sp-msg ok';
   msg.textContent = '\u2713 Aviso anulado. No se cambi\u00f3 ning\u00fan dato.';
+  marcarResuelta(row);
 }
 
 /* ---------- ACCIONES DE FILA: foto, ficha, copiar ----------
@@ -501,16 +590,21 @@ function rowCopyText(c) {
   if (ubi) L.push(ubi);
   L.push('');
   L.push(`Datos que no coinciden (${c.fields.length}):`);
+  // Mismo criterio que la pantalla: el "?" de AX se traduce, no se copia crudo.
+  const quien = (by, at) => {
+    const partes = [];
+    if (by) partes.push(esSinAutor(by) ? 'sin autor registrado' : by);
+    if (at) partes.push(fmtDT(at));
+    return partes.length ? `   [${partes.join(' \u00b7 ')}]` : '';
+  };
   c.fields.forEach(f => {
     const lbl = CAMPO_LBL[f.campo] || f.campo;
     L.push(`- ${lbl}`);
     L.push(`    Portal:  ${f.portal ? fmtValor(f.campo, f.portal) : '(sin dato)'}`
-      + (f.portal_by || f.portal_at
-        ? `   [${[f.portal_by, f.portal_at ? fmtDT(f.portal_at) : null].filter(Boolean).join(' \u00b7 ')}]` : ''));
+      + quien(f.portal_by, f.portal_at));
     L.push(`    Sistema: ${f.sistema ? fmtValor(f.campo, f.sistema) : '(sin dato)'}`
       + (f.estado === 'dato_roto' ? '   (mal escrito)' : '')
-      + (f.sistema_by || f.sistema_at
-        ? `   [${[f.sistema_by, f.sistema_at ? fmtDT(f.sistema_at) : null].filter(Boolean).join(' \u00b7 ')}]` : ''));
+      + quien(f.sistema_by, f.sistema_at));
   });
   if (c.at) { L.push(''); L.push(`Diferencia detectada el ${fmtDT(c.at)}`); }
   return L.join('\n');

@@ -169,6 +169,86 @@ export async function onRequestPost({ request, env }) {
      Requiere hcm.publish: apagar un aviso de un dato que no coincide es una
      decision, no una consulta. Quien solo puede MIRAR el registro no deberia
      poder silenciarlo. */
+
+  /* ===================== ADOPTAR (v5.47) =====================
+     Escribe en el portal EL VALOR QUE MUESTRA LA PANTALLA. No vuelve a
+     preguntarle al sistema.
+
+     Antes esto llamaba a /api/ax-review action:adopt, que RE-DETECTA contra AX
+     antes de escribir. Dos problemas:
+
+     1. Tardaba varios segundos por cada clic (una llamada a la API por ficha).
+
+     2. ⚠ EL PELIGROSO: podia escribir un valor QUE EL USUARIO NUNCA VIO. Si
+        entre la sincronizacion y el clic alguien cambiaba el dato en AX, el
+        boton adoptaba el valor NUEVO, no el que estaba en pantalla. En una
+        cuenta bancaria eso es plata a una cuenta que nadie aprobo.
+
+     Ahora: lo que ves es lo que se escribe. Si el dato cambio en AX despues, la
+     proxima corrida lo vuelve a marcar como un conflicto nuevo — que es
+     exactamente lo correcto: es una diferencia nueva, y merece una decision
+     nueva.
+
+     El valor sale de ax_diff_fields (lo que la ultima sincronizacion leyo del
+     sistema), no del cuerpo del pedido: el front NO decide que se escribe. Si
+     el front mandara el valor, cualquiera podria escribir lo que quisiera en
+     workers_master con un pedido armado a mano. */
+  if (body.action === 'adopt') {
+    if (!can(actor, 'hcm.sync')) {
+      return json({ ok: false, error: 'No tienes permiso para adoptar datos del sistema.' }, 403);
+    }
+    const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
+    if (!ced) return json({ ok: false, error: 'Falta la c\u00e9dula.' }, 400);
+
+    const rows = await sb(env,
+      `workers_master?id_number=eq.${encodeURIComponent(ced)}`
+      + '&select=id_number,last_source_company,ax_diff,ax_diff_fields&limit=1');
+    const w = rows && rows[0];
+    if (!w) return json({ ok: false, error: 'No se encontr\u00f3 la ficha.' }, 404);
+    if (!inScope(w.last_source_company || '')) {
+      return json({ ok: false, error: 'Esa ficha no est\u00e1 en tu alcance.' }, 403);
+    }
+    if (!w.ax_diff) return json({ ok: true, count: 0, already: true });
+
+    const ff = (w.ax_diff_fields && typeof w.ax_diff_fields === 'object') ? w.ax_diff_fields : {};
+
+    /* Solo se adopta lo que se PUEDE adoptar:
+         - conflicto  -> el sistema tiene un valor valido. Se toma.
+         - dato_roto  -> el sistema lo tiene MAL. Adoptarlo seria romper el
+                         portal a proposito. Se deja como esta.
+       Si la ficha era toda dato_roto, no hay nada que hacer y se dice. */
+    const patch = {};
+    let rotos = 0;
+    for (const [campo, d] of Object.entries(ff)) {
+      if (!d || typeof d !== 'object') continue;
+      if (d.estado === 'dato_roto') { rotos++; continue; }
+      const col = CAMPO_A_INTERNO[campo];
+      if (!col) continue;
+      if (d.sistema == null || d.sistema === '') continue;
+      patch[col] = String(d.sistema);
+    }
+
+    if (!Object.keys(patch).length) {
+      return json({ ok: false, count: 0,
+        error: rotos
+          ? 'El sistema tiene estos datos mal escritos: no hay nada que adoptar. Hay que corregirlos all\u00e1.'
+          : 'No hay ning\u00fan valor del sistema para adoptar.' }, 400);
+    }
+
+    /* La marca se limpia junto con la escritura: el conflicto quedo resuelto.
+       Si mas adelante vuelven a diferir, la proxima corrida lo marca de nuevo. */
+    patch.ax_diff = false;
+    patch.ax_diff_fields = null;
+    patch.ax_diff_at = null;
+
+    await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
+      method: 'PATCH', headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify(patch),
+    });
+
+    return json({ ok: true, count: Object.keys(patch).length - 3, skipped_broken: rotos });
+  }
+
   if (body.action === 'dismiss') {
     if (!can(actor, 'hcm.publish')) {
       return json({ ok: false, error: 'No tienes permiso para anular avisos de diferencias.' }, 403);
