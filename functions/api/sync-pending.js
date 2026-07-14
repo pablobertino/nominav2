@@ -394,7 +394,7 @@ export async function onRequestPost({ request, env }) {
     const rows = await sb(env,
       `workers_master?id_number=eq.${encodeURIComponent(ced)}`
       + '&select=id_number,last_source_company,ax_diff,ax_diff_fields,'
-      + 'profile_updated_by,profile_updated_at&limit=1');
+      + 'ax_pending_fields,profile_updated_by,profile_updated_at&limit=1');
     const w = rows && rows[0];
     if (!w) return json({ ok: false, error: 'No se encontr\u00f3 la ficha.' }, 404);
     if (!inScope(w.last_source_company || '')) {
@@ -497,12 +497,27 @@ export async function onRequestPost({ request, env }) {
     }
 
     /* LO QUE FALTABA: encender ax_pending (aparece en Publicar) y APAGAR ax_diff
-       (sale de Diferencias). Las dos cosas, en la misma escritura. */
+       (sale de Diferencias). Las dos cosas, en la misma escritura.
+
+       ⚠ ax_pending_fields ES UN OBJETO {campo: true}, NO UN ARRAY.
+
+       v5.49 escribia Object.keys(changes) — un array ["phone"]. Publicar lo lee
+       con Object.keys(), que sobre un array devuelve LOS INDICES (["0"]), no los
+       campos. Resultado: "Sin campos validos para enviar (todo quedo vacio)".
+       El envio se creaba, aparecia en la lista, y al publicarlo no mandaba nada.
+
+       Se respeta el pendiente previo (union): si la ficha ya tenia el correo
+       esperando, agregar el telefono no puede borrarlo. */
+    const pendPrev = (w.ax_pending_fields && typeof w.ax_pending_fields === 'object'
+                      && !Array.isArray(w.ax_pending_fields))
+      ? { ...w.ax_pending_fields } : {};
+    for (const col of Object.keys(changes)) pendPrev[col] = true;
+
     await sbWrite(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
       method: 'PATCH', headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
         ax_pending: true,
-        ax_pending_fields: Object.keys(changes),
+        ax_pending_fields: pendPrev,
         ax_pending_at: ahora,
         ...LIMPIAR_DIFF,
       }),
