@@ -67,7 +67,7 @@ const VIEW_SUBGROUPS = [
   ['Reportes', ['view.historial', 'view.estadisticas', 'view.reportempresas', 'view.estadopago', 'view.misstats']],
   ['Comunicacion', ['view.avisos', 'view.avisosconfig']],
   ['Solicitudes', ['view.solicitudes', 'view.firmantes']],
-  ['Sincronizacion', ['view.sync', 'view.syncreview', 'view.axcompare', 'view.axhistory', 'view.synclog', 'view.erpquery']],
+  ['Sincronizacion', ['view.synclog', 'view.syncpend', 'view.sync', 'view.syncreview', 'view.axhistory', 'view.axcompare', 'view.erpquery']],
   ['Datos bancarios', ['view.bankstats', 'view.banksync', 'view.bankhist', 'view.bankaccounts']],
   ['WhatsApp', ['view.whatsapp']],
   ['Administracion', ['view.equipo', 'view.permisos', 'view.config', 'view.roles', 'view.resetdata']],
@@ -122,14 +122,45 @@ const MENU_CATALOG = [
     { id: 'constancias', lbl: 'Constancias', view: 'view.solicitudes', acts: ['cert.request', 'cert.generate', 'cert.reject', 'cert.cancel'] },
     { id: 'firmantes', lbl: 'Firmantes', view: 'view.firmantes', acts: ['cert.signers'] },
   ] },
+  /* v5.55 — CALCADO DEL MENU REAL (v5.48).
+
+     El catalogo se habia quedado en la version vieja: nombres que ya no existen
+     ("Registro", "Sincronizar", "Configurar (sincronizaciones)"), el orden de
+     antes, y — lo importante — LA PAGINA DIFERENCIAS NO ESTABA. Se podia entrar
+     a Roles y no encontrarla por ningun lado, aunque es donde se decide sobre
+     cuentas bancarias.
+
+     Ahora refleja el menu tal cual, con sus tres subtitulos:
+
+       CORRIDA AUTOMATICA
+         Ultima corrida
+           └ Diferencias      <- colgaba de la corrida y no existia aca
+         Configurar
+       ENVIAR AL SISTEMA
+         Publicar
+         Historial de envios
+       HERRAMIENTAS
+         Comparar
+         Consultar API
+
+     `sub`   = subtitulo de seccion (el rotulo gris del menu real).
+     `child` = cuelga de la linea de arriba (la indentacion del menu).
+
+     ⚠ view.syncpend se CREO en BD junto con este cambio. No existia: la pagina
+     se protegia solo con 'adminonly' en el menu, o sea que NO se podia dar ni
+     quitar por rol. Nace con enforced=false porque el gate real sigue siendo
+     'adminonly'; cuando el menu pase a mirar el permiso, se sube a true. */
   { g: 'Sincronizacion', items: [
-    // v5.24: Sincronizar publica (sin la cuenta) y anula -> dos llaves.
-    { id: 'syncreview', lbl: 'Sincronizar', view: 'view.syncreview', acts: ['hcm.publish', 'hcm.discard'] },
-    { id: 'axcompare', lbl: 'Comparar', view: 'view.axcompare', acts: ['hcm.sync', 'hcm.publish'] },
-    { id: 'axhistory', lbl: 'Historial', view: 'view.axhistory', acts: [] },
-    { id: 'synclog', lbl: 'Registro', view: 'view.synclog', acts: ['hcm.log'] },
+    { id: 'synclog', lbl: 'Ultima corrida', view: 'view.synclog', acts: ['hcm.log'], sub: 'Corrida automatica' },
+    { id: 'syncpend', lbl: 'Diferencias', view: 'view.syncpend', acts: ['hcm.sync', 'hcm.publish', 'hcm.discard'], child: true },
+    { id: 'sync', lbl: 'Configurar', view: 'view.sync', acts: [] },
+
+    // v5.24: Publicar publica (sin la cuenta) y anula -> dos llaves.
+    { id: 'syncreview', lbl: 'Publicar', view: 'view.syncreview', acts: ['hcm.publish', 'hcm.discard'], sub: 'Enviar al sistema' },
+    { id: 'axhistory', lbl: 'Historial de envios', view: 'view.axhistory', acts: [] },
+
+    { id: 'axcompare', lbl: 'Comparar', view: 'view.axcompare', acts: ['hcm.sync', 'hcm.publish'], sub: 'Herramientas' },
     { id: 'erpquery', lbl: 'Consultar API', view: 'view.erpquery', acts: ['hcm.query'] },
-    { id: 'sync', lbl: 'Configurar (sincronizaciones)', view: 'view.sync', acts: [] },
   ] },
   // v4.81: grupo Datos bancarios (v4.78-4.80) en el editor visual.
   // v5.23/v5.24: banksync YA NO publica la ficha completa: publica SOLO la
@@ -299,6 +330,19 @@ function ensureStyles() {
   .rl-me-it.sel{background:#eff6ff;border-left-color:var(--brand,#2563eb)}
   .rl-me-it.off .melbl{color:var(--faint,#94a3b8);text-decoration:line-through;text-decoration-color:#cbd5e1}
   .rl-me-it .melbl{font-size:13px;font-weight:550;flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  /* v5.55: el menu real tiene SUBTITULOS dentro de un grupo (Corrida automatica /
+     Enviar al sistema / Herramientas) y una linea INDENTADA (Diferencias cuelga
+     de Ultima corrida). El editor mostraba las 7 lineas planas y en otro orden:
+     no se parecia al menu que el rol iba a ver. */
+  .rl-me-sub{font-size:9.5px;font-weight:800;letter-spacing:.07em;color:var(--faint,#94a3b8);
+             text-transform:uppercase;padding:9px 14px 2px}
+  .rl-me-g .rl-me-sub:first-child{padding-top:4px}
+  /* La hija: sangrada y con la guia vertical, igual que en el menu del portal. */
+  .rl-me-it.child{padding-left:30px;position:relative}
+  .rl-me-it.child::before{content:'';position:absolute;left:20px;top:0;bottom:50%;
+                          width:1px;background:var(--border,#e6eaf0)}
+  .rl-me-it.child::after{content:'';position:absolute;left:20px;top:50%;width:5px;height:1px;
+                         background:var(--border,#e6eaf0)}
   .rl-me-it .mecnt{font-size:9.5px;color:var(--muted,#64748b);background:var(--border-soft,#f1f4f8);border-radius:999px;padding:1px 6px;font-weight:700}
   .rl-me-sw{position:relative;width:32px;height:18px;flex:none;cursor:pointer;display:inline-block}
   .rl-me-sw input{opacity:0;width:0;height:0;position:absolute}
@@ -820,7 +864,10 @@ function paintMenuEditor(root) {
         const acts = it.acts.filter(exists);
         const nOn = acts.filter(onSet).length;
         const orphan = !on && nOn > 0;
-        return `<div class="rl-me-it ${ME_SEL === it.id ? 'sel' : ''} ${on ? '' : 'off'}" data-meit="${esc(it.id)}">
+        /* v5.55: el subtitulo va ANTES de su item (asi lo dibuja el menu real).
+           `child` sangra la linea: Diferencias cuelga de Ultima corrida. */
+        const sub = it.sub ? `<div class="rl-me-sub">${esc(it.sub)}</div>` : '';
+        return sub + `<div class="rl-me-it ${ME_SEL === it.id ? 'sel' : ''} ${on ? '' : 'off'} ${it.child ? 'child' : ''}" data-meit="${esc(it.id)}">
           <span class="melbl">${esc(it.lbl)}</span>
           ${orphan ? '<span title="Acciones activas en un menu apagado" style="width:7px;height:7px;border-radius:99px;background:#c2410c;flex:none"></span>' : ''}
           ${acts.length ? `<span class="mecnt">${nOn}/${acts.length}</span>` : ''}
