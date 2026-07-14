@@ -1030,7 +1030,32 @@ export async function onRequestPost({ request, env, ctx }) {
           stores_total: codes.length,
         }]),
       });
-    } catch (_) { /* el log nunca tumba la corrida */ }
+    } catch (e) {
+      /* ⚠️ v5.70: ESTE CATCH YA NO SE TRAGA EL ERROR.
+
+         Tres veces en la misma sesion un catch vacio escondio la causa de un
+         bug (la auto-invocacion de v5.38, la bitacora de v5.66, y esta misma
+         fila de cierre en v5.68, que fallaba en silencio y nadie sabia por que).
+
+         El caso tipico: se agrega una columna con ALTER TABLE y PostgREST sigue
+         con el schema viejo cacheado -> rechaza el insert con 400 -> el catch se
+         lo come -> la fila no aparece y no hay ni un rastro de por que.
+         (La regla existe: NOTIFY pgrst, 'reload schema' despues de cada ALTER.
+         Pero si igual falla, TIENE que quedar constancia.)
+
+         El log no puede tumbar la corrida (por eso sigue habiendo catch), pero
+         el error se guarda donde se pueda ver. */
+      try {
+        await sb(env, 'roster_chain_log', {
+          method: 'POST', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({
+            run_id: runId, offset_from: offset, offset_next: null,
+            event: 'chain_fail',
+            detail: `No se pudo escribir la fila de cierre: ${String(e && e.message || e).slice(0, 400)}`,
+          }),
+        });
+      } catch (_) { /* si ni esto se puede, no hay nada mas que hacer */ }
+    }
   }
 
   /* v5.14: el resumen ACUMULA entre tandas. La corrida son N invocaciones; si
