@@ -209,6 +209,30 @@ const cleanEmail = (v) => {
   return e;
 };
 
+/* ===== TIPO DE CEDULA (v5.53) =====
+
+   ⚠ EL BUG (Pablo, 2026-07-14): "porque algunos salen con la V- y otros solo
+   con -? sin la V?". Y era literal: la ficha mostraba "-30283265" en vez de
+   "V-30283265", porque ced_kind estaba en NULL y la UI imprime
+   `${ced_kind ? ced_kind + '-' : ''}` — sin la letra, queda el guion solo.
+
+   El corte era PERFECTO POR ORIGEN, el mismo patron que el bug de las cuentas
+   de v5.31:
+
+     source='ax_api'    (carga manual)  1.967 fichas,  ced_kind = 'V'  ✓
+     source='auto_sync' (esta sync)         80 fichas,  ced_kind = NULL ✗
+
+   AX NO MANDA EL TIPO DE CEDULA. Se deduce del numero, y la carga manual
+   (ax-roster.js) ya lo hacia desde siempre. Esta sincronizacion nunca copio esa
+   linea: creaba las fichas sin el campo.
+
+   La regla venezolana: las cedulas de extranjero empiezan en 80.000.000. */
+const cedKind = (ced) => {
+  const d = String(ced || '').replace(/[^0-9]/g, '');
+  if (!d) return null;
+  return Number(d) >= 80000000 ? 'E' : 'V';
+};
+
 /* Departamento Retail de la tienda (cada tienda tiene el suyo); lo crea si
    no existe. Misma regla que las cargas manuales (roster.js/ax-roster.js). */
 async function retailDeptId(env, cc) {
@@ -378,6 +402,7 @@ async function processStore(env, cc) {
       // seguro mandar aca la ficha completa.
       const masterRows = toInsert.map(([ced, r]) => ({
         id_number: ced,
+        ced_kind: cedKind(ced),   // v5.53: AX no lo manda; se deduce del numero
         full_name: fullNameOf(r) || ced,
         first_name: r.primerNombre || null,
         second_name: r.segundoNombre || null,
