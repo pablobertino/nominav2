@@ -103,8 +103,21 @@ const TIME_BUDGET_MS = 90000;   // presupuesto total de corrida
 
    Baja de 10 a 5: mas tandas, pero ninguna muere. Una tanda que revienta no
    avanza el offset y la corrida se cuelga entera; mejor ir despacio. */
-const STORES_PER_CALL = 3;      // tiendas por invocacion (limite de Cloudflare)
-const BATCH = 3;                // tiendas en paralelo dentro de la tanda
+/* v5.67: 3 -> 5 tiendas por tanda.
+   Bajo a 3 en su momento por miedo al techo de 50 subrequests. Pero los datos
+   reales de la corrida del 14/07 dicen que hay MUCHO aire: cada tanda de 3
+   tiendas tarda 868 ms y usa ~15-20 subrequests. Con 5 quedan ~30: entra
+   comodo.
+
+   La cuenta de la corrida completa: 132 tiendas / 5 = 27 tandas. Con el cron
+   cada minuto (v5.67), eso es ~27 minutos.
+
+   No subo mas (10 seria ~14 min) porque el peor caso — 5 tiendas grandes, todas
+   con huecos que rellenar — gasta bastante mas que el promedio, y una tanda que
+   revienta por subrequests NO avanza el offset: la corrida se traba. Mejor 27
+   minutos seguros que 14 con riesgo. */
+const STORES_PER_CALL = 5;      // tiendas por invocacion (limite de Cloudflare)
+const BATCH = 5;                // tiendas en paralelo dentro de la tanda
 
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -1091,70 +1104,38 @@ export async function onRequestPost({ request, env, ctx }) {
      El Worker vuelve a ser lo que debe ser: procesa SU tanda y contesta. Quien
      encadena es quien llama (el tick, o el front). */
 
-  /* ===== v5.66 — LA CADENA LA HACE EL WORKER, OTRA VEZ. PERO CON TESTIGOS. =====
+  /* ===== v5.67 — LA AUTO-INVOCACION NO SE PUEDE. PUNTO FINAL. =====
 
-     Historia: esto YA se intento (v5.38) y fallaba. Se cortaba en el primer
-     eslabon y el `.catch(() => {})` se tragaba el error, asi que nadie supo
-     nunca por que. Se movio el bucle a Postgres... donde murio por
-     statement_timeout (v5.64). Dos bugs distintos, mismo sintoma: no sincroniza.
+     Se intento DOS VECES:
+       v5.38  ctx.waitUntil(fetch(selfUrl)) con .catch(() => {}) → fallaba en
+              silencio. Nunca supimos por que.
+       v5.66  lo mismo pero CON bitacora (roster_chain_log), justamente para
+              ver el error. Resultado: la bitacora quedo VACIA. Ni siquiera el
+              primer `chain_start` se escribio.
 
-     Por que volver: el cron NO PUEDE encadenar. pg_cron se despierta cada N
-     minutos, asi que entre tanda y tanda hay 1-2 min de espera MUERTA. La
-     sincronizacion tarda 3 minutos; el cron la estiraba a 44. El unico que
-     puede encadenar sin esperar es el Worker, que es justo lo que hace el front
-     cuando le das "Ejecutar ahora" — y ahi funciona.
+     Eso ultimo es la prueba: si el codigo se hubiera ejecutado, la primera
+     linea (el INSERT de chain_start) habria entrado ANTES del fetch. No entro.
+     O sea: el fetch a la propia zona no completa, y se lleva puesto al
+     ctx.waitUntil cuando el request muere.
 
-     Que cambia respecto de v5.38:
-       1. El fetch se dispara ANTES del return, sin await. Si se hace despues,
-          Cloudflare puede cancelarlo cuando el handler retorna.
-       2. ctx.waitUntil() mantiene vivo el Worker hasta que el fetch salga.
-       3. NADA se traga en silencio: cada eslabon deja fila en roster_chain_log.
-          Si se corta, se ve donde y con que error.
+     ⚠️ UN WORKER DE CLOUDFLARE NO PUEDE LLAMARSE A SI MISMO por su URL publica.
+     La plataforma lo detecta como loop y lo corta. No es un bug nuestro y no
+     hay forma de sortearlo desde aca.
 
-     Red de seguridad: aunque la cadena se rompa, `cur_offset` (v5.64) quedo
-     guardado. El tick del cron retoma en su proxima vuelta. Peor caso, vuelve
-     a ser lento; nunca se cuelga.
+     Verificado con datos (14/07, corrida de las 10:00):
+       - El deploy tenia v5.66 (commit 7efb3c2, confirmado en disco y en CF)
+       - `cur_offset` SI avanzaba (o sea: el codigo de v5.64 corria)
+       - `roster_chain_log` VACIA (o sea: el bloque de v5.66 no llegaba a correr)
+       - net._http_response mostraba UNA llamada cada 6 min: todas del tick,
+         ninguna del Worker
 
-     Solo encadena el CRON. El front tiene su propia cadena (con barra de
-     progreso) y no debe disparar una segunda en paralelo. */
-  if (persistProgress && !done && nextOffset < codes.length) {
-    const chain = async (event, detail) => {
-      try {
-        await sb(env, 'roster_chain_log', {
-          method: 'POST', headers: { Prefer: 'return=minimal' },
-          body: JSON.stringify({
-            run_id: runId, offset_from: offset, offset_next: nextOffset,
-            event, detail: detail ? String(detail).slice(0, 500) : null,
-          }),
-        });
-      } catch (_) { /* la bitacora no puede romper la corrida */ }
-    };
+     CONCLUSION: quien encadena es el TICK. Una tanda por vuelta. Es la unica
+     via que funciona, y con el cron cada minuto y tandas de 5 tiendas la
+     corrida completa toma ~27 minutos. No son los 3 del manual, pero el manual
+     encadena desde el NAVEGADOR — que si puede llamar al Worker.
 
-    const selfUrl = new URL(request.url).origin + '/api/sync-roster';
-    const nextBody = {
-      source: 'cron', adminId, offset: nextOffset, run_id: runId,
-      persist_progress: true,
-      acc_added: totAdded, acc_removed: totRemoved, acc_filled: totFilled,
-      acc_alerts: totAlerts, acc_stores: totStores,
-      acc_rej_account: totRej.account, acc_rej_phone: totRej.phone,
-      acc_rej_email: totRej.email, acc_rej_detail: totDetail,
-      acc_diffs: totDiffs, acc_diff_detail: totDiffDetail,
-    };
-
-    /* El fetch se CREA aca (no dentro del waitUntil) para que arranque ya. */
-    const p = chain('chain_start', `tienda ${offset} -> ${nextOffset} de ${codes.length}`)
-      .then(() => fetch(selfUrl, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(nextBody),
-      }))
-      .then(res => chain(res.ok ? 'chain_ok' : 'chain_fail',
-        res.ok ? `HTTP ${res.status}` : `HTTP ${res.status} — la cadena se corta aca`))
-      /* ⚠️ ESTE catch NO esta vacio. Ese fue el bug de v5.38. */
-      .catch(err => chain('chain_fail', `fetch fallo: ${err && err.message || err}`));
-
-    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p);
-  } else if (persistProgress && done) {
+     NO VOLVER A INTENTAR LA AUTO-INVOCACION. */
+  if (persistProgress && done) {
     try {
       await sb(env, 'roster_chain_log', {
         method: 'POST', headers: { Prefer: 'return=minimal' },
@@ -1163,7 +1144,7 @@ export async function onRequestPost({ request, env, ctx }) {
           event: 'chain_done', detail: `${codes.length} tiendas, corrida completa`,
         }),
       });
-    } catch (_) { /* best-effort */ }
+    } catch (_) { /* la bitacora no puede romper la corrida */ }
   }
 
   return json({
