@@ -1568,6 +1568,40 @@ async function submitIngreso(env, body) {
   const position = (body.position || '').trim();
   const lines = Array.isArray(body.lines) ? body.lines : [];
 
+  /* ===== v5.74: GATE DE NO REEMPLEABLES (Fase 2 del proyecto) =====
+     Antes de validar nada, se cruzan las cedulas del reporte contra la
+     lista local de no reempleables (nomina_v2.no_rehire, sincronizada a
+     diario por v5.72). Si alguna esta VIGENTE en la lista, el ingreso
+     entero se rechaza.
+
+     - Se consulta la COPIA LOCAL, no el sistema en vivo: un control que
+       depende de que el sistema responda falla abierto (sistema caido =
+       entra el que no debe). La copia local es fallo-cerrado.
+     - El mensaje dice SOLO que la persona no es reempleable (decision de
+       Pablo, 14/07): el motivo y las observaciones traen detalle sensible
+       (tickets, acusaciones) que no es de nivel tienda. El detalle vive
+       en la pantalla No reempleables (gate view.norehire).
+     - La cedula se normaliza a digitos sin ceros a la izquierda, igual
+       que en el motor de sincronizacion (no-rehire.js). */
+  const nrCeds = [...new Set(lines
+    .map(l => String((l && l.id_number) || '').replace(/[^0-9]/g, '').replace(/^0+/, ''))
+    .filter(Boolean))];
+  if (nrCeds.length) {
+    const nrHits = await sb(env,
+      `no_rehire?id_number=in.(${nrCeds.map(encodeURIComponent).join(',')})&removed_at=is.null&select=id_number,full_name`) || [];
+    if (nrHits.length) {
+      return json({
+        ok: false,
+        error: nrHits.length === 1
+          ? 'No se puede procesar el ingreso: la persona figura como no reempleable en el grupo.'
+          : `No se puede procesar el ingreso: ${nrHits.length} personas figuran como no reempleables en el grupo.`,
+        details: nrHits.map(h =>
+          `${h.full_name || 'La cédula ' + h.id_number} (${h.id_number}) no es reempleable. Para más información, contacta a Capital Humano.`),
+      }, 409);
+    }
+  }
+
+
   // Origen del reporte: 'company' (tienda) | 'admin' (central).
   let sourceKind = body.source_kind === 'admin' ? 'admin' : 'company';
   let sourceAdminId = null;
