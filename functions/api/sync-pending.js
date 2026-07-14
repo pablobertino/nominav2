@@ -439,9 +439,32 @@ export async function onRequestPost({ request, env }) {
       + '&select=id,changes&limit=1');
 
     const ahora = new Date().toISOString();
-    const quien = actor.kind === 'admin'
-      ? String(actor.id)
-      : `${w.last_source_company || ''} (tienda)`;
+
+    /* QUIEN LO ENVIA, con nombre y apellido.
+
+       ⚠ v5.50: antes esto guardaba String(actor.id) y en pantalla salia "Lo
+       edito 1" — el id crudo del superadmin. Ilegible.
+
+       El resto de la tabla ya usaba el patron legible desde siempre:
+         "BG04 (tienda)"  ·  "Wendy Moreno (admin)"  ·  "Pablo Bertino (Superadmin)"
+
+       Se busca el nombre real. Si por lo que sea no aparece, se cae a algo que
+       al menos diga QUE es, nunca a un numero suelto. */
+    let quien;
+    if (actor.kind === 'admin') {
+      let nombre = null;
+      try {
+        const a = await sb(env,
+          `admin_users?id=eq.${encodeURIComponent(actor.id)}&select=name,role&limit=1`);
+        if (a && a[0] && a[0].name) {
+          const esSuper = String(a[0].role || '').toLowerCase() === 'superadmin';
+          nombre = `${a[0].name} (${esSuper ? 'Superadmin' : 'admin'})`;
+        }
+      } catch (_) { /* si falla, se usa el respaldo de abajo */ }
+      quien = nombre || `Admin ${actor.id}`;
+    } else {
+      quien = `${w.last_source_company || ''} (tienda)`.trim();
+    }
 
     if (prev && prev[0]) {
       const merged = { ...(prev[0].changes || {}), ...changes };
