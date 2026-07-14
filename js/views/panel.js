@@ -159,47 +159,63 @@ const NAV_GROUPS = [
     ['constancias', I.docs, 'Constancias'],
     ['firmantes', I.pencil, 'Firmantes', 'superonly'],
   ] },
-  /* v5.44 — UN SOLO GRUPO "SINCRONIZACION", CON TRES DIVISIONES ADENTRO.
+  /* v5.48 — EL MENU MUESTRA DE DONDE SALE CADA COSA.
 
-     Historia corta: hasta v5.39 era un grupo plano donde "Historial" y
-     "Registro" parecian sinonimos (son la bitacora de flujos OPUESTOS, pero el
-     menu los ponia uno al lado del otro). v5.40 lo partio en dos grupos por
-     direccion, y v5.42 sumo un tercero para lo que no era ni una cosa ni la
-     otra. El problema: tres grupos hermanos en el menu principal hacen parecer
-     que son tres areas distintas del portal, cuando son UNA.
+     El problema (Pablo, 2026-07-14): "al ver el Pendiente no lo relacionamos
+     con la ultima sincronizacion tan intuitivamente". Y tenia razon: la pagina
+     aparecia con 5 casos adentro y nada decia quien los puso ahi. El menu los
+     listaba uno al lado del otro:
 
-     Ahora es un grupo con SUBTITULOS. Se colapsa entero (una cosa), pero por
-     dentro se lee la simetria de los dos flujos:
+         Pendientes  ①      <- lo que quedo por decidir
+         Comparar           <- otra cosa (consulta manual)
+         Registro           <- que paso en la corrida
+
+     Pendientes y Registro son LAS DOS MITADES DE LA MISMA CORRIDA, y el menu
+     los presentaba como hermanos sin relacion, con Comparar metido en el medio.
+
+     Ahora la INDENTACION hace el trabajo que ninguna etiqueta hacia bien:
 
          SINCRONIZACION
-           ─ Recibir del sistema
-             Pendientes  (5)
+           ─ CORRIDA AUTOMATICA
+             Última corrida            <- el hecho
+               └ Diferencias  ①        <- lo que dejo por decidir
+             Configurar                <- lo que la gobierna
+           ─ ENVIAR AL SISTEMA
+             Publicar  ⑪
+             Historial de envios
+           ─ HERRAMIENTAS
              Comparar
-             Registro
-           ─ Enviar al sistema
-             Publicar
-             Historial
-           ─ Herramientas
-             Consultar API      <- ni recibe ni envia: banco de pruebas
-             Configurar         <- gobierna LAS DOS direcciones
+             Consultar API
 
-     Un item con la forma ['--', 'Texto'] es un SUBTITULO, no un boton: no
-     navega, no tiene permiso, y no cuenta para decidir si el grupo esta vacio
-     (un grupo con solo subtitulos no se pinta).
+     Tres cambios, cada uno con su razon:
+
+     1. `Diferencias` CUELGA de `Ultima corrida`. Se lee que una sale de la
+        otra. El item lleva el prefijo '>' para indentarse.
+
+     2. `Configurar` se muda a CORRIDA AUTOMATICA. Es lo que gobierna esa
+        corrida (cada cuanto arranca), no una herramienta suelta. Estaba en
+        HERRAMIENTAS, lejos de lo que configura.
+
+     3. `Historial` pasa a `Historial de envios`. Antes se llamaba igual de
+        parecido que `Registro` y se confundian: cada uno es la bitacora de un
+        flujo OPUESTO.
+
+     Y `Comparar` baja a HERRAMIENTAS, que es lo que es: una consulta que el
+     usuario dispara a mano, no el resultado de la corrida automatica.
 
      Los `view` (data-view) NO cambian: son los que enruta navigate() y los que
-     gobierna la matriz de permisos. */
+     gobierna la matriz de permisos. Solo cambian etiquetas y orden. */
   { title: 'Sincronización', items: [
-    ['--', 'Recibir del sistema'],
-    ['syncpend', I.alert, 'Pendientes', 'adminonly'],
-    ['axcompare', I.compare, 'Comparar', 'adminonly'],
-    ['synclog', I.docs, 'Registro', 'adminonly'],
+    ['--', 'Corrida automática'],
+    ['synclog', I.docs, 'Última corrida', 'adminonly'],
+    ['>syncpend', I.alert, 'Diferencias', 'adminonly'],
+    ['sync', I.cog, 'Configurar', 'superonly'],
     ['--', 'Enviar al sistema'],
     ['syncreview', I.sync, 'Publicar', 'adminonly'],
-    ['axhistory', I.history, 'Historial', 'adminonly'],
+    ['axhistory', I.history, 'Historial de envíos', 'adminonly'],
     ['--', 'Herramientas'],
+    ['axcompare', I.compare, 'Comparar', 'adminonly'],
     ['erpquery', I.search, 'Consultar API', 'adminonly'],
-    ['sync', I.cog, 'Configurar', 'superonly'],
   ] },
   // v4.78: grupo DATOS BANCARIOS (aprobado por Pablo). Nace con Estadisticas;
   // Sincronizar e Historial (clones filtrados a cuentas) llegan en v4.79/80,
@@ -432,9 +448,16 @@ function shell(user) {
     navLoose = NAV_LOOSE; navGroups = NAV_GROUPS.filter(g => !g.superonly || isSuper);
   }
 
-  // Botón de navegación. data-label alimenta el tooltip del modo riel.
-  const navBtn = ([id, ic, label]) =>
-    `<button data-view="${id}" data-label="${label}" class="${id === currentView ? 'active' : ''}">${ic}<span>${label}</span></button>`;
+  /* Boton de navegacion. data-label alimenta el tooltip del modo riel.
+     v5.48: el prefijo '>' (item hijo) se saca del data-view — es presentacion,
+     no identidad. El router y la matriz de permisos siguen viendo `syncpend`.
+     La clase .nav-child es la que lo indenta. */
+  const navBtn = (it) => {
+    const [raw, ic, label] = it;
+    const id = raw.startsWith('>') ? raw.slice(1) : raw;
+    const child = raw.startsWith('>') ? ' nav-child' : '';
+    return `<button data-view="${id}" data-label="${label}" class="${id === currentView ? 'active' : ''}${child}">${ic}<span>${label}</span></button>`;
+  };
 
   // HTML del nav: items sueltos en .nav-loose + grupos con encabezado-chevron.
   const chev = '<svg class="nav-ghead-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>';
@@ -444,8 +467,16 @@ function shell(user) {
   /* v5.44: un item ['--', 'Texto'] es un SUBTITULO dentro del grupo, no un
      boton. Siempre visible (no navega ni tiene permiso), pero no cuenta para
      saber si el grupo tiene contenido: un grupo con solo subtitulos no se
-     pinta. */
+     pinta.
+
+     v5.48: un view con prefijo '>' es un item HIJO: se indenta y cuelga del
+     item de arriba. Sirve para mostrar que una pagina SALE de otra (Diferencias
+     sale de la Ultima corrida). El prefijo es solo de presentacion: se saca
+     antes de enrutar y antes de mirar permisos, asi que `>syncpend` navega y se
+     gatea exactamente igual que `syncpend`. */
   const isSubtitle = (it) => it[0] === '--';
+  const isChild = (it) => typeof it[0] === 'string' && it[0].startsWith('>');
+  const viewOf = (it) => isChild(it) ? it[0].slice(1) : it[0];
   const itemVisible = (it) => isSubtitle(it) ? true
     : it[3] === 'superonly' ? isSuper
     : it[3] === 'adminonly' ? user.kind === 'admin'
@@ -489,7 +520,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.47</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.48</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>

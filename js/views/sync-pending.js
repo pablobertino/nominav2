@@ -58,6 +58,7 @@
 import { $ } from '../core/dom.js';
 import { attachRefresh } from '../core/refresh.js';
 import { renderWorkerPhotos, openWorkerLightbox } from './worker-photos.js';
+import { renderSyncLog } from './sync-log.js';
 
 /* Tipos de empresa que NO son tienda: definen el modo de la vista Personal al
    saltar a la ficha (mismo criterio que Buscar y Publicar). */
@@ -157,6 +158,39 @@ function ensureStyles() {
   .sp-stat .h{font-size:11.5px;color:var(--faint,#94a3b8);margin-top:1px}
   .sp-stat.dec .v{color:#1d4ed8}
   .sp-stat.rot .v{color:#b45309}
+
+  /* ===== LA FICHA DE LA CORRIDA (v5.48) =====
+     El problema: la pagina abria con tres tarjetas de numeros y nada decia de
+     donde salieron. Quedaban como tres cosas sueltas, comparables entre si — y
+     el 63 (que NO se puede resolver desde aca) le ganaba el ojo al 5 (que si).
+
+     Ahora primero va EL HECHO ("la corrida del 13/07 a las 16:50 sobre 132
+     tiendas") y los numeros cuelgan de el como su consecuencia. Se lee: esto
+     es lo que ESA corrida encontro. */
+  .sp-run{border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);
+          padding:14px 16px;margin:18px 0 22px}
+  .sp-run-top{display:flex;align-items:baseline;gap:8px;flex-wrap:wrap;margin-bottom:2px}
+  .sp-run-t{font-size:13.5px;color:var(--ink);font-weight:600}
+  .sp-run-t b{font-weight:700}
+  .sp-run-lnk{margin-left:auto;font:inherit;font-size:12px;font-weight:600;color:var(--brand,#2563eb);
+              background:transparent;border:0;padding:0;cursor:pointer;white-space:nowrap}
+  .sp-run-lnk:hover{text-decoration:underline}
+  .sp-run-sub{font-size:12px;color:var(--muted);margin-bottom:12px}
+  .sp-run-found{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint,#94a3b8);
+                font-weight:700;margin-bottom:8px}
+  /* Los tres resultados. Sin bordes ni cajas: son parte de la misma ficha, no
+     tres tarjetas independientes. */
+  .sp-res{display:grid;grid-template-columns:repeat(3,1fr);gap:14px}
+  .sp-r{border-left:2px solid var(--border);padding-left:11px}
+  .sp-r .v{font-size:24px;font-weight:700;line-height:1.15;color:var(--ink)}
+  .sp-r .k{font-size:12px;color:var(--ink);font-weight:600;margin-top:1px}
+  .sp-r .h{font-size:11px;color:var(--muted);margin-top:1px;line-height:1.4}
+  /* Solo el accionable lleva color. Los otros dos son informativos: si los tres
+     gritan, ninguno se escucha. */
+  .sp-r.act{border-left-color:#2563eb}
+  .sp-r.act .v{color:#1d4ed8}
+  .sp-r.zero .v{color:var(--faint,#94a3b8)}
+  @media(max-width:720px){ .sp-res{grid-template-columns:1fr;gap:10px} }
 
   .sp-sec{margin:0 0 24px}
   .sp-sec h2{margin:0 0 3px;font-size:15px;font-weight:700;color:var(--ink)}
@@ -833,33 +867,52 @@ async function load() {
   paint();
 }
 
+/* ---------- LA FICHA DE LA CORRIDA ----------
+   Primero el HECHO, despues sus consecuencias. La corrida es lo que le da
+   sentido a todo lo que sigue: los tres numeros no son tres cosas sueltas, son
+   LO QUE ESA CORRIDA ENCONTRO. */
 function paintStats() {
-  const el = $('#spStats');
+  const el = $('#spRun');
   if (!el) return;
   const c = SP.counts || { conflicts: 0, rejected: 0, skipped: 0 };
+  const lr = SP.last_run || {};
+
+  const cuando = lr.run_at ? fmtDT(lr.run_at) : null;
+  const tiendas = lr.stores != null ? lr.stores : null;
+
+  const cabecera = cuando
+    ? `La sincronizaci\u00f3n corri\u00f3 el <b>${esc(cuando)}</b>`
+      + (tiendas ? ` sobre <b>${tiendas}</b> tienda${tiendas === 1 ? '' : 's'}.` : '.')
+    : 'A\u00fan no hay ninguna sincronizaci\u00f3n registrada.';
+
   el.innerHTML = `
-    <div class="sp-stat dec">
-      <div class="k">Hay que decidir</div>
-      <div class="v">${c.conflicts}</div>
-      <div class="h">los dos lados tienen dato</div>
+    <div class="sp-run-top">
+      <div class="sp-run-t">${cabecera}</div>
+      <button class="sp-run-lnk" id="spGoLog">Ver la corrida \u2192</button>
     </div>
-    <div class="sp-stat rot">
-      <div class="k">Mal escritos en el sistema</div>
-      <div class="v">${c.rejected}</div>
-      <div class="h">se corrigen all\u00e1</div>
-    </div>
-    <div class="sp-stat">
-      <div class="k">Tiendas saltadas</div>
-      <div class="v">${c.skipped}</div>
-      <div class="h">respuesta corta del sistema</div>
+    <div class="sp-run-sub">Corre sola cada 15 minutos. Compara el portal con el sistema y avisa lo que no coincide.</div>
+    <div class="sp-run-found">Encontr\u00f3</div>
+    <div class="sp-res">
+      <div class="sp-r act">
+        <div class="v">${c.conflicts}</div>
+        <div class="k">para decidir</div>
+        <div class="h">los dos lados tienen un dato distinto</div>
+      </div>
+      <div class="sp-r ${c.rejected ? '' : 'zero'}">
+        <div class="v">${c.rejected}</div>
+        <div class="k">mal escritos</div>
+        <div class="h">se corrigen en el sistema, no ac\u00e1</div>
+      </div>
+      <div class="sp-r ${c.skipped ? '' : 'zero'}">
+        <div class="v">${c.skipped}</div>
+        <div class="k">tiendas saltadas</div>
+        <div class="h">el sistema devolvi\u00f3 una lista corta</div>
+      </div>
     </div>`;
 
-  const sub = $('#spSub');
-  if (sub) {
-    sub.textContent = SP.last_run && SP.last_run.run_at
-      ? `\u00daltima sincronizaci\u00f3n: ${fmtDT(SP.last_run.run_at)}`
-      : '';
-  }
+  // La otra mitad de la historia: que paso EN esa corrida.
+  const go = $('#spGoLog');
+  if (go) go.addEventListener('click', () => renderSyncLog(USER, 'syncpend'));
 }
 
 export async function renderSyncPending(user) {
@@ -870,12 +923,12 @@ export async function renderSyncPending(user) {
   $('#pnlMain').innerHTML = `
     <div class="sp-head" style="display:flex;align-items:flex-start;justify-content:space-between;gap:12px">
       <div>
-        <h1>Pendientes</h1>
-        <p>Lo que la sincronizaci\u00f3n encontr\u00f3 y necesita una decisi\u00f3n. <span id="spSub" style="color:var(--faint,#94a3b8)"></span></p>
+        <h1>Diferencias</h1>
+        <p>Lo que la sincronizaci\u00f3n encontr\u00f3 y necesita una decisi\u00f3n.</p>
       </div>
       <span id="spRefresh"></span>
     </div>
-    <div class="sp-stats" id="spStats"></div>
+    <div class="sp-run" id="spRun"></div>
     <div id="spBody"></div>`;
 
   await load();

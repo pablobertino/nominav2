@@ -450,6 +450,12 @@ export async function onRequestPost({ request, env }) {
         run_id: runId,
         run_at: cfg.last_run_at || (logRows[0] && logRows[0].run_at) || null,
         source: cfg.last_source || (logRows[0] && logRows[0].source) || null,
+        /* v5.48: cuantas tiendas recorrio. La pagina lo usa para encabezar con
+           EL HECHO ("corrio el 13/07 a las 16:50 sobre 132 tiendas") en vez de
+           soltar tres numeros sin contexto. Sale del resumen de la corrida, que
+           ya lo tenia guardado. */
+        stores: (cfg.last_summary && cfg.last_summary.stores != null)
+          ? cfg.last_summary.stores : null,
       };
 
       for (const r of logRows) {

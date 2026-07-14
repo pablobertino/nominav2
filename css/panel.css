@@ -67,6 +67,25 @@
 .rail .nav-sub { font-size:0; padding:0; margin:6px 10px; height:1px;
   background:var(--border); letter-spacing:0; }
 
+/* v5.48 — ITEM HIJO (cuelga del de arriba).
+   Diferencias sale de la Ultima corrida. Antes eran dos entradas hermanas y
+   nada decia que una era el resultado de la otra; la pagina aparecia con 5
+   casos adentro y el usuario no la relacionaba con la corrida.
+   La indentacion y la guia vertical hacen ese trabajo: ninguna etiqueta lo
+   lograba tan bien. */
+.nav-gitems .nav-child { padding-left:30px; position:relative; font-size:13px; }
+.nav-gitems .nav-child::before {
+  content:''; position:absolute; left:17px; top:0; bottom:50%;
+  border-left:1px solid var(--border);
+  border-bottom:1px solid var(--border);
+  width:6px; border-bottom-left-radius:4px;
+}
+/* En modo riel no hay texto ni lugar para la guia: el item vuelve a ser un
+   icono mas (la jerarquia se pierde, pero el riel ya no muestra jerarquia de
+   ningun tipo). */
+.pnl-layout.rail .nav-gitems .nav-child { padding-left:0; }
+.pnl-layout.rail .nav-gitems .nav-child::before { display:none; }
+
 /* --- Modo RIEL (solo iconos) ---
    El boton de la marca (#pnlRail) SIGUE visible en riel para poder volver
    a expandir; solo se centra. Sin scroll horizontal: el nav no desborda. */
