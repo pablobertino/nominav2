@@ -550,7 +550,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.64</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.65</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4524,6 +4524,46 @@ async function paySyncApi(payload) {
   }).then(r => r.json());
 }
 
+/* ===== v5.65 · LA MISMA SENAL AL GUARDAR, EN LOS TRES BOTONES =====
+   Configurar tiene tres botones "Guardar programacion" (Empresas, Estado de
+   pago, Personal). Solo el de Estado de pago avisaba que habia guardado: los
+   otros dos se quedaban mudos, y no habia forma de saber si el clic hizo algo.
+
+   Esto centraliza el efecto: boton deshabilitado -> "Guardando..." -> ✓ Guardado
+   (que se apaga solo a los 2.5s). Un solo lugar que arreglar la proxima vez.
+
+   Se le pasa el id del boton, el id del span del ✓, y la funcion que guarda
+   (que debe devolver { ok, error }). */
+async function cfgSaveFlash(btnId, savedId, doSave) {
+  const btn = document.getElementById(btnId);
+  const ok  = document.getElementById(savedId);
+  if (!btn) return;
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Guardando\u2026';
+  if (ok) ok.style.display = 'none';
+  try {
+    const r = await doSave();
+    if (r && r.ok === false) {
+      // El error se muestra donde el usuario esta mirando: en el boton.
+      btn.textContent = '\u2717 No se guard\u00f3';
+      setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2600);
+      return r;
+    }
+    btn.textContent = orig;
+    btn.disabled = false;
+    if (ok) {
+      ok.style.display = 'inline';
+      setTimeout(() => { ok.style.display = 'none'; }, 2500);
+    }
+    return r;
+  } catch (e) {
+    btn.textContent = '\u2717 No se guard\u00f3';
+    setTimeout(() => { btn.textContent = orig; btn.disabled = false; }, 2600);
+    return { ok: false, error: String(e && e.message || e) };
+  }
+}
+
 async function renderPaySyncCard(user) {
   const host = document.getElementById('payCfgCard');
   if (!host) return;
@@ -4724,7 +4764,7 @@ async function viewSync(user) {
           <input type="text" id="syncUrl" value="${escH(cfg.endpoint_url || '')}" placeholder="https://nominav2.pages.dev">
           <p class="muted" style="font-size:11.5px;margin:6px 0 0">El cron llama a esta URL para ejecutar la sincronización. Debe ser la dirección pública del portal en producción. Si se deja vacío, usa el valor por defecto.</p></div>
       </details>
-      <div class="cfg-foot"><button class="btn btn-primary" id="syncSave">Guardar programación</button></div>
+      <div class="cfg-foot"><span class="cfg-saved" id="syncSaved">\u2713 Guardado</span><button class="btn btn-primary" id="syncSave">Guardar programación</button></div>
     </div>
 
     <div id="payCfgCard"></div>
@@ -4832,8 +4872,8 @@ async function viewSync(user) {
       if (r && r.ok) paintRuns(r.runs);
     }
     $('#rsFreq').addEventListener('change', rsHourVis);
-    $('#rsSave').addEventListener('click', async () => {
-      const b = $('#rsSave'); b.disabled = true;
+    // v5.65: mismo efecto que los otros dos (cfgSaveFlash).
+    $('#rsSave').addEventListener('click', () => cfgSaveFlash('rsSave', 'rsSaved', async () => {
       const r = await rsApi({
         action: 'save_config',
         config: {
@@ -4844,10 +4884,9 @@ async function viewSync(user) {
           endpoint_url: $('#rsUrl').value.trim(),
         },
       });
-      b.disabled = false;
-      const chip = $('#rsSaved');
-      if (chip && r && r.ok) { chip.classList.add('show'); setTimeout(() => chip.classList.remove('show'), 2000); }
-    });
+      if (!r || !r.ok) { alert((r && r.error) || 'No se pudo guardar.'); return r || { ok: false }; }
+      return r;
+    }));
     $('#rsRunBtn').addEventListener('click', async () => {
       const b = $('#rsRunBtn'); b.disabled = true;
       const prev = b.innerHTML; b.textContent = 'Ejecutando…';
@@ -5151,8 +5190,9 @@ async function viewSync(user) {
   });
 
   // Guardar programación
-  $('#syncSave').addEventListener('click', async () => {
-    const btn = $('#syncSave'); btn.disabled = true; const orig = btn.textContent; btn.textContent = 'Guardando…';
+  // v5.65: usa cfgSaveFlash — el mismo efecto que Estado de pago (boton
+  // deshabilitado -> "Guardando..." -> ✓ Guardado). Antes se quedaba mudo.
+  $('#syncSave').addEventListener('click', () => cfgSaveFlash('syncSave', 'syncSaved', async () => {
     const r = await syncCfgApi({
       action: 'set', adminId: user.id,
       enabled: $('#syncEnabled').value === '1',
@@ -5162,10 +5202,14 @@ async function viewSync(user) {
       manual_cooldown_value: parseInt($('#syncCdVal').value, 10),
       manual_cooldown_unit: $('#syncCdUnit').value,
     });
-    btn.disabled = false; btn.textContent = orig;
-    if (!r.ok) { alert(r.error || 'No se pudo guardar.'); return; }
-    const sv = $('#syncSaved'); if (sv) { sv.style.display = 'inline'; setTimeout(() => sv.style.display = 'none', 1800); }
-  });
+    /* v5.65: el efecto (deshabilitar, "Guardando...", ✓) lo maneja cfgSaveFlash.
+       Aca solo se avisa del error y se refresca la ficha.
+       El bug viejo: este codigo YA buscaba $('#syncSaved') y le ponia display
+       inline... pero ese span NO EXISTIA en el HTML. Escribia sobre null y no
+       pasaba nada. Por eso el boton se sentia muerto. */
+    if (!r.ok) { alert(r.error || 'No se pudo guardar.'); return r; }
+    return r;
+  }));
 
   // Sincronizar ahora (manual) -> relee la config para mostrar el resultado real
   $('#syncBtn').addEventListener('click', async () => {
