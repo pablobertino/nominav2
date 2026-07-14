@@ -135,6 +135,22 @@ function ensureStyles() {
      Compacto: sl-btn esta dimensionado para la barra de filtros y dentro de una
      celda quedaria enorme. */
   .sl-verdet{padding:5px 11px;font-size:12.5px;white-space:nowrap}
+
+  /* v5.62 — el detalle de Empresas, en la fila.
+     Gris y chico: es apoyo del resumen, no compite con el. Los numeros en
+     negrita para que se lean de un vistazo sin tener que leer las etiquetas. */
+  .sl-dline{font-size:12px;color:var(--muted);margin-top:3px;line-height:1.5}
+  .sl-dline b{color:var(--ink-soft,#475569);font-weight:600}
+  .sl-derr{color:var(--danger,#b91c1c)}
+  .sl-derr b{color:var(--danger,#b91c1c)}
+
+  /* El boton de copiar: cuadrado, solo icono. Reemplaza al viejo "Detalle" +
+     "Copiar detalle" (dos controles para una sola cosa). */
+  .sl-ico{padding:0;width:30px;height:30px;display:inline-flex;align-items:center;
+          justify-content:center;color:var(--muted)}
+  .sl-ico:hover{color:var(--ink)}
+  .sl-okcopy{display:inline-block;margin-left:5px;font-size:12px;font-weight:700;
+             color:var(--success,#15803d);vertical-align:middle}
   .sl-det{background:var(--bg-soft,#f8fafc);border-radius:8px;padding:8px 11px;margin-top:7px;font-size:12px;color:var(--ink-soft,#475569);line-height:1.55;word-break:break-word}
   .sl-pager{display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:10px;font-size:12.5px;color:var(--muted)}
   .sl-empty{padding:40px 16px;text-align:center;color:var(--muted)}
@@ -1164,6 +1180,38 @@ function detHtml(r, idx) {
   }
   return parts.join('') + copyBtn;
 }
+/* ===== v5.62 — EL DETALLE DE EMPRESAS VIVE EN LA FILA =====
+   Catalogo de empresas y Estado de pago no tienen pagina de detalle: su detalle
+   es UNA LINEA de conteos. Hacerte apretar un boton para desplegar un renglon —
+   y despues otro para cerrarlo — eran dos clics por nada.
+
+   Ahora ese renglon se pinta SIEMPRE, gris y chico, debajo del resumen. El boton
+   "Detalle" desaparece; en su lugar queda solo el icono de copiar.
+
+   SOLO Catalogo de empresas lleva la segunda linea. Estado de pago NO: su
+   `result` es {mode:'daily', rows:157, companies:157} y su resumen ya dice
+   "daily · 157 registro(s)". Repetirlo abajo seria decir lo mismo dos veces.
+   (Verificado contra la BD.) Se queda con su resumen y su icono.
+
+   Personal de tiendas no se toca: tiene pagina propia ("Ver detalle →"). */
+const DLINE_LBL = {
+  zones: 'Zonas', subzones: 'Subzonas', concepts: 'Conceptos', companies: 'Empresas',
+  updated: 'Actualizados', inserted: 'Nuevos', changes: 'Cambios',
+};
+function detailLine(r) {
+  const d = r.detail;
+  if (!d || typeof d !== 'object' || Array.isArray(d)) return '';
+  const partes = [];
+  for (const [k, v] of Object.entries(d)) {
+    if (v == null || typeof v === 'object' || typeof v === 'boolean') continue;
+    if (!DLINE_LBL[k]) continue;   // solo conteos conocidos: nunca claves crudas en pantalla
+    partes.push(`${esc(DLINE_LBL[k])} <b>${esc(String(v))}</b>`);
+  }
+  return partes.length ? `<div class="sl-dline">${partes.join(' \u00b7 ')}</div>` : '';
+}
+
+const IC_COPY = '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>';
+
 function slPaint() {
   const note = $('#slNote');
   if (note) note.textContent = SL.note || '';
@@ -1181,23 +1229,25 @@ function slPaint() {
          inline, que es una linea y no da para pagina. */
       const esRoster = SL.process === 'roster';
       const hasDet = !!(r.detail || r.error);
-      /* v5.61: los DOS botones de la columna llevan el mismo estilo. Antes uno
-         era boton (Personal) y el otro un link azul subrayado (Empresas / Pago):
-         en la misma columna de la misma tabla, eso se lee como un descuido, no
-         como una distincion. Lo que SI cambia es la etiqueta, que es donde la
-         diferencia importa: "Ver detalle →" abre una pagina; "Detalle" despliega
-         ahi mismo (esos dos procesos no tienen pagina propia: su resumen es una
-         linea y no da para una). */
+      /* v5.62: Personal de tiendas abre PAGINA ("Ver detalle →"). Empresas y Pago
+         ya no despliegan nada: su detalle se pinta en la fila (detailLine) y en
+         la columna solo queda el icono de copiar, que entrega el detalle tecnico
+         completo (JSON) al portapapeles. */
       const verBtn = esRoster
         ? (hasDet ? `<button class="sl-btn sl-verdet" data-open="${i}">Ver detalle →</button>` : '')
-        : (hasDet ? `<button class="sl-btn sl-verdet" data-det="${i}">Detalle</button>` : '');
+        : (hasDet ? `<button class="sl-btn sl-ico" data-copy="${i}" title="Copiar detalle" aria-label="Copiar detalle">${IC_COPY}</button>`
+            + `<span id="slCopied_${i}" class="sl-okcopy" hidden>\u2713</span>` : '');
+      /* El error, si lo hubo, sigue viendose: es lo unico que no puede quedar
+         escondido detras de un icono. */
+      const errLine = (!esRoster && r.error)
+        ? `<div class="sl-dline sl-derr">\u26a0 ${esc(r.error)}</div>` : '';
       return `<tr>
         <td>${fmtDT(r.run_at)}</td>
         <td>${r.source === 'cron' ? 'Autom\u00e1tica' : 'Manual'}</td>
         <td><span class="sl-st ${st}">${stLbl}</span></td>
-        <td>${esc(r.summary || '')}${(!esRoster && hasDet) ? `<div id="slDet_${i}" class="sl-det" hidden>${detHtml(r, i)}</div>` : ''}</td>
+        <td>${esc(r.summary || '')}${!esRoster ? detailLine(r) + errLine : ''}</td>
         <td style="text-align:right;white-space:nowrap">${r.duration_ms != null ? (r.duration_ms / 1000).toFixed(1) + ' s' : '\u2014'}</td>
-        <td>${verBtn}</td>
+        <td style="white-space:nowrap">${verBtn}</td>
       </tr>`;
     }).join('');
 
