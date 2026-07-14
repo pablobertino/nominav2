@@ -59,6 +59,7 @@ import { $ } from '../core/dom.js';
 import { attachRefresh } from '../core/refresh.js';
 import { renderWorkerPhotos, openWorkerLightbox } from './worker-photos.js';
 import { renderSyncLog } from './sync-log.js';
+import { paintSyncPendBadge } from './panel.js';
 
 /* Tipos de empresa que NO son tienda: definen el modo de la vista Personal al
    saltar a la ficha (mismo criterio que Buscar y Publicar). */
@@ -965,6 +966,12 @@ async function load() {
   };
   paintStats();
   paint();
+
+  /* v5.51: el menu tiene que seguir a la pagina. Si la sincronizacion bajo los
+     conflictos de 5 a 3, el badge dice 3 — sin recargar el navegador.
+     Antes el badge se pintaba una sola vez al abrir el panel y se quedaba
+     congelado con un numero viejo. */
+  try { paintSyncPendBadge(USER); } catch (_) { /* un badge no rompe la pagina */ }
 }
 
 /* ---------- LA FICHA DE LA CORRIDA ----------

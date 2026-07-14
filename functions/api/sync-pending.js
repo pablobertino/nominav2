@@ -393,7 +393,8 @@ export async function onRequestPost({ request, env }) {
 
     const rows = await sb(env,
       `workers_master?id_number=eq.${encodeURIComponent(ced)}`
-      + '&select=id_number,last_source_company,ax_diff,ax_diff_fields&limit=1');
+      + '&select=id_number,last_source_company,ax_diff,ax_diff_fields,'
+      + 'profile_updated_by,profile_updated_at&limit=1');
     const w = rows && rows[0];
     if (!w) return json({ ok: false, error: 'No se encontr\u00f3 la ficha.' }, 404);
     if (!inScope(w.last_source_company || '')) {
@@ -440,37 +441,45 @@ export async function onRequestPost({ request, env }) {
 
     const ahora = new Date().toISOString();
 
-    /* QUIEN LO ENVIA, con nombre y apellido.
+    /* ===== QUIEN EDITO EL DATO !== QUIEN DECIDIO ENVIARLO (v5.51) =====
 
-       ⚠ v5.50: antes esto guardaba String(actor.id) y en pantalla salia "Lo
-       edito 1" — el id crudo del superadmin. Ilegible.
+       ⚠ EL ERROR DE CONCEPTO QUE SE ARREGLA (Pablo, 2026-07-14):
+       "el que tome la decision de enviar a publicar no me habilita como el
+        editor de ese dato".
 
-       El resto de la tabla ya usaba el patron legible desde siempre:
-         "BG04 (tienda)"  ·  "Wendy Moreno (admin)"  ·  "Pablo Bertino (Superadmin)"
+       Y tiene razon. v5.49/50 escribian en changed_by a QUIEN APRETO EL BOTON.
+       Resultado: el modal decia "Lo edito Pablo Bertino" cuando el telefono
+       0424 8494408 lo habia escrito BG04. Se le atribuia a una persona una
+       edicion que no hizo, Y SE BORRABA EL RASTRO DEL EDITOR REAL.
 
-       Se busca el nombre real. Si por lo que sea no aparece, se cae a algo que
-       al menos diga QUE es, nunca a un numero suelto. */
-    let quien;
-    if (actor.kind === 'admin') {
-      let nombre = null;
-      try {
-        const a = await sb(env,
-          `admin_users?id=eq.${encodeURIComponent(actor.id)}&select=name,role&limit=1`);
-        if (a && a[0] && a[0].name) {
-          const esSuper = String(a[0].role || '').toLowerCase() === 'superadmin';
-          nombre = `${a[0].name} (${esSuper ? 'Superadmin' : 'admin'})`;
-        }
-      } catch (_) { /* si falla, se usa el respaldo de abajo */ }
-      quien = nombre || `Admin ${actor.id}`;
-    } else {
-      quien = `${w.last_source_company || ''} (tienda)`.trim();
-    }
+       Son dos actos distintos:
+
+         EDITOR   -> BG04 (tienda), 13/07 14:17   escribio el dato
+         DECISION -> Pablo,         14/07 01:47   aprobo que se envie
+
+       El change_set es EL DATO QUE VIAJA. Su dueno es quien lo escribio. Por eso
+       changed_by conserva al EDITOR ORIGINAL, que ya vivia en workers_master
+       (profile_updated_by) y estabamos ignorando.
+
+       Y quien decide no se registra todavia: mientras el envio este pendiente,
+       no le hizo nada al sistema. Cuando SE PUBLIQUE, ahi si hay un acto que
+       auditar — y para eso la tabla ya tiene resolved_by/resolved_at.
+
+       Si el dato del portal no tiene editor conocido (vino de una carga masiva
+       o de la propia sincronizacion), no se inventa uno: se atribuye a la
+       empresa duena del dato, sin nombre de persona. */
+    const editor = w.profile_updated_by
+      ? String(w.profile_updated_by)
+      : `${w.last_source_company || ''} (portal)`.trim();
+    const editadoEl = w.profile_updated_at || ahora;
 
     if (prev && prev[0]) {
+      /* Ya habia un envio pendiente: se le suman los campos. NO se toca su
+         changed_by — es el editor de aquel dato, y sigue siendo el mismo. */
       const merged = { ...(prev[0].changes || {}), ...changes };
       await sbWrite(env, `ax_change_set?id=eq.${prev[0].id}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({ changes: merged, changed_by: quien, changed_at: ahora }),
+        body: JSON.stringify({ changes: merged }),
       });
     } else {
       await sbWrite(env, 'ax_change_set', {
@@ -480,8 +489,8 @@ export async function onRequestPost({ request, env }) {
           company_code: w.last_source_company || null,
           changes,
           status: 'pending',
-          changed_by: quien,
-          changed_at: ahora,
+          changed_by: editor,      // el que ESCRIBIO el dato
+          changed_at: editadoEl,   // cuando lo escribio
           origin: 'erp_detect',
         }),
       });

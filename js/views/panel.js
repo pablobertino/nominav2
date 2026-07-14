@@ -520,7 +520,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.50</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.51</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -7029,7 +7029,7 @@ async function paintDoubleEmpBadge(user) {
    portal, asi que un numero que no baja nunca es ruido.
 
    Silencioso ante error: un badge no puede romper la carga del panel. */
-async function paintSyncPendBadge(user) {
+export async function paintSyncPendBadge(user) {
   try {
     const r = await fetch('/api/sync-pending', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -7041,16 +7041,30 @@ async function paintSyncPendBadge(user) {
 
     if (!r || !r.ok || !r.counts) return;
     const n = Number(r.counts.conflicts) || 0;
-    if (!n) return;   // nada pendiente: sin badge
 
     const btn = document.querySelector('.pnl-side [data-view="syncpend"]');
-    if (!btn || btn.querySelector('.pnl-badge')) return;
+    if (!btn) return;
 
-    const b = document.createElement('span');
+    /* ⚠ v5.51: ANTES ESTO SE PINTABA UNA SOLA VEZ Y NUNCA MAS.
+
+       El codigo decia: si ya hay un badge, no hagas nada (`return`). Resultado
+       (Pablo, 2026-07-14): corres la sincronizacion, los conflictos bajan de 5
+       a 3, la pagina lo muestra bien... y el menu SIGUE DICIENDO 5. Habia que
+       recargar el navegador para verlo.
+
+       Un numero que no cambia cuando el dato cambio no es un numero: es una
+       mentira. Ahora se reescribe: si bajo, baja; si llego a cero, se va. */
+    let b = btn.querySelector('.pnl-badge');
+
+    if (!n) { if (b) b.remove(); return; }   // resueltos todos: sin badge
+
+    if (!b) {
+      b = document.createElement('span');
+      btn.appendChild(b);
+    }
     b.className = 'pnl-badge warn';
     b.textContent = String(n);
     b.title = `${n} dato${n === 1 ? '' : 's'} que necesita${n === 1 ? '' : 'n'} una decisi\u00f3n`;
-    btn.appendChild(b);
   } catch (_) { /* un badge no rompe el panel */ }
 }
 
