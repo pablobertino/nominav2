@@ -342,6 +342,25 @@ const NAV_GESTOR_GROUPS = [
     ['reportempresas', I.bizreport, 'Análisis'],
   ] },
   { title: 'Datos bancarios', items: [
+    /* v5.59 — LOS TRES ITEMS EXISTEN PARA EL GESTOR.
+
+       El bug (Pablo, 2026-07-14): se le daba Estadisticas e Historial al rol
+       Gestor desde la matriz de Roles, se guardaba bien, la BD los tenia... y
+       en el menu seguia apareciendo SOLO Cuentas.
+
+       La razon: el Gestor no usa NAV_GROUPS. Tiene su propio array, y aca
+       adentro solo estaba `bankaccounts`. Y applyMenuPerms() SOLO PUEDE
+       ESCONDER lo que ya existe: nunca agrega. Si el boton no esta en el array,
+       no hay permiso que lo haga aparecer.
+
+       Con los items presentes, la matriz de Roles pasa a gobernarlos de verdad:
+       si manana se le quita view.bankstats al Gestor, el item desaparece solo.
+
+       Sin `banksync` a proposito: Sincronizar queda para superadmin y admin.
+       Sin flag 'adminonly': en este array no aporta (todos los que llegan aca
+       ya son gestor_empresa) y solo seria una segunda regla que mantener. */
+    ['bankstats', I.chart, 'Estadísticas'],
+    ['bankhist', I.history, 'Historial'],
     ['bankaccounts', I.wallet, 'Cuentas'],
   ] },
   { title: 'Comunicación', items: [
@@ -531,7 +550,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.58</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.59</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
