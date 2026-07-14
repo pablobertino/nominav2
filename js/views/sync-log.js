@@ -22,6 +22,13 @@ import { attachRefresh } from '../core/refresh.js';
 let USER = null;
 let SL = { process: 'roster', page: 1, size: 25, status: '', from: '', to: '', total: 0, rows: [], note: '' };
 
+/* ===== v5.58 — QUE CORRIDA SE ESTA MIRANDO =====
+   La pagina de detalle (renderSyncRun) necesita saber CUAL. El portal no tiene
+   router de verdad (navigate() enruta por data-view, sin parametros), asi que la
+   corrida elegida viaja por el estado del modulo. Se guarda la fila ENTERA, no
+   el id: ya la tenemos cargada, y pedirla de nuevo seria una llamada al pedo. */
+let SL_OPEN = null;
+
 /* v5.56: que pestaña esta abierta en cada corrida (idx -> 'mov'|'fill'|'dif'|
    'rej'|'alr'). Lo necesita EXPORTAR: baja LA PESTAÑA QUE ESTAS VIENDO, no todo
    mezclado. Antes el export tiraba las 5 categorias de TODAS las corridas de la
@@ -89,6 +96,19 @@ function ensureStyles() {
   .sl-bar .fg{display:flex;flex-direction:column;gap:4px;font-size:11.5px;font-weight:600;color:var(--muted)}
   .sl-bar input,.sl-bar select{font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--ink)}
   .sl-bar input:focus,.sl-bar select:focus{outline:none;border-color:var(--brand,#2563eb)}
+  /* v5.58 — EL COMBO TIENE QUE PARECER UN COMBO (Pablo).
+     Sin flechita no se lee como desplegable: parece una etiqueta. Y el navegador
+     pinta el <select> en negrita heredada, asi que "Personal de tiendas" gritaba
+     mas que el titulo de la pagina. Se apaga la apariencia nativa, se dibuja el
+     chevron a mano (mismo trazo que el del menu) y se deja el peso normal. */
+  .sl-bar select{
+    -webkit-appearance:none; -moz-appearance:none; appearance:none;
+    font-weight:400; padding-right:30px; cursor:pointer;
+    background-image:url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%2364748b' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+    background-repeat:no-repeat; background-position:right 9px center; background-size:13px;
+  }
+  .sl-bar select option{font-weight:400}
+  .sl-bar select:hover{border-color:var(--muted)}
   .sl-btn{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:13px;font-weight:600;padding:8px 14px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--ink);cursor:pointer}
   .sl-btn:hover:not(:disabled){background:var(--bg-soft,#f1f5f9)}
   .sl-btn:disabled{opacity:.5;cursor:default}
@@ -178,7 +198,43 @@ function ensureStyles() {
   .sl-cc{color:var(--brand,#2563eb);font-weight:700;font-size:11.5px}
   .sl-pill{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10.5px;font-weight:800;white-space:nowrap}
   .sl-pill.rev{background:#e6efff;color:#1e40af}
-  .sl-pill.fix{background:#fdf3e7;color:#b45309}`;
+  .sl-pill.fix{background:#fdf3e7;color:#b45309}
+
+  /* ===== v5.58 — LA PAGINA DE LA CORRIDA =====
+     El detalle dejo de vivir dentro de la fila del Registro. Es una pagina, con
+     su cabecera, su ficha y sus pestanas — tal cual el mockup aprobado. */
+  .sr-back{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:13px;font-weight:600;
+           padding:7px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface);
+           color:var(--ink);cursor:pointer;margin-bottom:14px}
+  .sr-back:hover{background:var(--bg-soft,#f1f5f9)}
+
+  /* La ficha de la corrida: los cuatro numeros. Es el mismo bloque que ya usa
+     Diferencias, para que las dos pantallas se lean igual. */
+  .sr-run{border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);
+          padding:14px 16px;margin:0 0 20px}
+  .sr-run-t{font-size:13.5px;color:var(--ink);font-weight:600}
+  .sr-run-sub{font-size:12px;color:var(--muted);margin:2px 0 12px}
+  .sr-run-found{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--faint,#94a3b8);
+                font-weight:700;margin-bottom:8px}
+  .sr-res{display:grid;grid-template-columns:repeat(4,1fr);gap:14px}
+  .sr-r{border-left:2px solid var(--border);padding-left:11px}
+  .sr-r .v{font-size:24px;font-weight:700;line-height:1.15;color:var(--ink)}
+  .sr-r .k{font-size:12px;color:var(--ink);font-weight:600;margin-top:1px}
+  .sr-r .h{font-size:11px;color:var(--muted);margin-top:1px;line-height:1.4}
+  .sr-r.act{border-left-color:#2563eb}
+  .sr-r.act .v{color:var(--brand-ink,#1e40af)}
+  .sr-r.zero .v{color:var(--faint,#94a3b8)}
+  @media(max-width:900px){.sr-res{grid-template-columns:1fr 1fr}}
+
+  /* La tarjeta que contiene las pestanas */
+  .sr-card{background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;padding:18px 20px}
+  .sr-chead{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;margin-bottom:14px}
+  .sr-chead h2{font-size:15.5px;font-weight:700;margin:0 0 3px;color:var(--ink)}
+  .sr-chead .desc{margin:0;color:var(--muted);font-size:12.5px}
+
+  .sr-tfoot{display:flex;justify-content:space-between;align-items:center;margin-top:14px;gap:12px;flex-wrap:wrap}
+  .sr-muted{color:var(--faint,#94a3b8);font-size:12px}
+  .sr-muted b{color:var(--muted)}`;
   document.head.appendChild(st);
 }
 
@@ -417,7 +473,6 @@ async function exportTab(idx, fmt) {
   if (!data.length) return;
   await writeFile(data, tabFname(r, key), fmt);
 }
-
 /* El menu de exportar de una pestaña. Dice QUE va a bajar y CUANTAS filas, para
    que no puedas equivocarte de pestaña sin darte cuenta. */
 function openTabExport(btn, idx) {
@@ -484,6 +539,374 @@ async function slLoad() {
 /* Un panel de pestaña. Solo el primero arranca visible. */
 function pane(idx, key, visible, inner) {
   return `<div class="sl-pane" id="slPane_${idx}_${key}"${visible ? '' : ' hidden'}>${inner}</div>`;
+}
+
+/* =====================================================================
+   v5.58 — LA PAGINA DE LA CORRIDA (renderSyncRun)
+
+   Pablo lo pidio SEIS O SIETE VECES: "dijimos muchisimas veces que el detalle
+   salga en otra pagina". Y el mockup aprobado siempre fue eso. Yo lo segui
+   metiendo dentro de la fila del Registro, empujando la tabla hacia abajo,
+   con la mitad del ancho util y tablas de 33 filas apretadas en un acordeon.
+
+   Ahora es una PAGINA:
+     ← Volver
+     Detalle de la corrida  (fecha · origen · tiendas)
+     [ficha con los 4 numeros: ingresos / egresos / completadas / necesitan atencion]
+     [el aviso, en pasado, con el estado de hoy]
+     [tarjeta con las 5 pestanas + Exportar]
+
+   El Registro vuelve a ser una LISTA: una fila por corrida, un boton que abre.
+   ===================================================================== */
+
+/* Los cuatro numeros de la ficha. `atencion` junta diferencias + mal escritos:
+   es lo unico de la corrida que le pide algo a un humano. */
+function runFicha(r) {
+  const diffs   = Array.isArray(r.diffs)   ? r.diffs   : [];
+  const rejects = Array.isArray(r.rejects) ? r.rejects : [];
+  const stores  = Array.isArray(r.detail)  ? r.detail  : [];
+  const ingresos = stores.reduce((a, s) => a + (s.added || 0), 0);
+  const egresos  = stores.reduce((a, s) => a + (s.removed || 0), 0);
+  const atencion = diffs.length + rejects.length;
+
+  const cel = (v, k, h, cls) =>
+    `<div class="sr-r ${v ? (cls || '') : 'zero'}">`
+    + `<div class="v">${v}</div><div class="k">${k}</div><div class="h">${h}</div></div>`;
+
+  const hint = [];
+  if (diffs.length)   hint.push(`${diffs.length} para decidir`);
+  if (rejects.length) hint.push(`${rejects.length} mal ${rejects.length === 1 ? 'escrito' : 'escritos'}`);
+
+  /* Cuantas tiendas TOCO. Ojo: el log solo guarda las tiendas CON MOVIMIENTO
+     (una corrida limpia no deja fila, por diseno), asi que este numero NO es
+     "cuantas recorrio" — es "en cuantas paso algo". Decir "corrio sobre 36
+     tiendas" seria mentira: recorrio 132 y encontro cosas en 36. */
+  const conAlgo = stores.length;
+
+  return `<div class="sr-run">
+    <div class="sr-run-t">La sincronización corrió el <b>${fmtDT(r.run_at)}</b>`
+    + (conAlgo ? ` y encontró movimiento en <b>${conAlgo}</b> ${conAlgo === 1 ? 'tienda' : 'tiendas'}.` : '.')
+    + `</div>
+    <div class="sr-run-sub">${r.source === 'cron' ? 'Automática' : 'Manual'} · `
+    + `terminó ${r.status === 'ok' ? 'OK' : 'con alerta'} · `
+    + `las tiendas sin novedad no dejan registro.</div>
+    <div class="sr-run-found">Hizo</div>
+    <div class="sr-res">
+      ${cel(ingresos, 'ingresos', 'personas nuevas que trajo el sistema')}
+      ${cel(egresos, 'egresos', 'solo con fin de contrato explícito')}
+      ${cel(r.filled || 0, 'fichas completadas', 'campos que estaban en blanco')}
+      ${cel(atencion, 'necesitan atención', hint.join(' · ') || 'nada pendiente', 'act')}
+    </div>
+  </div>`;
+}
+
+/* Las filas de una pestaña, ya pintadas. Devuelve {nota, thead, filas, pie}. */
+function paneHtml(r, key) {
+  const diffs   = Array.isArray(r.diffs)   ? r.diffs   : [];
+  const fills   = Array.isArray(r.fills)   ? r.fills   : [];
+  const rejects = Array.isArray(r.rejects) ? r.rejects : [];
+  const stores  = Array.isArray(r.detail)  ? r.detail  : [];
+  const movs    = stores.filter(s => s.added || s.removed);
+  const alertas = stores.filter(s => s.skipped || s.alert);
+  const TOPE = 300;   // mas que esto no se pinta: para eso esta Exportar
+
+  if (key === 'mov') {
+    return {
+      nota: `Quién <b>entró</b> y quién <b>salió</b> del padrón, por empresa. `
+        + `El egreso solo ocurre con <b>fin de contrato explícito</b>: nunca por ausencia en la respuesta.`,
+      thead: `<tr><th style="width:90px">Empresa</th><th style="width:110px">Ingresos</th><th>Egresos</th></tr>`,
+      filas: movs.map(s => `<tr>`
+        + `<td class="sl-cc">${esc(s.company_code)}</td>`
+        + `<td>${s.added ? `<b style="color:#15803d">+${s.added}</b>` : '<span style="color:#94a3b8">—</span>'}</td>`
+        + `<td>${s.removed ? `<b style="color:#b91c1c">−${s.removed}</b>` : '<span style="color:#94a3b8">—</span>'}</td>`
+        + `</tr>`).join(''),
+      pie: `<b>${movs.length}</b> ${movs.length === 1 ? 'empresa' : 'empresas'} con movimiento`,
+      n: movs.length,
+    };
+  }
+
+  if (key === 'fill') {
+    /* La cabecera dice "20 fichas completadas" y aca salen 33 filas. No es un
+       error y hay que decirlo: `filled` cuenta PERSONAS, el detalle cuenta
+       CAMPOS (a una persona se le puede completar el telefono Y el correo). */
+    const aclara = (r.filled && fills.length !== r.filled)
+      ? `<br>Son <b>${fills.length} campos</b> sobre <b>${r.filled} personas</b>: `
+        + `a una misma persona se le puede haber completado más de un dato.`
+      : '';
+    return {
+      nota: `Campos que estaban <b>en blanco</b> en el portal y el sistema sí tenía. `
+        + `Se completaron solos. <b>Ningún dato ya cargado se tocó.</b>${aclara}`,
+      thead: `<tr><th style="width:110px">Cédula</th><th>Colaborador</th>`
+        + `<th style="width:70px">Empresa</th><th style="width:100px">Campo</th>`
+        + `<th>Dato que se tomó del sistema</th></tr>`,
+      filas: fills.slice(0, TOPE).map(d => `<tr>`
+        + `<td class="sl-mono">${esc(cedFmt(d))}</td>`
+        + `<td style="font-weight:600">${esc(d.nom || '')}</td>`
+        + `<td class="sl-cc">${esc(d.comp || '')}</td>`
+        + `<td>${esc(CAMPO_LBL[d.campo] || d.campo || '')}</td>`
+        + `<td class="sl-mono sl-vp">${esc(fmtVal(d.campo, d.valor))}</td>`
+        + `</tr>`).join(''),
+      pie: fills.length > TOPE
+        ? `Mostrando <b>${TOPE}</b> de <b>${fills.length}</b> · usá Exportar para la lista completa`
+        : `<b>${fills.length}</b> ${fills.length === 1 ? 'campo completado' : 'campos completados'}`,
+      n: fills.length,
+    };
+  }
+
+  if (key === 'dif') {
+    const vivas = diffs.filter(d => d.vivo).length;
+    const resueltas = diffs.length - vivas;
+    return {
+      nota: `Los dos lados tenían un dato y <b>no coincidían</b>. El portal <b>no tocó nada</b>: `
+        + `solo los señaló. Se deciden en <b>Diferencias</b>; acá se ve cómo quedaron.`,
+      thead: `<tr><th style="width:112px">Estado</th><th style="width:110px">Cédula</th><th>Colaborador</th>`
+        + `<th style="width:70px">Empresa</th><th style="width:90px">Campo</th>`
+        + `<th>En el portal</th><th>En el sistema</th></tr>`,
+      filas: diffs.slice(0, TOPE).map(d => {
+        const roto = d.estado === 'dato_roto';
+        return `<tr>`
+          + `<td>${d.vivo
+              ? '<span class="sl-stt open">● sin resolver</span>'
+              : '<span class="sl-stt done">✓ resuelta</span>'}</td>`
+          + `<td class="sl-mono">${esc(cedFmt(d))}</td>`
+          + `<td style="font-weight:600">${esc(d.nom || '')}</td>`
+          + `<td class="sl-cc">${esc(d.comp || '')}</td>`
+          + `<td>${esc(CAMPO_LBL[d.campo] || d.campo || '')}</td>`
+          + `<td class="sl-mono sl-vp">${esc(fmtVal(d.campo, d.portal))}</td>`
+          + `<td class="sl-mono ${roto ? 'sl-vbad' : 'sl-vs'}">${esc(fmtVal(d.campo, d.sistema))}`
+          + (roto ? '<div style="font-size:10px;font-weight:600">⚠ mal escrito</div>' : '')
+          + `</td></tr>`;
+      }).join(''),
+      pie: `<b>${diffs.length}</b> ${diffs.length === 1 ? 'diferencia' : 'diferencias'}`
+        + (resueltas ? ` · <b>${resueltas}</b> ya ${resueltas === 1 ? 'resuelta' : 'resueltas'}` : '')
+        + (vivas ? ` · <b>${vivas}</b> ${vivas === 1 ? 'sigue viva' : 'siguen vivas'}` : ''),
+      n: diffs.length,
+    };
+  }
+
+  if (key === 'rej') {
+    return {
+      nota: `El sistema mandó estos datos mal escritos, así que <b>no se guardaron</b>. `
+        + `El portal no arregla datos del sistema: <b>hay que corregirlos allá</b>. `
+        + `Cuando se corrijan, dejan de aparecer solos.`,
+      thead: `<tr><th style="width:110px">Cédula</th><th>Colaborador</th>`
+        + `<th style="width:70px">Empresa</th><th style="width:90px">Campo</th><th>Vino así</th></tr>`,
+      filas: rejects.slice(0, TOPE).map(d => `<tr>`
+        + `<td class="sl-mono">${esc(cedFmt(d))}</td>`
+        + `<td style="font-weight:600">${esc(d.nom || '')}</td>`
+        + `<td class="sl-cc">${esc(d.comp || '')}</td>`
+        + `<td>${esc(CAMPO_LBL[d.campo] || d.campo || '')}</td>`
+        + `<td class="sl-mono sl-vbad">${esc(d.valor || '')}</td>`
+        + `</tr>`).join(''),
+      pie: rejects.length > TOPE
+        ? `Mostrando <b>${TOPE}</b> de <b>${rejects.length}</b> · usá Exportar para la lista completa`
+        : `<b>${rejects.length}</b> a corregir en el sistema`,
+      n: rejects.length,
+    };
+  }
+
+  // alr
+  return {
+    nota: `Estas tiendas <b>se saltaron</b>: el sistema devolvió una lista sospechosamente corta `
+      + `y el portal prefirió no tocar nada antes que dar de baja a gente que sigue trabajando.`,
+    thead: `<tr><th style="width:90px">Empresa</th><th>Motivo</th></tr>`,
+    filas: alertas.map(s => `<tr>`
+      + `<td class="sl-cc">${esc(s.company_code)}</td>`
+      + `<td style="color:#b45309">${esc(s.alert || 'Sin detalle')}</td>`
+      + `</tr>`).join(''),
+    pie: `<b>${alertas.length}</b> ${alertas.length === 1 ? 'tienda saltada' : 'tiendas saltadas'}`,
+    n: alertas.length,
+  };
+}
+
+/* La cedula con su letra. El detalle guarda solo el numero, asi que se deduce
+   igual que en el resto del portal (extranjeros desde 80.000.000). */
+function cedFmt(d) {
+  const s = String(d.ced || '');
+  if (!s) return '';
+  if (d.ced_kind) return `${d.ced_kind}-${s}`;
+  const n = parseInt(s.replace(/\D/g, ''), 10);
+  if (!n) return s;
+  return `${n >= 80000000 ? 'E' : 'V'}-${s}`;
+}
+
+/* Estado del modulo de la pagina: que pestaña se esta viendo. */
+let SR_TAB = 'mov';
+
+export async function renderSyncRun(user) {
+  USER = user;
+  ensureStyles();
+
+  const r = SL_OPEN;
+  if (!r) {
+    // Entraron por la ruta sin haber elegido corrida (recarga, link directo).
+    // No se inventa nada: se los manda a la lista.
+    renderSyncLog(user);
+    return;
+  }
+
+  const diffs   = Array.isArray(r.diffs)   ? r.diffs   : [];
+  const rejects = Array.isArray(r.rejects) ? r.rejects : [];
+  const stores  = Array.isArray(r.detail)  ? r.detail  : [];
+  const movs    = stores.filter(s => s.added || s.removed);
+  const fills   = Array.isArray(r.fills)   ? r.fills   : [];
+  const alertas = stores.filter(s => s.skipped || s.alert);
+
+  const nOpen = r.diff_open != null ? r.diff_open : diffs.filter(d => d.vivo).length;
+  const nTotal = diffs.length + rejects.length;
+
+  /* Las pestanas: TODAS se muestran, incluso vacias (a diferencia del inline,
+     donde se escondian). En una pagina, una pestana en 0 es informacion: te dice
+     que esa corrida no tuvo alertas, y eso es bueno saberlo. */
+  const TABS = [
+    ['mov',  'Movimientos',  movs.length,    false],
+    ['fill', 'Completadas',  fills.length,   false],
+    ['dif',  'Diferencias',  diffs.length,   nOpen > 0],
+    ['rej',  'Mal escritos', rejects.length, false],
+    ['alr',  'Alertas',      alertas.length, false],
+  ];
+  // Se abre en la primera pestana que tenga algo: si la corrida solo encontro
+  // diferencias, no tiene sentido abrirla en Movimientos vacio.
+  if (!TABS.some(([k, , n]) => k === SR_TAB && n)) {
+    const primera = TABS.find(([, , n]) => n);
+    SR_TAB = primera ? primera[0] : 'mov';
+  }
+
+  const ICO_WARN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>';
+  const ICO_OK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+
+  /* EL AVISO. El numero de la corrida es HISTORIA y no cambia nunca; debajo va
+     el estado de HOY. Sin nada vivo: verde y SIN boton (no tiene a donde llevar). */
+  let aviso = '';
+  if (nTotal) {
+    const vivo = nOpen > 0;
+    const resueltas = diffs.length - nOpen;
+    const sub = [];
+    if (vivo) sub.push(`Hoy ${nOpen === 1 ? 'queda' : 'quedan'} <b>${nOpen} sin resolver</b>.`);
+    else if (diffs.length) sub.push('Ya no queda ninguna pendiente.');
+    if (rejects.length) {
+      sub.push(`${vivo && diffs.length ? 'Los otros' : 'Los'} ${rejects.length} mal `
+        + `${rejects.length === 1 ? 'escrito' : 'escritos'} se corrigen en el sistema, no acá.`);
+    } else if (resueltas > 0 && vivo) {
+      sub.push(`${resueltas === 1 ? 'Una ya se resolvió' : resueltas + ' ya se resolvieron'}.`);
+    }
+    aviso = `<div class="sl-av ${vivo ? 'pend' : 'done'}">`
+      + `<div class="sl-av-ico">${vivo ? ICO_WARN : ICO_OK}</div>`
+      + `<div class="tx">Esta corrida encontró <b>${nTotal}</b> `
+      + `${nTotal === 1 ? 'cosa que necesitaba' : 'cosas que necesitaban'} una decisión.`
+      + (sub.length ? `<div class="sub">${sub.join(' ')}</div>` : '')
+      + `</div>`
+      + (vivo ? `<button class="sl-golink" id="srGo">Ir a Diferencias →</button>` : '')
+      + `</div>`;
+  }
+
+  const IC_DOWN = '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>';
+
+  $('#pnlMain').innerHTML = `
+    <button class="sr-back" id="srBack">← Volver a las sincronizaciones</button>
+
+    <div class="sl-head" style="margin-bottom:16px">
+      <h1>Detalle de la corrida</h1>
+      <p>Qué hizo la sincronización, y qué dejó pendiente.</p>
+    </div>
+
+    ${runFicha(r)}
+    ${aviso}
+
+    <div class="sr-card">
+      <div class="sr-chead">
+        <div>
+          <h2>Lo que encontró</h2>
+          <p class="desc">${fmtDT(r.run_at)} · ${r.source === 'cron' ? 'Automática' : 'Manual'}</p>
+        </div>
+        <button class="sl-btn" id="srExp" title="Exportar la pestaña que estás viendo">${IC_DOWN} Exportar</button>
+      </div>
+
+      <div class="sl-tabs" id="srTabs">
+        ${TABS.map(([k, lbl, n, hot]) =>
+          `<button class="sl-tab${k === SR_TAB ? ' on' : ''}" data-k="${k}">`
+          + `${esc(lbl)} <span class="sl-tn">${n}</span>`
+          + (hot ? '<span class="sl-tdot" title="Tiene cosas sin resolver"></span>' : '')
+          + `</button>`).join('')}
+      </div>
+
+      <div id="srPane"></div>
+    </div>`;
+
+  const pintarPane = () => {
+    const p = paneHtml(r, SR_TAB);
+    const cuerpo = p.n
+      ? `<table class="sl-mini" style="margin-top:0"><thead>${p.thead}</thead><tbody>${p.filas}</tbody></table>`
+        + `<div class="sr-tfoot"><span class="sr-muted">${p.pie}</span></div>`
+      : `<div class="sl-empty" style="padding:28px 16px">Esta corrida no tuvo nada de esto.</div>`;
+    $('#srPane').innerHTML = `<div class="sl-pane"><p class="sl-pn">${p.nota}</p>${cuerpo}</div>`;
+  };
+  pintarPane();
+
+  $('#srBack').addEventListener('click', () => renderSyncLog(USER));
+
+  document.querySelectorAll('#srTabs [data-k]').forEach(b =>
+    b.addEventListener('click', () => {
+      SR_TAB = b.dataset.k;
+      document.querySelectorAll('#srTabs [data-k]').forEach(t => t.classList.remove('on'));
+      b.classList.add('on');
+      pintarPane();
+    }));
+
+  const go = $('#srGo');
+  if (go) go.addEventListener('click', () => {
+    const nav = document.querySelector('.pnl-side [data-view="syncpend"]');
+    if (nav) nav.click();
+  });
+
+  // Exportar: baja LA PESTAÑA que se esta viendo, en los 3 formatos de siempre.
+  $('#srExp').addEventListener('click', (e) => {
+    e.stopPropagation();
+    openRunExport($('#srExp'), r);
+  });
+}
+
+/* El menu de Exportar de la pagina. Dice QUE baja y CUANTAS filas. */
+function openRunExport(btn, r) {
+  const old = document.getElementById('srExpMenu');
+  if (old) { old.remove(); return; }
+  const data = tabRows(r, SR_TAB);
+  const rect = btn.getBoundingClientRect();
+
+  const m = document.createElement('div');
+  m.id = 'srExpMenu';
+  m.style.cssText = `position:fixed;top:${rect.bottom + 6}px;left:${Math.max(8, rect.right - 200)}px;`
+    + `z-index:1100;background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;`
+    + `box-shadow:0 10px 32px rgba(15,23,42,.18);padding:6px;min-width:200px;display:flex;flex-direction:column;gap:2px`;
+
+  const head = document.createElement('div');
+  head.textContent = `${(TAB_LBL[SR_TAB] || '').replace('_', ' ')} · ${data.length} fila${data.length === 1 ? '' : 's'}`;
+  head.style.cssText = 'font-size:10px;text-transform:uppercase;letter-spacing:.05em;'
+    + 'color:var(--faint,#94a3b8);font-weight:800;padding:6px 10px 3px';
+  m.appendChild(head);
+
+  [['Excel (.xlsx)', 'xlsx'], ['CSV (.csv)', 'csv'], ['Texto (.txt)', 'txt']].forEach(([lbl, f]) => {
+    const b = document.createElement('button');
+    b.textContent = lbl;
+    b.disabled = !data.length;
+    b.style.cssText = 'font:inherit;font-size:13px;text-align:left;padding:8px 12px;border:0;'
+      + `border-radius:8px;background:transparent;color:var(--ink);cursor:${data.length ? 'pointer' : 'default'};`
+      + (data.length ? '' : 'opacity:.45');
+    if (data.length) {
+      b.addEventListener('mouseenter', () => { b.style.background = 'var(--bg-soft,#f1f5f9)'; });
+      b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
+      b.addEventListener('click', () => { m.remove(); writeFile(data, tabFname(r, SR_TAB), f); });
+    }
+    m.appendChild(b);
+  });
+
+  document.body.appendChild(m);
+  setTimeout(() => {
+    const away = ev => {
+      if (!m.contains(ev.target) && ev.target !== btn) { m.remove(); document.removeEventListener('click', away); }
+    };
+    document.addEventListener('click', away);
+  }, 0);
 }
 
 function detHtml(r, idx) {
@@ -740,16 +1163,34 @@ function slPaint() {
     body.innerHTML = SL.rows.map((r, i) => {
       const st = esc(r.status || 'ok');
       const stLbl = r.status === 'ok' ? 'OK' : (r.status === 'alerta' ? 'Con alerta' : 'Error');
+      /* v5.58: el detalle YA NO SE DESPLIEGA ACA. Se abre en su propia pagina
+         (mockup aprobado). Solo las corridas de Personal tienen pagina de
+         detalle; las de Empresas/Pago siguen mostrando su resumen tecnico
+         inline, que es una linea y no da para pagina. */
+      const esRoster = SL.process === 'roster';
       const hasDet = !!(r.detail || r.error);
+      const verBtn = esRoster
+        ? (hasDet ? `<button class="sl-more" data-open="${i}">Ver detalle →</button>` : '')
+        : (hasDet ? `<button class="sl-more" data-det="${i}">Detalle</button>` : '');
       return `<tr>
         <td>${fmtDT(r.run_at)}</td>
         <td>${r.source === 'cron' ? 'Autom\u00e1tica' : 'Manual'}</td>
         <td><span class="sl-st ${st}">${stLbl}</span></td>
-        <td>${esc(r.summary || '')}${hasDet ? `<div id="slDet_${i}" class="sl-det" hidden>${detHtml(r, i)}</div>` : ''}</td>
+        <td>${esc(r.summary || '')}${(!esRoster && hasDet) ? `<div id="slDet_${i}" class="sl-det" hidden>${detHtml(r, i)}</div>` : ''}</td>
         <td style="text-align:right;white-space:nowrap">${r.duration_ms != null ? (r.duration_ms / 1000).toFixed(1) + ' s' : '\u2014'}</td>
-        <td>${hasDet ? `<button class="sl-more" data-det="${i}">Detalle</button>` : ''}</td>
+        <td>${verBtn}</td>
       </tr>`;
     }).join('');
+
+    /* v5.58: abrir la pagina de la corrida. Se guarda la fila entera en SL_OPEN
+       y se navega; renderSyncRun la lee de ahi. */
+    body.querySelectorAll('[data-open]').forEach(b =>
+      b.addEventListener('click', () => {
+        SL_OPEN = SL.rows[+b.dataset.open] || null;
+        if (!SL_OPEN) return;
+        renderSyncRun(USER);
+      }));
+
     body.querySelectorAll('[data-det]').forEach(b =>
       b.addEventListener('click', () => {
         const el = $('#slDet_' + b.dataset.det);

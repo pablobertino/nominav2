@@ -36,7 +36,7 @@ import { renderWaSend } from './wa-send.js';
 import { renderWaGroups } from './wa-groups.js';
 import { renderWaTemplates } from './wa-templates.js';
 import { renderErpQuery } from './erp-query.js';
-import { renderSyncLog } from './sync-log.js';
+import { renderSyncLog, renderSyncRun } from './sync-log.js';
 import { renderSyncPending } from './sync-pending.js';   // v5.40
 import { renderResetData } from './reset-data.js';
 import { renderRoles } from './roles.js';
@@ -207,7 +207,7 @@ const NAV_GROUPS = [
      gobierna la matriz de permisos. Solo cambian etiquetas y orden. */
   { title: 'Sincronización', items: [
     ['--', 'Corrida automática'],
-    ['synclog', I.docs, 'Última corrida', 'adminonly'],
+    ['synclog', I.docs, 'Últimas sincronizaciones', 'adminonly'],
     ['>syncpend', I.alert, 'Diferencias', 'adminonly'],
     ['sync', I.cog, 'Configurar', 'superonly'],
     ['--', 'Enviar al sistema'],
@@ -531,7 +531,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.57</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.58</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4734,10 +4734,20 @@ async function viewSync(user) {
           <p class="muted" style="font-size:11.5px;margin:6px 0 0">El cron llama a esta URL. Si se deja vacío, usa el valor por defecto.</p></div>
       </details>
       <div class="cfg-foot"><span class="cfg-saved" id="rsSaved">✓ Guardado</span><button class="btn btn-primary" id="rsSave">Guardar programación</button></div>
-      <div id="rsRuns" style="margin-top:14px"></div>
     </div></div>
 
-    <div id="syncRuns">${runsHtml(cfgRes.runs)}</div>`;
+    <!-- v5.58 — SE SACAN LAS DOS TABLAS DE HISTORIAL (Pablo).
+
+         Aca vivian "Ultimas corridas con movimiento" (personal) y "Ultimas
+         ejecuciones" (empresas — nadie sabia bien que era, y era eso).
+
+         Las dos son HISTORIAL, y el historial ya tiene su lugar: "Ultimas
+         sincronizaciones", que ademas lo hace mejor (filtros, paginado, detalle
+         por corrida, exportar). Tenerlas tambien aca las duplicaba y sumaba dos
+         tablas a una pagina que es de CONFIGURACION, no de consulta.
+
+         Configurar responde "como y cuando corre". Que paso, se mira en el
+         registro. Los botones "Ver el registro" de cada tarjeta llevan alli. -->`;
 
   wireRunToggles();
   applySyncCooldown(cfg);
@@ -4777,23 +4787,13 @@ async function viewSync(user) {
       el.innerHTML = `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">${okPill}<b>${fmtDT(c.last_run_at)}</b><span class="muted">${c.last_source === 'cron' ? 'automática' : 'manual'} · ${(((c.last_duration_ms || 0)) / 1000).toFixed(1)} s</span></div>`
         + `<div style="margin-top:8px">${bits.join(' · ')}</div>`;
     };
-    const paintRuns = (runs) => {
-      const el = $('#rsRuns'); if (!el) return;
-      if (!runs || !runs.length) { el.innerHTML = ''; return; }
-      const rows = runs.map(g => {
-        const det = (g.stores || []).map(st => st.skipped
-          ? `<span title="${(st.alert || '').replace(/"/g, '&quot;')}" style="color:#b45309">${st.company_code} ⚠</span>`
-          : `${st.company_code} ${st.added ? '+' + st.added : ''}${st.removed ? '−' + st.removed : ''}`
-        ).join(' · ');
-        return `<tr><td data-label="Fecha">${fmtDT(g.run_at)}</td>`
-          + `<td data-label="Origen">${g.source === 'cron' ? 'Automática' : 'Manual'}</td>`
-          + `<td data-label="Ingresos"><b>${g.added}</b></td>`
-          + `<td data-label="Egresos"><b>${g.removed}</b></td>`
-          + `<td data-label="Tiendas" style="font-size:12px;color:var(--muted)">${det || '—'}</td></tr>`;
-      }).join('');
-      el.innerHTML = `<h3 style="margin:0 0 10px;font-size:14px">Últimas corridas con movimiento</h3>`
-        + `<table class="cfg-cat-table tbl-cards"><thead><tr><th>Fecha</th><th>Origen</th><th>Ingresos</th><th>Egresos</th><th>Tiendas</th></tr></thead><tbody>${rows}</tbody></table>`;
-    };
+    /* v5.58 — LA TABLA DE HISTORIAL SE FUE A "ULTIMAS SINCRONIZACIONES".
+       Vivia aca ("Ultimas corridas con movimiento") duplicando lo que el registro
+       ya hace mejor: filtros, paginado, detalle por corrida y exportar. Y sumaba
+       una tabla a una pagina que es de CONFIGURACION, no de consulta.
+       Se deja como no-op porque loadRs() la sigue llamando tras cada corrida. */
+    const paintRuns = () => {};
+
     const rsHourVis = () => {
       const f = $('#rsFreq').value;
       $('#rsHourWrap').style.display = (f === 'hourly') ? 'none' : '';
@@ -6771,6 +6771,14 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'wagrupos') renderWaGroups(user);
   else if (view === 'erpquery') renderErpQuery(user);
   else if (view === 'synclog') renderSyncLog(user);
+  /* v5.58 — EL DETALLE ES UNA PAGINA, NO UN DESPLEGABLE.
+     Pablo lo pidio 6 o 7 veces y yo lo segui metiendo inline dentro de la fila
+     del Registro. El mockup aprobado (_PRUEBAS/sync_resumen_mockup.html) SIEMPRE
+     fue una pagina aparte: cabecera propia, ficha de la corrida con los cuatro
+     numeros, aviso, y las pestanas debajo. Aca esta.
+     `runId` viaja por el estado del modulo (SL_OPEN), no por la URL: el portal
+     no tiene router de verdad. */
+  else if (view === 'syncrun') renderSyncRun(user);
   else if (view === 'syncpend') renderSyncPending(user);   // v5.40
   else if (view === 'resetdata') renderResetData(user);
   else if (view === 'roles') renderRoles(user);
