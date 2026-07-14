@@ -209,28 +209,73 @@ const cleanEmail = (v) => {
   return e;
 };
 
-/* ===== TIPO DE CEDULA (v5.53) =====
+/* ===== TIPO DE CEDULA + LOS DEMAS CAMPOS QUE AX SI MANDA (v5.53 / v5.57) =====
 
    ⚠ EL BUG (Pablo, 2026-07-14): "porque algunos salen con la V- y otros solo
    con -? sin la V?". Y era literal: la ficha mostraba "-30283265" en vez de
    "V-30283265", porque ced_kind estaba en NULL y la UI imprime
    `${ced_kind ? ced_kind + '-' : ''}` — sin la letra, queda el guion solo.
 
-   El corte era PERFECTO POR ORIGEN, el mismo patron que el bug de las cuentas
-   de v5.31:
+   ⚠ v5.57 — Y NO ERA SOLO ced_kind. Al arreglar aquello mire ese campo y no
+   revise el resto del INSERT. Comparando los dos maestros salieron SIETE:
 
-     source='ax_api'    (carga manual)  1.967 fichas,  ced_kind = 'V'  ✓
-     source='auto_sync' (esta sync)         80 fichas,  ced_kind = NULL ✗
+     campo            auto_sync (80)   ax_api (1.967)
+     first_lastname   80 sin dato      1
+     role             80 sin dato      0
+     todo_ticket      80 sin dato      0
+     data_id          80 sin dato      0
+     bank_code        70 sin dato      0
+     gender           70 sin dato      47
+     marital_status   70 sin dato      191
 
-   AX NO MANDA EL TIPO DE CEDULA. Se deduce del numero, y la carga manual
-   (ax-roster.js) ya lo hacia desde siempre. Esta sincronizacion nunca copio esa
-   linea: creaba las fichas sin el campo.
+   Cuatro de ellos la carga manual los llena al 100% y la sincronizacion los
+   dejaba TODOS en NULL. La API los manda (genero, estadoCivil, idCargo,
+   todoTicket, primerApellido, dataArea); ax-roster.js los traduce desde
+   siempre; sync-roster.js nunca copio esas lineas.
 
-   La regla venezolana: las cedulas de extranjero empiezan en 80.000.000. */
+   La leccion: cuando aparezca un campo olvidado en este INSERT, revisar el
+   INSERT ENTERO contra ax-roster.js, no solo el campo que se reporto.
+
+   Los normalizadores son los MISMOS que ax-roster.js (bilingues: la API cambio
+   de idioma el 2026-07-07 y puede responder Single/Married o Soltero/Casado). */
+
+// Cedula de extranjero: en Venezuela empiezan en 80.000.000.
 const cedKind = (ced) => {
   const d = String(ced || '').replace(/[^0-9]/g, '');
   if (!d) return null;
   return Number(d) >= 80000000 ? 'E' : 'V';
+};
+
+const genderCode = (raw) => {
+  const s = String(raw || '').trim().toUpperCase();
+  if (s.startsWith('MASC') || s === 'M' || s === 'MALE') return 'M';
+  if (s.startsWith('FEM') || s === 'F') return 'F';
+  return null;
+};
+
+const maritalCode = (raw) => {
+  const s = String(raw || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toUpperCase();
+  if (s.startsWith('SOLTER') || s.startsWith('SINGLE')) return 'S';
+  if (s.startsWith('CASAD') || s.startsWith('MARRIED')) return 'C';
+  if (s.startsWith('DIVORC')) return 'D';
+  if (s.startsWith('VIUD') || s.startsWith('WIDOW')) return 'V';
+  if (s.startsWith('COHABIT') || s.startsWith('CONVIV') || s.startsWith('UNION LIBRE')) return 'O';
+  if (s.startsWith('ASOCIAC') || s.startsWith('UNION REGISTRAD') || s.startsWith('SOCIEDAD REGISTRAD') || s.startsWith('REGISTERED')) return 'R';
+  return null;
+};
+
+// todoTicket: "Y"/"N" (o "Yes"/"No" con la API en ingles).
+const todoTicketCode = (raw) => {
+  const s = String(raw || '').trim().toUpperCase();
+  if (s === 'Y' || s === 'S' || s === 'SI' || s === 'YES') return 'S';
+  if (s === 'N' || s === 'NO') return 'N';
+  return null;
+};
+
+// Texto en mayusculas, con los centinelas de la API tratados como vacio.
+const upperOrNull = (v) => {
+  const s = clean(v);
+  return s ? s.toUpperCase() : null;
 };
 
 /* Departamento Retail de la tienda (cada tienda tiene el suyo); lo crea si
@@ -375,6 +420,10 @@ async function processStore(env, cc) {
 
         r.__acc = acc; r.__tel = tel; r.__mail = mail;   // para el maestro
 
+        /* v5.57: el roster tambien entra COMPLETO. Tenia el mismo agujero que
+           el maestro: guardaba el cargo crudo (sin normalizar) y no guardaba
+           genero, estado civil, primer apellido, todo_ticket ni data_id.
+           Se usan los MISMOS normalizadores que ax-roster.js. */
         return {
           company_code: cc,
           id_number: ced,
@@ -382,7 +431,13 @@ async function processStore(env, cc) {
           first_name: r.primerNombre || null,
           second_name: r.segundoNombre || null,
           last_names: r.apellidos || [r.primerApellido, r.segundoApellido].filter(Boolean).join(' ') || null,
-          role: r.idCargo || null,
+          first_lastname: upperOrNull(r.primerApellido),
+          role: upperOrNull(r.idCargo),
+          birth_date: iso10(r.fechaNacimiento),
+          gender: genderCode(r.genero),
+          marital_status: maritalCode(r.estadoCivil),
+          todo_ticket: todoTicketCode(r.todoTicket),
+          data_id: clean(r.dataArea),
           start_date: iso10(r.inicioContrato),
           account_number: acc,
           phone: tel,
@@ -402,13 +457,23 @@ async function processStore(env, cc) {
       // seguro mandar aca la ficha completa.
       const masterRows = toInsert.map(([ced, r]) => ({
         id_number: ced,
-        ced_kind: cedKind(ced),   // v5.53: AX no lo manda; se deduce del numero
+        /* v5.53/v5.57: TODO lo que la API manda y antes se tiraba a la basura.
+           El orden y los normalizadores son los mismos que ax-roster.js: si un
+           dia cambian alli, tienen que cambiar aca. */
+        ced_kind: cedKind(ced),                       // AX no lo manda: se deduce
         full_name: fullNameOf(r) || ced,
         first_name: r.primerNombre || null,
         second_name: r.segundoNombre || null,
         last_names: r.apellidos || null,
+        first_lastname: upperOrNull(r.primerApellido),
+        role: upperOrNull(r.idCargo),                 // el cargo (100% vacio antes)
         birth_date: iso10(r.fechaNacimiento),
+        gender: genderCode(r.genero),
+        marital_status: maritalCode(r.estadoCivil),
         account_number: r.__acc,
+        bank_code: r.__acc ? r.__acc.slice(0, 4) : null,
+        todo_ticket: todoTicketCode(r.todoTicket),
+        data_id: clean(r.dataArea),
         phone: r.__tel,
         email: r.__mail,
         last_source_company: cc,
@@ -485,7 +550,10 @@ async function processStore(env, cc) {
       const inList = ceds.map(c => `"${c}"`).join(',');
       const master = await sb(env,
         `workers_master?id_number=in.(${inList})`
-        + `&select=id_number,full_name,account_number,phone,email,ax_diff`) || [];
+        + `&select=id_number,full_name,account_number,phone,email,ax_diff`
+        // v5.57: los campos que la sincronizacion olvidaba. Se piden para saber
+        // cuales estan vacios y poder rellenarlos igual que los otros.
+        + `,gender,marital_status,todo_ticket,data_id,role,first_lastname,ced_kind`) || [];
 
       for (const m of master) {
         const ced = digits(m.id_number);
@@ -612,6 +680,41 @@ async function processStore(env, cc) {
         if (fMail) { patch.email          = fMail.fill;
                      out.fillDetail.push({ ced, nom, comp: cc, campo: 'correo',   valor: fMail.fill }); }
 
+        /* ===== v5.57 — LOS CAMPOS QUE LA SINCRONIZACION OLVIDABA =====
+
+           Genero, estado civil, todo_ticket, data_id, cargo, primer apellido y
+           tipo de cedula. La API los manda desde siempre; el INSERT no los
+           copiaba (ya arreglado arriba), pero eso solo sirve para las fichas
+           NUEVAS. Las 80 que ya entraron incompletas seguirian incompletas para
+           siempre — el mismo limbo de EIVAR con la cuenta.
+
+           Se rellenan aca, con la MISMA regla de siempre: solo si el campo esta
+           VACIO en el portal. Un dato que alguien cargo no se toca.
+
+           NO pasan por revisar(): esa funcion existe para los campos de TEXTO
+           LIBRE (cuenta/telefono/correo), donde el sistema puede mandar basura
+           mal formateada y hay que rechazarla y avisar. Estos son CATALOGO
+           CERRADO: genderCode() solo puede devolver M, F o null. Si la API manda
+           algo que no entiende, el normalizador devuelve null y no se escribe
+           nada. No hay "dato roto" que reportar ni conflicto que decidir: o el
+           valor es del catalogo, o no existe.
+
+           ced_kind no lo manda AX (se deduce del numero), pero se rellena aca
+           igual: es el mismo hueco. */
+        const rellenar = (campo, actual, valor) => {
+          if (clean(actual)) return;          // ya tiene dato: intocable
+          if (!valor) return;                 // el sistema no lo tiene (o no se entiende)
+          patch[campo] = valor;
+        };
+        rellenar('gender',         m.gender,         genderCode(r.genero));
+        rellenar('marital_status', m.marital_status, maritalCode(r.estadoCivil));
+        rellenar('todo_ticket',    m.todo_ticket,    todoTicketCode(r.todoTicket));
+        rellenar('data_id',        m.data_id,        clean(r.dataArea));
+        rellenar('role',           m.role,           upperOrNull(r.idCargo));
+        rellenar('first_lastname', m.first_lastname, upperOrNull(r.primerApellido));
+        rellenar('ced_kind',       m.ced_kind,       cedKind(ced));
+
+        // Un solo PATCH por ficha, con TODO lo que haya que rellenar.
         if (Object.keys(patch).length) toFill.push([ced, patch]);
 
         /* La marca de diferencia se escribe SIEMPRE que cambie: si aparece una
