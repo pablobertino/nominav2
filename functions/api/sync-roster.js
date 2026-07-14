@@ -495,6 +495,46 @@ async function processStore(env, cc) {
            Por eso los dos lados pasan por el MISMO validador antes de comparar:
            el validador es la forma canonica. Si el validador no puede con el
            valor del portal (ej: un correo viejo raro), se cae al valor crudo. */
+        /* v5.46 — QUIEN TOCO EL DATO EN EL SISTEMA, Y CUANDO.
+
+           La API SIEMPRE mando esto y nunca lo guardamos (el comentario de
+           arriba lo menciona desde v5.31 como "municion para Comparar", pero
+           quedo sin usar). Viene por campo:
+
+             "auditoria": {
+               "telefono":       { "modificadoPor": "PABLO",    "modificadoFecha": "2026-07-09T01:39:43Z" },
+               "cuentaBancaria": { "modificadoPor": "LUZ.GORD", "modificadoFecha": "2026-07-06T17:54:17Z" }
+             }
+
+           Guardarlo AQUI (y no pedirlo despues, cada vez que alguien abre
+           Pendientes) es lo correcto por dos razones:
+
+           1. Es GRATIS. Ya estamos hablando con el sistema; el dato viene en la
+              misma respuesta. Pedirlo despues serian N llamadas mas, cada vez
+              que alguien mira la pantalla.
+
+           2. Es la FOTO DEL MOMENTO. El conflicto se detecto AHORA, contra el
+              valor que el sistema tenia AHORA. El "quien" tiene que ser el de
+              ese mismo instante, no el de cuando a alguien se le ocurra abrir la
+              pagina tres dias despues. Si el sistema cambia mientras tanto, el
+              conflicto guardado y su autoria dejarian de corresponderse.
+
+           Las claves usan los nombres de la API (telefono, cuentaBancaria), no
+           los nuestros (telefono, cuenta). AUD_KEY traduce.
+           `GeneroFechadeNacimiento` cubre dos campos a la vez: asi lo manda el
+           sistema. */
+        const aud = (r.auditoria && typeof r.auditoria === 'object') ? r.auditoria : null;
+        const AUD_KEY = { cuenta: 'cuentaBancaria', telefono: 'telefono', correo: 'correo' };
+        const audOf = (campoUI) => {
+          if (!aud) return {};
+          const a = aud[AUD_KEY[campoUI] || campoUI];
+          if (!a || typeof a !== 'object') return {};
+          return {
+            sistema_por: a.modificadoPor || null,
+            sistema_el: a.modificadoFecha || null,
+          };
+        };
+
         const revisar = (campoUI, valPortal, crudoSistema, validador, contador) => {
           const portal = clean(valPortal);
           const crudo  = clean(crudoSistema);
@@ -521,18 +561,18 @@ async function processStore(env, cc) {
                Es un dato a CORREGIR EN EL SISTEMA. Sin esta marca, un correo
                roto en AX se quedaba roto y NADIE lo veia (el validador solo
                miraba campos vacios). */
-            diffs[campoUI] = { estado: 'dato_roto', portal, sistema: crudo };
+            diffs[campoUI] = { estado: 'dato_roto', portal, sistema: crudo, ...audOf(campoUI) };
             return null;
           }
           if (valido !== portalCanon) {
             /* CONFLICTO DE VERDAD: los dos tienen valor, los dos son validos, y
                una vez normalizados SIGUEN siendo distintos. Nadie sabe cual es
-               el bueno. Lo decide un humano (la API trae auditoria.modificadoPor,
-               que dice si el cambio salio del portal o de un tercero en AX).
+               el bueno. Lo decide un humano — y para eso necesita saber QUIEN
+               toco cada lado y CUANDO, que es lo que ahora se guarda.
 
                Se muestran los valores TAL CUAL estan en cada lado (no los
                normalizados): lo que el usuario tiene que ver es lo que hay. */
-            diffs[campoUI] = { estado: 'conflicto', portal, sistema: valido };
+            diffs[campoUI] = { estado: 'conflicto', portal, sistema: valido, ...audOf(campoUI) };
           }
           return null;   // el mismo dato (aunque escrito distinto): nada que hacer
         };

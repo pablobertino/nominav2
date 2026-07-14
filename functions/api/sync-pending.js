@@ -67,73 +67,47 @@ function thumbUrlPub(env, photoKey) {
   return `${env.supabase_url}/storage/v1/object/public/${PUBLIC_THUMB_BUCKET}/${photoKey}.jpg`;
 }
 
-/* ===================== v5.45: QUIEN TOCO EL DATO DEL OTRO LADO =====================
+/* ===================== v5.46: QUIEN TOCO EL DATO, DESDE LA BASE =====================
 
-   El sistema SIEMPRE nos mando esto y lo estabamos tirando. Cada ficha viene
-   con un bloque `auditoria`, CAMPO POR CAMPO:
+   v5.45 salia a preguntarle al sistema el bloque `auditoria` CADA VEZ que
+   alguien abria esta pagina. Estaba mal por dos razones:
 
-     "auditoria": {
-       "telefono":       { "modificadoPor": "PABLO",    "modificadoFecha": "2026-07-09T01:39:43Z" },
-       "cuentaBancaria": { "modificadoPor": "LUZ.GORD", "modificadoFecha": "2026-07-06T17:54:17Z" },
-       "estadoCivil":    { "modificadoPor": "th08.pmv", "modificadoFecha": "2021-11-03T14:34:35Z" }
+   1. COSTABA UNA LLAMADA POR EMPRESA, EN CADA VISITA. Abrir Pendientes cinco
+      veces eran quince llamadas al sistema para leer un dato que no cambia.
+
+   2. LA FOTO NO CORRESPONDIA. El conflicto se detecto en la corrida de las
+      16:50, contra el valor que el sistema tenia a las 16:50. Si a las 18:00
+      alguien abre la pagina y le preguntamos al sistema "quien toco esto", la
+      respuesta puede ser de OTRO cambio, posterior al conflicto que estamos
+      mostrando. El "quien" no se corresponderia con el "que".
+
+   Ahora la sincronizacion guarda el quien/cuando DENTRO de ax_diff_fields, en
+   el mismo instante en que detecta el conflicto (v5.46 de sync-roster.js):
+
+     "telefono": {
+       "estado": "conflicto",
+       "portal": "+584248494408",
+       "sistema": "04123570189",
+       "sistema_por": "ISMAEL.M",              <- quien lo toco en el sistema
+       "sistema_el": "2025-11-17T20:16:16Z"    <- cuando
      }
 
-   Esto CAMBIA LA DECISION. No es lo mismo:
-     - "el sistema dice 0412..."                                    <- un dato huerfano
-     - "LUZ.GORD cambio la cuenta el 06/07, hace una semana"        <- alguien la valido
-     - "th08.pmv toco esto en 2021"                                 <- nadie lo mira hace 5 anos
+   Esta pagina ya no llama a la API: lee de Postgres. Es la foto del momento en
+   que se detecto el conflicto, que es exactamente lo que hay que mostrar.
 
-   Con la fecha de cada lado se ve CUAL ES MAS NUEVO, que suele ser el argumento
-   mas fuerte para elegir.
+   ⚠ Las fichas marcadas ANTES de v5.46 no tienen estos campos. Se muestran sin
+   la linea de "quien", que es correcto: no lo sabemos. La proxima corrida las
+   completa sola. */
 
-   OJO con el eco: si el modificadoPor dice "PABLO" y la fecha coincide con una
-   publicacion del portal, ese "cambio" en el sistema LO HIZO EL PORTAL. No es
-   una novedad de un tercero. El front lo distingue.
-
-   Las claves de `auditoria` usan los nombres de la API (telefono,
-   cuentaBancaria), no los internos (phone, account_number). Este mapa traduce.
-   `GeneroFechadeNacimiento` cubre DOS campos internos a la vez (asi lo manda el
-   sistema; no es un error de tipeo nuestro). */
-const AUD_KEY = {
-  phone: 'telefono',
-  email: 'correo',
-  account_number: 'cuentaBancaria',
-  first_name: 'nombres',
-  second_name: 'nombres',
-  last_names: 'apellidos',
-  gender: 'GeneroFechadeNacimiento',
-  birth_date: 'GeneroFechadeNacimiento',
-  marital_status: 'estadoCivil',
-  // Alias que ya usa el portal para las claves cortas del ax_diff_fields.
-  telefono: 'telefono',
-  correo: 'correo',
-  cuenta: 'cuentaBancaria',
+/* El change_set guarda los campos con el nombre INTERNO (phone, email,
+   account_number); ax_diff_fields usa el nombre CORTO (telefono, correo,
+   cuenta). Sin este puente, la atribucion del portal no encontraria nunca su
+   campo y la linea de "quien edito" no saldria jamas. */
+const CAMPO_A_INTERNO = {
+  telefono: 'phone',
+  correo: 'email',
+  cuenta: 'account_number',
 };
-
-const HCM_API = 'https://api2.grupocanaima.com/empleados/datos/v1';
-
-/* Lee el padron del sistema para una empresa y devuelve, por cedula, SOLO el
-   bloque de auditoria. Null si la API no respondio: en ese caso la pagina se
-   pinta igual, sin la columna de quien — un dato de contexto que falta no
-   puede tumbar la bandeja. */
-async function auditFor(env, cc) {
-  try {
-    const res = await fetch(`${HCM_API}?alias=${encodeURIComponent(cc)}`, {
-      headers: { Accept: 'application/json', 'X-API-Key': env.canaima_apikey },
-    });
-    if (!res.ok) return null;
-    let data = await res.json();
-    if (!Array.isArray(data)) data = data.empleados || data.data || data.items || [];
-    const map = {};
-    for (const e of data) {
-      const ced = String(e.ficha ?? '').replace(/[^0-9]/g, '');
-      if (ced && e.auditoria && typeof e.auditoria === 'object') map[ced] = e.auditoria;
-    }
-    return map;
-  } catch (_) {
-    return null;
-  }
-}
 
 /* Empresas del alcance del actor. null = todas (superadmin). Mismo criterio
    que el resto del portal: un admin no-super solo ve lo suyo. */
@@ -290,28 +264,11 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
-    /* ---------- QUIEN TOCO CADA LADO ----------
-
-       PORTAL: el ax_change_set guarda quien edito la ficha y cuando. Es la
-       bitacora de las ediciones del portal.
-
-       SISTEMA: el bloque `auditoria` de la API, campo por campo. Una llamada
-       por empresa (son pocas: las de las fichas marcadas). Si la API no
-       responde, la pagina se pinta igual sin esa columna.
-
-       ⚠ LIMITE DE CLOUDFLARE: 50 subrequests por invocacion. Aca ya van ~6
-       consultas fijas + 1 por empresa. Con 5 conflictos en 3 empresas son 9.
-       Si algun dia hay conflictos en 40 empresas distintas, esto hay que
-       partirlo en tandas. Por eso el tope de empresas. */
-    const AUD_MAX_COMPANIES = 20;
-    const audByCed = {};
-    const ccsForAudit = ccs.slice(0, AUD_MAX_COMPANIES);
-    for (const cc of ccsForAudit) {
-      const m = await auditFor(env, cc);
-      if (m) Object.assign(audByCed, m);
-    }
-
-    // Quien edito en el PORTAL (del change_set pendiente de cada ficha).
+    /* ---------- QUIEN EDITO EN EL PORTAL ----------
+       Sale del ax_change_set (la bitacora de ediciones del portal). El "quien"
+       del lado del SISTEMA no se consulta: ya viene guardado dentro de
+       ax_diff_fields, escrito por la sincronizacion en el momento de detectar
+       el conflicto. Esta pagina NO llama a la API. */
     const ceds = [...new Set(marked.map(m => String(m.id_number)))];
     const portalEditBy = {};
     if (ceds.length) {
@@ -334,23 +291,19 @@ export async function onRequestPost({ request, env }) {
       if (!inScope(cc)) continue;
       const ff = (m.ax_diff_fields && typeof m.ax_diff_fields === 'object') ? m.ax_diff_fields : {};
       const ced = String(m.id_number);
-      const aud = audByCed[ced] || null;
       const pe = portalEditBy[ced] || null;
 
       const fields = [];
       for (const [campo, d] of Object.entries(ff)) {
         if (!d || typeof d !== 'object') continue;
 
-        /* Quien toco ESTE campo en el SISTEMA. La clave del bloque auditoria
-           usa el nombre de la API (telefono, cuentaBancaria), no el interno. */
-        const ak = AUD_KEY[campo] || campo;
-        const a = (aud && aud[ak] && typeof aud[ak] === 'object') ? aud[ak] : null;
-
         /* Quien lo toco en el PORTAL. Solo se atribuye si ESE campo esta en el
            change_set: si la tienda edito el correo, no se le puede endilgar
-           tambien el telefono. */
+           tambien el telefono. Se prueban los dos nombres (corto e interno)
+           porque las dos tablas los llaman distinto. */
+        const interno = CAMPO_A_INTERNO[campo] || campo;
         const editoEsteCampo = pe && Array.isArray(pe.fields)
-          && (pe.fields.includes(campo) || pe.fields.includes(ak));
+          && (pe.fields.includes(campo) || pe.fields.includes(interno));
 
         fields.push({
           campo,
@@ -360,9 +313,12 @@ export async function onRequestPost({ request, env }) {
           // Procedencia del dato del portal (si alguien lo edito y no publico).
           portal_by: editoEsteCampo ? (pe.by || null) : null,
           portal_at: editoEsteCampo ? (pe.at || null) : null,
-          // Procedencia del dato del sistema (del bloque auditoria).
-          sistema_by: a ? (a.modificadoPor || null) : null,
-          sistema_at: a ? (a.modificadoFecha || null) : null,
+          /* Procedencia del dato del sistema. Guardado por la sincronizacion en
+             el momento de detectar el conflicto (v5.46). Las fichas marcadas
+             antes de eso no lo tienen: van en null y la pagina no muestra la
+             linea, que es lo correcto (no lo sabemos). */
+          sistema_by: d.sistema_por || null,
+          sistema_at: d.sistema_el || null,
         });
       }
       if (!fields.length) continue;
