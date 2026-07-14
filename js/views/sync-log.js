@@ -124,14 +124,16 @@ function ensureStyles() {
   .sl-st.alerta{background:var(--warn-bg,#fff7ed);color:#b45309;border:1px solid #fed7aa}
   .sl-more{background:none;border:0;color:var(--brand,#2563eb);cursor:pointer;padding:0;font:inherit;font-size:12.5px;text-decoration:underline}
 
-  /* v5.60 — "Ver detalle" ES UN BOTON, NO UN LINK.
-     Abre una PAGINA (renderSyncRun), igual que "← Volver a las sincronizaciones"
-     vuelve de ella. Dos acciones del mismo peso: se ven igual. El link azul
-     subrayado lo hacia parecer una nota al pie.
+  /* v5.60/61 — LOS BOTONES DE LA COLUMNA SON BOTONES, NO LINKS.
+     "Ver detalle →" abre una PAGINA (renderSyncRun), igual que
+     "← Volver a las sincronizaciones" vuelve de ella: dos acciones del mismo
+     peso, se ven igual. El link azul subrayado las hacia parecer notas al pie.
+     v5.61: "Detalle" (Empresas / Estado de pago) toma el MISMO estilo. Estan en
+     la misma columna de la misma tabla: que uno fuera boton y el otro link se
+     leia como un descuido. La diferencia real vive en la ETIQUETA, no en el
+     estilo ("Ver detalle →" navega; "Detalle" despliega ahi mismo).
      Compacto: sl-btn esta dimensionado para la barra de filtros y dentro de una
-     celda quedaria enorme. Solo aplica al proceso Personal de tiendas: Empresas
-     y Estado de pago siguen con el link "Detalle" (despliegan inline, no tienen
-     pagina propia — son cosas distintas y no deben verse iguales). */
+     celda quedaria enorme. */
   .sl-verdet{padding:5px 11px;font-size:12.5px;white-space:nowrap}
   .sl-det{background:var(--bg-soft,#f8fafc);border-radius:8px;padding:8px 11px;margin-top:7px;font-size:12px;color:var(--ink-soft,#475569);line-height:1.55;word-break:break-word}
   .sl-pager{display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:10px;font-size:12.5px;color:var(--muted)}
@@ -1179,9 +1181,16 @@ function slPaint() {
          inline, que es una linea y no da para pagina. */
       const esRoster = SL.process === 'roster';
       const hasDet = !!(r.detail || r.error);
+      /* v5.61: los DOS botones de la columna llevan el mismo estilo. Antes uno
+         era boton (Personal) y el otro un link azul subrayado (Empresas / Pago):
+         en la misma columna de la misma tabla, eso se lee como un descuido, no
+         como una distincion. Lo que SI cambia es la etiqueta, que es donde la
+         diferencia importa: "Ver detalle →" abre una pagina; "Detalle" despliega
+         ahi mismo (esos dos procesos no tienen pagina propia: su resumen es una
+         linea y no da para una). */
       const verBtn = esRoster
         ? (hasDet ? `<button class="sl-btn sl-verdet" data-open="${i}">Ver detalle →</button>` : '')
-        : (hasDet ? `<button class="sl-more" data-det="${i}">Detalle</button>` : '');
+        : (hasDet ? `<button class="sl-btn sl-verdet" data-det="${i}">Detalle</button>` : '');
       return `<tr>
         <td>${fmtDT(r.run_at)}</td>
         <td>${r.source === 'cron' ? 'Autom\u00e1tica' : 'Manual'}</td>
