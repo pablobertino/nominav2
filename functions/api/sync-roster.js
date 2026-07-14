@@ -890,6 +890,11 @@ export async function onRequestPost({ request, env, ctx }) {
      todas las tandas de una misma corrida compartan el mismo id en el log (y
      el Registro las muestre como UNA corrida, no como 14 sueltas). */
   const offset = Math.max(0, parseInt(body.offset, 10) || 0);
+  /* v5.64: solo el CRON pide que se guarde el progreso en la config. El front
+     encadena sus tandas en memoria (tiene su barra de progreso) y no debe
+     tocar el estado de la corrida automatica: si lo hiciera, un "Ejecutar
+     ahora" a mitad de una corrida del cron le pisaria el offset. */
+  const persistProgress = body.persist_progress === true;
   const runId = (body.run_id && String(body.run_id).slice(0, 40))
     || `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
   const slice = codes.slice(offset, offset + STORES_PER_CALL);
@@ -1021,7 +1026,38 @@ export async function onRequestPost({ request, env, ctx }) {
   /* La config se marca como CORRIDA solo cuando la ultima tanda termina: si se
      escribiera last_run_at en cada tanda, el tick del cron creeria que la
      corrida ya se hizo y no dispararia las tandas que faltan. Mientras hay
-     tandas pendientes se refresca last_attempt_at (senal de vida). */
+     tandas pendientes se refresca last_attempt_at (senal de vida).
+
+     ===== v5.64: EL WORKER GUARDA EL PROGRESO =====
+     El tick ya NO espera la respuesta (lo mataba el statement_timeout: 44
+     tandas x varios segundos = 2-3 min, muy por encima del techo de Postgres).
+     Ahora dispara UNA tanda y sale.
+
+     Entonces alguien tiene que anotar EN QUE TIENDA QUEDO, o la proxima vuelta
+     del cron arrancaria de cero otra vez (ese era el viejo bug de "el cron no
+     avanza de tanda": sincronizaba siempre las mismas 3 tiendas, para siempre).
+
+     Ese alguien es el Worker: es el unico que sabe como le fue. Al cerrar su
+     tanda escribe cur_offset / cur_run_id / cur_acc; el tick los lee y sigue.
+     Cuando termina (done), los limpia: no hay corrida abierta.
+
+     Solo cuando el llamador lo pide (persist_progress). El front NO lo pide:
+     el encadena sus tandas en memoria y no debe tocar el estado del cron. */
+  const cronProgress = persistProgress
+    ? (done
+        ? { cur_offset: null, cur_run_id: null, cur_started_at: null, cur_rounds: 0, cur_acc: null }
+        : {
+          cur_offset: nextOffset,
+          cur_run_id: runId,
+          cur_acc: {
+            added: totAdded, removed: totRemoved, filled: totFilled,
+            alerts: totAlerts, stores: totStores, diffs: totDiffs,
+            rej_account: totRej.account, rej_phone: totRej.phone, rej_email: totRej.email,
+            rej_detail: totDetail, diff_detail: totDiffDetail,
+          },
+        })
+    : {};
+
   try {
     await sb(env, 'roster_sync_config?id=eq.1', {
       method: 'PATCH', headers: { Prefer: 'return=minimal' },
@@ -1030,8 +1066,9 @@ export async function onRequestPost({ request, env, ctx }) {
           last_run_at: new Date().toISOString(), last_source: source,
           last_status: 'ok', last_error: null,
           last_duration_ms: Date.now() - t0, last_summary: summary,
+          ...cronProgress,
         }
-        : { last_attempt_at: new Date().toISOString(), last_source: source }),
+        : { last_attempt_at: new Date().toISOString(), last_source: source, ...cronProgress }),
     });
   } catch (_) { /* resumen best-effort */ }
 
@@ -1079,6 +1116,9 @@ export async function onRequestPost({ request, env, ctx }) {
   } catch (e) {
     // v4.58: una falla dura marca la corrida como error en la config para
     // que el tick REINTENTE a los retry_minutes configurados.
+    // v5.64: y ADEMAS limpia el progreso. Si no, la corrida quedaria "abierta"
+    // con su cur_offset puesto, y el tick seguiria disparando tandas de una
+    // corrida que ya murio (hasta que la guarda de las 3 horas la cierre).
     try {
       await sb(env, 'roster_sync_config?id=eq.1', {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
@@ -1086,6 +1126,10 @@ export async function onRequestPost({ request, env, ctx }) {
           last_run_at: new Date().toISOString(), last_source: source,
           last_status: 'error', last_error: String(e && e.message || e).slice(0, 400),
           last_duration_ms: Date.now() - t0,
+          ...(persistProgress ? {
+            cur_offset: null, cur_run_id: null, cur_started_at: null,
+            cur_rounds: 0, cur_acc: null,
+          } : {}),
         }),
       });
     } catch (_) { /* best-effort */ }
