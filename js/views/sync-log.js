@@ -22,6 +22,13 @@ import { attachRefresh } from '../core/refresh.js';
 let USER = null;
 let SL = { process: 'roster', page: 1, size: 25, status: '', from: '', to: '', total: 0, rows: [], note: '' };
 
+/* v5.56: que pestaña esta abierta en cada corrida (idx -> 'mov'|'fill'|'dif'|
+   'rej'|'alr'). Lo necesita EXPORTAR: baja LA PESTAÑA QUE ESTAS VIENDO, no todo
+   mezclado. Antes el export tiraba las 5 categorias de TODAS las corridas de la
+   pagina en un solo archivo con columnas vacias por todos lados: un Excel que
+   habia que limpiar a mano antes de poder usarlo. */
+let SL_TAB = {};
+
 const PROC_LBL = {
   companies: 'Cat\u00e1logo de empresas',
   pay: 'Estado de pago',
@@ -37,6 +44,33 @@ function fmtDT(iso) {
   const d = new Date(iso); const p = n => String(n).padStart(2, '0');
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+/* Etiqueta legible del campo. El backend manda la clave interna (telefono /
+   correo / cuenta), igual que en Diferencias. */
+const CAMPO_LBL = {
+  cuenta: 'Cuenta bancaria', telefono: 'Tel\u00e9fono', correo: 'Correo',
+  account_number: 'Cuenta bancaria', phone: 'Tel\u00e9fono', email: 'Correo',
+};
+
+/* Mismo formateo que Diferencias: una cuenta de 20 digitos pegados es
+   ilegible; en grupos de 4, la diferencia entre dos cuentas salta a la vista.
+   El telefono se muestra en formato nacional (0424 8494408). */
+function fmtVal(campo, v) {
+  const s = String(v == null ? '' : v);
+  if (!s) return '\u2014';
+  const c = String(campo || '').toLowerCase();
+  if (c.includes('cuenta') || c === 'account_number') {
+    const d = s.replace(/\D/g, '');
+    if (d.length === 20) return d.replace(/(\d{4})(?=\d)/g, '$1 ');
+  }
+  if (c.includes('tel') || c === 'phone') {
+    let d = s.replace(/[^\d+]/g, '');
+    if (d.startsWith('+58')) d = '0' + d.slice(3);
+    else if (d.startsWith('58') && d.length === 12) d = '0' + d.slice(2);
+    if (/^\d{11}$/.test(d)) return d.slice(0, 4) + ' ' + d.slice(4);
+  }
+  return s;
+}
+
 async function api(payload) {
   return fetch('/api/sync-log', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -73,15 +107,47 @@ function ensureStyles() {
   .sl-pager{display:flex;gap:10px;align-items:center;justify-content:flex-end;margin-top:10px;font-size:12.5px;color:var(--muted)}
   .sl-empty{padding:40px 16px;text-align:center;color:var(--muted)}
 
-  /* v5.43: la franja "esta corrida dejo N cosas por resolver → Ir a Pendientes".
-     Reemplaza a las pestañas Diferencias y Datos mal escritos, que se mudaron
-     a Pendientes (alli tienen botones; aca solo se miraban). */
-  .sl-topend{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;
-             margin-top:10px;padding:9px 12px;border-radius:9px;
-             background:#fffbeb;border:1px solid #fde68a;color:#92400e;font-size:12.5px}
-  .sl-golink{font:inherit;font-size:12.5px;font-weight:700;padding:6px 12px;border-radius:8px;
-             border:1px solid #d97706;background:#d97706;color:#fff;cursor:pointer;white-space:nowrap}
-  .sl-golink:hover{background:#b45309;border-color:#b45309}
+  /* ===== EL AVISO (v5.56) =====
+     v5.43 lo puso ABAJO, despues de las tablas, y con un boton naranja solido
+     que gritaba mas que el propio aviso.
+
+     Ahora va ARRIBA (es lo primero que hay que saber) y, sobre todo, HABLA EN
+     PASADO: el numero de la corrida es historia y no cambia nunca; debajo se
+     dice cuantas siguen vivas HOY. Antes decia "dejo 19 por resolver" aunque ya
+     las hubieras resuelto todas, y el boton te mandaba a una pantalla vacia. */
+  .sl-av{display:flex;align-items:center;gap:12px;border-radius:11px;padding:11px 14px;
+         margin:0 0 14px;font-size:12.5px;line-height:1.55}
+  .sl-av-ico{width:30px;height:30px;border-radius:9px;flex:none;display:flex;align-items:center;
+             justify-content:center}
+  .sl-av-ico svg{width:16px;height:16px}
+  .sl-av .tx{flex:1;min-width:0}
+  .sl-av .sub{font-size:11.5px;margin-top:2px;opacity:.9}
+
+  /* Con cosas vivas: ambar. El boton ATENUADO, en la familia del de Publicar
+     (borde ambar, fondo blanco, texto oscuro). El relleno naranja solido de
+     v5.43 se veia mas fuerte que la pagina entera. Fondo blanco y no ambar
+     claro: el aviso YA es ambar, un boton del mismo tono se le fundiria. */
+  .sl-av.pend{background:#fffbeb;border:1px solid #fde68a;color:#78350f}
+  .sl-av.pend .sl-av-ico{background:#fef3c7;color:#b45309}
+  .sl-golink{font:inherit;font-size:12.5px;font-weight:600;padding:7px 13px;border-radius:8px;
+             border:1px solid #fcd34d;background:#fff;color:#92400e;cursor:pointer;white-space:nowrap;
+             display:inline-flex;align-items:center;gap:6px;flex:none}
+  .sl-golink:hover{background:#fef3c7;border-color:#d97706}
+
+  /* Ya no queda nada: verde y SIN boton (no tiene a donde llevarte). */
+  .sl-av.done{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
+  .sl-av.done .sl-av-ico{background:#dcfce7;color:#15803d}
+
+  /* Estado de cada diferencia: si ya se decidio o si sigue esperando. Sin esto,
+     el Registro te obliga a ir a Diferencias a ver que paso con cada una. */
+  .sl-stt{display:inline-flex;align-items:center;gap:5px;padding:2px 9px;border-radius:999px;
+          font-size:10px;font-weight:800;white-space:nowrap}
+  .sl-stt.open{background:#fffbeb;color:#b45309}
+  .sl-stt.done{background:#f0fdf4;color:#15803d}
+
+  .sl-vp{color:#15803d;font-weight:600}   /* valor del portal  */
+  .sl-vs{color:#b45309;font-weight:600}   /* valor del sistema */
+  .sl-vbad{color:#9a3412;font-weight:600} /* dato mal escrito  */
 
   /* v5.37: pestanas del detalle (Movimientos / Completadas / Alertas) */
   .sl-tabs{display:flex;gap:2px;border-bottom:1px solid var(--border);margin:2px 0 0;flex-wrap:wrap}
@@ -92,6 +158,10 @@ function ensureStyles() {
   .sl-tn{display:inline-block;margin-left:4px;padding:1px 6px;border-radius:999px;background:#eef2f7;
          color:var(--muted);font-size:10.5px;font-weight:700}
   .sl-tab.on .sl-tn{background:#e6efff;color:var(--brand,#2563eb)}
+  /* Punto en la pestaña que tiene cosas sin resolver. El mismo gesto que el
+     badge del menu: te dice DONDE mirar sin que tengas que abrir cada una. */
+  .sl-tdot{display:inline-block;width:6px;height:6px;border-radius:99px;background:#d97706;
+           margin-left:5px;vertical-align:1px}
   .sl-pane{padding-top:11px}
   .sl-pn{font-size:12px;color:var(--ink-soft,#475569);margin:0 0 10px;padding:8px 11px;border-radius:8px;
          background:var(--bg-soft,#f8fafc);border:1px solid var(--border-soft,#eef1f5);line-height:1.6}
@@ -199,11 +269,13 @@ function slTstamp() {
   const d = new Date(); const p = n => String(n).padStart(2, '0');
   return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
 }
-async function slDoExport(fmt) {
-  const data = slExportRows();
+/* v5.56: la ESCRITURA del archivo, separada de QUE datos van adentro. Antes
+   estaba pegada a slDoExport (que arma las filas del registro completo), asi que
+   el export por pestaña habria tenido que duplicar los tres formatos. */
+async function writeFile(data, fname, fmt) {
   if (!data.length) return;
   const headers = Object.keys(data[0]);
-  const fname = `registro_sync_${SL.process}_${slTstamp()}`;
+
   if (fmt === 'csv') {
     const escv = v => { const s = String(v ?? ''); return /[",;\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s; };
     const lines = [headers.join(';')].concat(data.map(r => headers.map(h => escv(r[h])).join(';')));
@@ -230,10 +302,16 @@ async function slDoExport(fmt) {
       }
       const ws = window.XLSX.utils.json_to_sheet(data, { header: headers });
       const wb = window.XLSX.utils.book_new();
-      window.XLSX.utils.book_append_sheet(wb, ws, 'Registro');
+      window.XLSX.utils.book_append_sheet(wb, ws, 'Datos');
       window.XLSX.writeFile(wb, `${fname}.xlsx`);
     } catch (_) { /* sin conexion al CDN: reintentar luego */ }
   }
+}
+
+async function slDoExport(fmt) {
+  const data = slExportRows();
+  if (!data.length) return;
+  await writeFile(data, `registro_sync_${SL.process}_${slTstamp()}`, fmt);
 }
 function slOpenExportMenu(btn) {
   const old = document.getElementById('slExpMenu');
@@ -261,6 +339,128 @@ function slOpenExportMenu(btn) {
   }, 0);
 }
 
+/* ===== EXPORTAR LA PESTAÑA ABIERTA (v5.56) =====
+   Cada corrida tiene su propio boton Exportar, y baja SOLO la pestaña que estas
+   viendo. Antes solo existia el Exportar de arriba, que mezclaba las 5
+   categorias de TODAS las corridas de la pagina en un unico archivo.
+
+   Sobre CSV y TXT (la pregunta de Pablo): no hay problema. El lio de "varias
+   hojas" solo existiria si se bajaran las 5 pestañas juntas — xlsx soporta
+   hojas, csv y txt son texto plano y no. Pero una pestaña es UNA TABLA, asi que
+   los tres formatos funcionan igual, con el mismo patron de siempre. */
+const TAB_LBL = {
+  mov: 'movimientos', fill: 'completadas', dif: 'diferencias',
+  rej: 'mal_escritos', alr: 'alertas',
+};
+
+/* Las filas de UNA pestaña de UNA corrida, ya con las columnas de esa pestaña
+   (cada una tiene las suyas: no se fuerza un formato comun con huecos). */
+function tabRows(r, key) {
+  const stores = Array.isArray(r.detail) ? r.detail : [];
+  if (key === 'mov') {
+    return stores.filter(s => s.added || s.removed).map(s => ({
+      'Empresa': s.company_code || '',
+      'Ingresos': s.added || 0,
+      'Egresos': s.removed || 0,
+    }));
+  }
+  if (key === 'alr') {
+    return stores.filter(s => s.skipped || s.alert).map(s => ({
+      'Empresa': s.company_code || '',
+      'Motivo': s.alert || 'Sin detalle',
+    }));
+  }
+  if (key === 'fill') {
+    return (r.fills || []).map(d => ({
+      'C\u00e9dula': d.ced || '', 'Colaborador': d.nom || '', 'Empresa': d.comp || '',
+      'Campo': CAMPO_LBL[d.campo] || d.campo || '',
+      'Dato que se tom\u00f3': fmtVal(d.campo, d.valor),
+    }));
+  }
+  if (key === 'dif') {
+    return (r.diffs || []).map(d => ({
+      // El estado de HOY viaja al Excel: sin esto, el archivo miente igual que
+      // mentia la pantalla antes de v5.56.
+      'Estado': d.vivo ? 'Sin resolver' : 'Resuelta',
+      'C\u00e9dula': d.ced || '', 'Colaborador': d.nom || '', 'Empresa': d.comp || '',
+      'Campo': CAMPO_LBL[d.campo] || d.campo || '',
+      'En el portal': fmtVal(d.campo, d.portal),
+      'En el sistema': fmtVal(d.campo, d.sistema),
+      'Mal escrito': d.estado === 'dato_roto' ? 'S\u00ed' : '',
+    }));
+  }
+  if (key === 'rej') {
+    return (r.rejects || []).map(d => ({
+      'C\u00e9dula': d.ced || '', 'Colaborador': d.nom || '', 'Empresa': d.comp || '',
+      'Campo': CAMPO_LBL[d.campo] || d.campo || '',
+      'Vino as\u00ed': d.valor || '',
+    }));
+  }
+  return [];
+}
+
+/* Nombre del archivo: la pestaña + la hora DE LA CORRIDA (no la de ahora). Asi
+   dos exports de corridas distintas nunca se pisan. */
+function tabFname(r, key) {
+  const d = new Date(r.run_at);
+  const p = n => String(n).padStart(2, '0');
+  const ts = isNaN(d) ? slTstamp()
+    : `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+  return `${TAB_LBL[key] || 'detalle'}_${ts}`;
+}
+
+async function exportTab(idx, fmt) {
+  const r = SL.rows[idx];
+  if (!r) return;
+  const key = SL_TAB[idx] || 'mov';
+  const data = tabRows(r, key);
+  if (!data.length) return;
+  await writeFile(data, tabFname(r, key), fmt);
+}
+
+/* El menu de exportar de una pestaña. Dice QUE va a bajar y CUANTAS filas, para
+   que no puedas equivocarte de pestaña sin darte cuenta. */
+function openTabExport(btn, idx) {
+  const old = document.getElementById('slTabExp');
+  if (old) { old.remove(); return; }
+  const r = SL.rows[idx];
+  if (!r) return;
+  const key = SL_TAB[idx] || 'mov';
+  const n = tabRows(r, key).length;
+  const rect = btn.getBoundingClientRect();
+
+  const m = document.createElement('div');
+  m.id = 'slTabExp';
+  m.style.cssText = `position:fixed;top:${rect.bottom + 6}px;left:${Math.max(8, rect.right - 190)}px;`
+    + `z-index:1100;background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;`
+    + `box-shadow:0 10px 32px rgba(15,23,42,.18);padding:6px;min-width:190px;display:flex;flex-direction:column;gap:2px`;
+
+  const head = document.createElement('div');
+  head.textContent = `${(TAB_LBL[key] || '').replace('_', ' ')} \u00b7 ${n} fila${n === 1 ? '' : 's'}`;
+  head.style.cssText = 'font-size:10px;text-transform:uppercase;letter-spacing:.05em;'
+    + 'color:var(--faint,#94a3b8);font-weight:800;padding:6px 10px 3px';
+  m.appendChild(head);
+
+  [['Excel (.xlsx)', 'xlsx'], ['CSV (.csv)', 'csv'], ['Texto (.txt)', 'txt']].forEach(([lbl, f]) => {
+    const b = document.createElement('button');
+    b.textContent = lbl;
+    b.style.cssText = 'font:inherit;font-size:13px;text-align:left;padding:8px 12px;border:0;'
+      + 'border-radius:8px;background:transparent;color:var(--ink);cursor:pointer';
+    b.addEventListener('mouseenter', () => { b.style.background = 'var(--bg-soft,#f1f5f9)'; });
+    b.addEventListener('mouseleave', () => { b.style.background = 'transparent'; });
+    b.addEventListener('click', () => { m.remove(); exportTab(idx, f); });
+    m.appendChild(b);
+  });
+
+  document.body.appendChild(m);
+  setTimeout(() => {
+    const away = ev => {
+      if (!m.contains(ev.target) && ev.target !== btn) { m.remove(); document.removeEventListener('click', away); }
+    };
+    document.addEventListener('click', away);
+  }, 0);
+}
+
 /* ---------- carga y pintado ---------- */
 async function slLoad() {
   const list = $('#slBody');
@@ -276,6 +476,9 @@ async function slLoad() {
   SL.total = r.total || 0;
   SL.rows = r.rows || [];
   SL.note = r.note || '';
+  // v5.56: los indices cambian con la pagina/filtros. Si no se limpia, SL_TAB[3]
+  // seguiria apuntando a la pestaña de OTRA corrida.
+  SL_TAB = {};
   slPaint();
 }
 /* Un panel de pestaña. Solo el primero arranca visible. */
@@ -288,30 +491,37 @@ function detHtml(r, idx) {
   const copyBtn = `<div style="margin-top:7px"><button class="sl-more" data-copy="${idx}">Copiar detalle</button> <span id="slCopied_${idx}" style="display:none;font-size:11px;color:var(--success,#15803d)">✓ copiado</span></div>`;
 
   /* ===================================================================
-     v5.43 — EL DETALLE, SIN LO QUE YA VIVE EN PENDIENTES.
+     v5.56 — EL DETALLE VUELVE A CONTAR LA CORRIDA ENTERA.
 
-     v5.37 metio CINCO pestañas aca (mockup aprobado). Estuvo bien en su
-     momento: antes el detalle era una linea de codigos de tienda y no decia
-     nada de la gente.
+     v5.43 saco de aca las pestañas Diferencias y Mal escritos, con este
+     argumento: viven en la pagina Diferencias, alli tienen botones, y el numero
+     del log esta congelado mientras el de Diferencias es el de hoy — dos
+     numeros distintos para la misma pregunta.
 
-     Pero v5.40 creo la pagina PENDIENTES, y dos de esas pestañas — Diferencias
-     y Datos mal escritos — pasaron a vivir alli, con botones para resolverlas.
-     Dejarlas tambien aca las DUPLICA: el mismo dato en dos lugares, uno donde
-     se puede actuar y otro donde no. Y peor: el de aca esta CONGELADO en la
-     corrida que estas mirando, mientras el de Pendientes es el estado de HOY.
-     Dos numeros distintos para la misma pregunta.
+     El diagnostico era correcto; la solucion, demasiado. Sacarlas dejo el
+     Registro sin poder contestar la pregunta que se le hace: "que encontro esta
+     corrida?". Quedaba un cartel con un numero y ningun modo de ver QUE era.
 
-     Regla: el Registro cuenta QUE PASO en una corrida (historia, inmutable).
-     Pendientes muestra QUE FALTA HOY (estado, vivo). Una cosa por lugar.
+     Ahora vuelven, pero resolviendo el problema de fondo: cada diferencia trae
+     su ESTADO DE HOY (`vivo`, del backend, leido de workers_master). Entonces:
 
-     Quedan las pestañas que SON historia de la corrida:
+       - El Registro sigue siendo HISTORIA: la lista es la de esa corrida, y su
+         numero (19) no cambia nunca.
+       - Pero cada fila dice si esa diferencia YA SE RESOLVIO o sigue esperando.
+       - Y el aviso de arriba habla en pasado ("esta corrida encontro 19") y
+         debajo dice la verdad de hoy ("quedan 3 sin resolver" / "ya no queda
+         ninguna").
+
+     Asi no hay dos numeros peleando: hay UN numero historico y UN estado actual,
+     y se ve cual es cual. Actuar se sigue haciendo en Diferencias (aca no hay
+     botones de decision): esa parte de v5.43 se mantiene.
+
+     Las cinco pestañas:
        Movimientos   — ingresos y egresos de ese dia
-       Completadas   — fichas en blanco que se llenaron con el sistema
+       Completadas   — campos en blanco que se llenaron con el sistema
+       Diferencias   — lo que no coincidia, con su ✓/● de hoy
+       Mal escritos  — datos que el sistema mando rotos
        Alertas       — tiendas que se saltaron esa vez
-
-     Y en su lugar, un enlace a Pendientes con el conteo de la corrida. Ver el
-     numero sigue siendo util (te dice que ESA corrida encontro 5); actuar sobre
-     el se hace donde corresponde.
      =================================================================== */
   if (Array.isArray(r.detail)) {
     const diffs   = Array.isArray(r.diffs)   ? r.diffs   : [];
@@ -320,19 +530,32 @@ function detHtml(r, idx) {
     const movs    = r.detail.filter(s => s.added || s.removed);
     const alertas = r.detail.filter(s => s.skipped || s.alert);
 
+    // Cuantas diferencias de ESTA corrida siguen vivas hoy (lo calcula el
+    // backend contra workers_master; si es una corrida vieja, no viene).
+    const nOpen = r.diff_open != null ? r.diff_open : diffs.filter(d => d.vivo).length;
+
     const tabs = [];
-    if (movs.length)    tabs.push(['mov',  'Movimientos', movs.length]);
-    if (fills.length)   tabs.push(['fill', 'Completadas', fills.length]);
-    if (alertas.length) tabs.push(['alr',  'Alertas', alertas.length]);
+    if (movs.length)    tabs.push(['mov',  'Movimientos', movs.length, false]);
+    if (fills.length)   tabs.push(['fill', 'Completadas', fills.length, false]);
+    if (diffs.length)   tabs.push(['dif',  'Diferencias', diffs.length, nOpen > 0]);
+    if (rejects.length) tabs.push(['rej',  'Mal escritos', rejects.length, false]);
+    if (alertas.length) tabs.push(['alr',  'Alertas', alertas.length, false]);
 
     // Corrida vieja (sin las columnas nuevas): se cae al detalle de antes.
     if (!tabs.length) {
       return r.detail.map(st => esc(st.company_code)).join(' · ') + copyBtn;
     }
 
-    const tabsHtml = tabs.map(([k, lbl, n], i) =>
+    const tabsHtml = tabs.map(([k, lbl, n, hot], i) =>
       `<button class="sl-tab${i === 0 ? ' on' : ''}" data-tab="${idx}" data-key="${k}">`
-      + `${esc(lbl)} <span class="sl-tn">${n}</span></button>`).join('');
+      + `${esc(lbl)} <span class="sl-tn">${n}</span>`
+      + (hot ? '<span class="sl-tdot" title="Tiene cosas sin resolver"></span>' : '')
+      + `</button>`).join('');
+
+    /* La primera pestaña es la que se ve al abrir. Se registra ya, porque si el
+       usuario exporta SIN haber tocado ninguna pestaña, Exportar tiene que bajar
+       la que esta viendo — no una por defecto que no eligio. */
+    if (SL_TAB[idx] == null) SL_TAB[idx] = tabs[0][0];
 
     const panes = [];
     const first = (k) => tabs[0][0] === k;
@@ -345,17 +568,70 @@ function detHtml(r, idx) {
       + `</tbody></table>`));
 
     if (fills.length) panes.push(pane(idx, 'fill', first('fill'),
-      `<p class="sl-pn">Fichas que estaban <b>en blanco</b> en el portal y que el sistema sí tenía. `
-      + `Se completaron solas. <b>Ningún dato ya cargado fue modificado.</b></p>`
+      `<p class="sl-pn">Campos que estaban <b>en blanco</b> en el portal y que el sistema sí tenía. `
+      + `Se completaron solos. <b>Ningún dato ya cargado fue modificado.</b>`
+      /* v5.56: la cabecera dice "20 fichas completadas" y aca salen 33 filas.
+         No es un error y hay que decirlo, o parece uno: `filled` cuenta
+         PERSONAS, `fill_detail` cuenta CAMPOS (a una misma persona se le puede
+         haber completado el telefono Y el correo). */
+      + (r.filled && fills.length !== r.filled
+        ? `<br>Son <b>${fills.length} campos</b> sobre <b>${r.filled} personas</b>: `
+          + `a una misma persona se le puede haber completado más de un dato.`
+        : '')
+      + `</p>`
       + `<table class="sl-mini"><thead><tr><th>Cédula</th><th>Colaborador</th><th>Empresa</th><th>Campo</th><th>Dato que se tomó</th></tr></thead><tbody>`
       + fills.slice(0, 300).map(d => `<tr>`
         + `<td class="sl-mono">${esc(d.ced || '')}</td>`
         + `<td>${esc(d.nom || '')}</td>`
         + `<td class="sl-cc">${esc(d.comp || '')}</td>`
-        + `<td>${esc(d.campo || '')}</td>`
-        + `<td class="sl-mono" style="color:#15803d">${esc(d.valor || '')}</td></tr>`).join('')
+        + `<td>${esc(CAMPO_LBL[d.campo] || d.campo || '')}</td>`
+        + `<td class="sl-mono sl-vp">${esc(fmtVal(d.campo, d.valor))}</td></tr>`).join('')
       + `</tbody></table>`
       + (fills.length > 300 ? `<p class="sl-pn">Mostrando 300 de ${fills.length}. Usá Exportar para la lista completa.</p>` : '')));
+
+    /* ===== DIFERENCIAS (vuelve en v5.56) =====
+       Cada fila lleva su estado de HOY. La lista es la de la corrida (historia)
+       pero el ✓/● sale de workers_master (presente). Sin esto, ver el Registro
+       te obligaba a ir a Diferencias a chequear una por una que habia pasado. */
+    if (diffs.length) panes.push(pane(idx, 'dif', first('dif'),
+      `<p class="sl-pn">Los dos lados tenían un dato y <b>no coincidían</b>. El portal <b>no tocó nada</b>: `
+      + `solo los señaló. Se deciden en <b>Diferencias</b>; acá se ve cómo quedaron.</p>`
+      + `<table class="sl-mini"><thead><tr><th>Estado</th><th>Cédula</th><th>Colaborador</th><th>Empresa</th>`
+      + `<th>Campo</th><th>En el portal</th><th>En el sistema</th></tr></thead><tbody>`
+      + diffs.slice(0, 300).map(d => {
+        const roto = d.estado === 'dato_roto';
+        return `<tr>`
+        + `<td>${d.vivo
+            ? '<span class="sl-stt open">● sin resolver</span>'
+            : '<span class="sl-stt done">✓ resuelta</span>'}</td>`
+        + `<td class="sl-mono">${esc(d.ced || '')}</td>`
+        + `<td>${esc(d.nom || '')}</td>`
+        + `<td class="sl-cc">${esc(d.comp || '')}</td>`
+        + `<td>${esc(CAMPO_LBL[d.campo] || d.campo || '')}</td>`
+        + `<td class="sl-mono sl-vp">${esc(fmtVal(d.campo, d.portal))}</td>`
+        + `<td class="sl-mono ${roto ? 'sl-vbad' : 'sl-vs'}">${esc(fmtVal(d.campo, d.sistema))}`
+        + (roto ? '<div style="font-size:10px;font-weight:600">⚠ mal escrito</div>' : '')
+        + `</td></tr>`;
+      }).join('')
+      + `</tbody></table>`
+      + (diffs.length > 300 ? `<p class="sl-pn">Mostrando 300 de ${diffs.length}. Usá Exportar para la lista completa.</p>` : '')));
+
+    /* ===== MAL ESCRITOS (vuelve en v5.56) =====
+       No llevan estado: no se resuelven en el portal. Se arreglan en el sistema
+       y desaparecen solos en la proxima corrida. */
+    if (rejects.length) panes.push(pane(idx, 'rej', first('rej'),
+      `<p class="sl-pn">El sistema mandó estos datos mal escritos, así que <b>no se guardaron</b>. `
+      + `El portal no arregla datos del sistema: <b>hay que corregirlos allá</b>. `
+      + `Cuando se corrijan, dejan de aparecer solos.</p>`
+      + `<table class="sl-mini"><thead><tr><th>Cédula</th><th>Colaborador</th><th>Empresa</th><th>Campo</th><th>Vino así</th></tr></thead><tbody>`
+      + rejects.slice(0, 300).map(d => `<tr>`
+        + `<td class="sl-mono">${esc(d.ced || '')}</td>`
+        + `<td>${esc(d.nom || '')}</td>`
+        + `<td class="sl-cc">${esc(d.comp || '')}</td>`
+        + `<td>${esc(CAMPO_LBL[d.campo] || d.campo || '')}</td>`
+        + `<td class="sl-mono sl-vbad">${esc(d.valor || '')}</td></tr>`).join('')
+      + `</tbody></table>`
+      + (rejects.length > 300 ? `<p class="sl-pn">Mostrando 300 de ${rejects.length}. Usá Exportar para la lista completa.</p>` : '')));
 
     if (alertas.length) panes.push(pane(idx, 'alr', first('alr'),
       `<p class="sl-pn">Estas tiendas <b>se saltaron</b>: el sistema devolvió una lista sospechosamente corta `
@@ -365,23 +641,64 @@ function detHtml(r, idx) {
         + `<td style="color:#b45309">${esc(s.alert || 'Sin detalle')}</td></tr>`).join('')
       + `</tbody></table>`));
 
-    /* Lo que ESTA corrida encontro y quedo esperando una decision. No se lista
-       aca (vive en Pendientes, con botones): se dice CUANTO fue y se ofrece el
-       camino. El numero es de la corrida (historia); el de Pendientes es de hoy
-       (estado). Pueden diferir, y esta bien: si alguien resolvio algo desde
-       entonces, el de hoy es menor. */
-    const nPend = diffs.length + rejects.length;
-    const linkPend = nPend
-      ? `<div class="sl-topend">`
-        + `<span>Esta corrida dejó <b>${nPend}</b> ${nPend === 1 ? 'cosa' : 'cosas'} por resolver`
-        + (diffs.length ? ` · ${diffs.length} por decidir` : '')
-        + (rejects.length ? ` · ${rejects.length} mal ${rejects.length === 1 ? 'escrito' : 'escritos'} en el sistema` : '')
-        + `</span>`
-        + `<button class="sl-golink" data-gopend="1">Ir a Pendientes →</button>`
-        + `</div>`
-      : '';
+    /* ===== EL AVISO (v5.56) =====
+       Va ARRIBA de las pestañas: es lo primero que hay que saber al abrir una
+       corrida.
 
-    return `<div class="sl-tabs">${tabsHtml}</div>${panes.join('')}${linkPend}${copyBtn}`;
+       Y habla EN PASADO. El log esta congelado — dice "19" para siempre — asi
+       que decir "esta corrida DEJA 19 por resolver" era mentira apenas resolvias
+       la primera. Ahora: el numero de la corrida es historia (no cambia), y
+       debajo va el estado de HOY, que sale de workers_master.
+
+       Cuando no queda nada vivo, el aviso se pone verde y PIERDE EL BOTON: no
+       tiene a donde llevarte. Mandarte a una pantalla vacia es peor que no
+       ofrecer el camino.
+
+       Los mal escritos NO cuentan como "sin resolver": no se resuelven aca, se
+       corrigen en el sistema. Por eso solo miran a las diferencias vivas. */
+    const nTotal = diffs.length + rejects.length;
+    const ICO_WARN = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>';
+    const ICO_OK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+
+    let aviso = '';
+    if (nTotal) {
+      const vivo = nOpen > 0;
+      // Que paso con las que ya no estan vivas.
+      const resueltas = diffs.length - nOpen;
+      const detalle = [];
+      if (vivo) {
+        detalle.push(`Hoy ${nOpen === 1 ? 'queda' : 'quedan'} <b>${nOpen} sin resolver</b>.`);
+      } else if (diffs.length) {
+        detalle.push('Ya no queda ninguna pendiente.');
+      }
+      if (rejects.length) {
+        detalle.push(`${vivo && diffs.length ? 'Los otros' : 'Los'} ${rejects.length} mal `
+          + `${rejects.length === 1 ? 'escrito' : 'escritos'} se corrigen en el sistema, no acá.`);
+      } else if (resueltas > 0 && vivo) {
+        detalle.push(`${resueltas === 1 ? 'Una ya se resolvió' : resueltas + ' ya se resolvieron'}.`);
+      }
+
+      aviso = `<div class="sl-av ${vivo ? 'pend' : 'done'}">`
+        + `<div class="sl-av-ico">${vivo ? ICO_WARN : ICO_OK}</div>`
+        + `<div class="tx">Esta corrida encontró <b>${nTotal}</b> `
+        + `${nTotal === 1 ? 'cosa que necesitaba' : 'cosas que necesitaban'} una decisión.`
+        + (detalle.length ? `<div class="sub">${detalle.join(' ')}</div>` : '')
+        + `</div>`
+        // Sin nada vivo, no hay boton: no tendria a donde llevar.
+        + (vivo ? `<button class="sl-golink" data-gopend="1">Ir a Diferencias →</button>` : '')
+        + `</div>`;
+    }
+
+    /* v5.56: barra de la corrida — el boton Exportar de ESTA corrida, que baja
+       la pestaña abierta. El Exportar de arriba sigue existiendo y baja el
+       registro completo (todas las corridas): son dos cosas distintas y ahora
+       se puede elegir cual. */
+    const IC_DOWN = '<svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>';
+    const barra = `<div style="display:flex;align-items:center;justify-content:flex-end;margin-bottom:6px">`
+      + `<button class="sl-btn" style="padding:6px 11px;font-size:12px" data-texp="${idx}" `
+      + `title="Exportar la pestaña que estás viendo">${IC_DOWN} Exportar</button></div>`;
+
+    return `${aviso}${barra}<div class="sl-tabs">${tabsHtml}</div>${panes.join('')}${copyBtn}`;
   }
 
   // v4.63: detalle LEGIBLE para no-programadores (nunca JSON crudo en
@@ -450,9 +767,21 @@ function slPaint() {
         body.querySelectorAll(`[id^="slPane_${idx}_"]`).forEach(p => { p.hidden = true; });
         const pane = $(`#slPane_${idx}_${key}`);
         if (pane) pane.hidden = false;
+        // v5.56: se recuerda cual quedo abierta — es lo que va a bajar Exportar.
+        SL_TAB[idx] = key;
       }));
-    // v5.43: "Ir a Pendientes". El detalle ya no lista las diferencias ni los
-    // datos rotos (viven alli, con botones); solo dice cuantos fueron y lleva.
+
+    /* v5.56: Exportar de la corrida. Baja LA PESTAÑA ABIERTA, con sus propias
+       columnas y en los tres formatos de siempre (xlsx/csv/txt). */
+    body.querySelectorAll('[data-texp]').forEach(b =>
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        openTabExport(b, +b.dataset.texp);
+      }));
+
+    /* El aviso lleva a Diferencias (la pagina ya no se llama "Pendientes").
+       El boton solo existe cuando queda algo vivo: si no, no tendria a donde
+       llevar. */
     body.querySelectorAll('[data-gopend]').forEach(b =>
       b.addEventListener('click', () => {
         const nav = document.querySelector('.pnl-side [data-view="syncpend"]');

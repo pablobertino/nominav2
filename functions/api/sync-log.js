@@ -163,6 +163,36 @@ export async function onRequestPost({ request, env }) {
     if (status === 'ok') groups = groups.filter(g => g.status === 'ok');
     const total = groups.length;
     const rows = groups.slice(offset, offset + size);
+
+    /* ===== v5.56: EL ESTADO DE HOY, NO SOLO EL DE LA CORRIDA =====
+
+       El log esta CONGELADO: dice "3 por decidir" para siempre, aunque ya las
+       hayas resuelto todas. Eso esta bien (el registro es historia y no se
+       reescribe), pero el aviso que sale arriba HABLA EN PRESENTE y termina
+       mandandote a una pantalla vacia.
+
+       Solucion: el numero de la corrida no se toca, y ademas se le pregunta al
+       maestro cuales de esas fichas SIGUEN VIVAS hoy (ax_diff = true). Con eso
+       cada fila lleva su ✓ resuelta / ● sin resolver, y el aviso puede decir la
+       verdad de HOY sin falsear la historia.
+
+       Una sola consulta para toda la pagina (no una por corrida). */
+    const cedsDiff = [...new Set(
+      rows.flatMap(g => (g.diffs || []).map(d => String(d.ced || '')).filter(Boolean))
+    )];
+    let vivas = new Set();
+    if (cedsDiff.length) {
+      const inList = cedsDiff.map(c => `"${c}"`).join(',');
+      const wm = await sb(env,
+        `workers_master?id_number=in.(${inList})&ax_diff=is.true&select=id_number`) || [];
+      vivas = new Set(wm.map(w => String(w.id_number)));
+    }
+    for (const g of rows) {
+      g.diffs = (g.diffs || []).map(d => ({ ...d, vivo: vivas.has(String(d.ced || '')) }));
+      // Cuantas de ESTA corrida siguen sin resolverse. Es lo que mira el aviso.
+      g.diff_open = g.diffs.filter(d => d.vivo).length;
+    }
+
     return json({
       ok: true, process, rows, total, page, page_size: size,
       note: 'Solo corridas con movimiento o alerta (las limpias no dejan registro por diseno).',

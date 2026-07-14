@@ -487,8 +487,19 @@ function shell(user) {
         // Un grupo que solo tiene subtitulos (todos sus botones cayeron por
         // permisos) no se pinta: seria una cabecera con encabezados adentro.
         if (!items.some(it => !isSubtitle(it))) return '';
+
+        /* v5.56 — LOS GRUPOS ARRANCAN CERRADOS (Pablo, 2026-07-14: "ya son
+           muchos"). Con 8 grupos abiertos, el menu medía mas que la pantalla y
+           habia que hacer scroll para llegar a Administracion.
+
+           EXCEPCION: el grupo donde estas parado queda ABIERTO. Si se cerraran
+           todos, al entrar a cualquier pantalla el menu no mostraria donde
+           estas: perderias la referencia justo cuando mas la necesitas. */
+        const tengoElActivo = items.some(it => !isSubtitle(it) && viewOf(it) === currentView);
+        const cerrado = tengoElActivo ? '' : ' collapsed';
+
         return `
-        <div class="nav-group" data-group="${gi}">
+        <div class="nav-group${cerrado}" data-group="${gi}">
           <button type="button" class="nav-ghead" data-group-toggle="${gi}"><span class="gh-label">${g.title}</span>${chev}</button>
           <div class="nav-gitems">${items.map(it => isSubtitle(it)
             ? `<div class="nav-sub">${it[1]}</div>`
@@ -520,7 +531,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.55</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.56</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
