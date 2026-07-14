@@ -109,6 +109,71 @@ const CAMPO_A_INTERNO = {
   cuenta: 'account_number',
 };
 
+/* ===================== LAS TRES DECISIONES (v5.49) =====================
+
+   EL BUG QUE SE ARREGLA (Pablo, 2026-07-14): "lo envias a publicar perfecto,
+   sigue el flujo. Pero nunca desaparece de las diferencias".
+
+   Y tenia razon. Son DOS MARCAS DISTINTAS en workers_master:
+
+     ax_diff     -> "el portal y el sistema no coinciden"   (la pone la sync)
+     ax_pending  -> "hay un cambio esperando enviarse"      (la pone Publicar)
+
+   El boton Publicar de Diferencias creaba el ax_change_set (por eso aparecia en
+   la pagina Publicar) pero NO LIMPIABA ax_diff. La ficha quedaba en las DOS
+   pantallas a la vez, y volvia a pedir la misma decision para siempre.
+
+   ⚠ Y HABIA ALGO PEOR, que Pablo tambien detecto: ADOPTAR con un cambio del
+   portal pendiente. Pasaba esto:
+
+     1. La tienda edita el telefono         -> ax_change_set (pendiente)
+     2. La sync ve que no coincide          -> ax_diff
+     3. Adoptar escribe el valor del SISTEMA en workers_master
+     4. El change_set SIGUE AHI con el valor de la tienda
+     5. Alguien publica -> MANDA AL SISTEMA EL VALOR QUE SE ACABA DE DESCARTAR
+
+   Adoptar y el change_set se pisaban entre si. En un telefono es molesto; en
+   una CUENTA BANCARIA es plata a la cuenta equivocada.
+
+   LA REGLA AHORA, para las tres decisiones:
+
+     ADOPTAR   -> "el del sistema es el bueno"
+                  escribe en el portal + ANULA el change_set pendiente
+                  (no tiene sentido guardar un envio del valor que se descarto)
+                  + limpia ax_diff
+
+     PUBLICAR  -> "el del portal es el bueno"
+                  crea el change_set (aparece en Publicar) + limpia ax_diff
+
+     ANULAR    -> "no toques nada"
+                  limpia ax_diff y DEJA EL CHANGE_SET EN PAZ
+                  (son cosas distintas: uno es un aviso, el otro un envio)
+
+   En los tres casos la ficha SALE de Diferencias. Ya se decidio; no hay nada
+   mas que decidir.
+   ===================================================================== */
+
+/* Escritura en Supabase (PATCH/POST). El `sb` de arriba es solo lectura. */
+async function sbWrite(env, path, opts) {
+  const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
+    ...opts,
+    headers: {
+      apikey: env.supabase_service_role,
+      Authorization: `Bearer ${env.supabase_service_role}`,
+      'Accept-Profile': 'nomina_v2',
+      'Content-Profile': 'nomina_v2',
+      'Content-Type': 'application/json',
+      ...(opts.headers || {}),
+    },
+  });
+  if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
+  const t = await res.text();
+  return t ? JSON.parse(t) : null;
+}
+
+/* Limpia SOLO la marca de diferencia. No toca ningun dato ni el change_set. */
+const LIMPIAR_DIFF = { ax_diff: false, ax_diff_fields: null, ax_diff_at: null };
+
 /* Empresas del alcance del actor. null = todas (superadmin). Mismo criterio
    que el resto del portal: un admin no-super solo ve lo suyo. */
 async function allowedCompanies(env, actor) {
@@ -148,6 +213,14 @@ export async function onRequestPost({ request, env }) {
     return json({ ok: false, error: 'No tienes permiso para ver los pendientes de sincronizacion.' }, 403);
   }
   try { await shadowCan(env, body.user || { kind: 'admin', id: adminId }, 'sync-pending', body.action || 'list', 'hcm.log', true); } catch (_) { /* bitacora */ }
+
+  /* El alcance se resuelve ANTES de las acciones, no despues: las tres
+     decisiones (adoptar / enviar a publicar / anular) lo necesitan para no
+     dejar que un admin toque una ficha de otra empresa. Estaba declarado mas
+     abajo, y como es `const`, cualquier accion que lo usara reventaba con
+     ReferenceError antes de llegar a la validacion. */
+  const allowed = await allowedCompanies(env, actor);
+  const inScope = (cc) => allowed === null || allowed.has(String(cc || ''));
 
   /* ---------- ANULAR (v5.40) ----------
      Limpia la marca de diferencia SIN TOCAR NINGUN DATO. Ni el del portal ni el
@@ -237,16 +310,173 @@ export async function onRequestPost({ request, env }) {
 
     /* La marca se limpia junto con la escritura: el conflicto quedo resuelto.
        Si mas adelante vuelven a diferir, la proxima corrida lo marca de nuevo. */
-    patch.ax_diff = false;
-    patch.ax_diff_fields = null;
-    patch.ax_diff_at = null;
+    Object.assign(patch, LIMPIAR_DIFF);
 
-    await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
+    await sbWrite(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
       method: 'PATCH', headers: { Prefer: 'return=minimal' },
       body: JSON.stringify(patch),
     });
 
-    return json({ ok: true, count: Object.keys(patch).length - 3, skipped_broken: rotos });
+    /* ⚠ EL ARREGLO IMPORTANTE (v5.49): anular el envio pendiente.
+
+       Si la tienda habia editado el dato y ese cambio estaba esperando irse al
+       sistema, adoptar el valor del SISTEMA lo contradice. Dejar el change_set
+       vivo significaba que despues alguien publicaba y MANDABA EL VALOR QUE SE
+       ACABA DE DESCARTAR.
+
+       En un telefono es molesto. En una CUENTA BANCARIA es plata a la cuenta
+       equivocada.
+
+       Se anula DESPUES de escribir: si la escritura falla, el change_set
+       sobrevive y no se pierde el trabajo de la tienda. */
+    let anulado = null;
+    try {
+      const pend = await sb(env,
+        `ax_change_set?id_number=eq.${encodeURIComponent(ced)}&status=eq.pending`
+        + '&select=id,changed_by,changed_at,changes&limit=1');
+      if (pend && pend[0]) {
+        await sbWrite(env, `ax_change_set?id=eq.${pend[0].id}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({
+            status: 'discarded',
+            resolved_by: actor.id || null,
+            resolved_at: new Date().toISOString(),
+          }),
+        });
+        anulado = {
+          by: pend[0].changed_by || null,
+          at: pend[0].changed_at || null,
+          fields: (pend[0].changes && typeof pend[0].changes === 'object')
+            ? Object.keys(pend[0].changes) : [],
+        };
+      }
+    } catch (_) { /* el dato ya se escribio; esto no puede tumbar la respuesta */ }
+
+    // Tambien hay que apagar la marca de pendiente en el maestro.
+    if (anulado) {
+      try {
+        await sbWrite(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ ax_pending: false, ax_pending_fields: null, ax_pending_at: null }),
+        });
+      } catch (_) { /* idem */ }
+    }
+
+    return json({ ok: true, count: Object.keys(patch).length - 3,
+                  skipped_broken: rotos, discarded: anulado });
+  }
+
+  /* ===================== ENVIAR A PUBLICAR (v5.49) =====================
+     "El dato del portal es el bueno: preparalo para irse al sistema."
+
+     OJO CON EL NOMBRE. El boton NO PUBLICA: crea el envio. La publicacion pasa
+     despues, en la pagina Publicar, con su propia revision y su propio permiso.
+     Por eso ahora dice "Enviar a Publicar" (Pablo: "no deberia decir Publicar,
+     sino enviar a Publicar") — el nombre viejo prometia algo que no hacia.
+
+     Antes esto llamaba a /api/ax-review action:detect_commit, que crea el
+     change_set pero NO limpia ax_diff. Resultado: la ficha quedaba en las DOS
+     pantallas y volvia a pedir la misma decision para siempre. Ese era el bug.
+
+     No se arregla en ax-review.js porque ese endpoint sirve a otras pantallas
+     (Comparar), donde el ax_diff NO se debe limpiar: ahi no hay una decision
+     tomada, solo una deteccion.
+
+     El valor sale de ax_diff_fields, no del cuerpo del pedido: el front no
+     decide que se envia. Se manda LO QUE SE VE EN PANTALLA. */
+  if (body.action === 'publish_prep') {
+    if (!can(actor, 'hcm.publish')) {
+      return json({ ok: false, error: 'No tienes permiso para enviar cambios al sistema.' }, 403);
+    }
+    const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
+    if (!ced) return json({ ok: false, error: 'Falta la c\u00e9dula.' }, 400);
+
+    const rows = await sb(env,
+      `workers_master?id_number=eq.${encodeURIComponent(ced)}`
+      + '&select=id_number,last_source_company,ax_diff,ax_diff_fields&limit=1');
+    const w = rows && rows[0];
+    if (!w) return json({ ok: false, error: 'No se encontr\u00f3 la ficha.' }, 404);
+    if (!inScope(w.last_source_company || '')) {
+      return json({ ok: false, error: 'Esa ficha no est\u00e1 en tu alcance.' }, 403);
+    }
+    if (!w.ax_diff) return json({ ok: true, count: 0, already: true });
+
+    const ff = (w.ax_diff_fields && typeof w.ax_diff_fields === 'object') ? w.ax_diff_fields : {};
+
+    /* El change_set guarda {campo: {old, new}}: old = lo que hay en el sistema,
+       new = lo que el portal quiere escribir alli.
+
+       La cuenta bancaria tiene su propio permiso. Sin el, se envian los demas
+       campos y se avisa: mejor mandar el telefono que no mandar nada. */
+    const puedeBanco = can(actor, 'hcm.publish.bank');
+    const changes = {};
+    let bancoBloqueado = 0;
+
+    for (const [campo, d] of Object.entries(ff)) {
+      if (!d || typeof d !== 'object') continue;
+      const col = CAMPO_A_INTERNO[campo];
+      if (!col) continue;
+      if (col === 'account_number' && !puedeBanco) { bancoBloqueado++; continue; }
+      if (d.portal == null || d.portal === '') continue;
+      changes[col] = {
+        old: d.sistema != null ? String(d.sistema) : '',
+        new: String(d.portal),
+      };
+    }
+
+    if (!Object.keys(changes).length) {
+      return json({ ok: false, count: 0,
+        error: bancoBloqueado
+          ? 'Esta diferencia es de la cuenta bancaria y no tienes permiso para enviarla.'
+          : 'No hay ning\u00fan valor del portal para enviar.' }, 400);
+    }
+
+    /* UPSERT: si ya hay un envio pendiente para esta ficha, se le suman los
+       campos en vez de crear un segundo. Dos change_set pendientes para la misma
+       cedula romperian Publicar (cual gana?). */
+    const prev = await sb(env,
+      `ax_change_set?id_number=eq.${encodeURIComponent(ced)}&status=eq.pending`
+      + '&select=id,changes&limit=1');
+
+    const ahora = new Date().toISOString();
+    const quien = actor.kind === 'admin'
+      ? String(actor.id)
+      : `${w.last_source_company || ''} (tienda)`;
+
+    if (prev && prev[0]) {
+      const merged = { ...(prev[0].changes || {}), ...changes };
+      await sbWrite(env, `ax_change_set?id=eq.${prev[0].id}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ changes: merged, changed_by: quien, changed_at: ahora }),
+      });
+    } else {
+      await sbWrite(env, 'ax_change_set', {
+        method: 'POST', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          id_number: ced,
+          company_code: w.last_source_company || null,
+          changes,
+          status: 'pending',
+          changed_by: quien,
+          changed_at: ahora,
+          origin: 'erp_detect',
+        }),
+      });
+    }
+
+    /* LO QUE FALTABA: encender ax_pending (aparece en Publicar) y APAGAR ax_diff
+       (sale de Diferencias). Las dos cosas, en la misma escritura. */
+    await sbWrite(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
+      method: 'PATCH', headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        ax_pending: true,
+        ax_pending_fields: Object.keys(changes),
+        ax_pending_at: ahora,
+        ...LIMPIAR_DIFF,
+      }),
+    });
+
+    return json({ ok: true, count: Object.keys(changes).length, bank_blocked: bancoBloqueado });
   }
 
   if (body.action === 'dismiss') {
@@ -257,41 +487,28 @@ export async function onRequestPost({ request, env }) {
     if (!ced) return json({ ok: false, error: 'Falta la cedula.' }, 400);
 
     // Alcance: no se puede anular el aviso de alguien de otra empresa.
-    const allowedD = await allowedCompanies(env, actor);
-    if (allowedD !== null) {
-      const w = await sb(env,
-        `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=last_source_company`);
-      const cc = w && w[0] ? String(w[0].last_source_company || '') : '';
-      if (!allowedD.has(cc)) {
-        return json({ ok: false, error: 'No tienes alcance sobre esa ficha.' }, 403);
-      }
+    const wd = await sb(env,
+      `workers_master?id_number=eq.${encodeURIComponent(ced)}&select=last_source_company&limit=1`);
+    if (!wd || !wd[0]) return json({ ok: false, error: 'No se encontr\u00f3 la ficha.' }, 404);
+    if (!inScope(wd[0].last_source_company || '')) {
+      return json({ ok: false, error: 'No tienes alcance sobre esa ficha.' }, 403);
     }
 
-    const res = await fetch(
-      `${env.supabase_url}/rest/v1/workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
-        method: 'PATCH',
-        headers: {
-          apikey: env.supabase_service_role,
-          Authorization: `Bearer ${env.supabase_service_role}`,
-          'Content-Profile': 'nomina_v2',
-          'Content-Type': 'application/json',
-          Prefer: 'return=minimal',
-        },
-        // Solo la etiqueta. Los datos (phone/email/account_number) NO se tocan.
-        body: JSON.stringify({ ax_diff: false, ax_diff_fields: null, ax_diff_at: null }),
-      });
-    if (!res.ok) {
-      return json({ ok: false, error: `No se pudo anular: ${res.status}` }, 500);
-    }
+    /* Solo la etiqueta. Los datos (phone/email/account_number) NO se tocan, y el
+       change_set pendiente TAMPOCO: son cosas distintas. Anular aca apaga un
+       AVISO; el Anular de Publicar descarta un ENVIO. Mezclarlos haria que
+       silenciar una diferencia borre el trabajo de la tienda. */
+    await sbWrite(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
+      method: 'PATCH', headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify(LIMPIAR_DIFF),
+    });
     return json({ ok: true, dismissed: ced });
   }
 
-  const allowed = await allowedCompanies(env, actor);
   if (allowed !== null && !allowed.size) {
     return json({ ok: true, conflicts: [], rejected: [], skipped: [], last_run: null,
                   counts: { conflicts: 0, rejected: 0, skipped: 0 } });
   }
-  const inScope = (cc) => allowed === null || allowed.has(String(cc || ''));
 
   try {
     /* ---------- 1. HAY QUE DECIDIR (estado acumulado) ----------

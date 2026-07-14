@@ -128,16 +128,12 @@ async function api(payload) {
   }).then(x => x.json()).catch(() => null);
 }
 
-/* Las acciones van a /api/ax-review, que YA las tenia. No se reimplementa nada. */
-async function axReview(payload) {
-  return fetch('/api/ax-review', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      user: { kind: USER.kind, id: USER.id || null, companyCode: USER.companyCode || null },
-      ...payload,
-    }),
-  }).then(x => x.json()).catch(() => null);
-}
+/* v5.49: las tres decisiones (adoptar / enviar a publicar / anular) van todas a
+   /api/sync-pending. Antes "Publicar" iba a /api/ax-review action:detect_commit,
+   que crea el change_set pero NO limpia ax_diff — y la ficha quedaba pegada en
+   esta pantalla para siempre. Ese endpoint sigue vivo y lo usa Comparar, donde
+   NO hay que limpiar el ax_diff (ahi no hay una decision tomada, solo una
+   deteccion). Por eso se hizo una accion propia en vez de tocarlo. */
 
 function ensureStyles() {
   if (document.getElementById('spStyles')) return;
@@ -304,6 +300,33 @@ function ensureStyles() {
   .sp-b.nul{color:var(--muted)}
   .sp-b.nul:hover:not(:disabled){color:#b91c1c;border-color:#fca5a5;background:#fef2f2}
 
+  /* ===== EL AVISO DE PISADA (v5.49) =====
+     Adoptar el dato del sistema cuando la tienda ya edito el suyo DESCARTA ese
+     trabajo. Se avisa antes, con nombre y fecha de quien lo hizo. */
+  .sp-ovl{position:fixed;inset:0;z-index:1200;background:rgba(15,23,42,.45);
+          display:flex;align-items:center;justify-content:center;padding:20px}
+  .sp-modal{background:var(--card,#fff);border-radius:14px;max-width:480px;width:100%;
+            box-shadow:0 20px 50px rgba(15,23,42,.28);overflow:hidden}
+  .sp-mhead{display:flex;gap:12px;align-items:flex-start;padding:16px 18px 12px;
+            border-bottom:1px solid var(--border)}
+  .sp-mico{width:36px;height:36px;border-radius:10px;flex:none;display:flex;align-items:center;
+           justify-content:center;background:#fffbeb;color:#b45309}
+  .sp-mico svg{width:19px;height:19px}
+  .sp-mt{font-size:15px;font-weight:700;color:var(--ink);line-height:1.3}
+  .sp-msub{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .sp-mbody{padding:14px 18px}
+  .sp-mbody p{margin:0 0 12px;font-size:13px;color:var(--ink);line-height:1.6}
+  .sp-mbody p:last-child{margin-bottom:0}
+  /* Lo que se pierde, en su propia caja: es EL dato de la decision. */
+  .sp-mbox{background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:10px 12px;margin-bottom:12px}
+  .sp-mbk{font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:#92400e;font-weight:700}
+  .sp-mbv{font-size:13px;color:#78350f;font-weight:600;margin-top:2px}
+  .sp-mbw{font-size:11.5px;color:#92400e;margin-top:3px}
+  .sp-mbw b{font-weight:700}
+  .sp-mnote{font-size:12px !important;color:var(--muted) !important}
+  .sp-mfoot{display:flex;align-items:center;gap:8px;padding:12px 18px 16px;
+            border-top:1px solid var(--border)}
+
   .sp-msg{margin-top:10px;padding:8px 12px;border-radius:8px;font-size:12.5px}
   .sp-msg.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#15803d;font-weight:600}
   .sp-msg.err{background:#fef2f2;border:1px solid #fecaca;color:#b91c1c}
@@ -458,7 +481,7 @@ function conflictRow(c, i) {
         <div class="sp-foot">
           <button class="sp-b nul" data-act="null" data-i="${i}">Anular</button>
           <span class="sp-fspace"></span>
-          <button class="sp-b pub" data-act="portal" data-i="${i}">Publicar ${ARR_R}</button>
+          <button class="sp-b pub" data-act="portal" data-i="${i}" title="No publica todav\u00eda: prepara el env\u00edo. Se publica desde la p\u00e1gina Publicar.">Enviar a Publicar ${ARR_R}</button>
           <button class="sp-b ado" data-act="sistema" data-i="${i}"${todoRoto ? ' disabled title="El sistema tiene estos datos mal escritos: no hay nada que adoptar"' : ''}>${ARR_L} Adoptar</button>
         </div>
         <div class="sp-msg" id="spMsg_${i}" hidden></div>
@@ -467,23 +490,36 @@ function conflictRow(c, i) {
 }
 
 /* ---------- RESOLVER ----------
-   El usuario eligio un lado.
+   El usuario eligio un lado. Las dos decisiones van a /api/sync-pending y
+   escriben EL VALOR QUE MUESTRA LA PANTALLA (leido de ax_diff_fields). No le
+   vuelven a preguntar al sistema: lo que ves es lo que se hace.
 
-   ADOPTAR (v5.47) va a /api/sync-pending y escribe EL VALOR QUE MUESTRA LA
-   PANTALLA, tomado de la base (ax_diff_fields). NO le pregunta al sistema.
-   Es instantaneo, y ademas es lo correcto: escribe lo que el usuario aprobo.
+   v5.49 — LAS DOS SACAN LA FICHA DE ESTA PANTALLA.
 
-   Antes llamaba a /api/ax-review action:adopt, que RE-DETECTABA contra el
-   sistema antes de escribir. Tardaba segundos — y podia escribir un valor que
-   el usuario nunca vio (si el dato cambiaba en el sistema entre la corrida y el
-   clic). En una cuenta bancaria eso es plata a una cuenta que nadie aprobo.
+   Antes, "Publicar" llamaba a /api/ax-review action:detect_commit, que crea el
+   change_set pero NO limpia ax_diff. La ficha quedaba en Diferencias Y en
+   Publicar al mismo tiempo, y volvia a pedir la misma decision para siempre
+   (Pablo: "nunca desaparece de las diferencias").
 
-   PUBLICAR sigue yendo a /api/ax-review (detect_commit): no escribe en el
-   sistema, arma el change_set que despues se envia desde la pagina Publicar.
-   Ese circuito ya existe y funciona; no hay razon para duplicarlo. */
+   Ahora la decision se toma UNA VEZ:
+     Adoptar           -> escribe en el portal + anula el envio pendiente
+     Enviar a Publicar -> crea el envio + limpia la diferencia
+
+   ⚠ EL AVISO. Adoptar el dato del sistema cuando la tienda ya habia editado el
+   suyo DESCARTA ese trabajo. Antes pasaba en silencio, y peor: el change_set
+   sobrevivia y despues alguien publicaba el valor recien descartado. Ahora se
+   avisa y se pide confirmacion. Estas pisando el trabajo de otro; que se vea. */
 async function resolve(i, lado) {
   const c = SP.conflicts[i];
   if (!c) return;
+
+  /* Adoptar con un cambio del portal esperando: hay que avisar ANTES. La ficha
+     trae `pending` del backend (hay un ax_change_set en estado pending). */
+  if (lado === 'sistema' && c.pending) {
+    const ok = await confirmarPisada(c);
+    if (!ok) return;
+  }
+
   const row = $('#spRow_' + i);
   const msg = $('#spMsg_' + i);
   if (!row || !msg) return;
@@ -494,17 +530,11 @@ async function resolve(i, lado) {
 
   let r;
   if (lado === 'sistema') {
-    // ADOPTAR: directo contra la base. Sin vueltas.
     msg.textContent = 'Adoptando\u2026';
     r = await api({ action: 'adopt', id_number: c.id_number });
   } else {
-    // PUBLICAR: arma el envio (aparece en la pagina Publicar).
     msg.textContent = 'Preparando el env\u00edo\u2026';
-    r = await axReview({
-      action: 'detect_commit',
-      id_numbers: [c.id_number],
-      company_codes: [c.company_code],
-    });
+    r = await api({ action: 'publish_prep', id_number: c.id_number });
   }
 
   if (!r || !r.ok) {
@@ -514,28 +544,98 @@ async function resolve(i, lado) {
     return;
   }
 
-  if (lado === 'sistema') {
-    if (r.already) {
-      msg.className = 'sp-msg ok';
-      msg.textContent = '\u2713 Ya estaba resuelto.';
-      return;
-    }
+  if (r.already) {
     msg.className = 'sp-msg ok';
-    msg.textContent = '\u2713 Listo. El portal tom\u00f3 el dato del sistema.'
-      + (r.skipped_broken ? ` (${r.skipped_broken} campo${r.skipped_broken === 1 ? '' : 's'} mal escrito${r.skipped_broken === 1 ? '' : 's'} qued\u00f3 sin tocar)` : '');
+    msg.textContent = '\u2713 Ya estaba resuelto.';
     marcarResuelta(row);
     return;
   }
 
-  const n = (r.count != null) ? r.count : ((r.marked || []).length);
-  if (!n) {
-    msg.className = 'sp-msg ok';
-    msg.textContent = '\u2713 Ya estaba resuelto. La marca se limpia en la pr\u00f3xima sincronizaci\u00f3n.';
-    return;
-  }
   msg.className = 'sp-msg ok';
-  msg.textContent = '\u2713 Listo. El dato del portal qued\u00f3 para enviar: lo vas a ver en Publicar.';
+
+  if (lado === 'sistema') {
+    let t = '\u2713 Listo. El portal tom\u00f3 el dato del sistema.';
+    if (r.skipped_broken) {
+      t += ` (${r.skipped_broken} campo${r.skipped_broken === 1 ? '' : 's'} mal escrito${r.skipped_broken === 1 ? '' : 's'} qued\u00f3 sin tocar)`;
+    }
+    // Que se sepa que se descarto algo, aunque ya se haya confirmado.
+    if (r.discarded) {
+      const q = r.discarded.by ? r.discarded.by : 'el portal';
+      t += ` Se descart\u00f3 la edici\u00f3n que hab\u00eda hecho ${q}.`;
+    }
+    msg.textContent = t;
+  } else {
+    let t = '\u2713 Listo. El dato del portal qued\u00f3 para enviar: lo vas a ver en Publicar.';
+    if (r.bank_blocked) {
+      t += ' La cuenta bancaria no se incluy\u00f3: no ten\u00e9s permiso para enviarla.';
+    }
+    msg.textContent = t;
+  }
+
   marcarResuelta(row);
+}
+
+/* ---------- EL AVISO: "esto descarta el trabajo de otro" ----------
+   Modal del portal (nada de confirm() nativo: se cierra solo con sus botones).
+
+   Por que existe: adoptar el dato del sistema cuando la tienda ya edito el suyo
+   DESCARTA esa edicion. No es un detalle — es el trabajo de alguien, y en una
+   cuenta bancaria es una decision sobre a donde va la plata.
+
+   Devuelve una promesa: true = adelante, false = me arrepenti. */
+function confirmarPisada(c) {
+  return new Promise((resolver) => {
+    // Que campos se van a descartar, con el nombre que ve el usuario.
+    const campos = (c.fields || [])
+      .filter(f => f.portal_by || f.portal_at)
+      .map(f => CAMPO_LBL[f.campo] || f.campo);
+    const lista = campos.length ? campos.join(', ') : 'el dato del portal';
+
+    // Quien lo edito. Sale del primer campo que tenga atribucion.
+    const conAutor = (c.fields || []).find(f => f.portal_by);
+    const quien = conAutor && conAutor.portal_by ? conAutor.portal_by : null;
+    const cuando = conAutor && conAutor.portal_at ? fmtDT(conAutor.portal_at) : null;
+
+    const ov = document.createElement('div');
+    ov.className = 'sp-ovl';
+    ov.innerHTML = `
+      <div class="sp-modal" role="dialog" aria-modal="true" aria-labelledby="spCfT">
+        <div class="sp-mhead">
+          <div class="sp-mico">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/></svg>
+          </div>
+          <div>
+            <div class="sp-mt" id="spCfT">Esto descarta una edici\u00f3n del portal</div>
+            <div class="sp-msub">${esc(c.full_name)}</div>
+          </div>
+        </div>
+        <div class="sp-mbody">
+          <p>Esta ficha tiene un cambio <b>esperando enviarse al sistema</b>.
+             Si adopt\u00e1s el dato del sistema, ese cambio <b>se descarta</b> y no se env\u00eda.</p>
+          <div class="sp-mbox">
+            <div class="sp-mbk">Se va a descartar</div>
+            <div class="sp-mbv">${esc(lista)}</div>
+            ${quien || cuando ? `<div class="sp-mbw">Lo edit\u00f3 ${quien ? `<b>${esc(quien)}</b>` : 'el portal'}${cuando ? ` el ${esc(cuando)}` : ''}</div>` : ''}
+          </div>
+          <p class="sp-mnote">El dato del sistema pasa a ser el bueno. La ficha sale de esta pantalla
+             y tambi\u00e9n de Publicar.</p>
+        </div>
+        <div class="sp-mfoot">
+          <button class="sp-b" id="spCfNo">Mejor no</button>
+          <span class="sp-fspace"></span>
+          <button class="sp-b ado" id="spCfSi">S\u00ed, adoptar el del sistema</button>
+        </div>
+      </div>`;
+
+    const cerrar = (v) => { ov.remove(); resolver(v); };
+    ov.querySelector('#spCfNo').addEventListener('click', () => cerrar(false));
+    ov.querySelector('#spCfSi').addEventListener('click', () => cerrar(true));
+
+    /* Solo los botones cierran. Ni el fondo, ni Escape: es una decision, no un
+       aviso que se despacha sin leer. */
+    document.body.appendChild(ov);
+    setTimeout(() => { const b = ov.querySelector('#spCfNo'); if (b) b.focus(); }, 0);
+  });
 }
 
 /* La ficha resuelta se apaga en el lugar (no se saca de la lista de golpe: si
