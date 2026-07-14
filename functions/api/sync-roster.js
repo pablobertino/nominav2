@@ -977,6 +977,55 @@ export async function onRequestPost({ request, env, ctx }) {
     catch (_) { /* el log nunca tumba la corrida */ }
   }
 
+  /* ===== v5.68 — LA CORRIDA LIMPIA TAMBIEN DEJA REGISTRO =====
+
+     El bug (Pablo, 14/07): la corrida automatica de las 10:00 reviso las 132
+     tiendas, termino OK... y NO APARECIO en el Registro. Porque no encontro
+     movimiento, y el log solo guardaba tiendas CON movimiento.
+
+     El problema de fondo: una corrida limpia y una corrida que NUNCA PASO se
+     veian exactamente igual. Si el cron se rompe (y ya se rompio: 42 fallas
+     seguidas entre el 13 y el 14/07), nadie se entera hasta que alguien nota
+     que faltan ingresos. El silencio no puede ser la senal de que todo anda.
+
+     Ahora cada corrida deja UNA fila de cierre:
+       - `company_code = null`  -> no es una tienda, es la corrida entera
+       - `stores_total`         -> cuantas tiendas reviso
+       - `duration_ms`          -> cuanto tardo DE VERDAD (de punta a punta)
+
+     ⚠️ UNA fila por corrida, no 132. Si cada tienda limpia dejara la suya,
+     serian ~132 filas por dia de ruido y el Registro quedaria inservible.
+
+     ⚠️ Solo al terminar (done). Las tandas intermedias no cierran nada.
+
+     La duracion NO es Date.now() - t0: eso mide LA TANDA (~850 ms), no la
+     corrida. La corrida del cron son ~27 tandas a lo largo de ~27 minutos. El
+     unico que sabe cuando arranco es `cur_started_at`, que guarda la config. */
+  if (done) {
+    let realMs = Date.now() - t0;   // fallback: el manual encadena en una sola sesion
+    if (persistProgress) {
+      try {
+        const cfgRow = await sb(env, 'roster_sync_config?id=eq.1&select=cur_started_at');
+        const startedAt = cfgRow && cfgRow[0] && cfgRow[0].cur_started_at;
+        if (startedAt) realMs = Date.now() - new Date(startedAt).getTime();
+      } catch (_) { /* si falla, queda el de la tanda: mejor algo que nada */ }
+    }
+    try {
+      await sb(env, 'roster_sync_log', {
+        method: 'POST', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify([{
+          run_id: runId, source, company_code: null,
+          added: totAdded, removed: totRemoved, filled: totFilled,
+          diff_review: totDiffs, diff_broken: 0, skipped: false,
+          alert: null, detail: null,
+          rej_detail: (totDetail && totDetail.length) ? totDetail : null,
+          duration_ms: realMs,
+          stores_total: codes.length,
+        }]),
+      });
+    } catch (_) { /* el log nunca tumba la corrida */ }
+  }
+
   /* v5.14: el resumen ACUMULA entre tandas. La corrida son N invocaciones; si
      cada una pisara el resumen con lo suyo, la config terminaria mostrando lo
      de la ULTIMA tanda ("2 ingresos") en vez del total de la corrida. Los

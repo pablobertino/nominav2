@@ -137,7 +137,7 @@ export async function onRequestPost({ request, env }) {
        o sea, como si no hubiera hecho nada. */
     const logs = await sb(env,
       `roster_sync_log?select=run_id,run_at,source,company_code,added,removed,skipped,alert,detail,`
-      + `filled,diff_review,diff_broken,diff_detail,fill_detail,rej_detail`
+      + `filled,diff_review,diff_broken,diff_detail,fill_detail,rej_detail,duration_ms,stores_total`
       + (parts.length ? '&' + parts.join('&') : '')
       + `&order=run_at.desc&limit=3000`) || [];
     const byRun = new Map();
@@ -150,8 +150,26 @@ export async function onRequestPost({ request, env }) {
         stores: [],
         // El detalle fino, juntado de todas las tiendas de la corrida.
         diffs: [], fills: [], rejects: [],
+        // v5.68: los trae la fila de cierre (la que tiene company_code null).
+        duration_ms: null, stores_total: null, cerrada: false,
       });
       const g = byRun.get(k);
+
+      /* ===== v5.68: LA FILA DE CIERRE =====
+         `company_code = null` no es una tienda: es el cierre de la corrida.
+         Trae la duracion REAL (de punta a punta) y cuantas tiendas se revisaron.
+         Existe para que una corrida LIMPIA tambien deje registro: antes, una
+         corrida sin movimiento y una corrida que nunca paso se veian igual.
+         Sus contadores ya vienen sumados, asi que NO se acumulan (seria doble). */
+      if (r.company_code == null) {
+        g.duration_ms  = r.duration_ms;
+        g.stores_total = r.stores_total;
+        g.cerrada      = true;
+        // El cierre se escribe al final: es el run_at mas fiel de la corrida.
+        if (r.rej_detail && Array.isArray(r.rej_detail)) g.rejects.push(...r.rej_detail);
+        continue;
+      }
+
       g.added   += r.added   || 0;
       g.removed += r.removed || 0;
       g.filled  += r.filled  || 0;
@@ -173,11 +191,21 @@ export async function onRequestPost({ request, env }) {
       if (g.diff_review) bits.push(`${g.diff_review} por revisar`);
       if (g.diff_broken) bits.push(`${g.diff_broken} a corregir en el sistema`);
       if (g.alerts)      bits.push(`${g.alerts} alerta(s)`);
+
+      /* v5.68: la corrida que no encontro NADA tambien tiene algo que decir.
+         "0 ingreso(s) · 0 egreso(s)" no comunica: parece que fallo. Lo que
+         importa es que REVISO las 132 tiendas y no habia novedades. */
+      const sinMovimiento = !g.added && !g.removed && !g.filled
+                            && !g.diff_review && !g.diff_broken && !g.alerts;
+      const summary = sinMovimiento && g.stores_total
+        ? `${g.stores_total} tienda(s) revisada(s) \u00b7 sin novedades`
+        : bits.join(' \u00b7 ');
+
       return {
         run_at: g.run_at, source: g.source,
         status: g.alerts ? 'alerta' : 'ok',
-        duration_ms: null,
-        summary: bits.join(' \u00b7 '),
+        duration_ms: g.duration_ms,
+        summary,
         error: null,
         detail: g.stores,
         // Las pestanas del detalle (Completadas / Diferencias / Alertas).
@@ -187,6 +215,7 @@ export async function onRequestPost({ request, env }) {
         diffs: g.diffs,
         fills: g.fills,
         rejects: g.rejects,
+        stores_total: g.stores_total,
       };
     });
     if (status === 'error') groups = groups.filter(g => g.status === 'alerta');
@@ -225,7 +254,7 @@ export async function onRequestPost({ request, env }) {
 
     return json({
       ok: true, process, rows, total, page, page_size: size,
-      note: 'Solo corridas con movimiento o alerta (las limpias no dejan registro por diseno).',
+      note: 'Historial completo: tambien las corridas que no encontraron novedades.',
     });
   } catch (e) {
     return json({ ok: false, error: String(e && e.message || e) }, 500);
