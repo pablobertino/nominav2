@@ -1229,14 +1229,20 @@ function slPaint() {
          inline, que es una linea y no da para pagina. */
       const esRoster = SL.process === 'roster';
       const hasDet = !!(r.detail || r.error);
-      /* v5.62: Personal de tiendas abre PAGINA ("Ver detalle →"). Empresas y Pago
-         ya no despliegan nada: su detalle se pinta en la fila (detailLine) y en
-         la columna solo queda el icono de copiar, que entrega el detalle tecnico
-         completo (JSON) al portapapeles. */
+      /* v5.63: Empresas tambien abre PAGINA, pero SOLO si esa corrida cambio algo.
+         Una corrida "Sin cambios" no tiene nada que mostrar: se queda con su linea
+         de conteos y su icono de copiar. */
+      const esCompanies = SL.process === 'companies';
+      const hasChanges = esCompanies && (r.changes_count || 0) > 0;
+      const icoBtn = hasDet
+        ? `<button class="sl-btn sl-ico" data-copy="${i}" title="Copiar detalle" aria-label="Copiar detalle">${IC_COPY}</button>`
+          + `<span id="slCopied_${i}" class="sl-okcopy" hidden>\u2713</span>`
+        : '';
       const verBtn = esRoster
         ? (hasDet ? `<button class="sl-btn sl-verdet" data-open="${i}">Ver detalle →</button>` : '')
-        : (hasDet ? `<button class="sl-btn sl-ico" data-copy="${i}" title="Copiar detalle" aria-label="Copiar detalle">${IC_COPY}</button>`
-            + `<span id="slCopied_${i}" class="sl-okcopy" hidden>\u2713</span>` : '');
+        : hasChanges
+          ? `<button class="sl-btn sl-verdet" data-openc="${i}">Ver detalle →</button>` + icoBtn
+          : icoBtn;
       /* El error, si lo hubo, sigue viendose: es lo unico que no puede quedar
          escondido detras de un icono. */
       const errLine = (!esRoster && r.error)
@@ -1258,6 +1264,15 @@ function slPaint() {
         SL_OPEN = SL.rows[+b.dataset.open] || null;
         if (!SL_OPEN) return;
         renderSyncRun(USER);
+      }));
+
+    /* v5.63: Empresas -> pagina de cambios. Mismo mecanismo (SL_OPEN + navegar),
+       pero la pinta renderCompanyRun. */
+    body.querySelectorAll('[data-openc]').forEach(b =>
+      b.addEventListener('click', () => {
+        SL_OPEN = SL.rows[+b.dataset.openc] || null;
+        if (!SL_OPEN) return;
+        renderCompanyRun(USER);
       }));
 
     body.querySelectorAll('[data-det]').forEach(b =>
@@ -1387,4 +1402,95 @@ export async function renderSyncLog(user, presetProcess, backView) {
   await slLoad();
   // v4.66: chip "hace X min" + boton Recargar, como en Historial.
   attachRefresh('#slRefresh', () => slLoad(), 'synclog');
+}
+
+/* ===================================================================
+   v5.63 · renderCompanyRun — QUE EMPRESAS CAMBIARON EN ESTA CORRIDA
+
+   El Registro dice "3 cambio(s)" y ahi se acababa la historia. Esta pagina
+   contesta la pregunta que sigue: CUALES.
+
+   El dato ya existia: el motor (sync-companies.js) viene llenando la tabla
+   `company_change` desde junio — una fila por empresa, con el estatus viejo y
+   el nuevo. Nadie lo estaba mostrando.
+
+   Dos tipos de cambio, y se separan porque NO son lo mismo:
+     • nuevas  : empresas que el sistema no conocia (change_type 'new')
+     • estatus : empresas que ya estaban y cambiaron de estado ('status')
+
+   ⚠️ Solo empresas. Zonas, subzonas y conceptos NO registran cambios: el motor
+   las upsertea sin comparar contra el estado previo. Cuando eso se arregle,
+   esta pagina es donde van.
+   =================================================================== */
+export async function renderCompanyRun(user) {
+  USER = user;
+  const r = SL_OPEN;
+  const root = document.getElementById('view');
+  if (!root) return;
+  if (!r) { renderSyncLog(user); return; }
+
+  const changes = Array.isArray(r.changes) ? r.changes : [];
+  const nuevas  = changes.filter(c => c.change_type === 'new');
+  const estatus = changes.filter(c => c.change_type === 'status');
+  const conteo  = r.changes_count || 0;
+
+  /* Corridas viejas: el conteo dice que hubo cambios pero no hay filas. Se
+     avisa en vez de mostrar una pagina vacia que parece un bug. */
+  const sinDetalle = conteo > 0 && !changes.length;
+
+  const fila = (c) => `<tr>
+    <td><b>${esc(c.company_code)}</b></td>
+    <td>${esc(c.business_name || '\u2014')}</td>
+    <td>${c.old_value ? `<span class="cr-old">${esc(c.old_value)}</span> <span class="cr-arr">\u2192</span> ` : ''}<span class="cr-new">${esc(c.new_value || '\u2014')}</span></td>
+  </tr>`;
+
+  const tabla = (titulo, ayuda, filas) => !filas.length ? '' : `
+    <div class="cr-card">
+      <div class="cr-chd">
+        <h3>${titulo} <span class="cr-n">${filas.length}</span></h3>
+        <p>${ayuda}</p>
+      </div>
+      <div class="sl-tblwrap"><table class="sl-tbl">
+        <thead><tr><th style="width:90px">C\u00f3digo</th><th>Empresa</th><th style="width:40%">Estatus</th></tr></thead>
+        <tbody>${filas.map(fila).join('')}</tbody>
+      </table></div>
+    </div>`;
+
+  root.innerHTML = `<style>
+    .cr-card{background:#fff;border:1px solid var(--line,#e2e8f0);border-radius:12px;margin-bottom:16px;overflow:hidden}
+    .cr-chd{padding:14px 16px 10px}
+    .cr-chd h3{margin:0;font-size:15px;display:flex;align-items:center;gap:8px}
+    .cr-chd p{margin:3px 0 0;font-size:12.5px;color:var(--muted)}
+    .cr-n{font-size:12px;font-weight:700;background:var(--bg-soft,#f1f5f9);color:var(--ink-soft,#475569);
+          border-radius:999px;padding:1px 9px}
+    .cr-old{color:var(--muted);text-decoration:line-through}
+    .cr-arr{color:var(--muted)}
+    .cr-new{font-weight:600}
+    .cr-none{background:#fff;border:1px solid var(--line,#e2e8f0);border-radius:12px;
+             padding:34px 16px;text-align:center;color:var(--muted)}
+  </style>
+
+  <button class="sl-btn" id="crBack">\u2190 Volver a las sincronizaciones</button>
+
+  <h2 class="sl-h2">Qu\u00e9 cambi\u00f3 en el cat\u00e1logo</h2>
+  <p class="sl-sub">Las empresas que la sincronizaci\u00f3n dio de alta o les cambi\u00f3 el estatus.</p>
+
+  <div class="sl-ficha">
+    <p class="sl-fh">La sincronizaci\u00f3n corri\u00f3 el <b>${fmtDT(r.run_at)}</b> y encontr\u00f3
+       <b>${conteo}</b> cambio(s).</p>
+    <p class="sl-fs">${r.source === 'cron' ? 'Autom\u00e1tica' : 'Manual'} \u00b7 termin\u00f3 ${r.status === 'ok' ? 'OK' : esc(r.status || '')}</p>
+  </div>
+
+  ${sinDetalle ? `<div class="cr-none">
+      Esta corrida es anterior a que el sistema empezara a guardar el detalle.<br>
+      Sabemos que hubo <b>${conteo}</b> cambio(s), pero no cu\u00e1les.
+    </div>` : ''}
+
+  ${tabla('Empresas nuevas', 'No exist\u00edan en el portal: la sincronizaci\u00f3n las trajo por primera vez.', nuevas)}
+  ${tabla('Cambiaron de estatus', 'Ya estaban en el portal y el sistema las movi\u00f3 de estado.', estatus)}
+
+  ${(!sinDetalle && !changes.length) ? '<div class="cr-none">Esta corrida no cambi\u00f3 nada.</div>' : ''}`;
+
+  const bk = document.getElementById('crBack');
+  if (bk) bk.addEventListener('click', () => { SL_OPEN = null; renderSyncLog(USER); });
 }

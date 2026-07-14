@@ -79,6 +79,30 @@ export async function onRequestPost({ request, env }) {
       const res = await sbRaw(env, path, { Prefer: 'count=exact' });
       const total = parseInt((res.headers.get('content-range') || '').split('/')[1], 10) || 0;
       const runs = await res.json() || [];
+
+      /* ===== v5.63: QUE EMPRESAS CAMBIARON, NO SOLO CUANTAS =====
+         `sync_runs` solo guarda el CONTEO (changes_count). El detalle vive en
+         `company_change`, que el motor (sync-companies.js) ya viene llenando
+         desde junio: una fila por empresa, con change_type ('new' | 'status'),
+         old_value y new_value.
+
+         Se traen los cambios de las corridas de ESTA pagina en UNA sola
+         consulta (no una por corrida). Sin cambios, ni se pregunta. */
+      let changesByRun = new Map();
+      if (process === 'companies') {
+        const runIds = runs.filter(r => (r.changes_count || 0) > 0).map(r => r.id);
+        if (runIds.length) {
+          const chg = await sb(env,
+            `company_change?run_id=in.(${runIds.join(',')})`
+            + `&select=run_id,company_code,business_name,change_type,old_value,new_value`
+            + `&order=change_type.asc,company_code.asc`) || [];
+          for (const c of chg) {
+            if (!changesByRun.has(c.run_id)) changesByRun.set(c.run_id, []);
+            changesByRun.get(c.run_id).push(c);
+          }
+        }
+      }
+
       const rows = runs.map(r => {
         let summary;
         if (process === 'companies') {
@@ -87,11 +111,17 @@ export async function onRequestPost({ request, env }) {
           const n = r.result && (r.result.updated ?? r.result.rows ?? r.result.count);
           summary = [r.mode || null, n != null ? `${n} registro(s)` : null].filter(Boolean).join(' \u00b7 ') || 'OK';
         }
+        const changes = changesByRun.get(r.id) || [];
         return {
           run_at: r.started_at, source: r.source, status: r.status,
           duration_ms: r.duration_ms, summary,
           error: r.error || null,
           detail: r.result || null,
+          /* Solo companies: el detalle fino de la corrida. `changes_count` puede
+             ser > 0 con `changes` vacio en corridas viejas anteriores a que el
+             motor empezara a registrar el detalle: la pagina lo dice, no finge. */
+          changes_count: process === 'companies' ? (r.changes_count || 0) : undefined,
+          changes: process === 'companies' ? changes : undefined,
         };
       });
       return json({ ok: true, process, rows, total, page, page_size: size });
