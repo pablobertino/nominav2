@@ -37,8 +37,14 @@ const COL_ORDER = [
   'idCargo', 'idPosicion', 'departamento',
   'inicioContrato', 'finContrato',
   'alias', 'dataArea', 'empresaNombre', 'empresaTipo', 'todoTicket',
+  // v5.71 — No reempleables: el motivo va junto al nombre, que es lo que se lee.
+  'motivoNombre', 'motivoValor', 'observaciones',
+  // v5.71 — Departamentos.
+  'numeroUnidad', 'nombre',
 ];
-const MONO_COLS = new Set(['ficha', 'cuentaBancaria', 'telefono', 'alias', 'dataArea', 'idCargo', 'idPosicion']);
+const MONO_COLS = new Set(['ficha', 'cuentaBancaria', 'telefono', 'alias', 'dataArea', 'idCargo', 'idPosicion',
+  // v5.71: codigos, no texto.
+  'numeroUnidad', 'motivoValor']);
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
