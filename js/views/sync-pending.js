@@ -57,6 +57,11 @@
 
 import { $ } from '../core/dom.js';
 import { attachRefresh } from '../core/refresh.js';
+import { renderWorkerPhotos, openWorkerLightbox } from './worker-photos.js';
+
+/* Tipos de empresa que NO son tienda: definen el modo de la vista Personal al
+   saltar a la ficha (mismo criterio que Buscar y Publicar). */
+const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en l\u00ednea']);
 
 let USER = null;
 let SP = { conflicts: [], rejected: [], skipped: [], last_run: null, counts: null };
@@ -160,10 +165,14 @@ function ensureStyles() {
   /* ---- LA FILA (clon de axr-row) ---- */
   .sp-row{border:1px solid var(--border);border-radius:12px;background:var(--card,#fff);
           margin-bottom:8px;overflow:hidden}
-  .sp-rowhead{display:flex;align-items:center;gap:11px;padding:11px 14px}
-  .sp-ava{width:38px;height:38px;border-radius:50%;flex:none;display:flex;align-items:center;
-          justify-content:center;font-size:13px;font-weight:700;overflow:hidden}
-  .sp-ava img{width:100%;height:100%;object-fit:cover}
+  .sp-rowhead{display:flex;align-items:center;gap:13px;padding:12px 14px}
+  /* v5.45: MISMO avatar que Publicar. Estaba redondo (border-radius:50%) y en el
+     resto del portal es un cuadrado con esquinas redondeadas. Un circulo en una
+     sola pantalla no es una decision de diseno: es un descuido. */
+  .sp-ava{width:40px;height:40px;border-radius:10px;flex:none;display:flex;align-items:center;
+          justify-content:center;font-weight:700;font-size:14px;overflow:hidden}
+  .sp-ava.haspic{cursor:zoom-in;background:#eef2f7}
+  .sp-ava img{width:100%;height:100%;object-fit:cover;display:block}
   .sp-who{flex:1;min-width:0}
   .sp-nm{font-size:14px;font-weight:700;color:var(--ink);line-height:1.3}
   .sp-sub{font-size:12px;color:var(--muted);margin-top:1px}
@@ -173,6 +182,14 @@ function ensureStyles() {
   .sp-emeta{color:var(--faint,#94a3b8)}
   .sp-chip{display:inline-block;margin-top:3px;padding:1px 7px;border-radius:20px;font-size:10.5px;
            font-weight:700;background:#fef3c7;color:#92400e}
+
+  /* Botones de icono (Ver ficha / Copiar), identicos a los de Publicar. */
+  .sp-rowacts{display:flex;gap:6px;flex:none;align-items:center}
+  .sp-iconbtn{display:inline-flex;align-items:center;justify-content:center;width:30px;height:30px;
+              border:1px solid var(--border);border-radius:8px;background:var(--surface,#fff);
+              color:var(--ink-soft,#475569);cursor:pointer;padding:0}
+  .sp-iconbtn:hover{background:var(--bg-soft,#f1f5f9);color:var(--ink)}
+  .sp-iconbtn svg{width:15px;height:15px}
 
   /* ---- LA TABLA DE CAMPOS (clon de axr-tbl) ----
      El color va en el TEXTO, no en un fondo. Verde = portal, naranja = sistema:
@@ -191,20 +208,37 @@ function ensureStyles() {
   .sp-na{color:var(--faint,#94a3b8);font-style:italic;font-family:inherit;font-weight:400}
   .sp-warn{font-size:11px;color:#b45309;font-weight:600;white-space:nowrap}
 
+  /* v5.45: QUIEN toco el dato y CUANDO, debajo del valor.
+     Es lo que decide: "la cuenta la cambio LUZ.GORD hace una semana" pesa mas
+     que "la cuenta la toco th08.pmv en 2021". Y con las dos fechas se ve de un
+     vistazo cual es el mas nuevo. */
+  .sp-by{font-size:10.5px;color:var(--faint,#94a3b8);margin-top:3px;line-height:1.4}
+  .sp-by b{font-weight:700;color:var(--muted)}
+  /* El lado mas RECIENTE se marca. No decide por vos, pero es el dato mas duro
+     que hay para elegir. */
+  .sp-by.new{color:#0f766e}
+  .sp-by.new b{color:#0f766e}
+  .sp-eco{font-size:10px;color:#92400e;background:#fef3c7;border-radius:4px;padding:0 4px;
+          display:inline-block;margin-top:2px;font-weight:600}
+
   /* ---- BOTONES (mismo tamaño y peso que los de Publicar) ---- */
   .sp-foot{display:flex;gap:8px;justify-content:flex-end;align-items:center;
            margin-top:11px;flex-wrap:wrap}
   .sp-b{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12.5px;font-weight:600;
         padding:7px 13px;border-radius:8px;cursor:pointer;border:1px solid var(--border);
         background:var(--surface,#fff);color:var(--ink);white-space:nowrap}
+  .sp-b svg{width:15px;height:15px;flex:none}
   .sp-b:hover:not(:disabled){background:var(--bg-soft,#f1f5f9)}
   .sp-b:disabled{opacity:.5;cursor:default}
-  /* Publicar: ambar, EL MISMO de la pagina Publicar (es la misma accion). */
+  /* Publicar: ambar y flecha a la DERECHA (el dato sale del portal). El mismo
+     boton, el mismo color y la misma flecha que en la pagina Publicar. */
   .sp-b.pub{background:#fffbeb;border-color:#fcd34d;color:#92400e}
   .sp-b.pub:hover:not(:disabled){background:#fef3c7;border-color:#d97706}
-  /* Adoptar: naranja, el color del sistema en todo el portal. */
-  .sp-b.ado{background:#fff7ed;border-color:#fdba74;color:#9a3412}
-  .sp-b.ado:hover:not(:disabled){background:#ffedd5;border-color:#ea580c}
+  /* Adoptar: azul y flecha a la IZQUIERDA (el dato viene del sistema). Color
+     distinto a proposito: es la direccion contraria, no una variante de lo
+     mismo. */
+  .sp-b.ado{background:#eff6ff;border-color:#93c5fd;color:#1e40af}
+  .sp-b.ado:hover:not(:disabled){background:#dbeafe;border-color:#2563eb}
   /* Anular: gris. Es la salida, no una opcion mas. */
   .sp-b.nul{color:var(--muted)}
   .sp-b.nul:hover:not(:disabled){color:#b91c1c;border-color:#fca5a5;background:#fef2f2}
@@ -252,18 +286,55 @@ function ensureStyles() {
      - zona · subzona · concepto  <- sin esto, "BG04" no dice de donde es
      - cuando se detecto la diferencia
      - si ademas hay un cambio del portal esperando publicarse */
+/* Flechas de direccion. Publicar SALE (derecha), Adoptar VIENE (izquierda).
+   Las mismas que en Publicar y Comparar: el mismo gesto, el mismo significado. */
+const ARR_R = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>';
+const ARR_L = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>';
+const IC_FICHA = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><circle cx="8" cy="10" r="2"/><path d="M14 9h4M14 13h4M5 16c.6-1.5 1.9-2 3-2s2.4.5 3 2"/></svg>';
+const IC_COPY = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>';
+
+/* Cuando el sistema dice que el ultimo en tocar un campo fue el portal (el eco
+   de una publicacion nuestra), eso NO es una novedad de un tercero. Estos son
+   los usuarios con los que el portal escribe en el sistema. */
+const ECO_USERS = new Set(['PABLO']);
+
+/* Linea "quien · cuando" debajo de un valor. mas=true lo marca como el mas
+   reciente de los dos lados. */
+function byLine(by, at, mas) {
+  if (!by && !at) return '';
+  const eco = by && ECO_USERS.has(String(by).toUpperCase());
+  const partes = [];
+  if (by) partes.push(`<b>${esc(by)}</b>`);
+  if (at) partes.push(esc(fmtDT(at)));
+  return `<div class="sp-by${mas ? ' new' : ''}">${partes.join(' \u00b7 ')}`
+    + (eco ? '<div class="sp-eco">lo escribi\u00f3 el portal</div>' : '')
+    + '</div>';
+}
+
 function conflictRow(c, i) {
   const ci = i % AVATAR_BG.length;
   const emeta = [c.zona, c.subzona, c.concepto].filter(Boolean).map(esc).join(' \u00b7 ');
   const ced = `${c.ced_kind ? esc(c.ced_kind) + '-' : ''}${esc(c.id_number)}`;
 
-  const filas = c.fields.map((f, j) => {
+  const filas = c.fields.map((f) => {
     const roto = f.estado === 'dato_roto';
+    /* Cual lado se toco mas recientemente. Si falta una de las dos fechas no se
+       marca ninguno: no se puede comparar contra nada. */
+    const tp = f.portal_at ? Date.parse(f.portal_at) : NaN;
+    const ts = f.sistema_at ? Date.parse(f.sistema_at) : NaN;
+    const pNuevo = !isNaN(tp) && !isNaN(ts) && tp > ts;
+    const sNuevo = !isNaN(tp) && !isNaN(ts) && ts > tp;
     return `<tr>
       <td class="fld">${esc(CAMPO_LBL[f.campo] || f.campo)}</td>
-      <td><span class="sp-pv ${f.portal ? '' : 'sp-na'}">${f.portal ? esc(fmtValor(f.campo, f.portal)) : 'sin dato'}</span></td>
-      <td><span class="sp-sv ${f.sistema ? '' : 'sp-na'}">${f.sistema ? esc(fmtValor(f.campo, f.sistema)) : 'sin dato'}</span>
-          ${roto ? '<div class="sp-warn">\u26a0 mal escrito</div>' : ''}</td>
+      <td>
+        <span class="sp-pv ${f.portal ? '' : 'sp-na'}">${f.portal ? esc(fmtValor(f.campo, f.portal)) : 'sin dato'}</span>
+        ${byLine(f.portal_by, f.portal_at, pNuevo)}
+      </td>
+      <td>
+        <span class="sp-sv ${f.sistema ? '' : 'sp-na'}">${f.sistema ? esc(fmtValor(f.campo, f.sistema)) : 'sin dato'}</span>
+        ${roto ? '<div class="sp-warn">\u26a0 mal escrito</div>' : ''}
+        ${byLine(f.sistema_by, f.sistema_at, sNuevo)}
+      </td>
     </tr>`;
   }).join('');
 
@@ -275,12 +346,16 @@ function conflictRow(c, i) {
     <div class="sp-row" id="spRow_${i}">
       <div class="sp-rowhead">
         ${c.thumb_url
-          ? `<div class="sp-ava"><img src="${esc(c.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`
+          ? `<div class="sp-ava haspic" data-pic="${i}" title="Ver foto"><img src="${esc(c.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`
           : `<div class="sp-ava" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(c.full_name))}</div>`}
         <div class="sp-who">
           <div class="sp-nm">${esc(c.full_name)}</div>
           <div class="sp-sub">${ced} \u00b7 ${esc(c.company_name || c.company_code)}</div>
           ${c.at ? `<div class="sp-edit">Diferencia detectada el ${esc(fmtDT(c.at))}</div>` : ''}
+        </div>
+        <div class="sp-rowacts">
+          <button class="sp-iconbtn" data-ficha="${i}" title="Ver ficha">${IC_FICHA}</button>
+          <button class="sp-iconbtn" data-copy="${i}" title="Copiar datos">${IC_COPY}</button>
         </div>
         <div class="sp-rmeta">
           <div class="sp-cc">${esc(c.company_code)}</div>
@@ -295,8 +370,8 @@ function conflictRow(c, i) {
         </table>
         <div class="sp-foot">
           <button class="sp-b nul" data-act="null" data-i="${i}">Anular</button>
-          <button class="sp-b ado" data-act="sistema" data-i="${i}"${todoRoto ? ' disabled title="El sistema tiene estos datos mal escritos: no hay nada que adoptar"' : ''}>Adoptar</button>
-          <button class="sp-b pub" data-act="portal" data-i="${i}">Publicar</button>
+          <button class="sp-b ado" data-act="sistema" data-i="${i}"${todoRoto ? ' disabled title="El sistema tiene estos datos mal escritos: no hay nada que adoptar"' : ''}>${ARR_L} Adoptar</button>
+          <button class="sp-b pub" data-act="portal" data-i="${i}">${ARR_R} Publicar</button>
         </div>
         <div class="sp-msg" id="spMsg_${i}" hidden></div>
       </div>
@@ -382,6 +457,88 @@ async function dismiss(i) {
   msg.textContent = '\u2713 Aviso anulado. No se cambi\u00f3 ning\u00fan dato.';
 }
 
+/* ---------- ACCIONES DE FILA: foto, ficha, copiar ----------
+   Las mismas tres que Publicar. Estaban solo alli y no habia razon: el que mira
+   un conflicto necesita ver la cara, abrir la ficha y copiar los datos tanto o
+   mas que el que publica. */
+
+/* Foto en grande. Mismo lightbox que Personal y Publicar (imagen + Descargar +
+   Escape + clic fuera). Firma: (src, pie, nombreDeArchivo). */
+function openPic(i) {
+  const c = SP.conflicts[i];
+  if (!c || !c.thumb_url) return;
+  const ced = `${c.ced_kind ? c.ced_kind + '-' : ''}${c.id_number}`;
+  openWorkerLightbox(
+    c.thumb_url,
+    `${c.full_name || ''} \u00b7 ${ced}`,
+    `${String(c.id_number).replace(/[^0-9]/g, '')}.jpg`,
+  );
+}
+
+/* Abre la ficha en Personal.
+
+   ⚠ EL DETALLE QUE IMPORTA: el callback de vuelta es renderSyncPending, NO
+   renderAxReview. Si se copiaba el de Publicar tal cual, salias desde
+   Pendientes, mirabas la ficha, apretabas Volver... y aparecias en Publicar.
+   Una pantalla que no es la que dejaste. */
+function gotoFicha(i) {
+  const c = SP.conflicts[i];
+  if (!c) return;
+  const mode = NON_STORE_TYPES.has(c.company_type) ? 'enterprise' : 'store';
+  renderWorkerPhotos(USER, c.company_code, () => renderSyncPending(USER),
+    { mode, openCed: c.id_number });
+}
+
+/* Texto del conflicto para el portapapeles: para pegarlo en un ticket, un
+   correo a la tienda, o un mensaje a quien haya que preguntarle. Lleva LOS DOS
+   valores y quien toco cada uno — sin eso, el que lo recibe no puede decidir. */
+function rowCopyText(c) {
+  const L = [];
+  L.push(c.full_name || '(sin nombre)');
+  L.push(`C.I.: ${(c.ced_kind || 'V')}-${c.id_number}`);
+  L.push(`Empresa: ${[c.company_code, c.company_name].filter(Boolean).join(' \u00b7 ')}`);
+  const ubi = [c.zona, c.subzona, c.concepto].filter(Boolean).join(' \u00b7 ');
+  if (ubi) L.push(ubi);
+  L.push('');
+  L.push(`Datos que no coinciden (${c.fields.length}):`);
+  c.fields.forEach(f => {
+    const lbl = CAMPO_LBL[f.campo] || f.campo;
+    L.push(`- ${lbl}`);
+    L.push(`    Portal:  ${f.portal ? fmtValor(f.campo, f.portal) : '(sin dato)'}`
+      + (f.portal_by || f.portal_at
+        ? `   [${[f.portal_by, f.portal_at ? fmtDT(f.portal_at) : null].filter(Boolean).join(' \u00b7 ')}]` : ''));
+    L.push(`    Sistema: ${f.sistema ? fmtValor(f.campo, f.sistema) : '(sin dato)'}`
+      + (f.estado === 'dato_roto' ? '   (mal escrito)' : '')
+      + (f.sistema_by || f.sistema_at
+        ? `   [${[f.sistema_by, f.sistema_at ? fmtDT(f.sistema_at) : null].filter(Boolean).join(' \u00b7 ')}]` : ''));
+  });
+  if (c.at) { L.push(''); L.push(`Diferencia detectada el ${fmtDT(c.at)}`); }
+  return L.join('\n');
+}
+
+async function copyRow(i, btn) {
+  const c = SP.conflicts[i];
+  if (!c) return;
+  const text = rowCopyText(c);
+  let ok = false;
+  try { await navigator.clipboard.writeText(text); ok = true; }
+  catch (_) {
+    // Sin permiso de portapapeles (http, navegador viejo): el truco del textarea.
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+      document.body.appendChild(ta); ta.select();
+      ok = document.execCommand('copy'); ta.remove();
+    } catch (__) { ok = false; }
+  }
+  if (btn && ok) {
+    const prev = btn.innerHTML;
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+    btn.style.color = '#16a34a';
+    setTimeout(() => { btn.innerHTML = prev; btn.style.color = ''; }, 1200);
+  }
+}
+
 function paint() {
   const host = $('#spBody');
   if (!host) return;
@@ -457,6 +614,21 @@ function paint() {
       if (b.dataset.act === 'null') dismiss(i);
       else resolve(i, b.dataset.act);
     }));
+
+  // Foto en grande (mismo lightbox simple que Publicar).
+  host.querySelectorAll('[data-pic]').forEach(b =>
+    b.addEventListener('click', () => openPic(+b.dataset.pic)));
+
+  /* Ver ficha. El backView es 'syncpend': al volver de la ficha, el portal
+     regresa a PENDIENTES, no a Publicar. Antes volvia a la vista de donde salio
+     el codigo original y era desorientador: te ibas desde una pantalla y
+     aparecias en otra. */
+  host.querySelectorAll('[data-ficha]').forEach(b =>
+    b.addEventListener('click', () => gotoFicha(+b.dataset.ficha)));
+
+  // Copiar los datos de la ficha (para pegarlos en un ticket o un correo).
+  host.querySelectorAll('[data-copy]').forEach(b =>
+    b.addEventListener('click', () => copyRow(+b.dataset.copy, b)));
 
   const exp = $('#spExp');
   if (exp) exp.addEventListener('click', () => openExportMenu(exp));

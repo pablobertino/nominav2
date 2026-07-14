@@ -190,12 +190,13 @@ function ensureStyles() {
   .axr-tbl th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:700;padding:6px 10px;border-bottom:1px solid var(--border)}
   .axr-tbl td{padding:8px 10px;border-bottom:1px solid var(--border-soft,#eef1f5);vertical-align:top}
   .axr-tbl .fld{font-weight:600;color:var(--ink);width:130px}
-  /* v5.42: el tachado con color de linea casi blanco (#cbd5e1) sobre texto gris
-     era ilegible. Ahora la linea toma el color del texto y el texto se aclara:
-     se lee QUE decia, y se entiende que ya no vale. */
-  .axr-old{color:#94a3b8;text-decoration:line-through;text-decoration-thickness:1px}
-  /* Valor que NO cambio (mismo dato, distinto formato de guardado). Ni tachado
-     ni verde: gris neutro. No paso nada aqui. */
+  /* v5.45: SIN TACHADO. El tachado decia "esto ya no vale", pero el valor previo
+     SI vale: es lo que el sistema tiene HOY, y lo que se va a pisar. Tacharlo lo
+     vuelve ilegible justo cuando hay que compararlo con el nuevo. Ahora es texto
+     gris normal: se lee, se compara, y la flecha + el verde dicen cual es cual. */
+  .axr-old{color:#94a3b8;font-variant-numeric:tabular-nums}
+  /* Valor que NO cambio (mismo dato, distinto formato de guardado). Gris neutro:
+     aqui no paso nada. */
   .axr-same{color:var(--muted);font-variant-numeric:tabular-nums}
   .axr-arr{color:var(--faint,#94a3b8);padding:0 8px}
   .axr-new{color:var(--success,#16a34a);font-weight:600}
@@ -433,7 +434,7 @@ export async function renderAxReview(user, fieldFilter) {
              con y sin la cuenta. La simetria es a proposito: si se puede
              publicar sin tocar la cuenta, tambien se tiene que poder anular sin
              tocarla (antes "Anular todo" se llevaba la cuenta puesta sin avisar). */
-          `${may('hcm.publish') ? `<button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>` : ''}
+          `${may('hcm.publish') ? `<button class="axr-btn axr-btn-pub" id="axrPubSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg> Publicar sin cuenta <span class="axr-count" id="axrPubSafeN">0</span></button>` : ''}
            ${may('hcm.publish.bank') ? `<button class="axr-btn axr-btn-bank" id="axrPubBank"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><path d="M2 10h20"/></svg> Publicar con cuenta <span class="axr-count bankn" id="axrPubBankN">0</span></button>` : ''}
            ${may('hcm.discard') ? `<button class="axr-btn axr-btn-dis" id="axrDisSafe"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular sin cuenta</button>` : ''}
            ${may('hcm.discard') ? `<button class="axr-btn axr-btn-dis" id="axrDisAll"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg> Anular todo</button>` : ''}`}
@@ -589,7 +590,7 @@ function paint() {
                  si no tiene la llave bancaria). */
               ? may('hcm.publish.bank')
               : may('hcm.publish'))
-            ? `<button class="axr-btn axr-btn-pub" data-publish="${r.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> ${FIELD_FILTER === 'account_number' ? 'Publicar la cuenta' : 'Publicar'}</button>`
+            ? `<button class="axr-btn axr-btn-pub" data-publish="${r.id}"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg> ${FIELD_FILTER === 'account_number' ? 'Publicar la cuenta' : 'Publicar'}</button>`
             : ''}
         </div>
       </div>
@@ -1244,9 +1245,16 @@ function paintCompare() {
       <td><span class="axr-vsys">${f.erp == null ? '(vacío)' : esc(f.erp)}</span></td>
       <td><span class="axr-vpor">${f.portal == null ? '(vacío)' : esc(f.portal)}</span></td>
     </tr>`).join('');
+    /* v5.45: FLECHAS QUE MUESTRAN LA DIRECCION.
+       Publicar mira a la derecha (el dato SALE del portal hacia el sistema).
+       Adoptar mira a la izquierda (el dato VIENE del sistema hacia el portal).
+       Son las mismas flechas y los mismos colores que en Publicar y Pendientes:
+       el mismo gesto significa lo mismo en todo el portal. */
+    const ARR_R = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12h14"/><path d="M12 5l7 7-7 7"/></svg>';
+    const ARR_L = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5"/><path d="M12 19l-7-7 7-7"/></svg>';
     const acts = r._done ? '' : `<div class="axr-dacts">
-        ${may('hcm.publish') ? `<button class="axr-btn axr-btn-adopt" data-adopt="${i}">Adoptar (sistema)</button>
-        <button class="axr-btn axr-btn-pub" data-pub="${i}">Publicar (portal)</button>` : `<button class="axr-btn axr-btn-adopt" data-adopt="${i}">Adoptar (sistema)</button>`}
+        ${may('hcm.publish') ? `<button class="axr-btn axr-btn-adopt" data-adopt="${i}">${ARR_L} Adoptar</button>
+        <button class="axr-btn axr-btn-pub" data-pub="${i}">${ARR_R} Publicar</button>` : `<button class="axr-btn axr-btn-adopt" data-adopt="${i}">${ARR_L} Adoptar</button>`}
       </div>`;
     return `<div class="axr-drow ${r._done ? 'done' : ''}">
       <div class="axr-dhead">
