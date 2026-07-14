@@ -1091,6 +1091,81 @@ export async function onRequestPost({ request, env, ctx }) {
      El Worker vuelve a ser lo que debe ser: procesa SU tanda y contesta. Quien
      encadena es quien llama (el tick, o el front). */
 
+  /* ===== v5.66 — LA CADENA LA HACE EL WORKER, OTRA VEZ. PERO CON TESTIGOS. =====
+
+     Historia: esto YA se intento (v5.38) y fallaba. Se cortaba en el primer
+     eslabon y el `.catch(() => {})` se tragaba el error, asi que nadie supo
+     nunca por que. Se movio el bucle a Postgres... donde murio por
+     statement_timeout (v5.64). Dos bugs distintos, mismo sintoma: no sincroniza.
+
+     Por que volver: el cron NO PUEDE encadenar. pg_cron se despierta cada N
+     minutos, asi que entre tanda y tanda hay 1-2 min de espera MUERTA. La
+     sincronizacion tarda 3 minutos; el cron la estiraba a 44. El unico que
+     puede encadenar sin esperar es el Worker, que es justo lo que hace el front
+     cuando le das "Ejecutar ahora" — y ahi funciona.
+
+     Que cambia respecto de v5.38:
+       1. El fetch se dispara ANTES del return, sin await. Si se hace despues,
+          Cloudflare puede cancelarlo cuando el handler retorna.
+       2. ctx.waitUntil() mantiene vivo el Worker hasta que el fetch salga.
+       3. NADA se traga en silencio: cada eslabon deja fila en roster_chain_log.
+          Si se corta, se ve donde y con que error.
+
+     Red de seguridad: aunque la cadena se rompa, `cur_offset` (v5.64) quedo
+     guardado. El tick del cron retoma en su proxima vuelta. Peor caso, vuelve
+     a ser lento; nunca se cuelga.
+
+     Solo encadena el CRON. El front tiene su propia cadena (con barra de
+     progreso) y no debe disparar una segunda en paralelo. */
+  if (persistProgress && !done && nextOffset < codes.length) {
+    const chain = async (event, detail) => {
+      try {
+        await sb(env, 'roster_chain_log', {
+          method: 'POST', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({
+            run_id: runId, offset_from: offset, offset_next: nextOffset,
+            event, detail: detail ? String(detail).slice(0, 500) : null,
+          }),
+        });
+      } catch (_) { /* la bitacora no puede romper la corrida */ }
+    };
+
+    const selfUrl = new URL(request.url).origin + '/api/sync-roster';
+    const nextBody = {
+      source: 'cron', adminId, offset: nextOffset, run_id: runId,
+      persist_progress: true,
+      acc_added: totAdded, acc_removed: totRemoved, acc_filled: totFilled,
+      acc_alerts: totAlerts, acc_stores: totStores,
+      acc_rej_account: totRej.account, acc_rej_phone: totRej.phone,
+      acc_rej_email: totRej.email, acc_rej_detail: totDetail,
+      acc_diffs: totDiffs, acc_diff_detail: totDiffDetail,
+    };
+
+    /* El fetch se CREA aca (no dentro del waitUntil) para que arranque ya. */
+    const p = chain('chain_start', `tienda ${offset} -> ${nextOffset} de ${codes.length}`)
+      .then(() => fetch(selfUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(nextBody),
+      }))
+      .then(res => chain(res.ok ? 'chain_ok' : 'chain_fail',
+        res.ok ? `HTTP ${res.status}` : `HTTP ${res.status} — la cadena se corta aca`))
+      /* ⚠️ ESTE catch NO esta vacio. Ese fue el bug de v5.38. */
+      .catch(err => chain('chain_fail', `fetch fallo: ${err && err.message || err}`));
+
+    if (ctx && typeof ctx.waitUntil === 'function') ctx.waitUntil(p);
+  } else if (persistProgress && done) {
+    try {
+      await sb(env, 'roster_chain_log', {
+        method: 'POST', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          run_id: runId, offset_from: offset, offset_next: null,
+          event: 'chain_done', detail: `${codes.length} tiendas, corrida completa`,
+        }),
+      });
+    } catch (_) { /* best-effort */ }
+  }
+
   return json({
     ok: true, ...summary,
     // v5.14: el llamador usa esto para seguir con la proxima tanda.
