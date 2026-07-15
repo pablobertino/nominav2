@@ -36,6 +36,11 @@ let SL_OPEN = null;
    habia que limpiar a mano antes de poder usarlo. */
 let SL_TAB = {};
 
+/* v5.81: nombres de quienes entraron/salieron. Mapa ced -> {full_name,
+   ced_kind} que manda /api/sync-log (resuelto contra el maestro) para la
+   pagina cargada. Lo usan la pestana Movimientos y su export. */
+let SL_PEOPLE = {};
+
 const PROC_LBL = {
   companies: 'Cat\u00e1logo de empresas',
   pay: 'Estado de pago',
@@ -118,6 +123,9 @@ function ensureStyles() {
   .sl-tbl th{background:var(--bg-soft,#f8fafc);text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);font-weight:700;padding:9px 12px;border-bottom:1px solid var(--border);white-space:nowrap}
   .sl-tbl td{padding:9px 12px;border-bottom:1px solid var(--border-soft,#eef1f5);vertical-align:top;color:var(--ink)}
   .sl-tbl tr:hover td{background:var(--bg-soft,#f8fafc)}
+  /* v5.81: personas en la pestana Movimientos */
+  .sl-person{white-space:nowrap;line-height:1.75}
+  .sl-pced{font-family:ui-monospace,Menlo,monospace;font-size:11.5px;color:var(--muted);margin-left:5px}
   .sl-st{font-size:11px;font-weight:700;padding:2px 9px;border-radius:999px;white-space:nowrap}
   .sl-st.ok{background:var(--success-bg,#f0fdf4);color:var(--success,#15803d);border:1px solid #bbf7d0}
   .sl-st.error{background:var(--danger-bg,#fef2f2);color:var(--danger,#b91c1c);border:1px solid #f3c2c2}
@@ -437,15 +445,44 @@ const TAB_LBL = {
   rej: 'mal_escritos', alr: 'alertas',
 };
 
+/* v5.81: QUIENES entraron/salieron, con nombre (pedido de Pablo: "se puede
+   detallar quien ingreso?"). Las cedulas viven en el detail de cada tienda
+   (detail.added / detail.removed); el nombre llega en SL_PEOPLE. Corridas
+   viejas que no guardaron cedulas caen al numero de siempre. Una cedula sin
+   ficha en el maestro se muestra igual, marcada. */
+function movPeople(s, kind) {
+  const n = kind === 'added' ? (s.added || 0) : (s.removed || 0);
+  const numHtml = kind === 'added'
+    ? `<b style="color:#15803d">+${n}</b>` : `<b style="color:#b91c1c">−${n}</b>`;
+  if (!n) return '<span style="color:#94a3b8">—</span>';
+  const ceds = (s.detail && Array.isArray(s.detail[kind])) ? s.detail[kind] : [];
+  if (!ceds.length) return numHtml;   // corrida vieja: solo el numero
+  const sign = kind === 'added'
+    ? '<b style="color:#15803d">+</b>' : '<b style="color:#b91c1c">−</b>';
+  return ceds.map(c => {
+    const p = SL_PEOPLE[String(c)] || null;
+    const ced = `${(p && p.ced_kind) || 'V'}-${c}`;
+    return `<div class="sl-person">${sign} ${p && p.full_name ? esc(p.full_name) : '<i>Sin ficha en el portal</i>'}<span class="sl-pced">${esc(ced)}</span></div>`;
+  }).join('');
+}
+
 /* Las filas de UNA pestaña de UNA corrida, ya con las columnas de esa pestaña
    (cada una tiene las suyas: no se fuerza un formato comun con huecos). */
 function tabRows(r, key) {
   const stores = Array.isArray(r.detail) ? r.detail : [];
   if (key === 'mov') {
+    // v5.81: el export tambien dice QUIENES, no solo cuantos.
+    const names = (s, kind) => ((s.detail && Array.isArray(s.detail[kind])) ? s.detail[kind] : [])
+      .map(c => {
+        const p = SL_PEOPLE[String(c)] || null;
+        return `${p && p.full_name ? p.full_name : 'Sin ficha'} (${(p && p.ced_kind) || 'V'}-${c})`;
+      }).join(' · ');
     return stores.filter(s => s.added || s.removed).map(s => ({
       'Empresa': s.company_code || '',
       'Ingresos': s.added || 0,
+      'Quiénes ingresaron': names(s, 'added'),
       'Egresos': s.removed || 0,
+      'Quiénes egresaron': names(s, 'removed'),
     }));
   }
   if (key === 'alr') {
@@ -558,6 +595,7 @@ async function slLoad() {
   }
   SL.total = r.total || 0;
   SL.rows = r.rows || [];
+  SL_PEOPLE = r.people || {};   // v5.81: nombres para la pestana Movimientos
   SL.note = r.note || '';
   // v5.56: los indices cambian con la pagina/filtros. Si no se limpia, SL_TAB[3]
   // seguiria apuntando a la pestaña de OTRA corrida.
@@ -642,11 +680,11 @@ function paneHtml(r, key) {
     return {
       nota: `Quién <b>entró</b> y quién <b>salió</b> del padrón, por empresa. `
         + `El egreso solo ocurre con <b>fin de contrato explícito</b>: nunca por ausencia en la respuesta.`,
-      thead: `<tr><th style="width:90px">Empresa</th><th style="width:110px">Ingresos</th><th>Egresos</th></tr>`,
+      thead: `<tr><th style="width:90px">Empresa</th><th>Ingresos</th><th>Egresos</th></tr>`,
       filas: movs.map(s => `<tr>`
         + `<td class="sl-cc">${esc(s.company_code)}</td>`
-        + `<td>${s.added ? `<b style="color:#15803d">+${s.added}</b>` : '<span style="color:#94a3b8">—</span>'}</td>`
-        + `<td>${s.removed ? `<b style="color:#b91c1c">−${s.removed}</b>` : '<span style="color:#94a3b8">—</span>'}</td>`
+        + `<td>${movPeople(s, 'added')}</td>`
+        + `<td>${movPeople(s, 'removed')}</td>`
         + `</tr>`).join(''),
       pie: `<b>${movs.length}</b> ${movs.length === 1 ? 'empresa' : 'empresas'} con movimiento`,
       n: movs.length,

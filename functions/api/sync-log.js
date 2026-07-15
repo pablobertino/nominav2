@@ -252,8 +252,30 @@ export async function onRequestPost({ request, env }) {
       g.diff_open = g.diffs.filter(d => d.vivo).length;
     }
 
+    /* ===== v5.81: QUIEN entro y quien salio, con nombre =====
+       El log guarda las CEDULAS (detail.added / detail.removed por tienda),
+       pero no los nombres. Se resuelven contra el maestro en UNA consulta
+       por pagina y viajan como mapa aparte (`people`), sin reescribir el log
+       ni engordar cada fila. El maestro nunca borra, asi que tambien
+       resuelve a los egresados. Corridas viejas sin cedulas en el detail
+       simplemente no aparecen en el mapa (el front cae al numero). */
+    const cedsMov = [...new Set(rows.flatMap(g => (g.detail || []).flatMap(s => {
+      const d = (s && s.detail) || {};
+      return [
+        ...(Array.isArray(d.added) ? d.added : []),
+        ...(Array.isArray(d.removed) ? d.removed : []),
+      ];
+    }).map(String).filter(Boolean)))];
+    const people = {};
+    if (cedsMov.length) {
+      const inList = cedsMov.map(c => `"${c}"`).join(',');
+      const wm = await sb(env,
+        `workers_master?id_number=in.(${inList})&select=id_number,full_name,ced_kind`) || [];
+      for (const w of wm) people[String(w.id_number)] = { full_name: w.full_name, ced_kind: w.ced_kind || 'V' };
+    }
+
     return json({
-      ok: true, process, rows, total, page, page_size: size,
+      ok: true, process, rows, total, page, page_size: size, people,
       note: 'Historial completo: tambien las corridas que no encontraron novedades.',
     });
   } catch (e) {
