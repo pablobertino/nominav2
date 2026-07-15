@@ -3,10 +3,11 @@
    Solo superadmin. Se abre desde los botones "Registro" de las tres
    tarjetas de Configurar (no tiene item de menu propio).
 
-   Un solo lugar para los TRES procesos programados (combo Proceso):
+   Un solo lugar para los CUATRO procesos programados (combo Proceso):
      - Catalogo de empresas   (sync_runs)
      - Estado de pago         (pay_sync_run)
      - Personal de tiendas    (roster_sync_log agrupado por corrida)
+     - No reempleables        (no_rehire_log agrupado por corrida, v5.83)
 
    Filtros: proceso, desde/hasta, estado. Paginado server-side. Detalle
    expandible por corrida (en Personal: fila por tienda con +/-/alerta).
@@ -41,10 +42,15 @@ let SL_TAB = {};
    pagina cargada. Lo usan la pestana Movimientos y su export. */
 let SL_PEOPLE = {};
 
+/* v5.83: motivos de no reempleables (valor -> etiqueta), del catalogo. Los
+   usan la pagina de detalle y el export del proceso No reempleables. */
+let SL_REASONS = {};
+
 const PROC_LBL = {
   companies: 'Cat\u00e1logo de empresas',
   pay: 'Estado de pago',
   roster: 'Personal de tiendas',
+  norehire: 'No reempleables',
 };
 
 function esc(s) {
@@ -81,6 +87,19 @@ function fmtVal(campo, v) {
     if (/^\d{11}$/.test(d)) return d.slice(0, 4) + ' ' + d.slice(4);
   }
   return s;
+}
+
+/* v5.83: motivos y cambios de No reempleables, legibles. */
+function nrMotivoLbl(v) {
+  if (v == null || v === '') return '';
+  return SL_REASONS[String(v)] || ('Motivo ' + v);
+}
+function nrCambioTexto(d) {
+  const partes = [];
+  if (d && d.motivo_valor) partes.push(`Motivo: ${nrMotivoLbl(d.motivo_valor.antes) || '—'} → ${nrMotivoLbl(d.motivo_valor.ahora) || '—'}`);
+  if (d && d.observaciones) partes.push(`Observaciones: ${d.observaciones.antes || '—'} → ${d.observaciones.ahora || '—'}`);
+  if (d && d.nombre) partes.push(`Nombre: ${d.nombre.antes || '—'} → ${d.nombre.ahora || '—'}`);
+  return partes.join(' · ');
 }
 
 async function api(payload) {
@@ -329,6 +348,32 @@ function slExportRows() {
       }));
     }
     return filas;
+  }
+
+  /* v5.83: No reempleables — una fila por evento (alta/baja/cambio), que es
+     lo que sirve para trabajar en Excel. Sin eventos, cae al resumen. */
+  if (SL.process === 'norehire') {
+    const filas = [];
+    for (const r of SL.rows) {
+      const base = { 'Fecha': fmtDT(r.run_at), 'Origen': r.source === 'cron' ? 'Automática' : 'Manual' };
+      for (const e of (r.eventos || [])) {
+        const d = e.detail || {};
+        filas.push({
+          ...base,
+          'Evento': e.event === 'alta' ? (d.reactivada ? 'Alta (reactivada)' : 'Alta') : (e.event === 'baja' ? 'Baja' : 'Cambio'),
+          'Cédula': e.ced || '', 'Nombre': e.nom || '',
+          'Motivo': e.event === 'cambio' ? '' : (d.motivo || nrMotivoLbl(d.motivo_valor)),
+          'Detalle': e.event === 'cambio' ? nrCambioTexto(d) : (d.observaciones || ''),
+        });
+      }
+    }
+    if (filas.length) return filas;
+    return SL.rows.map(r => ({
+      'Fecha': fmtDT(r.run_at),
+      'Origen': r.source === 'cron' ? 'Automática' : 'Manual',
+      'Evento': 'Resumen', 'Cédula': '', 'Nombre': '',
+      'Motivo': '', 'Detalle': r.summary || '',
+    }));
   }
 
   return SL.rows.map(r => ({
@@ -596,6 +641,7 @@ async function slLoad() {
   SL.total = r.total || 0;
   SL.rows = r.rows || [];
   SL_PEOPLE = r.people || {};   // v5.81: nombres para la pestana Movimientos
+  SL_REASONS = r.reasons || {}; // v5.83: motivos de no reempleables
   SL.note = r.note || '';
   // v5.56: los indices cambian con la pagina/filtros. Si no se limpia, SL_TAB[3]
   // seguiria apuntando a la pestaña de OTRA corrida.
@@ -1272,15 +1318,21 @@ function slPaint() {
          de conteos y su icono de copiar. */
       const esCompanies = SL.process === 'companies';
       const hasChanges = esCompanies && (r.changes_count || 0) > 0;
+      /* v5.83: No reempleables tambien abre pagina, si la corrida tuvo
+         eventos (altas/bajas/cambios). Sin eventos, solo el icono de copiar. */
+      const esNorehire = SL.process === 'norehire';
+      const hayEventos = esNorehire && Array.isArray(r.eventos) && r.eventos.length > 0;
       const icoBtn = hasDet
         ? `<button class="sl-btn sl-ico" data-copy="${i}" title="Copiar detalle" aria-label="Copiar detalle">${IC_COPY}</button>`
           + `<span id="slCopied_${i}" class="sl-okcopy" hidden>\u2713</span>`
         : '';
       const verBtn = esRoster
         ? (hasDet ? `<button class="sl-btn sl-verdet" data-open="${i}">Ver detalle →</button>` : '')
-        : hasChanges
-          ? `<button class="sl-btn sl-verdet" data-openc="${i}">Ver detalle →</button>` + icoBtn
-          : icoBtn;
+        : hayEventos
+          ? `<button class="sl-btn sl-verdet" data-openn="${i}">Ver detalle →</button>` + icoBtn
+          : hasChanges
+            ? `<button class="sl-btn sl-verdet" data-openc="${i}">Ver detalle →</button>` + icoBtn
+            : icoBtn;
       /* El error, si lo hubo, sigue viendose: es lo unico que no puede quedar
          escondido detras de un icono. */
       const errLine = (!esRoster && r.error)
@@ -1311,6 +1363,14 @@ function slPaint() {
         SL_OPEN = SL.rows[+b.dataset.openc] || null;
         if (!SL_OPEN) return;
         renderCompanyRun(USER);
+      }));
+
+    /* v5.83: No reempleables -> pagina de eventos de la corrida. */
+    body.querySelectorAll('[data-openn]').forEach(b =>
+      b.addEventListener('click', () => {
+        SL_OPEN = SL.rows[+b.dataset.openn] || null;
+        if (!SL_OPEN) return;
+        renderNoRehireRun(USER);
       }));
 
     body.querySelectorAll('[data-det]').forEach(b =>
@@ -1394,6 +1454,7 @@ export async function renderSyncLog(user, presetProcess, backView) {
         <option value="companies">Cat\u00e1logo de empresas</option>
         <option value="pay">Estado de pago</option>
         <option value="roster">Personal de tiendas</option>
+        <option value="norehire">No reempleables</option>
       </select></span>
       <span class="fg">Desde<input type="date" id="slFrom"></span>
       <span class="fg">Hasta<input type="date" id="slTo"></span>
@@ -1531,4 +1592,89 @@ export async function renderCompanyRun(user) {
 
   const bk = document.getElementById('crBack');
   if (bk) bk.addEventListener('click', () => { SL_OPEN = null; renderSyncLog(USER); });
+}
+
+/* ===================================================================
+   v5.83 · renderNoRehireRun — QUE PASO EN ESTA CORRIDA DE NO REEMPLEABLES
+
+   El Registro dice "2 alta(s) · 1 baja(s)"; esta pagina contesta QUIENES.
+   Tres tablas: Entraron a la lista (incluye reactivadas, con motivo y
+   observaciones), Salieron de la lista (baja historica, no se borran) y
+   Cambiaron (antes → ahora legible). Los motivos se traducen con el
+   catalogo (SL_REASONS, que manda /api/sync-log con cada pagina).
+
+   Esta pantalla vive detras de hcm.log (el gate del Registro): mostrar el
+   motivo aca es correcto — es la misma poblacion que ve la pantalla
+   No reempleables completa. La consulta SIN motivos para tiendas es otra
+   (Verificar candidato) y no pasa por aca.
+   =================================================================== */
+export async function renderNoRehireRun(user) {
+  USER = user;
+  ensureStyles();
+  const r = SL_OPEN;
+  if (!r) { renderSyncLog(user, 'norehire'); return; }
+
+  const evs = Array.isArray(r.eventos) ? r.eventos : [];
+  const altas = evs.filter(e => e.event === 'alta');
+  const bajas = evs.filter(e => e.event === 'baja');
+  const cambios = evs.filter(e => e.event === 'cambio');
+  const c = (r.detail && typeof r.detail === 'object') ? r.detail : {};
+
+  const filaAB = (e) => {
+    const d = e.detail || {};
+    return `<tr>
+      <td class="sl-mono">${esc(e.ced || '')}</td>
+      <td><b>${esc(e.nom || '—')}</b>${d.reactivada ? ' <span class="sl-pill rev">Reactivada</span>' : ''}</td>
+      <td>${esc(d.motivo || nrMotivoLbl(d.motivo_valor) || '—')}</td>
+      <td>${esc(d.observaciones || '—')}</td>
+    </tr>`;
+  };
+  const filaC = (e) => {
+    const d = e.detail || {};
+    return `<tr>
+      <td class="sl-mono">${esc(e.ced || '')}</td>
+      <td><b>${esc(e.nom || '—')}</b></td>
+      <td>${esc(nrCambioTexto(d) || '—')}</td>
+    </tr>`;
+  };
+  const tabla = (titulo, ayuda, thead, filas) => !filas.length ? '' : `
+    <div class="cr-card">
+      <div class="cr-chd"><h3>${titulo} <span class="cr-n">${filas.length}</span></h3><p>${ayuda}</p></div>
+      <div class="sl-tblwrap"><table class="sl-tbl">
+        <thead>${thead}</thead><tbody>${filas.join('')}</tbody>
+      </table></div>
+    </div>`;
+
+  $('#pnlMain').innerHTML = `<style>
+    .cr-card{background:#fff;border:1px solid var(--line,#e2e8f0);border-radius:12px;margin-bottom:16px;overflow:hidden}
+    .cr-chd{padding:14px 16px 10px}
+    .cr-chd h3{margin:0;font-size:15px;display:flex;align-items:center;gap:8px}
+    .cr-chd p{margin:3px 0 0;font-size:12.5px;color:var(--muted)}
+    .cr-n{font-size:12px;font-weight:700;background:var(--bg-soft,#f1f5f9);color:var(--ink-soft,#475569);
+          border-radius:999px;padding:1px 9px}
+    .cr-none{background:#fff;border:1px solid var(--line,#e2e8f0);border-radius:12px;
+             padding:34px 16px;text-align:center;color:var(--muted)}
+  </style>
+
+  <button class="sl-btn" id="nrrBack">← Volver a las sincronizaciones</button>
+
+  <h2 class="sl-h2">Detalle de la corrida · No reempleables</h2>
+  <p class="sl-sub">Quiénes entraron, salieron o cambiaron en la lista.</p>
+
+  <div class="sl-ficha">
+    <p class="sl-fh">La sincronización corrió el <b>${fmtDT(r.run_at)}</b>${c.total_api != null ? ` · la lista del sistema trae <b>${c.total_api}</b> vigente(s)` : ''}.</p>
+    <p class="sl-fs">${r.source === 'cron' ? 'Automática' : 'Manual'} · ${r.status === 'ok' ? 'terminó OK' : (r.status === 'alerta' ? 'terminó con advertencia' : 'terminó con ERROR')}${r.duration_ms != null ? ` · ${(r.duration_ms / 1000).toFixed(1)} s` : ''}</p>
+    ${r.error ? `<p style="color:var(--danger,#b91c1c);font-size:12.5px;margin:6px 0 0">⚠ ${esc(r.error)}</p>` : ''}
+  </div>
+
+  ${tabla('Entraron a la lista', 'Personas que el sistema marcó como no reempleables (incluye reactivadas).',
+    `<tr><th style="width:110px">Cédula</th><th>Colaborador</th><th>Motivo</th><th>Observaciones</th></tr>`, altas.map(filaAB))}
+  ${tabla('Salieron de la lista', 'Ya no vienen del sistema: quedan como baja histórica (no se borran).',
+    `<tr><th style="width:110px">Cédula</th><th>Colaborador</th><th>Motivo que tenían</th><th>Observaciones</th></tr>`, bajas.map(filaAB))}
+  ${tabla('Cambiaron', 'Mismo registro, con motivo, observaciones o nombre distintos en el sistema.',
+    `<tr><th style="width:110px">Cédula</th><th>Colaborador</th><th>Qué cambió</th></tr>`, cambios.map(filaC))}
+
+  ${!evs.length ? '<div class="cr-none">Esta corrida no encontró novedades en la lista.</div>' : ''}`;
+
+  document.getElementById('nrrBack')?.addEventListener('click', () => { SL_OPEN = null; renderSyncLog(USER, 'norehire'); });
 }

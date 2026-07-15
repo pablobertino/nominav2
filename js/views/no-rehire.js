@@ -23,6 +23,9 @@
    Superadmin ademas ve: Sincronizar ahora + la hora de la corrida diaria.
    ===================================================================== */
 import { $ } from '../core/dom.js';
+// v5.83: el boton Registro de la tarjeta de Configurar abre el Registro de
+// sincronizaciones directo en el proceso No reempleables.
+import { renderSyncLog } from './sync-log.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -509,7 +512,7 @@ export async function mountNoRehireConfigCard(user) {
   host.innerHTML = `
     <div class="card">
       <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">No reempleables</h3>
-        <div class="head-actions"><button class="btn" id="nrcRun"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg> Sincronizar ahora</button></div>
+        <div class="head-actions"><button class="btn" id="nrcLog"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path><polyline points="14 2 14 8 20 8"></polyline><line x1="16" y1="13" x2="8" y2="13"></line><line x1="16" y1="17" x2="8" y2="17"></line></svg> Registro</button><button class="btn" id="nrcRun"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg> Sincronizar ahora</button></div>
       </div>
       <p class="cfg-desc" style="margin:0 0 6px">Trae del sistema la lista de personas no aptas para recontratar y la compara con la del portal: registra altas, bajas y cambios de motivo u observaciones. Es la lista que <b>bloquea los ingresos</b> en el reporte de Ingreso. Con una corrida al día alcanza.</p>
       <div style="margin:0 0 12px;font-size:13px" id="nrcLast">${lastLine()}</div>
@@ -542,6 +545,12 @@ export async function mountNoRehireConfigCard(user) {
       okSpan.textContent = '✗ ' + ((res && res.error) || 'No se pudo guardar.');
       setTimeout(() => { okSpan.style.visibility = 'hidden'; okSpan.textContent = '✓ Guardado'; }, 4000);
     }
+  });
+
+  // v5.83: el Registro, filtrado directo al proceso No reempleables. Vuelve
+  // a Configurar con el boton ← Volver (backView 'sync').
+  document.getElementById('nrcLog')?.addEventListener('click', () => {
+    renderSyncLog(user, 'norehire', 'sync');
   });
 
   document.getElementById('nrcRun')?.addEventListener('click', async () => {

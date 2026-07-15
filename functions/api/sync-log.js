@@ -57,7 +57,7 @@ export async function onRequestPost({ request, env }) {
   }
   try { await shadowCan(env, body.user || { kind: 'admin', id: adminId }, 'sync-log', body.process || 'list', 'hcm.log', true); } catch (_) { /* bitacora */ }
 
-  const process = ['companies', 'pay', 'roster'].includes(body.process) ? body.process : 'companies';
+  const process = ['companies', 'pay', 'roster', 'norehire'].includes(body.process) ? body.process : 'companies';
   const page = Math.max(1, parseInt(body.page, 10) || 1);
   const size = [25, 50, 100].includes(+body.page_size) ? +body.page_size : 25;
   const status = ['ok', 'error'].includes(body.status) ? body.status : '';
@@ -125,6 +125,80 @@ export async function onRequestPost({ request, env }) {
         };
       });
       return json({ ok: true, process, rows, total, page, page_size: size });
+    }
+
+    /* ---------- norehire: agrupar no_rehire_log por run_id (v5.83) ----------
+       La lista de no reempleables. Cada corrida deja eventos por persona
+       (alta / baja / cambio) y una fila de CIERRE (event 'cierre') con el
+       resumen, el origen, el estado y la duracion. Corridas anteriores al
+       cierre (la carga inicial del 14/07) se reconstruyen desde sus eventos:
+       aparecen igual, sin origen ni duracion. */
+    if (process === 'norehire') {
+      const nrParts = [];
+      if (from) nrParts.push(`at=gte.${from}T00:00:00`);
+      if (to) nrParts.push(`at=lte.${to}T23:59:59`);
+      const logs = await sb(env,
+        `no_rehire_log?select=run_id,event,id_number,full_name,detail,at`
+        + (nrParts.length ? '&' + nrParts.join('&') : '')
+        + `&order=at.desc&limit=3000`) || [];
+
+      const byRun = new Map();
+      for (const r of logs) {
+        const k = r.run_id || r.at;
+        if (!byRun.has(k)) byRun.set(k, {
+          run_at: r.at, source: null, status: 'ok', duration_ms: null,
+          error: null, cierre: null, eventos: [],
+        });
+        const g = byRun.get(k);
+        if (r.event === 'cierre') {
+          const d = (r.detail && typeof r.detail === 'object') ? r.detail : {};
+          g.cierre = d;
+          g.run_at = r.at;   // el cierre se escribe al final: es el run_at fiel
+          g.source = d.source || null;
+          g.status = d.status === 'error' ? 'error' : (d.status === 'warn' ? 'alerta' : 'ok');
+          g.duration_ms = Number.isFinite(+d.duration_ms) ? +d.duration_ms : null;
+          g.error = d.error || null;
+        } else {
+          g.eventos.push({ event: r.event, ced: r.id_number, nom: r.full_name, detail: r.detail || null });
+        }
+      }
+
+      let groups = [...byRun.values()].map(g => {
+        const c = g.cierre || {};
+        const nA = g.eventos.filter(e => e.event === 'alta').length;
+        const nB = g.eventos.filter(e => e.event === 'baja').length;
+        const nC = g.eventos.filter(e => e.event === 'cambio').length;
+        // El cierre manda; sin cierre (corridas viejas) se cuenta desde los eventos.
+        const altas   = c.altas != null ? (c.altas + (c.reactivadas || 0)) : nA;
+        const bajas   = c.bajas != null ? c.bajas : nB;
+        const cambios = c.cambios != null ? c.cambios : nC;
+        const sinMov = !altas && !bajas && !cambios;
+        const summary = (sinMov && c.total_api != null)
+          ? `${c.total_api} en la lista · sin novedades`
+          : [`${altas} alta(s)`, `${bajas} baja(s)`, `${cambios} cambio(s)`].join(' · ');
+        return {
+          run_at: g.run_at, source: g.source, status: g.status,
+          duration_ms: g.duration_ms, summary, error: g.error,
+          detail: g.cierre, eventos: g.eventos,
+        };
+      });
+      if (status === 'error') groups = groups.filter(g => g.status !== 'ok');
+      if (status === 'ok') groups = groups.filter(g => g.status === 'ok');
+      const nrTotal = groups.length;
+
+      // Motivos traducidos (valor -> etiqueta), para que el detalle y el
+      // export no muestren "motivo 3" pelado.
+      const reasons = {};
+      try {
+        const rr = await sb(env, 'no_rehire_reason?select=value,label') || [];
+        for (const x of rr) reasons[String(x.value)] = x.label;
+      } catch (_) { /* sin catalogo: el front muestra el valor crudo */ }
+
+      return json({
+        ok: true, process, rows: groups.slice(offset, offset + size),
+        total: nrTotal, page, page_size: size, reasons,
+        note: 'Corridas de la lista de no reempleables: altas, bajas y cambios de motivo u observaciones.',
+      });
     }
 
     /* ---------- roster: agrupar roster_sync_log por run_id ---------- */

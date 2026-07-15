@@ -261,6 +261,17 @@ async function runSync(env, sourceLabel) {
     errorMsg = String(e && e.message ? e.message : e);
   }
 
+  /* v5.83: TODA corrida deja su FILA DE CIERRE (event 'cierre', sin persona):
+     el resumen completo + origen + estado + duracion. Mismo aprendizaje que
+     sync-roster (v5.68/v5.82): sin cierre, una corrida limpia y una que nunca
+     paso se ven iguales, y el Registro de sincronizaciones no tendria de
+     donde leer origen, estado ni duracion. Se escribe SIEMPRE, incluso si la
+     corrida fallo (el error viaja adentro del detail). */
+  logRows.push({
+    run_id: runId, event: 'cierre', id_number: null, full_name: null,
+    detail: { ...summary, source: sourceLabel, status, error: errorMsg, duration_ms: Date.now() - t0 },
+  });
+
   // 5) Bitacora. Si falla, el motivo NO se pierde: va a last_error.
   if (logRows.length) {
     try {
