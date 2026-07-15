@@ -164,6 +164,14 @@ function sortRows(list) {
         if (!da) return 1; if (!db) return -1;
         return da === db ? cmpNameRow(a, b) : (da > db ? -1 : 1);
       }
+      // v5.91: fecha de subida de la FOTO (la RPC ya la devuelve). Sin foto o
+      // sin fecha -> al final.
+      case 'photo_recent': {
+        const da = a.photo_uploaded_at || '', db = b.photo_uploaded_at || '';
+        if (!da && !db) return cmpNameRow(a, b);
+        if (!da) return 1; if (!db) return -1;
+        return da === db ? cmpNameRow(a, b) : (da > db ? -1 : 1);
+      }
       case 'photo_loaded': return ((b.thumb_url ? 1 : 0) - (a.thumb_url ? 1 : 0)) || cmpNameRow(a, b);
       case 'photo_pending': return ((a.thumb_url ? 1 : 0) - (b.thumb_url ? 1 : 0)) || cmpNameRow(a, b);
       case 'cargo_az': {
@@ -392,9 +400,10 @@ export async function renderPersonnelSearch(user) {
           <input id="psFilter" type="text" placeholder="Filtrar resultados por nombre, cédula, cargo o depto. (separa con coma)…" autocomplete="off">
         </div>
         <select id="psSort" title="Ordenar los resultados obtenidos">
-          <option value="">Orden: Empresa (alias)</option>
+          <option value="">Orden: Última actividad (original)</option>
           <option value="name_az">Orden: Nombre (A→Z)</option>
           <option value="name_za">Orden: Nombre (Z→A)</option>
+          <option value="photo_recent">Orden: Última foto primero</option>
           <option value="edit_recent">Orden: Última edición primero</option>
           <option value="photo_loaded">Orden: Con foto primero</option>
           <option value="photo_pending">Orden: Sin foto primero</option>
@@ -789,6 +798,7 @@ function exportRows() {
     'Estado empresa': w.company_status || '',
     'Ficha actualizada por': w.profile_updated_by || '',
     'Ficha actualizada el': w.profile_updated_at ? fmtDT(w.profile_updated_at) : '',
+    'Foto subida el': w.photo_uploaded_at ? fmtDT(w.photo_uploaded_at) : '',
   }));
 }
 function downloadBlob(content, filename, mime) {
