@@ -62,6 +62,19 @@ function fmtDT(iso) {
   const d = new Date(iso); const p = n => String(n).padStart(2, '0');
   return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} ${p(d.getHours())}:${p(d.getMinutes())}`;
 }
+/* v5.85: duracion legible (pedido de Pablo: "1560.8 s" es incomprensible).
+   Hasta el minuto se queda en segundos ("12.3 s", util para las corridas de
+   Empresas/Pago que duran nada); de ahi en adelante, "26 min 1 s"; y si un
+   dia pasa de la hora, "1 h 5 min". */
+function fmtDur(ms) {
+  if (ms == null) return '\u2014';
+  const s = Math.round(ms / 1000);
+  if (s < 60) return (ms / 1000).toFixed(1) + ' s';
+  const m = Math.floor(s / 60), rs = s % 60;
+  if (m < 60) return rs ? `${m} min ${rs} s` : `${m} min`;
+  const h = Math.floor(m / 60), rm = m % 60;
+  return rm ? `${h} h ${rm} min` : `${h} h`;
+}
 /* Etiqueta legible del campo. El backend manda la clave interna (telefono /
    correo / cuenta), igual que en Diferencias. */
 const CAMPO_LBL = {
@@ -1342,7 +1355,7 @@ function slPaint() {
         <td>${r.source === 'cron' ? 'Autom\u00e1tica' : 'Manual'}</td>
         <td><span class="sl-st ${st}">${stLbl}</span></td>
         <td>${esc(r.summary || '')}${!esRoster ? detailLine(r) + errLine : ''}</td>
-        <td style="text-align:right;white-space:nowrap">${r.duration_ms != null ? (r.duration_ms / 1000).toFixed(1) + ' s' : '\u2014'}</td>
+        <td style="text-align:right;white-space:nowrap">${fmtDur(r.duration_ms)}</td>
         <td style="white-space:nowrap">${verBtn}</td>
       </tr>`;
     }).join('');
@@ -1524,7 +1537,12 @@ export async function renderSyncLog(user, presetProcess, backView) {
 export async function renderCompanyRun(user) {
   USER = user;
   const r = SL_OPEN;
-  const root = document.getElementById('view');
+  /* v5.84: el contenedor es #pnlMain, como en TODAS las vistas del portal.
+     Esto decia getElementById('view') — un id que no existe aca —, asi que
+     root quedaba null y la funcion retornaba en silencio: el boton
+     "Ver detalle" de Catalogo de empresas no abria nada desde que nacio
+     (v5.63). Otro fallo mudo, primo del cierre del roster. */
+  const root = document.getElementById('pnlMain');
   if (!root) return;
   if (!r) { renderSyncLog(user); return; }
 
@@ -1591,7 +1609,8 @@ export async function renderCompanyRun(user) {
   ${(!sinDetalle && !changes.length) ? '<div class="cr-none">Esta corrida no cambi\u00f3 nada.</div>' : ''}`;
 
   const bk = document.getElementById('crBack');
-  if (bk) bk.addEventListener('click', () => { SL_OPEN = null; renderSyncLog(USER); });
+  // v5.84: volver conservando el proceso (antes caia al default, Personal).
+  if (bk) bk.addEventListener('click', () => { SL_OPEN = null; renderSyncLog(USER, 'companies'); });
 }
 
 /* ===================================================================
@@ -1663,7 +1682,7 @@ export async function renderNoRehireRun(user) {
 
   <div class="sl-ficha">
     <p class="sl-fh">La sincronización corrió el <b>${fmtDT(r.run_at)}</b>${c.total_api != null ? ` · la lista del sistema trae <b>${c.total_api}</b> vigente(s)` : ''}.</p>
-    <p class="sl-fs">${r.source === 'cron' ? 'Automática' : 'Manual'} · ${r.status === 'ok' ? 'terminó OK' : (r.status === 'alerta' ? 'terminó con advertencia' : 'terminó con ERROR')}${r.duration_ms != null ? ` · ${(r.duration_ms / 1000).toFixed(1)} s` : ''}</p>
+    <p class="sl-fs">${r.source === 'cron' ? 'Automática' : 'Manual'} · ${r.status === 'ok' ? 'terminó OK' : (r.status === 'alerta' ? 'terminó con advertencia' : 'terminó con ERROR')}${r.duration_ms != null ? ` · ${fmtDur(r.duration_ms)}` : ''}</p>
     ${r.error ? `<p style="color:var(--danger,#b91c1c);font-size:12.5px;margin:6px 0 0">⚠ ${esc(r.error)}</p>` : ''}
   </div>
 
