@@ -184,6 +184,8 @@ function ensureStyles() {
   .ps-sub{color:var(--muted);font-size:12px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ps-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex:none;text-align:right;max-width:46%;margin-left:auto}
   .ps-emp{font-size:12px;color:var(--brand,#2563eb);font-weight:700;font-family:ui-monospace,Menlo,monospace}
+  .ps-emp.link{cursor:pointer;border-bottom:1px dashed transparent}
+  .ps-emp.link:hover{border-bottom-color:var(--brand,#2563eb);filter:brightness(.9)}
   .ps-emp .da{color:var(--muted);font-weight:600}
   .ps-empn{font-size:12px;color:var(--ink);font-weight:600;max-width:230px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ps-empmeta{font-size:11px;color:var(--muted);max-width:230px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -546,7 +548,7 @@ function paint() {
       </div>
       ${acts}
       <div class="ps-right">
-        <span class="ps-emp">${esc(w.company_code)}${w.data_area ? ` · <span class="da">${esc(w.data_area)}</span>` : ''}</span>
+        <span class="ps-emp link" data-emp="${start + i}" title="Ver Personal de ${esc(w.company_code)}">${esc(w.company_code)}${w.data_area ? ` · <span class="da">${esc(w.data_area)}</span>` : ''}</span>
         <span class="ps-empn">${esc(w.company_name || '')}</span>
         ${empMeta ? `<span class="ps-empmeta">${empMeta}</span>` : ''}
         ${updLine}
@@ -567,6 +569,13 @@ function paint() {
       if (!w || !w.thumb_url) return;
       openWorkerLightbox(w.thumb_url, `${w.full_name} · C.I. ${w.id_number}`, `${w.id_number}.jpg`);
     }));
+  // v5.89: clic en el ALIAS de la empresa -> abre el Personal COMPLETO de esa
+  // empresa (grilla con filtros y orden). Volver regresa a ESTA busqueda con
+  // criterios, resultados, filtro y pagina intactos (estado de modulo). El
+  // server revalida permisos/alcance en el directory; si no tiene, la vista
+  // Personal muestra el aviso y el boton Volver sigue disponible.
+  list.querySelectorAll('[data-emp]').forEach(b =>
+    b.addEventListener('click', () => openCompany(shown[+b.dataset.emp])));
 
   paintPager(pager, total, pages, start, pageRows.length);
 }
@@ -621,6 +630,15 @@ function openWorker(w) {
   if (!w) return;
   const mode = NON_STORE_TYPES.has(w.company_type) ? 'enterprise' : 'store';
   renderWorkerPhotos(USER, w.company_code, () => renderPersonnelSearch(USER), { mode, openCed: w.id_number });
+}
+
+/* v5.89: abre el PERSONAL completo de la empresa del resultado (clic en el
+   alias). Mismo mecanismo que openWorker pero SIN openCed: entra a la grilla
+   de la empresa. El onExit re-renderiza Buscar (el estado vive en el modulo). */
+function openCompany(w) {
+  if (!w || !w.company_code) return;
+  const mode = NON_STORE_TYPES.has(w.company_type) ? 'enterprise' : 'store';
+  renderWorkerPhotos(USER, w.company_code, () => renderPersonnelSearch(USER), { mode });
 }
 
 /* ---------- Copiar datos de la ficha al portapapeles (v4.39) ---------- */
