@@ -53,7 +53,7 @@ let LAST_WORKERS = [];
    front, el gate del servidor (submitIngreso, v5.74) rechaza igual.
    Por eso un error aca solo se anota en consola y no bloquea nada.
    Cache por cedula para no repetir consultas mientras escriben. */
-const NR_CACHE = new Map();   // ced -> true (bloqueada) | false (libre)
+const NR_CACHE = new Map();   // ced -> { blocked, full_name } (respuesta del check)
 let NR_TIMER = null;
 function nrLookup(ced, refresh) {
   if (!ced || NR_CACHE.has(ced)) return;   // ya se sabe: check() lo lee sincrono
@@ -69,14 +69,48 @@ function nrLookup(ced, refresh) {
           user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null },
         }),
       }).then(x => x.json());
-      if (r && r.ok) { NR_CACHE.set(ced, !!r.blocked); refresh(); }
+      if (r && r.ok) { NR_CACHE.set(ced, { blocked: !!r.blocked, full_name: r.full_name || null }); refresh(); }
     } catch (e) {
       // Cortesia fallida: el servidor bloquea igual en el envio.
       console.warn('Chequeo de no reempleable fallo (el servidor valida igual):', e);
     }
   }, 350);
 }
-const nrIsBlocked = ced => NR_CACHE.get(ced) === true;
+const nrIsBlocked = ced => { const e = NR_CACHE.get(ced); return !!(e && e.blocked); };
+
+/* ===== v5.78: ENCABEZADO FIJO + CARTEL DE NO REEMPLEABLE (mockup B) =====
+   Mockup aprobado: _PRUEBAS\norehire_banner_mockup.html (variante B).
+   El modal del alta pasa a tener el encabezado ("Nuevo ingreso (Alta)" +
+   Accion/Data ID) SIEMPRE fijo arriba; el formulario scrollea por debajo.
+   Cuando la cedula esta en la lista de no reempleables, el cartel rojo se
+   inyecta DENTRO de ese bloque fijo (nombre oficial de la lista + cedula +
+   mensaje) y el resto del formulario se atenua y bloquea, salvo la cedula,
+   que sigue editable para corregirla. Si la corrigen, todo revive.
+   OJO: sin escapes octales en este CSS (leccion de v5.13). */
+let IG_STYLED = false;
+function ensureIngresoCss() {
+  if (IG_STYLED) return;
+  IG_STYLED = true;
+  const css = document.createElement('style');
+  css.textContent = `
+  .ig-modal{display:flex;flex-direction:column;padding:0 !important;overflow:hidden !important;max-height:88vh}
+  .ig-mhead{flex:none;background:#fff;position:relative;z-index:5;box-shadow:0 4px 12px rgba(15,23,42,.07)}
+  .ig-mhead h3{margin:0;padding:20px 26px 2px}
+  .ig-mhead .who{margin:0;padding:0 26px 12px}
+  .ig-mbody{flex:1;min-height:0;overflow:auto;padding:16px 26px 24px}
+  .ig-nrbanner{background:#fef2f2;border-top:1px solid #fecaca;border-bottom:2px solid #fca5a5;
+    padding:12px 26px;display:flex;gap:13px;align-items:center}
+  .ig-nrbanner .ico{flex:none;width:42px;height:42px;border-radius:50%;background:#fee2e2;
+    border:1.5px solid #fca5a5;display:flex;align-items:center;justify-content:center;font-size:20px}
+  .ig-nrbanner .tt{font-size:13px;font-weight:800;color:#991b1b;letter-spacing:.01em}
+  .ig-nrbanner .nm{font-size:15px;font-weight:800;color:#7f1d1d;margin-top:1px}
+  .ig-nrbanner .nm .ced{font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:13px;
+    background:#fee2e2;border:1px solid #fecaca;border-radius:7px;padding:1px 8px;margin-left:8px;
+    color:#991b1b;vertical-align:1px}
+  .ig-nrbanner .ms{font-size:12px;color:#b91c1c;margin-top:3px;line-height:1.5}
+  .ig-dimmed{opacity:.45;pointer-events:none;user-select:none}`;
+  document.head.appendChild(css);
+}
 
 async function loadCatalogs() {
   if (CAT) return CAT;
@@ -381,6 +415,7 @@ function renderRows(ctx) {
 
 /* ---------- MODAL: alta / edicion de un ingreso ---------- */
 function openIngresoModal(ctx, id) {
+  ensureIngresoCss();   // v5.78: encabezado fijo + cartel de no reempleable
   const win = ingresoWindow();
   const existing = id ? ctx.getWorker(id) : null;
   // Si el worker llego del paso 3 (cedula + nombre) y aun no tiene datos de
@@ -406,55 +441,60 @@ function openIngresoModal(ctx, id) {
   const ov = document.createElement('div');
   ov.className = 'modal-ov';
   ov.innerHTML = `
-    <div class="modal modal-wide">
-      <h3>${id ? 'Editar ingreso' : 'Nuevo ingreso (Alta)'}</h3>
-      <p class="who">Acción <span class="pill pill-set">A · Alta</span> · Data ID <b>${companyLabel}</b> (automático, de la empresa)</p>
+    <div class="modal modal-wide ig-modal">
+      <div class="ig-mhead">
+        <h3>${id ? 'Editar ingreso' : 'Nuevo ingreso (Alta)'}</h3>
+        <p class="who">Acción <span class="pill pill-set">A · Alta</span> · Data ID <b>${companyLabel}</b> (automático, de la empresa)</p>
+        <div id="ig_nrslot"></div>
+      </div>
+      <div class="ig-mbody">
 
-      <div class="ig-band">
+      <div class="ig-band" data-nrdim>
         <div class="ig-band-t">📅 Fecha inicial de empleo <span style="color:var(--danger)">*</span></div>
         <input type="date" id="ig_start" min="${win.minDate || ''}" max="${win.maxDate}" value="${g.startDate || ''}">
         <div class="date-err" id="e_start" style="color:var(--danger);font-size:12px;min-height:15px;margin-top:5px"></div>
         <div class="hint" style="margin-top:4px">Dato principal del reporte. Admite del ${DW.fmtDate(win.minDate)} al ${DW.fmtDate(win.maxDate)}.</div>
       </div>
 
-      <div class="ig-sec">Identidad</div>
-      <div class="grid2">
+      <div class="ig-sec" data-nrdim>Identidad</div>
+      <div class="grid2" data-nrdim>
         <div><label class="flabel">Primer nombre <span style="color:var(--danger)">*</span></label><input id="ig_first" value="${esc(g.firstName)}" placeholder="JUAN"><div class="ferr" id="e_first"></div></div>
         <div><label class="flabel">Segundo nombre <span class="opt">(opcional)</span></label><input id="ig_second" value="${esc(g.secondName)}" placeholder="CARLOS"><div class="ferr"></div></div>
       </div>
-      <div style="margin-top:12px"><label class="flabel">Apellidos <span style="color:var(--danger)">*</span></label><input id="ig_last" value="${esc(g.lastNames)}" placeholder="PÉREZ GARCÍA"><div class="ferr" id="e_last"></div></div>
+      <div data-nrdim style="margin-top:12px"><label class="flabel">Apellidos <span style="color:var(--danger)">*</span></label><input id="ig_last" value="${esc(g.lastNames)}" placeholder="PÉREZ GARCÍA"><div class="ferr" id="e_last"></div></div>
       <div class="grid2" style="margin-top:12px">
         <div><label class="flabel">Cédula (Nro Personal) <span style="color:var(--danger)">*</span></label><input id="ig_ced" value="${existing ? existing.ced : ''}" placeholder="12345678" inputmode="numeric"><div class="ig-line" id="e_ced"></div></div>
-        <div><label class="flabel">Cargo <span style="color:var(--danger)">*</span></label><select id="ig_cargo">${cargoOpts}</select><div class="ferr" id="e_cargo"></div></div>
+        <div data-nrdim><label class="flabel">Cargo <span style="color:var(--danger)">*</span></label><select id="ig_cargo">${cargoOpts}</select><div class="ferr" id="e_cargo"></div></div>
       </div>
-      <div class="grid2" style="margin-top:12px">
+      <div class="grid2" data-nrdim style="margin-top:12px">
         <div><label class="flabel">Fecha de nacimiento <span style="color:var(--danger)">*</span></label><input type="date" id="ig_birth" max="${today}" value="${g.birthDate || ''}"><div class="ferr" id="e_birth"></div></div>
         <div><label class="flabel">Edad <span class="opt">(calculada)</span></label><div class="ig-readonly" id="ig_age">—</div></div>
       </div>
 
-      <div class="ig-sec">Datos personales y bancarios</div>
-      <div class="grid2">
+      <div class="ig-sec" data-nrdim>Datos personales y bancarios</div>
+      <div class="grid2" data-nrdim>
         <div><label class="flabel">Género <span style="color:var(--danger)">*</span></label><select id="ig_gender">${opt(GEN, g.gender)}</select><div class="ferr" id="e_gender"></div></div>
         <div><label class="flabel">Estado civil <span style="color:var(--danger)">*</span></label><select id="ig_marital">${opt(CIV, g.marital)}</select><div class="ferr" id="e_marital"></div></div>
       </div>
-      <div style="margin-top:12px"><label class="flabel">Nro cuenta bancaria <span style="color:var(--danger)">*</span> <span class="opt">(20 dígitos)</span></label>
+      <div data-nrdim style="margin-top:12px"><label class="flabel">Nro cuenta bancaria <span style="color:var(--danger)">*</span> <span class="opt">(20 dígitos)</span></label>
         <input id="ig_account" value="${esc(g.account)}" placeholder="0134 0123 45 0001234567" inputmode="numeric"><div class="ig-line" id="ig_bankline"></div><div class="ferr" id="e_account"></div></div>
 
-      <div class="ig-sec">Contacto</div>
-      <div class="grid2">
+      <div class="ig-sec" data-nrdim>Contacto</div>
+      <div class="grid2" data-nrdim>
         <div><label class="flabel">Correo <span class="opt">(opcional)</span></label><input id="ig_email" value="${esc(g.email)}" placeholder="nombre@correo.com"><div class="ferr" id="e_email"></div></div>
         <div><label class="flabel">Teléfono móvil <span class="opt">(opcional)</span></label><input id="ig_phone" value="${esc(g.phone)}" placeholder="0414-1234567" inputmode="numeric"><div class="ig-line" id="ig_phoneline"></div><div class="ferr" id="e_phone"></div></div>
       </div>
-      <div style="margin-top:12px"><label class="flabel">Dirección <span class="opt">(opcional)</span></label><input id="ig_address" value="${esc(g.address)}" placeholder="Calle, sector, ciudad"><div class="ferr"></div></div>
+      <div data-nrdim style="margin-top:12px"><label class="flabel">Dirección <span class="opt">(opcional)</span></label><input id="ig_address" value="${esc(g.address)}" placeholder="Calle, sector, ciudad"><div class="ferr"></div></div>
 
       ${(CAT.docs && CAT.docs.length) ? `
-      <div class="ig-sec">Recaudos del trabajador <span class="opt">(opcionales)</span></div>
-      <p class="hint" style="margin:-4px 0 8px">Adjunta lo que tengas; los que falten quedan como <b>pendientes</b> en el ticket. Máx. ${CAT.docLimits.max_file_mb} MB por archivo (${CAT.docLimits.allowed_ext.join(', ')}).</p>
-      <div id="ig_docs"></div>` : ''}
+      <div class="ig-sec" data-nrdim>Recaudos del trabajador <span class="opt">(opcionales)</span></div>
+      <p class="hint" data-nrdim style="margin:-4px 0 8px">Adjunta lo que tengas; los que falten quedan como <b>pendientes</b> en el ticket. Máx. ${CAT.docLimits.max_file_mb} MB por archivo (${CAT.docLimits.allowed_ext.join(', ')}).</p>
+      <div id="ig_docs" data-nrdim></div>` : ''}
 
       <div class="wiz-foot" style="margin-top:18px">
         <button class="btn" id="ig_cancel">Cancelar</button>
         <button class="btn btn-primary" id="ig_save" disabled>${id ? 'Guardar cambios' : 'Agregar al reporte'}</button>
+      </div>
       </div>
       <input type="file" id="ig_file" hidden accept=".jpg,.jpeg,.png,.pdf,.doc,.docx,image/*">
     </div>`;
@@ -540,10 +580,10 @@ function openIngresoModal(ctx, id) {
 
   q('#ig_ced').addEventListener('input', function () {
     this.value = this.value.replace(/[^0-9]/g, '');
-    showCed(); check();
+    showCed(); check(); applyNrState();
     // v5.77: apenas la cedula es valida, se consulta si es no reempleable.
     const v = DW.validateCedula(this.value);
-    if (v.ok) nrLookup(v.ced, () => { if (ov.isConnected) { showCed(); check(); } });
+    if (v.ok) nrLookup(v.ced, () => { if (ov.isConnected) { showCed(); check(); applyNrState(); } });
   });
   q('#ig_account').addEventListener('input', function () { this.value = this.value.replace(/[^0-9 \-]/g, ''); showBank(); check(); });
   q('#ig_phone').addEventListener('input', function () { this.value = this.value.replace(/[^0-9 \-]/g, ''); showPhone(); check(); });
@@ -568,7 +608,9 @@ function openIngresoModal(ctx, id) {
     // antes de que llenen la ficha. Sin motivo: solo Capital Humano lo maneja.
     if (nrIsBlocked(v.ced)) {
       line.className = 'ig-line warn';
-      line.textContent = '🚫 Esta persona no es reempleable en el grupo: no se puede ingresar. Para más información, contacta a Capital Humano.';
+      // v5.78: el mensaje completo vive en el cartel del encabezado; aca
+      // queda el recordatorio y la salida (corregir el numero).
+      line.textContent = '🚫 En la lista de no reempleables. Corrígela si te equivocaste de número.';
       return;
     }
     line.className = 'ig-line ok'; line.textContent = `✓ ${v.kind === 'E' ? 'Extranjero' : 'Venezolano'} — ${v.kind}-${v.ced}`;
@@ -642,6 +684,32 @@ function openIngresoModal(ctx, id) {
     return e;
   }
 
+  /* v5.78: cartel + formulario atenuado (mockup B). Se inyecta o se quita
+     del slot del encabezado fijo segun el resultado del check; todo lo
+     marcado con data-nrdim se atenua y bloquea (la cedula NO lo lleva:
+     sigue editable para corregirla, y Cancelar tampoco). El nombre sale de
+     la LISTA del sistema, no de lo que tipeo la tienda: es la identidad
+     real de esa cedula. */
+  const escT = s => String(s == null ? '' : s).replace(/[&<>"']/g, c => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  function applyNrState() {
+    const slot = q('#ig_nrslot');
+    if (!slot) return;
+    const v = DW.validateCedula(q('#ig_ced').value);
+    const info = v.ok ? NR_CACHE.get(v.ced) : null;
+    const blocked = !!(info && info.blocked);
+    slot.innerHTML = !blocked ? '' : `
+      <div class="ig-nrbanner">
+        <div class="ico">🚫</div>
+        <div>
+          <div class="tt">NO REEMPLEABLE — NO SE PUEDE INGRESAR</div>
+          <div class="nm">${escT(info.full_name || 'Persona en la lista del sistema')} <span class="ced">${v.kind}-${v.ced}</span></div>
+          <div class="ms">Esta persona no es reempleable en el grupo. Para más información, contacta a Capital Humano.</div>
+        </div>
+      </div>`;
+    ov.querySelectorAll('[data-nrdim]').forEach(el => el.classList.toggle('ig-dimmed', blocked));
+  }
+
   q('#ig_cancel').addEventListener('click', () => ov.remove());
   saveB.addEventListener('click', () => {
     if (Object.keys(check()).length) return;
@@ -690,12 +758,12 @@ function openIngresoModal(ctx, id) {
     renderRows(ctx);
   });
 
-  showAge(); showCed(); showBank(); showPhone(); check();
+  showAge(); showCed(); showBank(); showPhone(); check(); applyNrState();
   // v5.77: si el modal abre con cedula precargada (editar / venia del paso 3),
   // consultarla de una vez.
   {
     const v0 = DW.validateCedula(q('#ig_ced').value);
-    if (v0.ok) nrLookup(v0.ced, () => { if (ov.isConnected) { showCed(); check(); } });
+    if (v0.ok) nrLookup(v0.ced, () => { if (ov.isConnected) { showCed(); check(); applyNrState(); } });
   }
   setTimeout(() => q('#ig_start').focus(), 40);
 }
