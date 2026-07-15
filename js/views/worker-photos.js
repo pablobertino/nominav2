@@ -147,8 +147,10 @@ function isBirthday(ymd) {
   if (String(ymd).slice(0, 10) <= '1900-01-01') return false;
   return String(ymd).slice(5, 10) === caracasMD();
 }
-/* Antiguedad desde la fecha de ingreso: "Xa Ym" / "Ym" / "nuevo". Devuelve ''
-   si falta el dato o la fecha es futura. */
+/* Antiguedad desde la fecha de ingreso: "Xa Ym" / "Ym" / dias. Devuelve ''
+   si falta el dato o la fecha es futura.
+   v5.92: con menos de 1 mes cumplido ya no dice 'nuevo': muestra los DIAS
+   corridos desde el ingreso ('hoy', '3 d', '28 d'), que informan de verdad. */
 function tenureLabel(ymd) {
   if (!ymd) return '';
   const s = new Date(String(ymd).slice(0, 10) + 'T00:00:00');
@@ -159,9 +161,26 @@ function tenureLabel(ymd) {
   if (t.getDate() < s.getDate()) m--;
   if (m < 0) { y--; m += 12; }
   if (y < 0) return '';
-  if (y === 0 && m === 0) return 'nuevo';
+  if (y === 0 && m === 0) {
+    const days = Math.max(0, Math.floor((t - s) / 86400000));
+    return days === 0 ? 'hoy' : `${days} d`;
+  }
   if (y === 0) return `${m} m`;
   return m > 0 ? `${y}a ${m}m` : `${y}a`;
+}
+/* v5.92: ¿la fecha cae en la QUINCENA CALENDARIO en curso? (1-15 / 16-fin
+   del mes actual, hora Caracas — misma regla que la nomina). La marca se
+   apaga sola al cambiar de quincena. */
+function isCurrentFortnight(ymd) {
+  if (!ymd) return false;
+  const p = new Intl.DateTimeFormat('en-CA', { timeZone: 'America/Caracas', year: 'numeric', month: '2-digit', day: '2-digit' }).formatToParts(new Date());
+  const gv = t => ((p.find(x => x.type === t) || {}).value || '');
+  const ty = gv('year'), tm = gv('month'), td = Number(gv('day'));
+  const s = String(ymd).slice(0, 10).split('-');
+  if (s.length !== 3) return false;
+  if (s[0] !== ty || s[1] !== tm) return false;
+  const sd = Number(s[2]);
+  return (td <= 15) === (sd <= 15);
 }
 /* Mini-fila SEXO / EDAD / ANT bajo el cargo. Solo muestra los datos que
    existen: si falta uno, esa columna no aparece; si faltan todos, no se
@@ -177,7 +196,17 @@ function miniRowHtml(w) {
     items.push(`<div class="wp-mini-c"><div class="wp-mini-l">Edad</div><div class="wp-mini-v${bday ? ' bday' : ''}">${age}${bday ? ' \uD83C\uDF82' : ''}</div></div>`);
   }
   const ant = tenureLabel(w.start_date);
-  if (ant) items.push(`<div class="wp-mini-c"><div class="wp-mini-l">Ant</div><div class="wp-mini-v">${ant}</div></div>`);
+  if (ant) {
+    // v5.92 (mockup A3 aprobado): si el ingreso es de la quincena calendario
+    // en curso y la persona esta activa, la celda se pinta verde y la
+    // etiqueta pasa de ANT a NUEVO. Al cambiar la quincena vuelve sola a ANT.
+    const isNew = !w.end_date && isCurrentFortnight(w.start_date);
+    if (isNew) {
+      items.push(`<div class="wp-mini-c wp-ant-new" title="Ingresó el ${fmtDate(w.start_date)} · esta quincena"><div class="wp-mini-l">Nuevo</div><div class="wp-mini-v">${ant}</div></div>`);
+    } else {
+      items.push(`<div class="wp-mini-c" title="Ingresó el ${fmtDate(w.start_date)}"><div class="wp-mini-l">Ant</div><div class="wp-mini-v">${ant}</div></div>`);
+    }
+  }
   if (!items.length) return '';
   return `<div class="wp-mini" style="grid-template-columns:repeat(${items.length},1fr)">${items.join('')}</div>`;
 }
@@ -202,6 +231,10 @@ function ensureFootStyles() {
   .wp-footdot.mid{background:#f59e0b}
   .wp-footdot.old{background:#cbd5e1}
   .wp-footdot.none{width:6px;height:6px;background:transparent;border:1.5px solid #d3dae4}
+  /* v5.92: celda ANT de ingreso en la quincena en curso (mockup A3) */
+  .wp-mini-c.wp-ant-new{background:#e9f7f1}
+  .wp-mini-c.wp-ant-new .wp-mini-l{color:#0e9f6e}
+  .wp-mini-c.wp-ant-new .wp-mini-v{color:#0e9f6e}
   @media (max-width:768px){ .wp-footbar{padding:5px 8px;font-size:9.5px;gap:5px} }
   `;
   document.head.appendChild(st);
@@ -1495,6 +1528,7 @@ function fichaHtml(w, c) {
 
         <div class="ff-sec">Registro</div>
         <div class="ff-grid">
+          <div class="ff-row"><span class="ff-lbl">Ingreso</span><span class="ff-val" data-v="start_date"></span></div>
           <div class="ff-row"><span class="ff-lbl">Ficha actualizada por</span><span class="ff-val" data-v="profile_updated_by"></span></div>
           <div class="ff-row"><span class="ff-lbl">Foto cargada por</span><span class="ff-val" data-v="photo_uploaded_by"></span></div>
           <div class="ff-row"><span class="ff-lbl">Última actualización</span><span class="ff-val" data-v="updated_at"></span></div>
@@ -1523,6 +1557,12 @@ function paintFichaValues(host, w) {
     ? `${w.photo_uploaded_by}${w.photo_uploaded_at ? ' · ' + fmtDateTime(w.photo_uploaded_at) : ''}`
     : '');
   setVal(host, 'updated_at', fmtDateTime(w.updated_at));
+  // v5.92: fila Ingreso en Registro: fecha + antiguedad (en dias si <1 mes) y
+  // la marca de quincena calendario en curso (misma regla que la tarjeta).
+  const ingFecha = w.start_date ? fmtDate(w.start_date) : '';
+  const ingTen = tenureLabel(w.start_date);
+  const ingNew = (!w.end_date && isCurrentFortnight(w.start_date)) ? ' · Nuevo esta quincena' : '';
+  setVal(host, 'start_date', ingFecha ? `${ingFecha}${ingTen ? ' · ' + ingTen : ''}${ingNew}` : '');
   // v4.20: quien edito la ficha de ultimo (tienda/admin/gestor) y cuando.
   setVal(host, 'profile_updated_by', w.profile_updated_by
     ? `${w.profile_updated_by}${w.profile_updated_at ? ' · ' + fmtDateTime(w.profile_updated_at) : ''}`
