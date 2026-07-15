@@ -113,6 +113,10 @@ let SEARCH_ROWS = null;     // null = aun no se ha buscado
 // Filtro en cliente sobre los resultados ya traidos (separador por coma, igual
 // que la vista Personal). No dispara busqueda: refina lo que ya esta en pantalla.
 let FQ = '';
+// v5.90: orden en cliente sobre el UNIVERSO COMPLETO de resultados traidos
+// ('' = orden original del server: alias de empresa). Se aplica despues del
+// filtro por coma y ANTES de paginar; el export respeta el mismo orden.
+let SORT = '';
 // Paginacion en cliente (el export siempre incluye TODO).
 let PAGE = 1;
 let PER = 50;               // 25 | 50 | 100
@@ -138,6 +142,49 @@ function matchesSearch(w, groups) {
   if (!groups.length) return true;
   const blob = normSearch(`${w.id_number || ''} ${w.full_name || ''} ${w.role || ''} ${w.department_name || ''}`);
   return groups.some(tokens => tokens.every(t => blob.includes(t)));
+}
+
+/* -------- v5.90: ORDEN en cliente sobre el universo completo de resultados.
+   '' = orden original del server (alias de empresa). Devuelve COPIA ordenada
+   (asi "Empresa (alias)" siempre puede volver al orden original). Sin dato al
+   final; desempate estable por nombre — mismos criterios que Personal. */
+function cmpNameRow(a, b) {
+  return String(a.full_name || '').localeCompare(String(b.full_name || ''), 'es', { sensitivity: 'base' });
+}
+function sortRows(list) {
+  if (!SORT) return list;
+  const k = SORT;
+  return [...list].sort((a, b) => {
+    switch (k) {
+      case 'name_az': return cmpNameRow(a, b);
+      case 'name_za': return -cmpNameRow(a, b);
+      case 'edit_recent': {
+        const da = a.profile_updated_at || '', db = b.profile_updated_at || '';
+        if (!da && !db) return cmpNameRow(a, b);
+        if (!da) return 1; if (!db) return -1;
+        return da === db ? cmpNameRow(a, b) : (da > db ? -1 : 1);
+      }
+      case 'photo_loaded': return ((b.thumb_url ? 1 : 0) - (a.thumb_url ? 1 : 0)) || cmpNameRow(a, b);
+      case 'photo_pending': return ((a.thumb_url ? 1 : 0) - (b.thumb_url ? 1 : 0)) || cmpNameRow(a, b);
+      case 'cargo_az': {
+        const ra = a.role || '', rb = b.role || '';
+        if (!ra && rb) return 1; if (ra && !rb) return -1;
+        return ra.localeCompare(rb, 'es', { sensitivity: 'base' }) || cmpNameRow(a, b);
+      }
+      case 'age_desc': case 'age_asc': {
+        const aa = a.age == null ? null : a.age, ab = b.age == null ? null : b.age;
+        if (aa == null && ab == null) return cmpNameRow(a, b);
+        if (aa == null) return 1; if (ab == null) return -1;
+        return (k === 'age_desc' ? ab - aa : aa - ab) || cmpNameRow(a, b);
+      }
+      case 'ced_asc': {
+        const na = parseInt(String(a.id_number).replace(/\D/g, ''), 10) || 0;
+        const nb = parseInt(String(b.id_number).replace(/\D/g, ''), 10) || 0;
+        return (na - nb) || cmpNameRow(a, b);
+      }
+      default: return 0;
+    }
+  });
 }
 
 function ensureStyles() {
@@ -170,7 +217,9 @@ function ensureStyles() {
   .ps-count{color:var(--muted);font-size:12px;margin:6px 2px 10px}
   .ps-filterbar{margin:2px 0 10px}
   .ps-filterbar[hidden]{display:none}
-  .ps-filterbar .fb{display:flex;align-items:center;gap:8px;max-width:460px;padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+  .ps-filterbar .fbrow{display:flex;gap:8px;align-items:stretch;flex-wrap:wrap}
+  .ps-filterbar .fb{display:flex;align-items:center;gap:8px;flex:1 1 320px;max-width:460px;padding:8px 12px;border:1px solid var(--border);border-radius:10px;background:var(--surface)}
+  .ps-filterbar select{font:inherit;font-size:13px;padding:7px 10px;border:1px solid var(--border);border-radius:10px;background:var(--surface);color:var(--ink)}
   .ps-filterbar svg{flex:none;color:var(--muted)}
   .ps-filterbar input{flex:1;font:inherit;font-size:13.5px;border:0;background:transparent;color:var(--ink);outline:none}
   .ps-list{display:flex;flex-direction:column;gap:8px}
@@ -337,9 +386,23 @@ export async function renderPersonnelSearch(user) {
     </div>
     <div class="ps-count" id="psCount"></div>
     <div class="ps-filterbar" id="psFilterBar" hidden>
-      <div class="fb">
-        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <input id="psFilter" type="text" placeholder="Filtrar resultados por nombre, cédula, cargo o depto. (separa con coma)…" autocomplete="off">
+      <div class="fbrow">
+        <div class="fb">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+          <input id="psFilter" type="text" placeholder="Filtrar resultados por nombre, cédula, cargo o depto. (separa con coma)…" autocomplete="off">
+        </div>
+        <select id="psSort" title="Ordenar los resultados obtenidos">
+          <option value="">Orden: Empresa (alias)</option>
+          <option value="name_az">Orden: Nombre (A→Z)</option>
+          <option value="name_za">Orden: Nombre (Z→A)</option>
+          <option value="edit_recent">Orden: Última edición primero</option>
+          <option value="photo_loaded">Orden: Con foto primero</option>
+          <option value="photo_pending">Orden: Sin foto primero</option>
+          <option value="cargo_az">Orden: Cargo (A→Z)</option>
+          <option value="age_desc">Orden: Mayor edad</option>
+          <option value="age_asc">Orden: Menor edad</option>
+          <option value="ced_asc">Orden: Cédula</option>
+        </select>
       </div>
     </div>
     <div class="ps-list" id="psList"></div>
@@ -393,6 +456,7 @@ export async function renderPersonnelSearch(user) {
   $('#psClear').addEventListener('click', () => {
     C = { q: '', type: '', company: '', photo: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
     FQ = '';
+    SORT = '';
     SEARCH_ROWS = null;
     renderPersonnelSearch(USER);
   });
@@ -410,6 +474,12 @@ export async function renderPersonnelSearch(user) {
   if (filterEl) {
     filterEl.value = FQ || '';
     filterEl.addEventListener('input', () => { FQ = filterEl.value; PAGE = 1; paint(); });
+  }
+  // v5.90: selector de orden (se conserva al volver de una ficha/Personal).
+  const sortEl = $('#psSort');
+  if (sortEl) {
+    sortEl.value = SORT || '';
+    sortEl.addEventListener('change', () => { SORT = sortEl.value; PAGE = 1; paint(); });
   }
 
   // Restaurar resultados previos (al volver de una ficha) o pintar estado inicial.
@@ -484,7 +554,9 @@ function paint() {
   // Hay resultados: mostrar el filtro por coma y aplicarlo en cliente.
   if (filterBar) filterBar.hidden = false;
   const groups = parseSearchGroups(FQ || '');
-  const shown = groups.length ? SEARCH_ROWS.filter(w => matchesSearch(w, groups)) : SEARCH_ROWS;
+  // v5.90: filtro por coma sobre lo traido y luego ORDEN sobre ese universo
+  // completo (no solo la pagina). La paginacion corta el conjunto ya ordenado.
+  const shown = sortRows(groups.length ? SEARCH_ROWS.filter(w => matchesSearch(w, groups)) : SEARCH_ROWS);
 
   const totalAll = SEARCH_ROWS.length;
   const total = shown.length;
@@ -693,7 +765,8 @@ const MARITAL_LABEL = { S: 'Soltero(a)', C: 'Casado(a)', D: 'Divorciado(a)', V: 
 function exportRows() {
   const groups = parseSearchGroups(FQ || '');
   const src = groups.length ? (SEARCH_ROWS || []).filter(w => matchesSearch(w, groups)) : (SEARCH_ROWS || []);
-  return src.map(w => ({
+  // v5.90: el export sale en el MISMO orden que se ve en pantalla.
+  return sortRows(src).map(w => ({
     'Cédula': w.id_number || '',
     'Nombre': w.full_name || '',
     'Cargo': w.role || '',
