@@ -24,7 +24,7 @@ import { renderEgressRatify } from './egress-ratify.js';
 import { renderPersonnelSearch } from './personnel-search.js';
 import { renderPersonnelIncomplete } from './personnel-incomplete.js';
 import { renderDoubleEmployment } from './double-employment.js';
-import { renderNoRehire } from './no-rehire.js';
+import { renderNoRehire, mountNoRehireConfigCard } from './no-rehire.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { renderCertSigners } from './cert-signers.js';
@@ -558,7 +558,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.74</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.76</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4807,6 +4807,11 @@ async function viewSync(user) {
       <div class="cfg-foot"><span class="cfg-saved" id="rsSaved">✓ Guardado</span><button class="btn btn-primary" id="rsSave">Guardar programación</button></div>
     </div></div>
 
+    <!-- v5.75: tarjeta de No reempleables. El placeholder vive en este
+         template pero la tarjeta la monta no-rehire.js (mountNoRehireConfigCard,
+         llamada desde navigate al entrar a 'sync'), para no engordar viewSync. -->
+    <div id="norehireCfgCard"></div>
+
     <!-- v5.58 — SE SACAN LAS DOS TABLAS DE HISTORIAL (Pablo).
 
          Aca vivian "Ultimas corridas con movimiento" (personal) y "Ultimas
@@ -6839,7 +6844,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'permisos') viewPermisos(user);
   else if (view === 'firmantes') renderCertSigners(user);
   else if (view === 'constancias') renderCertRequests(user);
-  else if (view === 'sync') viewSync(user);
+  else if (view === 'sync') { await viewSync(user); if (currentView === 'sync') mountNoRehireConfigCard(user); }
   else if (view === 'syncreview') renderAxReview(user);
   else if (view === 'axcompare') renderAxCompare(user);
   else if (view === 'axhistory') renderAxHistory(user);

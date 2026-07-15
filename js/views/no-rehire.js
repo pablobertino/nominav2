@@ -59,6 +59,13 @@ function initials(name) {
   return (p[0][0] + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
 }
 
+/* Clase de color del chip segun el valor del motivo (m1..m8 del catalogo;
+   m0 para valores fuera de rango o desconocidos). v5.76. */
+function motClass(v) {
+  const n = Number(v);
+  return (Number.isFinite(n) && n >= 1 && n <= 8) ? ('m' + n) : 'm0';
+}
+
 async function api(user, payload) {
   const res = await fetch('/api/no-rehire', {
     method: 'POST',
@@ -111,12 +118,23 @@ function ensureStyles() {
   .nr-nm{font-weight:700}
   .nr-ced{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted)}
   .nr-role{font-size:11px;color:var(--muted);margin-top:1px}
-  .nr-pill{display:inline-block;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:800;white-space:nowrap}
-  .nr-pill.motivo{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
-  .nr-pill.unk{background:#fef3c7;color:#92400e;border:1px solid #fde68a}
+  .nr-pill{display:inline-block;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:700;white-space:nowrap}
+  /* v5.76: paleta SUAVE, un color por motivo (Pablo: "salen muy fuertes").
+     Fondo claro + texto medio + borde tenue, como los chips de Publicar.
+     m1..m8 = no_rehire_reason.value; m0 = sin valor / desconocido. */
+  .nr-pill.m1{background:#fff1f2;color:#be123c;border:1px solid #fecdd3}   /* Robo */
+  .nr-pill.m2{background:#fff7ed;color:#c2410c;border:1px solid #fed7aa}   /* Agresión verbal */
+  .nr-pill.m3{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}   /* Agresión física */
+  .nr-pill.m4{background:#f5f3ff;color:#6d28d9;border:1px solid #ddd6fe}   /* Insubordinación */
+  .nr-pill.m5{background:#fefce8;color:#a16207;border:1px solid #fde68a}   /* Negligencia */
+  .nr-pill.m6{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe}   /* Abandono del puesto */
+  .nr-pill.m7{background:#eef2ff;color:#4338ca;border:1px solid #c7d2fe}   /* Fraude */
+  .nr-pill.m8{background:#fdf4ff;color:#a21caf;border:1px solid #f5d0fe}   /* Acoso */
+  .nr-pill.m0{background:#f8fafc;color:#475569;border:1px solid #e2e8f0}   /* desconocido */
+  .nr-pill.unk{background:#fefce8;color:#a16207;border:1px solid #fde68a}
   .nr-pill.vig{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
   .nr-pill.out{background:#f1f5f9;color:#64748b;border:1px solid #e2e8f0}
-  .nr-pill.act{background:#dc2626;color:#fff;border:1px solid #dc2626}
+  .nr-pill.act{background:#fee2e2;color:#b91c1c;border:1px solid #fca5a5;font-weight:800}
   .nr-obs{font-size:12px;color:var(--muted);max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .nr-note{font-size:11.5px;color:var(--muted);margin:10px 2px 0;line-height:1.6}
   .nr-empty{padding:52px 20px;text-align:center}
@@ -237,7 +255,7 @@ function openFicha(r) {
             <div class="nr-ced">${esc(ced)}</div>
             ${r.role ? `<div class="nr-role">${esc(r.role)}</div>` : ''}
             <div style="margin-top:7px">
-              <span class="nr-pill motivo">${esc(r.reason_label || '')}</span>
+              <span class="nr-pill ${motClass(r.reason_value)}">${esc(r.reason_label || '')}</span>
               ${r.reason_unknown ? '<span class="nr-pill unk" title="Este motivo no está en el catálogo del portal">motivo sin traducir</span>' : ''}
             </div>
           </div>
@@ -291,7 +309,7 @@ function rowHtml(r) {
           </div>
         </div>
       </td>
-      <td><span class="nr-pill motivo">${esc(r.reason_label || '')}</span>
+      <td><span class="nr-pill ${motClass(r.reason_value)}">${esc(r.reason_label || '')}</span>
         ${r.reason_unknown ? '<span class="nr-pill unk" title="Este motivo no está en el catálogo del portal">sin traducir</span>' : ''}</td>
       <td><div class="nr-obs" title="${esc(r.notes || '')}">${esc(r.notes || '—')}</div></td>
       <td style="white-space:nowrap;color:var(--muted);font-size:12px">${fmtDate(r.detected_at)}</td>
@@ -363,20 +381,14 @@ export async function renderNoRehire(user) {
         ? '<span class="st-ok">OK</span>'
         : `<span class="st-err">${esc(cfg.last_status || 'error')}</span>`}`
     : 'aún no ha corrido';
-  const hh = cfg ? String(cfg.daily_hour ?? 5).padStart(2, '0') : '05';
-  const mm = cfg ? String(cfg.daily_minute ?? 0).padStart(2, '0') : '00';
+  /* v5.75: los controles (Sincronizar ahora + hora) se MUDARON a
+     Sincronización → Configurar (pedido de Pablo, 14/07). Acá queda solo
+     la línea informativa; al superadmin se le dice dónde viven ahora. */
   const syncBar = `
     <div class="nr-sync">
       <span>Última sincronización: ${lastTxt}</span>
       ${cfg && cfg.last_error ? `<span class="st-err" title="${esc(cfg.last_error)}">⚠ ${esc(String(cfg.last_error).slice(0, 90))}</span>` : ''}
-      ${isSuper ? `
-        <span style="margin-left:auto;display:inline-flex;gap:8px;align-items:center;flex-wrap:wrap">
-          <label class="chk" style="font-size:12.5px">Corrida diaria a las
-            <input type="time" id="nrHora" value="${hh}:${mm}"></label>
-          <button class="btn btn-sm" id="nrHoraSave">Guardar</button>
-          <button class="btn btn-sm btn-primary" id="nrSyncNow">Sincronizar ahora</button>
-        </span>
-        <span class="msg" id="nrSyncMsg"></span>` : ''}
+      ${isSuper ? `<span class="msg" style="margin-left:auto;color:var(--muted)">Se programa y se ejecuta desde <b>Sincronización → Configurar</b>.</span>` : ''}
     </div>`;
 
   if (!rows.length) {
@@ -461,40 +473,89 @@ export async function renderNoRehire(user) {
     $('#nrCsv')?.addEventListener('click', () => expCsv(visibleRows(rows)));
     $('#nrTxt')?.addEventListener('click', () => expTxt(visibleRows(rows)));
   }
+}
 
-  /* ---- controles de superadmin ---- */
-  if (isSuper) {
-    const msg = () => $('#nrSyncMsg');
+/* ===== v5.75: LA CONFIGURACION VIVE EN SINCRONIZACION → CONFIGURAR =====
+   Pablo (14/07): "prefiero que la sincronizacion y su programacion vivan
+   en el Configurar de Sincronizar". Esta funcion monta la tarjeta de No
+   reempleables dentro de esa pagina, en el placeholder #norehireCfgCard
+   del template de viewSync (panel.js la llama desde navigate al entrar a
+   'sync'). Usa las mismas clases que las otras tarjetas (card,
+   cfg-card-head, cfg-desc, cfg-foot) para verse identica.
 
-    $('#nrSyncNow')?.addEventListener('click', async () => {
-      const btn = $('#nrSyncNow');
-      btn.disabled = true; btn.textContent = 'Sincronizando…';
-      const res = await api(user, { action: 'sync', source: 'manual' }).catch(e => ({ ok: false, error: String(e) }));
-      if (res && res.ok) {
-        const s = res.summary || {};
-        if (msg()) msg().innerHTML = `<span class="st-ok">Listo:</span> ${s.altas || 0} altas · ${s.bajas || 0} bajas · ${s.cambios || 0} cambios${res.warn ? ` · <span class="st-err">${esc(res.warn)}</span>` : ''}`;
-        // Recargar la vista para que la tabla refleje la corrida.
-        setTimeout(() => renderNoRehire(user), 900);
-      } else {
-        btn.disabled = false; btn.textContent = 'Sincronizar ahora';
-        if (msg()) msg().innerHTML = `<span class="st-err">✗ ${esc((res && res.error) || 'No se pudo sincronizar.')}</span>`;
-      }
-    });
+   Solo superadmin: viewSync ni pinta la pagina para otros roles, y esta
+   funcion ademas corta por su cuenta (defensa doble; el endpoint gatea
+   igual). */
+export async function mountNoRehireConfigCard(user) {
+  const host = document.getElementById('norehireCfgCard');
+  if (!host) return;   // no-superadmin (viewSync no pinto el template) o vista vieja
+  if (!(user && user.kind === 'admin' && user.role === 'superadmin')) return;
 
-    $('#nrHoraSave')?.addEventListener('click', async () => {
-      const v = String($('#nrHora')?.value || '').split(':');
-      const h = parseInt(v[0], 10), m = parseInt(v[1], 10);
-      if (!Number.isFinite(h) || !Number.isFinite(m)) {
-        if (msg()) msg().innerHTML = '<span class="st-err">Hora inválida.</span>';
-        return;
-      }
-      const res = await api(user, { action: 'save_config', daily_hour: h, daily_minute: m })
-        .catch(e => ({ ok: false, error: String(e) }));
-      if (msg()) {
-        msg().innerHTML = (res && res.ok)
-          ? '<span class="st-ok">✓ Hora guardada.</span>'
-          : `<span class="st-err">✗ ${esc((res && res.error) || 'No se pudo guardar.')}</span>`;
-      }
-    });
-  }
+  host.innerHTML = '<div class="card"><p class="muted" style="margin:0">Cargando No reempleables…</p></div>';
+  const r = await api(user, { action: 'get_config' }).catch(() => null);
+  if (!document.getElementById('norehireCfgCard')) return;   // navego a otra vista
+  const cfg = (r && r.ok && r.config) || {};
+
+  const hh = String(cfg.daily_hour ?? 5).padStart(2, '0');
+  const mm = String(cfg.daily_minute ?? 0).padStart(2, '0');
+
+  const lastLine = () => cfg.last_run_at
+    ? `Última corrida: ${fmtDateTime(cfg.last_run_at)} · ${cfg.last_status === 'ok'
+        ? '<b style="color:#15803d">OK</b>'
+        : `<b style="color:#b91c1c">${esc(cfg.last_status || 'error')}</b>`}${
+        cfg.last_error ? `<div style="color:#b91c1c;font-size:12px;margin-top:3px">⚠ ${esc(String(cfg.last_error).slice(0, 140))}</div>` : ''}`
+    : '<span class="muted">Sin corridas todavía.</span>';
+
+  host.innerHTML = `
+    <div class="card">
+      <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">No reempleables</h3>
+        <div class="head-actions"><button class="btn" id="nrcRun"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6M1 20v-6h6"></path><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></svg> Sincronizar ahora</button></div>
+      </div>
+      <p class="cfg-desc" style="margin:0 0 6px">Trae del sistema la lista de personas no aptas para recontratar y la compara con la del portal: registra altas, bajas y cambios de motivo u observaciones. Es la lista que <b>bloquea los ingresos</b> en el reporte de Ingreso. Con una corrida al día alcanza.</p>
+      <div style="margin:0 0 12px;font-size:13px" id="nrcLast">${lastLine()}</div>
+      <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+        <label style="display:inline-flex;gap:8px;align-items:center;font-size:13px;cursor:pointer">
+          <input type="checkbox" id="nrcOn" ${cfg.enabled === false ? '' : 'checked'}> Sincronización automática</label>
+        <label style="display:inline-flex;gap:8px;align-items:center;font-size:13px">Todos los días a las
+          <input type="time" id="nrcHora" value="${hh}:${mm}" style="font:inherit;font-size:13px;padding:5px 8px;border:1px solid var(--border);border-radius:8px"></label>
+      </div>
+      <div class="cfg-foot"><span class="cfg-saved" id="nrcSaved" style="visibility:hidden">✓ Guardado</span><button class="btn btn-primary" id="nrcSave">Guardar programación</button></div>
+    </div>`;
+
+  document.getElementById('nrcSave')?.addEventListener('click', async () => {
+    const btn = document.getElementById('nrcSave');
+    const okSpan = document.getElementById('nrcSaved');
+    const v = String(document.getElementById('nrcHora')?.value || '').split(':');
+    const h = parseInt(v[0], 10), m = parseInt(v[1], 10);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return;
+    btn.disabled = true;
+    const res = await api(user, {
+      action: 'save_config', daily_hour: h, daily_minute: m,
+      enabled: !!document.getElementById('nrcOn')?.checked,
+    }).catch(e => ({ ok: false, error: String(e) }));
+    btn.disabled = false;
+    if (res && res.ok && okSpan) {
+      okSpan.style.visibility = 'visible';
+      setTimeout(() => { okSpan.style.visibility = 'hidden'; }, 2500);
+    } else if (okSpan) {
+      okSpan.style.visibility = 'visible';
+      okSpan.textContent = '✗ ' + ((res && res.error) || 'No se pudo guardar.');
+      setTimeout(() => { okSpan.style.visibility = 'hidden'; okSpan.textContent = '✓ Guardado'; }, 4000);
+    }
+  });
+
+  document.getElementById('nrcRun')?.addEventListener('click', async () => {
+    const btn = document.getElementById('nrcRun');
+    const last = document.getElementById('nrcLast');
+    btn.disabled = true; btn.textContent = 'Sincronizando…';
+    const res = await api(user, { action: 'sync', source: 'manual' }).catch(e => ({ ok: false, error: String(e) }));
+    btn.disabled = false; btn.textContent = 'Sincronizar ahora';
+    if (!last) return;
+    if (res && res.ok) {
+      const s = res.summary || {};
+      last.innerHTML = `Última corrida: recién · <b style="color:#15803d">OK</b> · ${s.altas || 0} altas · ${s.bajas || 0} bajas · ${s.cambios || 0} cambios${res.warn ? `<div style="color:#b91c1c;font-size:12px;margin-top:3px">⚠ ${esc(res.warn)}</div>` : ''}`;
+    } else {
+      last.innerHTML = `<b style="color:#b91c1c">✗ ${esc((res && res.error) || 'No se pudo sincronizar.')}</b>`;
+    }
+  });
 }
