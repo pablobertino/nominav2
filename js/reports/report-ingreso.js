@@ -26,6 +26,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { getSession } from '../core/session.js';
 import * as DW from './shared/date-window.js';
 
 // Catalogos del wizard (cargos + bancos + operadoras + ventana). Una vez.
@@ -36,6 +37,46 @@ let CAT = null;
 // hook a nuestras celdas) pueda localizar a la persona por su cedula y
 // abrir su ficha en modo solo-lectura. Se refresca en cada render del paso 4.
 let LAST_WORKERS = [];
+
+/* ===== v5.77: AVISO TEMPRANO DE NO REEMPLEABLE (en el modal del alta) =====
+   Hasta v5.76 el bloqueo solo saltaba al FINAL: la tienda llenaba la ficha
+   entera, adjuntaba recaudos, llegaba al Resumen, tocaba Enviar... y recien
+   ahi el servidor rechazaba. El control era correcto pero la experiencia no.
+
+   Ahora, apenas la cedula es valida (6-8 digitos), se consulta
+   /api/no-rehire (action 'check') y si la persona esta en la lista:
+   - la linea de la cedula lo dice en rojo (sin motivo ni observaciones:
+     decision de Pablo 14/07, ese detalle no es de nivel tienda), y
+   - el boton "Agregar al reporte" queda deshabilitado.
+
+   Esto es CORTESIA, no el control: si la red falla o alguien salta el
+   front, el gate del servidor (submitIngreso, v5.74) rechaza igual.
+   Por eso un error aca solo se anota en consola y no bloquea nada.
+   Cache por cedula para no repetir consultas mientras escriben. */
+const NR_CACHE = new Map();   // ced -> true (bloqueada) | false (libre)
+let NR_TIMER = null;
+function nrLookup(ced, refresh) {
+  if (!ced || NR_CACHE.has(ced)) return;   // ya se sabe: check() lo lee sincrono
+  clearTimeout(NR_TIMER);
+  NR_TIMER = setTimeout(async () => {
+    try {
+      const user = getSession();
+      if (!user) return;
+      const r = await fetch('/api/no-rehire', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'check', id_number: ced,
+          user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null },
+        }),
+      }).then(x => x.json());
+      if (r && r.ok) { NR_CACHE.set(ced, !!r.blocked); refresh(); }
+    } catch (e) {
+      // Cortesia fallida: el servidor bloquea igual en el envio.
+      console.warn('Chequeo de no reempleable fallo (el servidor valida igual):', e);
+    }
+  }, 350);
+}
+const nrIsBlocked = ced => NR_CACHE.get(ced) === true;
 
 async function loadCatalogs() {
   if (CAT) return CAT;
@@ -497,7 +538,13 @@ function openIngresoModal(ctx, id) {
     renderDocs();
   }
 
-  q('#ig_ced').addEventListener('input', function () { this.value = this.value.replace(/[^0-9]/g, ''); showCed(); check(); });
+  q('#ig_ced').addEventListener('input', function () {
+    this.value = this.value.replace(/[^0-9]/g, '');
+    showCed(); check();
+    // v5.77: apenas la cedula es valida, se consulta si es no reempleable.
+    const v = DW.validateCedula(this.value);
+    if (v.ok) nrLookup(v.ced, () => { if (ov.isConnected) { showCed(); check(); } });
+  });
   q('#ig_account').addEventListener('input', function () { this.value = this.value.replace(/[^0-9 \-]/g, ''); showBank(); check(); });
   q('#ig_phone').addEventListener('input', function () { this.value = this.value.replace(/[^0-9 \-]/g, ''); showPhone(); check(); });
   q('#ig_birth').addEventListener('change', () => { showAge(); check(); });
@@ -516,8 +563,15 @@ function openIngresoModal(ctx, id) {
     const el = q('#ig_ced'), line = q('#e_ced');
     const v = DW.validateCedula(el.value);
     if (!el.value) { line.textContent = ''; line.className = 'ig-line'; return; }
-    if (v.ok) { line.className = 'ig-line ok'; line.textContent = `✓ ${v.kind === 'E' ? 'Extranjero' : 'Venezolano'} — ${v.kind}-${v.ced}`; }
-    else { line.className = 'ig-line warn'; line.textContent = 'Cédula no válida (6 a 8 dígitos).'; }
+    if (!v.ok) { line.className = 'ig-line warn'; line.textContent = 'Cédula no válida (6 a 8 dígitos).'; return; }
+    // v5.77: la persona esta en la lista de no reempleables -> se dice ACA,
+    // antes de que llenen la ficha. Sin motivo: solo Capital Humano lo maneja.
+    if (nrIsBlocked(v.ced)) {
+      line.className = 'ig-line warn';
+      line.textContent = '🚫 Esta persona no es reempleable en el grupo: no se puede ingresar. Para más información, contacta a Capital Humano.';
+      return;
+    }
+    line.className = 'ig-line ok'; line.textContent = `✓ ${v.kind === 'E' ? 'Extranjero' : 'Venezolano'} — ${v.kind}-${v.ced}`;
   }
   function showBank() {
     const el = q('#ig_account'), line = q('#ig_bankline');
@@ -559,6 +613,12 @@ function openIngresoModal(ctx, id) {
       // (esa persona ya trabaja ahi). Se bloquea para evitar altas duplicadas.
       else if ((ctx.roster || []).some(r => r.id_number === cedV.ced)) {
         e.ced = 'Esa cédula ya está en la lista de la tienda (no es un ingreso nuevo).';
+      }
+      // v5.77: no reempleable -> no se puede agregar al reporte. El texto
+      // visible lo pinta showCed() en la linea de la cedula; aca solo se
+      // deshabilita el boton.
+      else if (nrIsBlocked(cedV.ced)) {
+        e.ced = 'No reempleable: no se puede ingresar.';
       }
     }
     if (!cargo) e.cargo = 'Selecciona un cargo.';
@@ -631,6 +691,12 @@ function openIngresoModal(ctx, id) {
   });
 
   showAge(); showCed(); showBank(); showPhone(); check();
+  // v5.77: si el modal abre con cedula precargada (editar / venia del paso 3),
+  // consultarla de una vez.
+  {
+    const v0 = DW.validateCedula(q('#ig_ced').value);
+    if (v0.ok) nrLookup(v0.ced, () => { if (ov.isConnected) { showCed(); check(); } });
+  }
   setTimeout(() => q('#ig_start').focus(), 40);
 }
 
