@@ -75,6 +75,10 @@ function ensureStyles() {
   .nv-ok .ms{font-size:12.5px;color:#166534;margin-top:2px}
   .nv-cedchip{font-family:ui-monospace,Menlo,monospace;font-weight:700;font-size:13px;
      background:#fff;border:1px solid var(--border);border-radius:8px;padding:2px 9px}
+  /* v5.86: advertencia de doble empleo (cedula libre pero ya activa en el grupo) */
+  .nv-warn{margin-top:10px;background:#fffbeb;border:1.5px solid #fcd34d;border-radius:12px;
+     padding:13px 16px;display:flex;gap:11px;align-items:flex-start;font-size:12.5px;color:#92400e;line-height:1.55}
+  .nv-warn .wico{flex:none;font-size:17px;line-height:1.2}
   /* tarjeta compacta bloqueada (fondo rojo) — la misma para cedula y nombre */
   .nv-hit{margin-top:10px;background:#fef2f2;border:1.5px solid #fca5a5;border-left:4px solid #ef4444;
      border-radius:12px;padding:13px 16px;display:flex;gap:12px;align-items:center}
@@ -166,6 +170,16 @@ export function renderNoRehireVerify(user) {
       if (!r.blocked) {
         // LIBRE: verde, SIN mencionar la lista (decision de Pablo, mockup v2).
         const kind = Number(r.id_number) >= 80000000 ? 'E' : 'V';
+        // v5.86: si la cedula ya esta activa en alguna empresa del grupo, se
+        // advierte el doble empleo — sin revelar nombre, empresa ni cargo
+        // (el endpoint solo manda el booleano `activa`).
+        const warnActiva = r.activa ? `
+          <div class="nv-warn">
+            <span class="wico">⚠️</span>
+            <div><b>Ojo:</b> esta cédula ya figura <b>activa en una empresa del grupo</b>.
+            Si la ingresas, quedaría con <b>doble empleo</b> — pregunta al candidato y
+            verifícalo antes de continuar.</div>
+          </div>` : '';
         out().innerHTML = `
           <div class="nv-ok">
             <div class="ico">✓</div>
@@ -174,7 +188,7 @@ export function renderNoRehireVerify(user) {
               <div class="ms">La cédula <span class="nv-cedchip">${esc(kind)}-${esc(r.id_number)}</span>
               no tiene impedimentos. Continúa con el reporte de Ingreso normalmente.</div>
             </div>
-          </div>`;
+          </div>${warnActiva}`;
       } else {
         out().innerHTML = hitCard(r.person || {});
       }

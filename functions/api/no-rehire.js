@@ -383,7 +383,21 @@ export async function onRequestPost({ request, env }) {
       if (/^[0-9]{6,8}$/.test(compact)) {
         const ced = cedNorm(compact);
         const rows = await sb(env, `no_rehire?id_number=eq.${encodeURIComponent(ced)}&removed_at=is.null&select=id_number,full_name`);
-        if (!rows || !rows.length) return json({ ok: true, mode: 'ced', blocked: false, id_number: ced });
+        if (!rows || !rows.length) {
+          /* v5.86: sin impedimento, pero con UNA advertencia que vale oro para
+             el que contrata: ¿la cedula ya esta ACTIVA en alguna empresa del
+             grupo? Contratarla seria un doble empleo. Contrato de privacidad:
+             se devuelve UN BOOLEANO y nada mas — ni nombre, ni empresa, ni
+             cargo — para no convertir esta consulta (que tienen las tiendas)
+             en un buscador del padron por la puerta de atras. Si la consulta
+             falla, se responde sin la advertencia: no bloquea el flujo. */
+          let activa = false;
+          try {
+            const sw = await sb(env, `store_workers?id_number=eq.${encodeURIComponent(ced)}&is_active=eq.true&select=id_number&limit=1`);
+            activa = !!(sw && sw.length);
+          } catch (_) { /* sin dato de actividad: la advertencia simplemente no sale */ }
+          return json({ ok: true, mode: 'ced', blocked: false, id_number: ced, activa });
+        }
         const people = await enrich(rows);
         return json({ ok: true, mode: 'ced', blocked: true, person: people[0] });
       }
