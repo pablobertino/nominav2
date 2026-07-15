@@ -452,6 +452,8 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
           <option value="name_za">Orden: Nombre (Z→A)</option>
           <option value="photo_pending">Orden: Sin foto primero</option>
           <option value="photo_loaded">Orden: Con foto primero</option>
+          <option value="photo_recent">Orden: Última foto primero</option>
+          <option value="edit_recent">Orden: Última edición primero</option>
           <option value="cargo_az">Orden: Cargo (A→Z)</option>
           <option value="tenure_old">Orden: Más antiguo</option>
           <option value="tenure_new">Orden: Más reciente</option>
@@ -779,6 +781,16 @@ function sortWorkers(list) {
         const da = a.start_date || '', db = b.start_date || '';
         if (!da && db) return 1; if (da && !db) return -1; if (da === db) return cmpName(a, b);
         return k === 'tenure_old' ? (da < db ? -1 : 1) : (da > db ? -1 : 1);
+      }
+      // v5.88: mas reciente primero por fecha de FOTO o de EDICION de ficha.
+      // Comparacion directa de ISO strings (ordenan igual que la fecha);
+      // sin dato al final y desempate estable por nombre.
+      case 'photo_recent': case 'edit_recent': {
+        const key = k === 'photo_recent' ? 'photo_uploaded_at' : 'profile_updated_at';
+        const da = a[key] || '', db = b[key] || '';
+        if (!da && !db) return cmpName(a, b);
+        if (!da) return 1; if (!db) return -1;
+        return da === db ? cmpName(a, b) : (da > db ? -1 : 1);
       }
       case 'age_desc': case 'age_asc': {
         const aa = ageFrom(a.birth_date), ab = ageFrom(b.birth_date);
@@ -1507,7 +1519,9 @@ function paintFichaValues(host, w) {
   setVal(host, 'phone', w.phone ? phoneDisplay(w.phone) : '');
   setVal(host, 'email', w.email);
   setVal(host, 'address', w.address);
-  setVal(host, 'photo_uploaded_by', w.photo_uploaded_by);
+  setVal(host, 'photo_uploaded_by', w.photo_uploaded_by
+    ? `${w.photo_uploaded_by}${w.photo_uploaded_at ? ' · ' + fmtDateTime(w.photo_uploaded_at) : ''}`
+    : '');
   setVal(host, 'updated_at', fmtDateTime(w.updated_at));
   // v4.20: quien edito la ficha de ultimo (tienda/admin/gestor) y cuando.
   setVal(host, 'profile_updated_by', w.profile_updated_by
@@ -2179,6 +2193,7 @@ function openPhotoModal(ced) {
     w.thumb_url = r.thumb_url || w.thumb_url;
     w.full_url = r.full_url || w.full_url;
     w.photo_uploaded_by = uploadedBy;
+    w.photo_uploaded_at = new Date().toISOString();   // v5.88: fecha de foto en memoria
     w.updated_at = new Date().toISOString();
     closeModal();
     paintGrid();
@@ -2191,6 +2206,7 @@ function openPhotoModal(ced) {
     const r = await api({ action: 'remove', company_code: STATE.cc, user: sessionUserPayload(STATE.user), id_number: w.id_number });
     if (!r.ok) { alert(r.error || 'No se pudo quitar.'); return; }
     w.has_photo = false; w.needs_sign = false; w.thumb_url = null; w.full_url = null;
+    w.photo_uploaded_by = null; w.photo_uploaded_at = null;   // v5.88: limpiar registro de foto
     closeModal();
     paintGrid();
     if (CUR && CUR.id_number === w.id_number) openFicha(w.id_number);

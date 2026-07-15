@@ -510,6 +510,8 @@ async function directory(env, cc, table, deptScope) {
       thumb_url: thumbUrl,     // URL publica directa (esquema nuevo) o null
       full_url: null,          // la full se firma on-demand al abrir el visor
       photo_uploaded_by: m.photo_uploaded_by || null,
+      // v5.88: cuando se subio la foto (ficha + orden "Ultima foto primero").
+      photo_uploaded_at: m.photo_uploaded_at || null,
       updated_at: m.updated_at || null,
       // v4.20: quien edito la ficha de ultimo (etiqueta) y cuando.
       profile_updated_by: m.profile_updated_by || null,
