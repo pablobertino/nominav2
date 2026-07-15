@@ -27,6 +27,12 @@
                                pero SI necesitan saber si pueden ingresar).
                                Respuesta minima: { blocked, reason_label,
                                notes, full_name }.
+     verify      {q}           gate view.norehirecheck (v5.79, pantalla
+                               "Verificar candidato"). Cedula (6-8 digitos)
+                               = respuesta definitiva; texto = coincidencias
+                               por nombre. NUNCA devuelve motivo ni
+                               observaciones: solo identidad (nombre, cedula,
+                               foto) y si esta bloqueada.
      get_config  {}            superadmin. La fila de no_rehire_config.
      save_config {enabled, daily_hour, daily_minute}  superadmin.
 
@@ -332,6 +338,54 @@ export async function onRequestPost({ request, env }) {
     /* ---------- el resto exige actor ---------- */
     const actor = await resolveActor(env, body.user || null);
     if (!actor) return json({ ok: false, error: 'Sesion no valida.' }, 403);
+
+    /* ---------- verify (v5.79): la pantalla "Verificar candidato" ----------
+       Gate propio (view.norehirecheck), pensado para tiendas y roles
+       operativos. Contrato de privacidad: la respuesta JAMAS incluye
+       reason_* ni notes — ni inspeccionando el JSON se ve el motivo. */
+    if (action === 'verify') {
+      if (!can(actor, 'view.norehirecheck')) {
+        return json({ ok: false, error: 'No tienes permiso para verificar candidatos (view.norehirecheck).' }, 403);
+      }
+      const qRaw = String(body.q || '').trim();
+      if (!qRaw) return json({ ok: false, error: 'Escribe una cedula o un nombre.' }, 400);
+
+      // Enriquecer con foto y letra de cedula. La letra: la del maestro si
+      // existe; si no, la regla de siempre (>= 80.000.000 -> E).
+      const enrich = async (rows) => {
+        const ceds = rows.map(x => cedNorm(x.id_number)).filter(Boolean);
+        let master = [];
+        if (ceds.length) {
+          master = await sb(env, `workers_master?id_number=in.(${ceds.map(encodeURIComponent).join(',')})&select=id_number,ced_kind,photo_key`) || [];
+        }
+        const by = new Map(master.map(m => [cedNorm(m.id_number), m]));
+        return rows.map(x => {
+          const ced = cedNorm(x.id_number);
+          const m = by.get(ced) || null;
+          const kind = (m && m.ced_kind) || (Number(ced) >= 80000000 ? 'E' : 'V');
+          return { id_number: ced, ced_kind: kind, full_name: x.full_name || null, thumb_url: m ? thumbUrl(env, m.photo_key) : null };
+        });
+      };
+
+      // ¿Cedula? Solo digitos (se admiten separadores . - espacio), 6-8.
+      const compact = qRaw.replace(/[\s.\-]/g, '').replace(/^[VvEe]/, '');
+      if (/^[0-9]{6,8}$/.test(compact)) {
+        const ced = cedNorm(compact);
+        const rows = await sb(env, `no_rehire?id_number=eq.${encodeURIComponent(ced)}&removed_at=is.null&select=id_number,full_name`);
+        if (!rows || !rows.length) return json({ ok: true, mode: 'ced', blocked: false, id_number: ced });
+        const people = await enrich(rows);
+        return json({ ok: true, mode: 'ced', blocked: true, person: people[0] });
+      }
+
+      // Nombre: minimo 3 letras. Se sanea lo que rompe la sintaxis de
+      // PostgREST (comas, parentesis, comodines) y se arma un patron que
+      // respeta el orden de las palabras: *WILTON*GARCIA*.
+      const term = qRaw.replace(/[%_,()*]/g, ' ').replace(/\s+/g, ' ').trim();
+      if (term.length < 3) return json({ ok: false, error: 'Escribe al menos 3 letras para buscar por nombre.' }, 400);
+      const pattern = '*' + term.split(' ').join('*') + '*';
+      const rows = await sb(env, `no_rehire?removed_at=is.null&full_name=ilike.${encodeURIComponent(pattern)}&select=id_number,full_name&order=full_name.asc&limit=20`) || [];
+      return json({ ok: true, mode: 'name', q: term, matches: await enrich(rows) });
+    }
 
     if (action === 'list') {
       if (!can(actor, 'view.norehire')) {

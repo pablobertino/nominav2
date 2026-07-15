@@ -25,6 +25,7 @@ import { renderPersonnelSearch } from './personnel-search.js';
 import { renderPersonnelIncomplete } from './personnel-incomplete.js';
 import { renderDoubleEmployment } from './double-employment.js';
 import { renderNoRehire, mountNoRehireConfigCard } from './no-rehire.js';
+import { renderNoRehireVerify } from './no-rehire-verify.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { renderCertSigners } from './cert-signers.js';
@@ -115,6 +116,8 @@ const I = {
   alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>',
   // v5.73: persona tachada (vista No reempleables).
   userx: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><line x1="17" y1="8" x2="22" y2="13"/><line x1="22" y1="8" x2="17" y2="13"/></svg>',
+  // v5.79: persona con visto (vista Verificar candidato).
+  usercheck: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>',
 };
 
 /* ---------- NAVEGACION (admin / superadmin) ----------
@@ -148,6 +151,7 @@ const NAV_GROUPS = [
     // v5.73: No reempleables. OJO §4 del resumen: agregar el item ACA no
     // alcanza para editor/gestor — cada rol tiene SU array (abajo).
     ['norehire', I.userx, 'No reempleables'],
+    ['norehirecheck', I.usercheck, 'Verificar candidato'],
     ['egmotivos', I.check, 'Ratificar egresos'],
     ['rostersync', I.sync, 'Carga de personal'],
   ] },
@@ -271,6 +275,10 @@ const NAV_COMPANY_LOOSE = [
 const NAV_COMPANY_GROUPS = [
   { title: 'Personal', items: [
     ['fotos', I.photo, 'Personal'],
+    // v5.79: primer item de no-reempleables para TIENDAS. Solo la consulta
+    // (view.norehirecheck): identidad y si puede o no ser contratado, sin
+    // motivos. La pantalla completa (view.norehire) sigue siendo de admin.
+    ['norehirecheck', I.usercheck, 'Verificar candidato'],
   ] },
   { title: 'Solicitudes', items: [
     ['constancias', I.docs, 'Constancias'],
@@ -305,6 +313,7 @@ const NAV_EDITOR_GROUPS = [
     ['buscar', I.search, 'Buscar'],
     ['datosincompletos', I.bizreport, 'Datos incompletos'],
     ['norehire', I.userx, 'No reempleables'],
+    ['norehirecheck', I.usercheck, 'Verificar candidato'],
     ['rostersync', I.sync, 'Carga de personal'],
   ] },
   { title: 'Datos bancarios', items: [
@@ -341,6 +350,7 @@ const NAV_GESTOR_GROUPS = [
     ['buscar', I.search, 'Buscar'],
     ['datosincompletos', I.bizreport, 'Datos incompletos'],
     ['norehire', I.userx, 'No reempleables'],
+    ['norehirecheck', I.usercheck, 'Verificar candidato'],
   ] },
   { title: 'Solicitudes', items: [
     ['constancias', I.docs, 'Constancias'],
@@ -558,7 +568,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.78</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v5.79</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -6882,6 +6892,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'datosincompletos') renderPersonnelIncomplete(user);
   else if (view === 'dobleempleo') renderDoubleEmployment(user);
   else if (view === 'norehire') renderNoRehire(user);
+  else if (view === 'norehirecheck') renderNoRehireVerify(user);
   else if (view === 'documentos') renderPersonnelDocs(user, null);
   else if (view === 'miempresa') viewMiEmpresa(user);
   else if (view === 'fotos') {
@@ -7219,6 +7230,7 @@ export function renderPanel() {
       datosincompletos: 'view.datosincompletos', egmotivos: 'view.egmotivos',
       dobleempleo: 'view.dobleempleo',
       norehire: 'view.norehire',
+      norehirecheck: 'view.norehirecheck',
       rostersync: 'view.rostersync',
       historial: 'view.historial', estadisticas: 'view.estadisticas',
       misstats: 'view.misstats', reportempresas: 'view.reportempresas',
