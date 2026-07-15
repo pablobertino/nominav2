@@ -390,11 +390,19 @@ export async function onRequestPost({ request, env }) {
              se devuelve UN BOOLEANO y nada mas — ni nombre, ni empresa, ni
              cargo — para no convertir esta consulta (que tienen las tiendas)
              en un buscador del padron por la puerta de atras. Si la consulta
-             falla, se responde sin la advertencia: no bloquea el flujo. */
+             falla, se responde sin la advertencia: no bloquea el flujo.
+             v5.87: el grupo tiene DOS padrones — store_workers (tiendas, lo
+             sincroniza el roster) y enterprise_workers (empresas
+             administrativas) — y hay que mirar AMBOS: el caso de prueba de
+             Pablo (28074254, activa en 0A01) vive en el segundo y v5.86 solo
+             miraba el primero. */
           let activa = false;
           try {
-            const sw = await sb(env, `store_workers?id_number=eq.${encodeURIComponent(ced)}&is_active=eq.true&select=id_number&limit=1`);
-            activa = !!(sw && sw.length);
+            const [sw, ew] = await Promise.all([
+              sb(env, `store_workers?id_number=eq.${encodeURIComponent(ced)}&is_active=eq.true&select=id_number&limit=1`),
+              sb(env, `enterprise_workers?id_number=eq.${encodeURIComponent(ced)}&is_active=eq.true&select=id_number&limit=1`),
+            ]);
+            activa = !!((sw && sw.length) || (ew && ew.length));
           } catch (_) { /* sin dato de actividad: la advertencia simplemente no sale */ }
           return json({ ok: true, mode: 'ced', blocked: false, id_number: ced, activa });
         }
