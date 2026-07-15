@@ -984,6 +984,49 @@ export async function onRequestPost({ request, env, ctx }) {
     catch (_) { /* el log nunca tumba la corrida */ }
   }
 
+  /* v5.82: ESTOS ACUMULADORES TIENEN QUE DECLARARSE ANTES de la fila de
+     cierre (bloque v5.68, abajo), porque ella los usa. Vivian despues, y con
+     const no hay hoisting: el cierre moria con ReferenceError en cada corrida
+     desde v5.68, el catch lo capturaba, y el Registro nunca vio ni la fila de
+     cierre ni la duracion real. */
+  /* v5.14: el resumen ACUMULA entre tandas. La corrida son N invocaciones; si
+     cada una pisara el resumen con lo suyo, la config terminaria mostrando lo
+     de la ULTIMA tanda ("2 ingresos") en vez del total de la corrida. Los
+     totales llegan del llamador (que los viene sumando) y aca se les agrega lo
+     de esta tanda. */
+  const prevAdded = Math.max(0, parseInt(body.acc_added, 10) || 0);
+  const prevRemoved = Math.max(0, parseInt(body.acc_removed, 10) || 0);
+  const prevFilled = Math.max(0, parseInt(body.acc_filled, 10) || 0);
+  const prevAlerts = Math.max(0, parseInt(body.acc_alerts, 10) || 0);
+  const prevStores = Math.max(0, parseInt(body.acc_stores, 10) || 0);
+  // Los rechazos tambien acumulan entre tandas (si no, el resumen mostraria
+  // solo los de la ultima tanda de 10 tiendas).
+  const prevRej = {
+    account: Math.max(0, parseInt(body.acc_rej_account, 10) || 0),
+    phone:   Math.max(0, parseInt(body.acc_rej_phone, 10) || 0),
+    email:   Math.max(0, parseInt(body.acc_rej_email, 10) || 0),
+  };
+
+  const totAdded = prevAdded + added;
+  const totRemoved = prevRemoved + removed;
+  const totFilled = prevFilled + filled;
+  const totAlerts = prevAlerts + alerts;
+  const totStores = prevStores + results.length;
+  /* v5.34: el DETALLE de los rechazos acumula entre tandas, igual que los
+     contadores. Se corta en 300 filas: alcanza de sobra para ir a corregir en
+     AX, y evita inflar el payload si un dia el ERP devuelve basura masiva. */
+  const prevDetail = Array.isArray(body.acc_rej_detail) ? body.acc_rej_detail : [];
+  const totDetail = prevDetail.concat(rejDetail).slice(0, 300);
+  const prevDiffs = Math.max(0, parseInt(body.acc_diffs, 10) || 0);
+  const totDiffs = prevDiffs + diffs;
+  const prevDiffDetail = Array.isArray(body.acc_diff_detail) ? body.acc_diff_detail : [];
+  const totDiffDetail = prevDiffDetail.concat(diffDetail).slice(0, 300);
+  const totRej = {
+    account: prevRej.account + rej.account,
+    phone:   prevRej.phone   + rej.phone,
+    email:   prevRej.email   + rej.email,
+  };
+
   /* ===== v5.68 — LA CORRIDA LIMPIA TAMBIEN DEJA REGISTRO =====
 
      El bug (Pablo, 14/07): la corrida automatica de las 10:00 reviso las 132
@@ -1058,43 +1101,12 @@ export async function onRequestPost({ request, env, ctx }) {
     }
   }
 
-  /* v5.14: el resumen ACUMULA entre tandas. La corrida son N invocaciones; si
-     cada una pisara el resumen con lo suyo, la config terminaria mostrando lo
-     de la ULTIMA tanda ("2 ingresos") en vez del total de la corrida. Los
-     totales llegan del llamador (que los viene sumando) y aca se les agrega lo
-     de esta tanda. */
-  const prevAdded = Math.max(0, parseInt(body.acc_added, 10) || 0);
-  const prevRemoved = Math.max(0, parseInt(body.acc_removed, 10) || 0);
-  const prevFilled = Math.max(0, parseInt(body.acc_filled, 10) || 0);
-  const prevAlerts = Math.max(0, parseInt(body.acc_alerts, 10) || 0);
-  const prevStores = Math.max(0, parseInt(body.acc_stores, 10) || 0);
-  // Los rechazos tambien acumulan entre tandas (si no, el resumen mostraria
-  // solo los de la ultima tanda de 10 tiendas).
-  const prevRej = {
-    account: Math.max(0, parseInt(body.acc_rej_account, 10) || 0),
-    phone:   Math.max(0, parseInt(body.acc_rej_phone, 10) || 0),
-    email:   Math.max(0, parseInt(body.acc_rej_email, 10) || 0),
-  };
-
-  const totAdded = prevAdded + added;
-  const totRemoved = prevRemoved + removed;
-  const totFilled = prevFilled + filled;
-  const totAlerts = prevAlerts + alerts;
-  const totStores = prevStores + results.length;
-  /* v5.34: el DETALLE de los rechazos acumula entre tandas, igual que los
-     contadores. Se corta en 300 filas: alcanza de sobra para ir a corregir en
-     AX, y evita inflar el payload si un dia el ERP devuelve basura masiva. */
-  const prevDetail = Array.isArray(body.acc_rej_detail) ? body.acc_rej_detail : [];
-  const totDetail = prevDetail.concat(rejDetail).slice(0, 300);
-  const prevDiffs = Math.max(0, parseInt(body.acc_diffs, 10) || 0);
-  const totDiffs = prevDiffs + diffs;
-  const prevDiffDetail = Array.isArray(body.acc_diff_detail) ? body.acc_diff_detail : [];
-  const totDiffDetail = prevDiffDetail.concat(diffDetail).slice(0, 300);
-  const totRej = {
-    account: prevRej.account + rej.account,
-    phone:   prevRej.phone   + rej.phone,
-    email:   prevRej.email   + rej.email,
-  };
+  /* v5.82: los acumuladores vivian ACA, DESPUES de la fila de cierre... que
+     los usa. Con const no hay hoisting: "Cannot access 'totAdded' before
+     initialization", el catch lo capturaba, y la fila de cierre NO SE
+     ESCRIBIO NUNCA (verificado: 0 filas con company_code null en toda la
+     historia, y la bitacora chain_fail de v5.70 lo tenia registrado). Se
+     mudaron arriba del bloque v5.68. */
 
   /* v5.36: el resumen que se guarda en la config (y que Configurar muestra al
      entrar) tiene que contar TODO lo que hizo la corrida. Antes solo guardaba
