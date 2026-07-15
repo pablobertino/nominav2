@@ -104,6 +104,11 @@ const MENU_CATALOG = [
     // v5.19: Doble empleo. Solo consulta (los casos se corrigen en el sistema),
     // por eso no tiene acciones: el permiso de vista es todo lo que hay.
     { id: 'dobleempleo', lbl: 'Doble empleo', view: 'view.dobleempleo', acts: [] },
+    // v5.80: No reempleables (pantalla completa, con motivos) y Verificar
+    // candidato (consulta sin motivos, apta para tiendas). Ninguna tiene
+    // acciones: la lista se mantiene en el sistema, el portal solo consulta.
+    { id: 'norehire', lbl: 'No reempleables', view: 'view.norehire', acts: [] },
+    { id: 'norehirecheck', lbl: 'Verificar candidato', view: 'view.norehirecheck', acts: [] },
     { id: 'egmotivos', lbl: 'Ratificar egresos', view: 'view.egmotivos', acts: ['egress.ratify'] },
     { id: 'rostersync', lbl: 'Carga de personal', view: 'view.rostersync', acts: ['roster.upload', 'roster.upload_ax', 'roster.upload_api', 'roster.manual', 'roster.clear'] },
   ] },
