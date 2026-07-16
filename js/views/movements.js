@@ -112,6 +112,7 @@ let TYPES_ON = new Set(TIPOS.map(t => t.key));   // chips: todos encendidos
 let SORT = 'fecha';      // fecha | nombre | antiguedad | alias
 let ROWS = null;         // null = aun no consultado
 let STATS = null;        // cabecera del tablero Analisis (F1 v5.96)
+let COHORT_SEL = '';     // cohorte elegida en la curva de supervivencia (F3)
 let PAGE = 1;
 let PER = 50;
 let TAB = 'detalle';     // detalle | analisis
@@ -170,6 +171,25 @@ function ensureStyles() {
     background:#eef4ff;color:var(--brand,#2563eb);font-size:11px;font-weight:800;
     display:flex;align-items:center;justify-content:center;text-decoration:none;line-height:1}
   .mv-rk .q:hover{background:var(--brand,#2563eb);color:#fff}
+  /* Dispersion entre tiendas + supervivencia (F3 v5.98) */
+  .mv-band-wrap{display:flex;align-items:center;gap:10px;font-size:11px;color:var(--muted);padding:6px 4px 2px}
+  .mv-band{flex:1;height:14px;border-radius:8px;background:linear-gradient(90deg,#bfe3d4,#f3e0c0,#ecc8c8);position:relative}
+  .mv-band .med{position:absolute;top:-5px;width:3px;height:24px;background:var(--ink);border-radius:2px}
+  .mv-band-cap{text-align:center;font-size:10.5px;color:var(--faint,#94a3b8);margin:4px 0 10px}
+  .mv-displists{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media (max-width:520px){.mv-displists{grid-template-columns:1fr}}
+  .mv-displists h4{font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--faint,#94a3b8);margin:0 0 5px}
+  .mv-dl{list-style:none;margin:0;padding:0}
+  .mv-dl li{display:flex;align-items:baseline;gap:8px;font-size:12px;padding:3px 0;border-bottom:1px dashed var(--border-soft,#eef1f5)}
+  .mv-dl li:last-child{border-bottom:0}
+  .mv-dl .rt{margin-left:auto;font-weight:800;font-variant-numeric:tabular-nums}
+  .mv-dl.hi .rt{color:#b91c1c}.mv-dl.lo .rt{color:var(--ok,#0e9f6e)}
+  .mv-dl .pl{font-size:10px;color:var(--faint,#94a3b8);white-space:nowrap}
+  .mv-coh-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:10px}
+  .mv-coh-head h3{margin:0}
+  .mv-coh-head select{font:inherit;font-size:12px;padding:6px 9px;border:1px solid var(--border);
+    border-radius:9px;background:var(--card,#fff);color:var(--ink);font-weight:600;margin-left:auto}
+  .mv-surv text{font-family:inherit}
   /* Chips-filtro por tipo */
   .mv-typechips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
   .mv-tc{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:6px 12px;
@@ -558,9 +578,75 @@ function paintAnalisis(body) {
         <div class="n">${neto}</div><div class="d">${pl ? `plantilla ${pl.n.toLocaleString('es-VE')} al corte (${esc(ddmm(pl.cut))})` : 'sin corte en el período'}</div></div>
     </div>
     ${paintIndicadores()}
+    ${paintSurvival()}
     <div class="mv-soon">
-      Dispersión entre tiendas comparables (con ranking clicable) y curva de supervivencia por cohorte — próxima fase (v5.98).
+      Diagnóstico y recomendaciones generados de los datos del período — última fase (v5.99).
       El <b>Detalle</b> del período está en su pestaña, con buscador y exportación.
+    </div>`;
+
+  // Cableado del tablero: selector de cohorte (repinta la curva sin
+  // refetch: todas las cohortes ya vienen en STATS) y tiendas clicables
+  // del ranking -> Personal (patron v5.89).
+  const cs = $('#mvCohSel');
+  cs?.addEventListener('change', () => { COHORT_SEL = cs.value; paintAnalisis(body); });
+  body.querySelectorAll('.mv-al[data-code]').forEach(a =>
+    a.addEventListener('click', () => openCompany(a.dataset.code)));
+}
+
+/* ---------- curva de supervivencia por cohorte (F3 v5.98, mockup v3) ---------- */
+const MES_FULL = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio',
+  'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+function mesLabel(ym) {
+  const m = String(ym || '').match(/^(\d{4})-(\d{2})$/);
+  return m ? `${MES_FULL[+m[2] - 1]} ${m[1]}` : ym;
+}
+function paintSurvival() {
+  const cohs = (STATS && Array.isArray(STATS.cohortes)) ? STATS.cohortes : [];
+  if (!cohs.length) return '';
+  if (!cohs.some(c => c.mes === COHORT_SEL)) COHORT_SEL = cohs[0].mes;
+  const c = cohs.find(x => x.mes === COHORT_SEL);
+
+  // Puntos de la curva: solo los checkpoints que la cohorte ya maduro
+  // (la RPC manda null en los que aun no llegan). 'Hoy' siempre, naranja.
+  const pts = [
+    { lbl: 'Ingreso', v: 100 },
+    { lbl: '1 mes',   v: c.s30 },
+    { lbl: '3 meses', v: c.s90 },
+    { lbl: '6 meses', v: c.s180 },
+    { lbl: 'Hoy',     v: c.vivos, hoy: true },
+  ].filter(p => p.v != null);
+  const n = pts.length;
+  const X = (i) => Math.round(60 + i * (485 / Math.max(1, n - 1)));
+  const Y = (v) => Math.round((115 - v * 0.9) * 10) / 10;
+  const line = pts.map((p, i) => `${X(i)},${Y(p.v)}`).join(' ');
+  const poly = `${line} ${X(n - 1)},115 ${X(0)},115`;
+
+  return `
+    <div class="mv-panel" style="margin-bottom:14px">
+      <div class="mv-coh-head">
+        <h3>Supervivencia · cohorte de ingreso ${esc(mesLabel(c.mes))} (${c.size.toLocaleString('es-VE')} personas)</h3>
+        <select id="mvCohSel">
+          ${cohs.map(x => `<option value="${esc(x.mes)}" ${x.mes === COHORT_SEL ? 'selected' : ''}>${esc(mesLabel(x.mes))} · ${x.size.toLocaleString('es-VE')} personas</option>`).join('')}
+        </select>
+      </div>
+      <svg class="mv-surv" viewBox="0 0 600 140" style="width:100%;max-width:680px;display:block">
+        <line x1="45" y1="115" x2="575" y2="115" stroke="#e2e8f0" stroke-width="1"/>
+        <line x1="45" y1="70" x2="575" y2="70" stroke="#eef1f5" stroke-width="1"/>
+        <line x1="45" y1="25" x2="575" y2="25" stroke="#eef1f5" stroke-width="1"/>
+        <text x="38" y="28" text-anchor="end" font-size="9" fill="#94a3b8">100%</text>
+        <text x="38" y="73" text-anchor="end" font-size="9" fill="#94a3b8">50%</text>
+        <text x="38" y="118" text-anchor="end" font-size="9" fill="#94a3b8">0%</text>
+        <polygon points="${poly}" fill="#eaf1fd"/>
+        <polyline points="${line}" fill="none" stroke="#2563eb" stroke-width="2.2" stroke-linejoin="round" stroke-linecap="round"/>
+        ${pts.map((p, i) => `
+          <circle cx="${X(i)}" cy="${Y(p.v)}" r="${p.hoy ? 4.5 : 3.5}" fill="${p.hoy ? '#b45309' : '#2563eb'}"/>
+          <text x="${X(i)}" y="${Math.max(11, Y(p.v) - 11)}" text-anchor="middle" font-size="10" font-weight="${p.hoy ? '800' : '700'}" fill="${p.hoy ? '#b45309' : '#0f172a'}">${p.v}%</text>
+          <text x="${X(i)}" y="131" text-anchor="middle" font-size="9" fill="#94a3b8">${esc(p.lbl)}</text>`).join('')}
+      </svg>
+      <p class="mv-note" style="margin-top:6px">Supervivencia <b>en el grupo</b>: la recontratación (misma u otra empresa) cuenta como seguir.
+      Los cortes de 1/3/6 meses aparecen cuando la cohorte completa madura hasta ese punto. El poder está en <b>comparar curvas</b>
+      con el selector — la cohorte que “cae menos” señala dónde algo se hizo mejor.
+      <a class="q" style="position:static;display:inline-flex;width:16px;height:16px;border-radius:50%;background:#eef4ff;color:var(--brand,#2563eb);font-size:10px;font-weight:800;align-items:center;justify-content:center;text-decoration:none;vertical-align:middle" href="/guias/indicadores-rotacion.html#coho" target="_blank" rel="noopener" title="Qué mide y cómo se calcula">?</a></p>
     </div>`;
 }
 
@@ -597,12 +683,34 @@ function paintIndicadores() {
                'Estabilidad gerencial: el mejor predictor de la rotación del resto del equipo.', 'disp')}
         </div>
       </div>
-      <div class="mv-panel" style="border-style:dashed;background:#fbfcfe;display:flex;align-items:center">
-        <p class="mv-note" style="margin:0"><b>La clave diagnóstica — dispersión entre tiendas comparables:</b>
-        llega en la próxima fase (v5.98) con la banda min–mediana–max, el ranking de tiendas clicable hacia Personal
-        y la curva de supervivencia por cohorte. Cada indicador de la izquierda ya tiene su “?” con la
-        <a href="${G}" target="_blank" rel="noopener">guía completa</a>.</p>
+      <div class="mv-panel">
+        ${paintDispersion()}
       </div>
+    </div>`;
+}
+
+/* ---------- panel Dispersión entre tiendas comparables (F3 v5.98) ---------- */
+function paintDispersion() {
+  const d = (STATS && STATS.dispersion) || null;
+  const G = '/guias/indicadores-rotacion.html';
+  if (!d) return `<h3>La clave diagnóstica: dispersión entre tiendas comparables</h3>
+    <p class="mv-note" style="margin:0">Sin tiendas comparables (plantilla ≥ 8) dentro de los filtros elegidos.</p>`;
+  const span = Math.max(1, d.max - d.min);
+  const medPos = Math.round((d.mediana - d.min) / span * 100);
+  const li = (x) => `<li><span class="mv-al" data-code="${esc(x.code)}" title="Ver Personal de ${esc(x.code)}">${esc(x.code)}</span>
+      <span class="pl">plantilla ${x.plantilla} · ${x.egresos} egr.</span><span class="rt">${x.rot}%</span></li>`;
+  return `
+    <h3>La clave diagnóstica: dispersión entre tiendas comparables
+      <a class="q" style="position:static;display:inline-flex;margin-left:6px;vertical-align:middle;width:17px;height:17px;border-radius:50%;background:#eef4ff;color:var(--brand,#2563eb);font-size:11px;font-weight:800;align-items:center;justify-content:center;text-decoration:none" href="${G}#disp" target="_blank" rel="noopener" title="Qué mide y cómo se calcula">?</a></h3>
+    <div class="mv-band-wrap">
+      <span>${d.min}%</span>
+      <div class="mv-band"><span class="med" style="left:${medPos}%" title="Mediana ${d.mediana}%"></span></div>
+      <span>${d.max}%</span>
+    </div>
+    <div class="mv-band-cap">mediana ${d.mediana}% · ${d.n} tiendas comparables (plantilla ≥8) · tasa del período · misma marca, mismo tabulador, mismo mercado</div>
+    <div class="mv-displists">
+      <div><h4>Rotan más</h4><ul class="mv-dl hi">${(d.top || []).map(li).join('')}</ul></div>
+      <div><h4>Retienen mejor</h4><ul class="mv-dl lo">${(d.low || []).map(li).join('')}</ul></div>
     </div>`;
 }
 
