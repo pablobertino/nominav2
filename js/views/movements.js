@@ -26,6 +26,13 @@
      con selector (F3); diagnostico y recomendaciones por motor de reglas
      en el front (F4). Los conteos salen de la MISMA RPC del Detalle
      (nunca discrepan de los chips).
+   - v6.00: PERIODO desde→hasta (rango de quincenas; el delta compara
+     contra el bloque anterior del MISMO largo, con nota de fechas y
+     aviso de rango corto); ranking de dispersion con FICHA COMPLETA en
+     modal del portal (razon social, zona/subzona/concepto, filtro en
+     vivo, codigo clicable -> Personal); indicadores con severidad por
+     color y textos contra referencia; supervivencia segmentable por
+     CARGO del primer ingreso (RPC cohortes_cargo, celdas >=5).
 
    Datos por /api/movements (facets + list). Gate: view.movimientos.
    Export: renderMovements(user)
@@ -109,12 +116,16 @@ let PERIODS = null;      // quincenas del calendario (desc)
 let LAST_CUT = null;     // ultimo corte cargado
 let CACHE_AT = null;     // ultimo recalculo de la cache de movimientos (v5.95)
 let COMPANY_TYPE = null; // Map alias -> company_type (para store/enterprise)
-let C = { period: '', from: '', to: '', zone: '', subzone: '', concept: '', company: '', q: '' };
+let C = { p1: '', p2: '', from: '', to: '', zone: '', subzone: '', concept: '', company: '', q: '' };
 let TYPES_ON = new Set(TIPOS.map(t => t.key));   // chips: todos encendidos
 let SORT = 'fecha';      // fecha | nombre | antiguedad | alias
 let ROWS = null;         // null = aun no consultado
 let STATS = null;        // cabecera del tablero Analisis (F1 v5.96)
 let COHORT_SEL = '';     // cohorte elegida en la curva de supervivencia (F3)
+let COHORT_CARGO = '';   // cargo elegido en la curva ('' = todos, v6.00)
+let PREV_N = 0;          // cuantas quincenas mide el periodo elegido (v6.00)
+let PREV_RANGE = null;   // {from,to} del bloque anterior del delta (v6.00)
+let PREV_REASON = '';    // '' | 'anio' | 'nohist' cuando no hay bloque anterior
 let PAGE = 1;
 let PER = 50;
 let TAB = 'detalle';     // detalle | analisis
@@ -165,10 +176,11 @@ function ensureStyles() {
   .mv-panel h3{font-size:13px;margin:0 0 12px;color:var(--ink-soft,#475569)}
   .mv-rot{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   @media (max-width:520px){.mv-rot{grid-template-columns:1fr}}
-  .mv-rk{border:1px solid var(--border-soft,#eef1f5);border-radius:11px;padding:10px 12px;background:#fbfcfe;position:relative}
-  .mv-rk .v{font-size:19px;font-weight:800;color:var(--ink)}
-  .mv-rk .l{font-size:11px;font-weight:700;color:var(--ink-soft,#475569);margin-top:1px}
-  .mv-rk .e{font-size:10.5px;color:var(--muted);margin-top:3px;line-height:1.4}
+  .mv-rk{border:1px solid var(--border-soft,#eef1f5);border-radius:11px;padding:12px 14px;background:#fbfcfe;position:relative}
+  .mv-rk .v{font-size:23px;font-weight:800;color:var(--ink);letter-spacing:-.02em}
+  .mv-rk .v.bad{color:#b91c1c}.mv-rk .v.warn{color:#b45309}.mv-rk .v.ok{color:var(--ok,#0e9f6e)}
+  .mv-rk .l{font-size:11.5px;font-weight:700;color:var(--ink-soft,#475569);margin-top:2px}
+  .mv-rk .e{font-size:11px;color:var(--muted);margin-top:4px;line-height:1.5}
   .mv-rk .q{position:absolute;top:8px;right:9px;width:17px;height:17px;border-radius:50%;
     background:#eef4ff;color:var(--brand,#2563eb);font-size:11px;font-weight:800;
     display:flex;align-items:center;justify-content:center;text-decoration:none;line-height:1}
@@ -201,6 +213,27 @@ function ensureStyles() {
   .mv-diag .ev{font-size:11.5px;color:var(--ink-soft,#475569);line-height:1.5;margin-bottom:6px}
   .mv-diag .ac{font-size:11.5px;color:var(--muted);line-height:1.55}
   .mv-diag .ac b{color:var(--ink-soft,#475569)}
+  /* Modal ficha completa de tiendas (v6.00) */
+  .mv-modal-ov{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:900;
+    display:flex;align-items:center;justify-content:center;padding:20px}
+  .mv-modal{background:var(--card,#fff);border-radius:16px;max-width:960px;width:100%;
+    max-height:88vh;display:flex;flex-direction:column;box-shadow:0 18px 60px rgba(15,23,42,.3)}
+  .mv-modal-head{display:flex;align-items:center;gap:10px;padding:15px 20px;border-bottom:1px solid var(--border)}
+  .mv-modal-head h3{margin:0;font-size:14.5px;color:var(--ink)}
+  .mv-modal-head input{font:inherit;font-size:12.5px;padding:7px 11px;border:1px solid var(--border);
+    border-radius:9px;min-width:180px;margin-left:auto}
+  .mv-modal-close{font:inherit;font-size:13px;font-weight:700;border:1px solid var(--border);border-radius:9px;
+    background:var(--card,#fff);padding:7px 14px;cursor:pointer;color:var(--ink-soft,#475569)}
+  .mv-modal-close:hover{background:var(--bg-soft,#f1f5f9)}
+  .mv-modal-body{overflow:auto;padding:6px 20px 18px}
+  .mv-modal table{width:100%;border-collapse:collapse;font-size:12px}
+  .mv-modal th{position:sticky;top:0;background:var(--bg-soft,#f1f5f9);font-size:10px;letter-spacing:.4px;
+    text-transform:uppercase;color:var(--ink-soft,#475569);padding:8px 10px;text-align:left;white-space:nowrap}
+  .mv-modal td{padding:8px 10px;border-top:1px solid var(--border-soft,#eef1f5);vertical-align:middle}
+  .mv-modal td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mv-modal .rk-n{color:var(--faint,#94a3b8);font-size:11px}
+  .mv-modal .rz{color:var(--ink,#0f172a)}
+  .mv-modal .ub{font-size:10.5px;color:var(--muted)}
   /* Chips-filtro por tipo */
   .mv-typechips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
   .mv-tc{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:6px 12px;
@@ -329,8 +362,10 @@ export async function renderMovements(user) {
     <div class="mv-head"><h1>Movimientos de personal</h1>
       <p>Ingresos, egresos, traslados y cambios de cargo del período, derivados de los cortes quincenales del sistema.</p></div>
     <div class="mv-filters">
-      <label>QUINCENA</label>
-      <select id="mvPeriod" class="mv-qsel"><option value="">Elige…</option></select>
+      <label>PERÍODO</label>
+      <select id="mvP1" class="mv-qsel"><option value="">Desde…</option></select>
+      <span class="mv-or">→</span>
+      <select id="mvP2" class="mv-qsel"><option value="">Hasta…</option></select>
       <span class="fg"><label>ZONA</label> <select id="mvZone"><option value="">Todas</option></select></span>
       <span class="fg"><label>SUBZONA</label> <select id="mvSubzone"><option value="">Todas</option></select></span>
       <span class="fg"><label>CONCEPTO</label> <select id="mvConcept"><option value="">Todos</option></select></span>
@@ -361,30 +396,49 @@ export async function renderMovements(user) {
     }
   }
 
-  // Combo QUINCENA: quincenas del calendario (desc) + año completo.
-  const pSel = $('#mvPeriod');
-  if (pSel) {
+  // Combos de PERÍODO (v6.00): DESDE -> HASTA de quincenas del calendario.
+  // Elegir solo DESDE = una quincena (HASTA se iguala). "Año completo"
+  // vive en DESDE y deshabilita HASTA. Valores: 'q|start|end' / 'y|start|end'.
+  const p1 = $('#mvP1'), p2 = $('#mvP2');
+  const qOpt = (p) => `<option value="q|${esc(p.range_start)}|${esc(p.range_end)}">${esc(quincenaLabel(p))}</option>`;
+  if (p1) {
     const years = [...new Set((PERIODS || []).map(p => p.year))];
-    pSel.innerHTML = '<option value="">Elige…</option>'
-      + (PERIODS || []).map(p =>
-          `<option value="${esc(p.range_start)}|${esc(p.range_end)}">${esc(quincenaLabel(p))}</option>`).join('')
-      + years.map(y => `<option value="${y}-01-01|${y}-12-31">— ${y} completo —</option>`).join('');
-    // Restaurar la seleccion previa (si el rango sigue existiendo en el combo).
-    if (C.period && [...pSel.options].some(o => o.value === C.period)) pSel.value = C.period;
+    p1.innerHTML = '<option value="">Desde…</option>'
+      + (PERIODS || []).map(qOpt).join('')
+      + years.map(y => `<option value="y|${y}-01-01|${y}-12-31">— ${y} completo —</option>`).join('');
+    if (C.p1 && [...p1.options].some(o => o.value === C.p1)) p1.value = C.p1;
   }
+  fillP2();
+  function fillP2() {
+    if (!p2) return;
+    const [k, s] = (C.p1 || '').split('|');
+    if (k !== 'q') {   // sin desde, o año completo: HASTA no aplica
+      p2.innerHTML = `<option value="">${k === 'y' ? '(año completo)' : 'Hasta…'}</option>`;
+      p2.disabled = true; C.p2 = '';
+      return;
+    }
+    p2.disabled = false;
+    // Solo quincenas IGUALES O POSTERIORES a la de DESDE.
+    const opts = (PERIODS || []).filter(p => p.range_start >= s);
+    p2.innerHTML = opts.map(qOpt).join('');
+    if (C.p2 && [...p2.options].some(o => o.value === C.p2)) p2.value = C.p2;
+    else { C.p2 = C.p1; p2.value = C.p1; }
+  }
+  function rangeFromSel() {
+    const a = (C.p1 || '').split('|');
+    if (a[0] === 'y') { C.from = a[1]; C.to = a[2]; return; }
+    if (a[0] !== 'q') { C.from = ''; C.to = ''; return; }
+    const b = (C.p2 || C.p1).split('|');
+    C.from = a[1]; C.to = b[2];
+  }
+  rangeFromSel();
   fillSelect($('#mvZone'), FACETS.zones || [], C.zone, 'Todas');
   fillSelect($('#mvSubzone'), subzonesFor(C.zone), C.subzone, 'Todas');
   fillSelect($('#mvConcept'), FACETS.concepts || [], C.concept, 'Todos');
   fillCompanySelect($('#mvCompany'), C.company);
 
-  // Periodo elegido -> rango de fechas del calendario (v5.96: el periodo
-  // es la UNICA forma de definir el rango; las fechas libres se retiraron).
-  pSel?.addEventListener('change', () => {
-    C.period = pSel.value;
-    if (!C.period) { C.from = ''; C.to = ''; return; }
-    const [a, b] = C.period.split('|');
-    C.from = a; C.to = b;
-  });
+  p1?.addEventListener('change', () => { C.p1 = p1.value; C.p2 = ''; fillP2(); rangeFromSel(); });
+  p2?.addEventListener('change', () => { C.p2 = p2.value; rangeFromSel(); });
 
   $('#mvZone')?.addEventListener('change', () => {
     C.zone = $('#mvZone').value; C.subzone = '';
@@ -396,7 +450,7 @@ export async function renderMovements(user) {
 
   $('#mvGo')?.addEventListener('click', run);
   $('#mvClear')?.addEventListener('click', () => {
-    C = { period: '', from: '', to: '', zone: '', subzone: '', concept: '', company: '', q: '' };
+    C = { p1: '', p2: '', from: '', to: '', zone: '', subzone: '', concept: '', company: '', q: '' };
     TYPES_ON = new Set(TIPOS.map(t => t.key));
     SORT = 'fecha'; ROWS = null; PAGE = 1;
     renderMovements(USER);
@@ -422,14 +476,14 @@ function closeMenus() {
 
 async function run() {
   showMsg('');
-  if (!C.from || !C.to) { showMsg('Elige un período del calendario (una quincena o el año completo).'); return; }
+  if (!C.from || !C.to) { showMsg('Elige el período: una quincena (desde), un rango de quincenas (desde → hasta) o el año completo.'); return; }
   const body = $('#mvBody');
   if (body) body.innerHTML = '<div class="mv-hint">Generando…</div>';
   const filtros = {
     zone: C.zone || null, subzone: C.subzone || null,
     concept: C.concept || null, company: C.company || null,
   };
-  const prev = prevRangeFor(C.period);
+  const prev = prevRange();
   const [r, rs] = await Promise.all([
     api({ action: 'list', from: C.from, to: C.to, ...filtros }),
     api({ action: 'stats', from: C.from, to: C.to,
@@ -447,14 +501,24 @@ async function run() {
   paintBody();
 }
 
-/* La quincena ANTERIOR del calendario a la elegida (para el delta de los
-   KPIs). PERIODS viene desc; "año completo" o sin match -> null (sin delta). */
-function prevRangeFor(periodValue) {
-  if (!periodValue || !Array.isArray(PERIODS)) return null;
-  const idx = PERIODS.findIndex(p => `${p.range_start}|${p.range_end}` === periodValue);
-  if (idx < 0 || idx + 1 >= PERIODS.length) return null;
-  const p = PERIODS[idx + 1];
-  return { from: p.range_start, to: p.range_end };
+/* El bloque ANTERIOR del mismo largo para el delta de los KPIs (v6.00):
+   si el período son N quincenas, se compara contra las N quincenas
+   inmediatamente anteriores del calendario. Año completo o historia
+   insuficiente -> null (sin delta). Deja PREV_N para el rotulo. */
+function prevRange() {
+  PREV_N = 0; PREV_RANGE = null; PREV_REASON = '';
+  const a = (C.p1 || '').split('|');
+  if (a[0] === 'y') { PREV_REASON = 'anio'; return null; }
+  if (a[0] !== 'q' || !Array.isArray(PERIODS)) return null;
+  const b = (C.p2 || C.p1).split('|');
+  const i1 = PERIODS.findIndex(p => p.range_start === a[1]);   // desde (mas viejo)
+  const i2 = PERIODS.findIndex(p => p.range_start === b[1]);   // hasta (mas nuevo)
+  if (i1 < 0 || i2 < 0 || i2 > i1) return null;                // PERIODS viene desc
+  const n = i1 - i2 + 1;
+  PREV_N = n;   // largo del periodo elegido (rotulo del delta + nota de rango corto)
+  if (i1 + n >= PERIODS.length) { PREV_REASON = 'nohist'; return null; }
+  PREV_RANGE = { from: PERIODS[i1 + n].range_start, to: PERIODS[i1 + 1].range_end };
+  return PREV_RANGE;
 }
 
 /* ---------- cuerpo: pestaña activa ---------- */
@@ -468,7 +532,7 @@ function paintBody() {
   }
 
   if (ROWS === null) {
-    body.innerHTML = `<div class="mv-hint">Elige un <b>período</b> del calendario (una quincena o el año completo), refina por alcance y pulsa <b>Generar</b>.</div>`;
+    body.innerHTML = `<div class="mv-hint">Elige el <b>período</b>: una quincena, un rango de quincenas (desde → hasta) o el año completo; refina por alcance y pulsa <b>Generar</b>.</div>`;
     return;
   }
 
@@ -550,20 +614,42 @@ function paintBody() {
 /* ---------- pestaña ANALISIS (F1 v5.96): fila de KPIs del mockup ---------- */
 function deltaLine(cur, prev, favorableUp) {
   // "▲ 12% vs Q anterior (207)" — flecha = direccion real del cambio;
-  // color = favorable (verde) / desfavorable (rojo). Sin delta -> guion.
-  if (prev == null) return 'sin quincena anterior para comparar';
-  if (cur === prev) return `= vs Q anterior (${prev})`;
+  // color = favorable (verde) / desfavorable (rojo). v6.00: si el periodo
+  // son N quincenas, el bloque anterior mide N quincenas tambien.
+  if (prev == null) return 'sin período anterior para comparar';
+  const lbl = PREV_N === 1 ? 'Q anterior' : `${PREV_N} Q anteriores`;
+  if (cur === prev) return `= vs ${lbl} (${prev})`;
   const up = cur > prev;
   const arrow = up ? '▲' : '▼';
   const pct = prev > 0 ? ` ${Math.round(Math.abs(cur - prev) / prev * 100)}%` : '';
   const good = (favorableUp === null) ? null : (up === favorableUp);
   const cls = good === null ? '' : (good ? 'up' : 'dn');
-  return `<span class="${cls}">${arrow}${pct}</span> vs Q anterior (${prev})`;
+  return `<span class="${cls}">${arrow}${pct}</span> vs ${lbl} (${prev})`;
+}
+
+/* Nota bajo la fila de KPIs (v6.00): contra QUE bloque compara el delta,
+   con fechas reales; nunca se comparan ventanas de largos distintos. Y
+   aviso de rango corto: con 1 quincena los indicadores anualizados
+   proyectan a 365 dias y amplifican variaciones puntuales. */
+function deltaNote() {
+  const Q = `<a class="q" style="position:static;display:inline-flex;width:15px;height:15px;border-radius:50%;background:#eef4ff;color:var(--brand,#2563eb);font-size:10px;font-weight:800;align-items:center;justify-content:center;text-decoration:none;vertical-align:middle" href="/guias/indicadores-rotacion.html#rot" target="_blank" rel="noopener" title="Qué mide y cómo se calcula">?</a>`;
+  const parts = [];
+  if (STATS && STATS.prev && PREV_RANGE) {
+    parts.push(`Δ comparado contra ${PREV_N === 1 ? 'la quincena anterior' : `el bloque anterior del <b>mismo largo</b> (${PREV_N} quincenas)`}: ${esc(ddmm(PREV_RANGE.from))}–${esc(ddmm(PREV_RANGE.to))}.`);
+  } else if (PREV_REASON === 'nohist') {
+    const oldest = (Array.isArray(PERIODS) && PERIODS.length) ? PERIODS[PERIODS.length - 1].range_start : null;
+    parts.push(`Sin bloque anterior del <b>mismo largo</b> (${PREV_N} quincena${PREV_N === 1 ? '' : 's'}) para comparar${oldest ? ` — el histórico arranca el ${esc(ddmm(oldest))}/${esc(String(oldest).slice(2, 4))}` : ''}; nunca se comparan ventanas de largos distintos.`);
+  }
+  if (PREV_N === 1) {
+    parts.push(`Rango corto: los indicadores <b>anualizados</b> proyectan la quincena a 365 días y amplifican variaciones puntuales — para tendencia, compara un rango de quincenas o el año. ${Q}`);
+  }
+  if (!parts.length) return '';
+  return `<p class="mv-note" style="margin:-4px 2px 14px">${parts.join(' ')}</p>`;
 }
 
 function paintAnalisis(body) {
   if (ROWS === null) {
-    body.innerHTML = `<div class="mv-hint">Elige un <b>período</b> del calendario (una quincena o el año completo), refina por alcance y pulsa <b>Generar</b>.</div>`;
+    body.innerHTML = `<div class="mv-hint">Elige el <b>período</b>: una quincena, un rango de quincenas (desde → hasta) o el año completo; refina por alcance y pulsa <b>Generar</b>.</div>`;
     return;
   }
   if (!STATS || !STATS.kpis) {
@@ -588,6 +674,7 @@ function paintAnalisis(body) {
       <div class="mv-kpi"><div class="t"><span class="dot" style="background:#b45309"></span>NETO</div>
         <div class="n">${neto}</div><div class="d">${pl ? `plantilla ${pl.n.toLocaleString('es-VE')} al corte (${esc(ddmm(pl.cut))})` : 'sin corte en el período'}</div></div>
     </div>
+    ${deltaNote()}
     ${paintIndicadores()}
     ${paintSurvival()}
     ${paintDiagnostico()}
@@ -602,6 +689,9 @@ function paintAnalisis(body) {
   // del ranking -> Personal (patron v5.89).
   const cs = $('#mvCohSel');
   cs?.addEventListener('change', () => { COHORT_SEL = cs.value; paintAnalisis(body); });
+  const cc = $('#mvCohCargo');
+  cc?.addEventListener('change', () => { COHORT_CARGO = cc.value; paintAnalisis(body); });
+  $('#mvDispAll')?.addEventListener('click', showDispModal);
   body.querySelectorAll('.mv-al[data-code]').forEach(a =>
     a.addEventListener('click', () => openCompany(a.dataset.code)));
 }
@@ -614,10 +704,17 @@ function mesLabel(ym) {
   return m ? `${MES_FULL[+m[2] - 1]} ${m[1]}` : ym;
 }
 function paintSurvival() {
-  const cohs = (STATS && Array.isArray(STATS.cohortes)) ? STATS.cohortes : [];
-  if (!cohs.length) return '';
-  if (!cohs.some(c => c.mes === COHORT_SEL)) COHORT_SEL = cohs[0].mes;
-  const c = cohs.find(x => x.mes === COHORT_SEL);
+  const all = (STATS && Array.isArray(STATS.cohortes)) ? STATS.cohortes : [];
+  if (!all.length) return '';
+  const porCargo = (STATS && Array.isArray(STATS.cohortes_cargo)) ? STATS.cohortes_cargo : [];
+  const cargos = [...new Set(porCargo.map(x => x.cargo))];   // ya vienen en orden de jerarquia
+
+  // Fuente segun el cargo elegido ('' = todos). Si el segmento quedo vacio
+  // (cargo sin celdas >=5 con estos filtros), se vuelve a Todos.
+  let src = COHORT_CARGO ? porCargo.filter(x => x.cargo === COHORT_CARGO) : all;
+  if (!src.length) { COHORT_CARGO = ''; src = all; }
+  if (!src.some(c => c.mes === COHORT_SEL)) COHORT_SEL = src[0].mes;
+  const c = src.find(x => x.mes === COHORT_SEL);
 
   // Puntos de la curva: solo los checkpoints que la cohorte ya maduro
   // (la RPC manda null en los que aun no llegan). 'Hoy' siempre, naranja.
@@ -633,13 +730,18 @@ function paintSurvival() {
   const Y = (v) => Math.round((115 - v * 0.9) * 10) / 10;
   const line = pts.map((p, i) => `${X(i)},${Y(p.v)}`).join(' ');
   const poly = `${line} ${X(n - 1)},115 ${X(0)},115`;
+  const cargoLbl = COHORT_CARGO ? ` · ${esc(COHORT_CARGO)}` : '';
 
   return `
     <div class="mv-panel" style="margin-bottom:14px">
       <div class="mv-coh-head">
-        <h3>Supervivencia · cohorte de ingreso ${esc(mesLabel(c.mes))} (${c.size.toLocaleString('es-VE')} personas)</h3>
-        <select id="mvCohSel">
-          ${cohs.map(x => `<option value="${esc(x.mes)}" ${x.mes === COHORT_SEL ? 'selected' : ''}>${esc(mesLabel(x.mes))} · ${x.size.toLocaleString('es-VE')} personas</option>`).join('')}
+        <h3>Supervivencia · cohorte de ingreso ${esc(mesLabel(c.mes))}${cargoLbl} (${c.size.toLocaleString('es-VE')} personas)</h3>
+        <select id="mvCohCargo" title="Segmentar la cohorte por el cargo del primer ingreso">
+          <option value="">Todos los cargos</option>
+          ${cargos.map(x => `<option value="${esc(x)}" ${x === COHORT_CARGO ? 'selected' : ''}>${esc(x)}</option>`).join('')}
+        </select>
+        <select id="mvCohSel" style="margin-left:0">
+          ${src.map(x => `<option value="${esc(x.mes)}" ${x.mes === COHORT_SEL ? 'selected' : ''}>${esc(mesLabel(x.mes))} · ${x.size.toLocaleString('es-VE')} personas</option>`).join('')}
         </select>
       </div>
       <svg class="mv-surv" viewBox="0 0 600 140" style="width:100%;max-width:680px;display:block">
@@ -658,7 +760,7 @@ function paintSurvival() {
       </svg>
       <p class="mv-note" style="margin-top:6px">Supervivencia <b>en el grupo</b>: la recontratación (misma u otra empresa) cuenta como seguir.
       Los cortes de 1/3/6 meses aparecen cuando la cohorte completa madura hasta ese punto. El poder está en <b>comparar curvas</b>
-      con el selector — la cohorte que “cae menos” señala dónde algo se hizo mejor.
+      con los selectores — por mes o por <b>cargo del primer ingreso</b> (segmentos con al menos 5 personas); la curva que “cae menos” señala dónde algo se hizo mejor.
       <a class="q" style="position:static;display:inline-flex;width:16px;height:16px;border-radius:50%;background:#eef4ff;color:var(--brand,#2563eb);font-size:10px;font-weight:800;align-items:center;justify-content:center;text-decoration:none;vertical-align:middle" href="/guias/indicadores-rotacion.html#coho" target="_blank" rel="noopener" title="Qué mide y cómo se calcula">?</a></p>
     </div>`;
 }
@@ -692,8 +794,11 @@ function paintDiagnostico() {
     const ratio = d.min > 0 ? d.max / d.min : (d.mediana > 0 ? d.max / d.mediana : 0);
     if (ratio >= 3) {
       const rTxt = d.min > 0 ? `${Math.round(d.max / d.min)}×` : `${Math.round(d.max / Math.max(1, d.mediana))}× sobre la mediana`;
-      const tops = (d.top || []).slice(0, 2).map(x => `${x.code} (${x.rot}%)`).join(' y ');
-      const lows = (d.low || []).slice(0, 2).map(x => `${x.code} (${x.rot}%)`).join(' y ');
+      // v6.00: la RPC manda la LISTA COMPLETA ordenada rot desc (ya no
+      // top/low): los extremos se rebanan de d.list.
+      const L = Array.isArray(d.list) ? d.list : [];
+      const tops = L.slice(0, 2).map(x => `${x.code} (${x.rot}%)`).join(' y ');
+      const lows = L.slice(-2).reverse().map(x => `${x.code} (${x.rot}%)`).join(' y ');
       cards.push(`
         <div class="mv-diag">
           <div class="h">◆ La dispersión entre tiendas (${d.min}%–${d.max}%) apunta a factor local, no solo a reclutamiento</div>
@@ -727,35 +832,60 @@ function paintDiagnostico() {
 
 /* ---------- panel Indicadores del periodo (F2 v5.97, mockup v3) ----------
    6 tarjetas, cada una con su "?" hacia la guia publicada. Formulas: las
-   de la guia, calculadas por la RPC respetando filtros y alcance. */
+   de la guia, calculadas por la RPC respetando filtros y alcance.
+   v6.00: valor destacado con COLOR POR SEVERIDAD y textos que ubican
+   contra la referencia donde la hay. Umbrales (documentados):
+   rotacion >100 mala / 60-100 alerta (banda alta del retail, guia #rot);
+   temprana >50 mala / >35 alerta; estabilidad <25 mala / <40 alerta. */
 function paintIndicadores() {
   const i = (STATS && STATS.indicadores) || null;
   if (!i) return '';
   const G = '/guias/indicadores-rotacion.html';
   const v = (x, suf) => (x == null ? '—' : `${x}${suf || ''}`);
-  const rk = (val, lbl, expl, anchor) => `
+  const fmt = (x) => (x == null ? '—' : Number(x).toLocaleString('es-VE'));
+  const rk = (val, sev, lbl, expl, anchor) => `
     <div class="mv-rk">
       <a class="q" href="${G}#${anchor}" target="_blank" rel="noopener" title="Qué mide y cómo se calcula">?</a>
-      <div class="v">${val}</div><div class="l">${lbl}</div><div class="e">${expl}</div>
+      <div class="v ${sev || ''}">${val}</div><div class="l">${lbl}</div><div class="e">${expl}</div>
     </div>`;
+
+  // Severidades y textos con referencia.
+  const rotSev = i.rot_anualizada == null ? '' : (i.rot_anualizada > 100 ? 'bad' : i.rot_anualizada >= 60 ? 'warn' : 'ok');
+  const rotMult = i.rot_anualizada != null ? (i.rot_anualizada / 100).toFixed(1).replace('.', ',') : null;
+  const rotTxt = `${fmt(i.egr_total)} egresos ÷ plantilla promedio ${fmt(i.plantilla_prom)}, a ${v(i.dias_efectivos)} días.`
+    + (rotMult && i.rot_anualizada > 100 ? ` <b>≈${rotMult}× el techo de la banda alta del retail global</b> (60–100% anual ya se considera alta).`
+       : ' Referencia retail: 60–100% anual ya es alta.');
+
+  const tSev = i.temprana90 == null ? '' : (i.temprana90 > 50 ? 'bad' : i.temprana90 > 35 ? 'warn' : 'ok');
+  const tHead = i.temprana90 != null && i.temprana90 > 50 ? 'Más de la mitad de los egresos no llega a los 3 meses. ' : '';
+  const tTxt = `${tHead}${v(i.temprana30, '%')} no completa ni el primer mes · mediana al egresar ${v(i.mediana_egreso)} días — el esfuerzo de retención rinde más en las primeras semanas que en el aniversario.`;
+
+  const eSev = i.estabilidad == null ? '' : (i.estabilidad < 25 ? 'bad' : i.estabilidad < 40 ? 'warn' : 'ok');
+  const de4 = i.estabilidad != null ? Math.max(1, Math.round(i.estabilidad / 25)) : null;
+  const eTxt = `Solo ~${de4 != null ? de4 : '—'} de cada 4 activos supera el año de contrato (al corte ${i.estab_cut ? esc(ddmm(i.estab_cut)) : '—'}): la experiencia del puesto se está reaprendiendo constantemente — el costo oculto de la rotación.`;
+
+  const rePct = (i.reincidentes != null && i.plantilla_prom) ? Math.round(i.reincidentes / i.plantilla_prom * 100) : null;
+  const reTxt = `Personas con 2+ contratos observados${rePct != null ? ` (≈${rePct}% de la plantilla promedio)` : ''}: se fueron y volvieron, o rotaron de tienda — también es un pool de reingreso ya conocido.`;
+
+  const brecha = (i.temprana_vendedor != null && i.temprana_gerente != null) ? i.temprana_vendedor - i.temprana_gerente : null;
+  const vgSev = brecha == null ? '' : (brecha > 20 ? 'bad' : brecha > 10 ? 'warn' : 'ok');
+  const vgTxt = `${brecha != null ? `Brecha de ${brecha} puntos: ` : ''}el problema se concentra en la base operativa; el gerente resiste más. La entrada del vendedor es donde más rinde intervenir.`;
+
+  const d = (STATS && STATS.dispersion) || null;
+  const gPorTienda = (i.gerentes_egresados != null && d && d.n) ? (i.gerentes_egresados / d.n).toFixed(1).replace('.', ',') : null;
+  const gTxt = `Estabilidad gerencial: el mejor predictor de la rotación del resto del equipo${gPorTienda ? ` — ≈${gPorTienda} egresos de gerente por tienda comparable en el período` : ''}. El cambio de gerente suele disparar la rotación del equipo en los ~90 días siguientes.`;
 
   return `
     <div class="mv-grid2">
       <div class="mv-panel">
         <h3>Indicadores del período (metodología estándar)</h3>
         <div class="mv-rot">
-          ${rk(v(i.rot_anualizada, '%'), 'Rotación anualizada',
-               `${v(i.egr_total)} egresos ÷ plantilla promedio ${i.plantilla_prom ? Number(i.plantilla_prom).toLocaleString('es-VE') : '—'}, a ${v(i.dias_efectivos)} días. Ref. retail: 60–100% ya es alta.`, 'rot')}
-          ${rk(v(i.temprana90, '%'), 'Rotación temprana <90 días',
-               `${v(i.temprana30, '%')} no llega ni al mes. Mediana al egresar: ${v(i.mediana_egreso)} días.`, 'temp')}
-          ${rk(v(i.estabilidad, '%'), 'Índice de estabilidad',
-               `Activos con más de 1 año de contrato, al corte ${i.estab_cut ? esc(ddmm(i.estab_cut)) : '—'}.`, 'estab')}
-          ${rk(v(i.reincidentes), 'Reincidentes',
-               'Personas con 2+ contratos observados (se fueron y volvieron, o rotaron de tienda).', 'boom')}
-          ${rk(`${v(i.temprana_vendedor, '%')} / ${v(i.temprana_gerente, '%')}`, 'Temprana: vendedor vs gerente',
-               'El problema se concentra en la base operativa; el gerente resiste más.', 'temp')}
-          ${rk(v(i.gerentes_egresados), 'Gerentes egresados',
-               'Estabilidad gerencial: el mejor predictor de la rotación del resto del equipo.', 'disp')}
+          ${rk(v(i.rot_anualizada, '%'), rotSev, 'Rotación anualizada', rotTxt, 'rot')}
+          ${rk(v(i.temprana90, '%'), tSev, 'Rotación temprana <90 días', tTxt, 'temp')}
+          ${rk(v(i.estabilidad, '%'), eSev, 'Índice de estabilidad', eTxt, 'estab')}
+          ${rk(v(i.reincidentes), '', 'Reincidentes', reTxt, 'boom')}
+          ${rk(`${v(i.temprana_vendedor, '%')} / ${v(i.temprana_gerente, '%')}`, vgSev, 'Temprana: vendedor vs gerente', vgTxt, 'temp')}
+          ${rk(v(i.gerentes_egresados), '', 'Gerentes egresados', gTxt, 'disp')}
         </div>
       </div>
       <div class="mv-panel">
@@ -764,16 +894,20 @@ function paintIndicadores() {
     </div>`;
 }
 
-/* ---------- panel Dispersión entre tiendas comparables (F3 v5.98) ---------- */
+/* ---------- panel Dispersión entre tiendas comparables (F3 v5.98) ----------
+   v6.00: la RPC manda la LISTA COMPLETA (list, orden rot desc); top/low se
+   rebanan aca y el boton abre la ficha completa en un modal del portal. */
 function paintDispersion() {
   const d = (STATS && STATS.dispersion) || null;
   const G = '/guias/indicadores-rotacion.html';
-  if (!d) return `<h3>La clave diagnóstica: dispersión entre tiendas comparables</h3>
+  if (!d || !Array.isArray(d.list) || !d.list.length) return `<h3>La clave diagnóstica: dispersión entre tiendas comparables</h3>
     <p class="mv-note" style="margin:0">Sin tiendas comparables (plantilla ≥ 8) dentro de los filtros elegidos.</p>`;
+  const top = d.list.slice(0, 6);
+  const low = d.list.slice(-6).reverse();
   const span = Math.max(1, d.max - d.min);
   const medPos = Math.round((d.mediana - d.min) / span * 100);
-  const li = (x) => `<li><span class="mv-al" data-code="${esc(x.code)}" title="Ver Personal de ${esc(x.code)}">${esc(x.code)}</span>
-      <span class="pl">plantilla ${x.plantilla} · ${x.egresos} egr.</span><span class="rt">${x.rot}%</span></li>`;
+  const li = (x) => `<li><span class="mv-al" data-code="${esc(x.code)}" title="${esc(x.name || '')} · ${esc(x.zona || '')} · ${esc(x.concepto || '')}">${esc(x.code)}</span>
+      <span class="pl">${esc(x.concepto || x.zona || '')} · plantilla ${x.plantilla} · ${x.egresos} egr.</span><span class="rt">${x.rot}%</span></li>`;
   return `
     <h3>La clave diagnóstica: dispersión entre tiendas comparables
       <a class="q" style="position:static;display:inline-flex;margin-left:6px;vertical-align:middle;width:17px;height:17px;border-radius:50%;background:#eef4ff;color:var(--brand,#2563eb);font-size:11px;font-weight:800;align-items:center;justify-content:center;text-decoration:none" href="${G}#disp" target="_blank" rel="noopener" title="Qué mide y cómo se calcula">?</a></h3>
@@ -784,9 +918,59 @@ function paintDispersion() {
     </div>
     <div class="mv-band-cap">mediana ${d.mediana}% · ${d.n} tiendas comparables (plantilla ≥8) · tasa del período · misma marca, mismo tabulador, mismo mercado</div>
     <div class="mv-displists">
-      <div><h4>Rotan más</h4><ul class="mv-dl hi">${(d.top || []).map(li).join('')}</ul></div>
-      <div><h4>Retienen mejor</h4><ul class="mv-dl lo">${(d.low || []).map(li).join('')}</ul></div>
+      <div><h4>Rotan más</h4><ul class="mv-dl hi">${top.map(li).join('')}</ul></div>
+      <div><h4>Retienen mejor</h4><ul class="mv-dl lo">${low.map(li).join('')}</ul></div>
+    </div>
+    <button class="mv-clear" id="mvDispAll" type="button" style="margin-top:12px">Ver la ficha completa (${d.n} tiendas)</button>`;
+}
+
+/* Modal del portal con la ficha completa de tiendas comparables (v6.00):
+   ranking entero con razon social, zona/subzona/concepto, plantilla,
+   egresos y rotacion; codigo clicable -> Personal. Solo se cierra con su
+   boton (regla de la casa: nada de click-afuera ni alert nativos). */
+function showDispModal() {
+  const d = (STATS && STATS.dispersion) || null;
+  if (!d || !Array.isArray(d.list)) return;
+  const old = document.getElementById('mvDispModal');
+  if (old) old.remove();
+  const ov = document.createElement('div');
+  ov.className = 'mv-modal-ov';
+  ov.id = 'mvDispModal';
+  const row = (x, i) => `<tr>
+    <td class="rk-n">${i + 1}</td>
+    <td><span class="mv-al" data-code="${esc(x.code)}">${esc(x.code)}</span></td>
+    <td><div class="rz">${esc(x.name || '—')}</div><div class="ub">${[x.zona, x.subzona, x.concepto].filter(Boolean).map(esc).join(' · ')}</div></td>
+    <td class="num">${x.plantilla}</td>
+    <td class="num">${x.egresos}</td>
+    <td class="num"><b style="color:${x.rot > d.mediana ? '#b91c1c' : 'var(--ok,#0e9f6e)'}">${x.rot}%</b></td>
+  </tr>`;
+  ov.innerHTML = `
+    <div class="mv-modal">
+      <div class="mv-modal-head">
+        <h3>Tiendas comparables — rotación del período (${d.n})</h3>
+        <input type="text" id="mvDispQ" placeholder="Filtrar por código, razón social, zona…" autocomplete="off">
+        <button class="mv-modal-close" id="mvDispClose" type="button">Cerrar</button>
+      </div>
+      <div class="mv-modal-body">
+        <table><thead><tr><th>#</th><th>Código</th><th>Empresa / ubicación</th><th style="text-align:right">Plantilla</th><th style="text-align:right">Egresos</th><th style="text-align:right">Rotación</th></tr></thead>
+        <tbody id="mvDispRows">${d.list.map(row).join('')}</tbody></table>
+      </div>
     </div>`;
+  document.body.appendChild(ov);
+  ov.querySelector('#mvDispClose').addEventListener('click', () => ov.remove());
+  // Filtro en vivo dentro del modal (cliente, sobre la lista ya cargada).
+  ov.querySelector('#mvDispQ').addEventListener('input', (e) => {
+    const q = normSearch(e.target.value);
+    const rows = d.list.filter(x => !q ||
+      normSearch(`${x.code} ${x.name || ''} ${x.zona || ''} ${x.subzona || ''} ${x.concepto || ''}`).includes(q));
+    ov.querySelector('#mvDispRows').innerHTML = rows.map(row).join('');
+    bindCodes();
+  });
+  function bindCodes() {
+    ov.querySelectorAll('.mv-al[data-code]').forEach(a =>
+      a.addEventListener('click', () => { const c = a.dataset.code; ov.remove(); openCompany(c); }));
+  }
+  bindCodes();
 }
 
 /* Filas visibles: chips de tipo + busqueda por coma + orden. */
