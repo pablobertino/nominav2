@@ -20,6 +20,13 @@
                   la vista). El alcance del admin se aplica en la RPC via
                   p_codes (patron personnel_search); en traslados la fila
                   entra si ORIGEN o DESTINO estan en el alcance.
+     stats   {from, to, prev_from, prev_to, zone, subzone, concept, company}
+                  gate view.movimientos. Cabecera del tablero ANALISIS
+                  (F1 v5.96): kpis del periodo + delta vs la quincena
+                  anterior + plantilla al corte, en un JSON (RPC
+                  personnel_movement_stats, que internamente cuenta con
+                  la MISMA personnel_movements del Detalle: los KPIs y
+                  los chips nunca discrepan).
 
    Gate: view.movimientos (permiso NUEVO v5.93, patron view.norehirecheck:
    enforced, gobernable desde Roles; nace con superadmin + admin).
@@ -140,6 +147,35 @@ export async function onRequestPost({ request, env }) {
         }),
       });
       return json({ ok: true, rows: rows || [] });
+    }
+
+    /* ---------- stats: cabecera del tablero Analisis (F1 v5.96) ---------- */
+    if (action === 'stats') {
+      const from = isoDate(body.from);
+      const to = isoDate(body.to);
+      if (!from || !to) return json({ ok: false, error: 'Indica el periodo.' }, 400);
+      if (from > to) return json({ ok: false, error: 'Periodo invalido.' }, 400);
+      // prev_* = la quincena anterior segun el calendario (lo resuelve el
+      // front); null = sin delta (ej. "2026 completo").
+      const pf = isoDate(body.prev_from);
+      const pt = isoDate(body.prev_to);
+
+      if (codes !== null && !codes.length) {
+        return json({ ok: true, stats: { kpis: { ing: 0, egr: 0, tras: 0, cargo: 0, neto: 0 }, prev: null, plantilla: null } });
+      }
+      const stats = await sb(env, 'rpc/personnel_movement_stats', {
+        method: 'POST',
+        body: JSON.stringify({
+          p_from: from, p_to: to,
+          p_prev_from: pf, p_prev_to: pt,
+          p_zone: body.zone ? String(body.zone) : null,
+          p_subzone: body.subzone ? String(body.subzone) : null,
+          p_concept: body.concept ? String(body.concept) : null,
+          p_company: body.company ? String(body.company) : null,
+          p_codes: codes,
+        }),
+      });
+      return json({ ok: true, stats: stats || null });
     }
 
     return json({ ok: false, error: 'Accion desconocida.' }, 400);

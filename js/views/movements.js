@@ -7,10 +7,11 @@
      _PRUEBAS\movimientos_mockup_v3.html          (tablero Analisis, v5.94)
      _PRUEBAS\movimientos_mockup_v3_detalle.html  (pestaña Detalle, ESTA)
 
-   ESTA v5.93 construye la pestaña DETALLE completa:
-   - Filtros: combo QUINCENA del calendario (payroll_periods) O fechas
-     libres (editar una fecha suelta el combo), + zona/subzona/concepto/
-     empresa. NADA preseleccionado: se elige y se pulsa Generar.
+   ESTA v5.93 construye la pestaña DETALLE completa (v5.96 la ajusta):
+   - Filtros (v5.96): SOLO por PERIODO del calendario (payroll_periods:
+     quincenas + año completo) + zona/subzona/concepto/empresa. Las fechas
+     libres se retiraron: el analisis es quincena contra quincena y el
+     Detalle tambien se consulta por periodo. NADA preseleccionado.
    - Chips-filtro por tipo con icono y CONTEO (clicables: aislar/combinar;
      todo se trae de una vez y los chips filtran en cliente).
    - Buscador por coma (nombre, cedula, cargo o alias), orden, tabla con
@@ -18,7 +19,11 @@
      ⏳ traslados en curso, fecha exacta/quincenal, alias clicable ->
      Personal (patron v5.89: Volver regresa aqui con todo intacto),
      paginacion 25/50/100 y Exportar xlsx/csv/txt (patron SheetJS).
-   - La pestaña ANALISIS muestra "proximamente": llega en v5.94.
+   - La pestaña ANALISIS (v5.96, F1): fila de KPIs del mockup v3 — ing/egr/
+     tras/cargo con delta vs la quincena anterior del calendario y NETO con
+     plantilla al corte. Los conteos salen de la MISMA RPC del Detalle
+     (nunca discrepan de los chips). Indicadores, dispersion y curva de
+     supervivencia: F2-F3 (v5.97-v5.98).
 
    Datos por /api/movements (facets + list). Gate: view.movimientos.
    Export: renderMovements(user)
@@ -106,6 +111,7 @@ let C = { period: '', from: '', to: '', zone: '', subzone: '', concept: '', comp
 let TYPES_ON = new Set(TIPOS.map(t => t.key));   // chips: todos encendidos
 let SORT = 'fecha';      // fecha | nombre | antiguedad | alias
 let ROWS = null;         // null = aun no consultado
+let STATS = null;        // cabecera del tablero Analisis (F1 v5.96)
 let PAGE = 1;
 let PER = 50;
 let TAB = 'detalle';     // detalle | analisis
@@ -139,6 +145,16 @@ function ensureStyles() {
   /* Analisis proximamente */
   .mv-soon{background:var(--card,#fff);border:1px dashed var(--border);border-radius:14px;
     padding:34px 22px;text-align:center;color:var(--muted);font-size:13px;line-height:1.6}
+  /* KPIs del tablero (mockup v3, F1 v5.96) */
+  .mv-kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:10px;margin-bottom:14px}
+  .mv-kpi{background:var(--card,#fff);border:1px solid var(--border);border-radius:13px;padding:12px 14px}
+  .mv-kpi .t{display:flex;align-items:center;gap:6px;font-size:10.5px;font-weight:700;letter-spacing:.4px;color:var(--faint,#94a3b8)}
+  .mv-kpi .dot{width:7px;height:7px;border-radius:50%;flex:none}
+  .mv-kpi .n{font-size:23px;font-weight:800;margin-top:3px;color:var(--ink)}
+  .mv-kpi .d{font-size:11px;color:var(--muted);margin-top:2px}
+  .mv-kpi .d .up{color:var(--ok,#0e9f6e);font-weight:700}
+  .mv-kpi .d .dn{color:#b91c1c;font-weight:700}
+  @media (max-width:900px){.mv-kpis{grid-template-columns:repeat(2,1fr)}}
   /* Chips-filtro por tipo */
   .mv-typechips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
   .mv-tc{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:6px 12px;
@@ -269,8 +285,6 @@ export async function renderMovements(user) {
     <div class="mv-filters">
       <label>QUINCENA</label>
       <select id="mvPeriod" class="mv-qsel"><option value="">Elige…</option></select>
-      <span class="mv-or">o FECHAS</span>
-      <span class="fg"><input type="date" id="mvFrom"> <input type="date" id="mvTo"></span>
       <span class="fg"><label>ZONA</label> <select id="mvZone"><option value="">Todas</option></select></span>
       <span class="fg"><label>SUBZONA</label> <select id="mvSubzone"><option value="">Todas</option></select></span>
       <span class="fg"><label>CONCEPTO</label> <select id="mvConcept"><option value="">Todos</option></select></span>
@@ -312,27 +326,19 @@ export async function renderMovements(user) {
     // Restaurar la seleccion previa (si el rango sigue existiendo en el combo).
     if (C.period && [...pSel.options].some(o => o.value === C.period)) pSel.value = C.period;
   }
-  const fEl = $('#mvFrom'), tEl = $('#mvTo');
-  if (fEl) fEl.value = C.from || '';
-  if (tEl) tEl.value = C.to || '';
-
   fillSelect($('#mvZone'), FACETS.zones || [], C.zone, 'Todas');
   fillSelect($('#mvSubzone'), subzonesFor(C.zone), C.subzone, 'Todas');
   fillSelect($('#mvConcept'), FACETS.concepts || [], C.concept, 'Todos');
   fillCompanySelect($('#mvCompany'), C.company);
 
-  // Quincena elegida -> fechas del calendario. Fecha tocada a mano -> el
-  // combo se suelta (rango personalizado), como en el mockup.
+  // Periodo elegido -> rango de fechas del calendario (v5.96: el periodo
+  // es la UNICA forma de definir el rango; las fechas libres se retiraron).
   pSel?.addEventListener('change', () => {
     C.period = pSel.value;
-    if (!C.period) return;
+    if (!C.period) { C.from = ''; C.to = ''; return; }
     const [a, b] = C.period.split('|');
     C.from = a; C.to = b;
-    if (fEl) fEl.value = a;
-    if (tEl) tEl.value = b;
   });
-  fEl?.addEventListener('change', () => { C.from = fEl.value; C.period = ''; if (pSel) pSel.value = ''; });
-  tEl?.addEventListener('change', () => { C.to = tEl.value; C.period = ''; if (pSel) pSel.value = ''; });
 
   $('#mvZone')?.addEventListener('change', () => {
     C.zone = $('#mvZone').value; C.subzone = '';
@@ -370,27 +376,39 @@ function closeMenus() {
 
 async function run() {
   showMsg('');
-  if (!C.from || !C.to) { showMsg('Elige una quincena del calendario o indica las dos fechas.'); return; }
-  if (C.from > C.to) { showMsg('La fecha inicial no puede ser posterior a la final.'); return; }
+  if (!C.from || !C.to) { showMsg('Elige un período del calendario (una quincena o el año completo).'); return; }
   const body = $('#mvBody');
   if (body) body.innerHTML = '<div class="mv-hint">Generando…</div>';
-  const r = await api({
-    action: 'list',
-    from: C.from, to: C.to,
+  const filtros = {
     zone: C.zone || null, subzone: C.subzone || null,
     concept: C.concept || null, company: C.company || null,
-  });
+  };
+  const prev = prevRangeFor(C.period);
+  const [r, rs] = await Promise.all([
+    api({ action: 'list', from: C.from, to: C.to, ...filtros }),
+    api({ action: 'stats', from: C.from, to: C.to,
+          prev_from: prev ? prev.from : null, prev_to: prev ? prev.to : null,
+          ...filtros }),
+  ]);
   if (!r || !r.ok) {
-    ROWS = null;
+    ROWS = null; STATS = null;
     if (body) body.innerHTML = `<div class="mv-empty">${esc((r && r.error) || 'No se pudo consultar. Intenta de nuevo.')}</div>`;
     return;
   }
   ROWS = r.rows || [];
-  TAB = 'detalle';
+  STATS = (rs && rs.ok) ? rs.stats : null;
   PAGE = 1;
-  // Refrescar la marca de pestaña activa sin re-render completo.
-  document.querySelectorAll('.mv-tab').forEach(t => t.classList.toggle('on', t.dataset.tab === TAB));
   paintBody();
+}
+
+/* La quincena ANTERIOR del calendario a la elegida (para el delta de los
+   KPIs). PERIODS viene desc; "año completo" o sin match -> null (sin delta). */
+function prevRangeFor(periodValue) {
+  if (!periodValue || !Array.isArray(PERIODS)) return null;
+  const idx = PERIODS.findIndex(p => `${p.range_start}|${p.range_end}` === periodValue);
+  if (idx < 0 || idx + 1 >= PERIODS.length) return null;
+  const p = PERIODS[idx + 1];
+  return { from: p.range_start, to: p.range_end };
 }
 
 /* ---------- cuerpo: pestaña activa ---------- */
@@ -399,19 +417,12 @@ function paintBody() {
   if (!body) return;
 
   if (TAB === 'analisis') {
-    body.innerHTML = `
-      <div class="mv-soon">
-        <div style="font-size:26px;margin-bottom:8px">📊</div>
-        <b>El tablero de Análisis llega en la próxima versión (v5.94)</b><br>
-        Indicadores del período, curva de supervivencia por cohorte y dispersión entre tiendas,
-        cada indicador con su “?” hacia la <a href="/guias/indicadores-rotacion.html" target="_blank" rel="noopener">guía de indicadores</a>.
-        Mientras tanto, la pestaña <b>Detalle</b> ya lista todos los movimientos.
-      </div>`;
+    paintAnalisis(body);
     return;
   }
 
   if (ROWS === null) {
-    body.innerHTML = `<div class="mv-hint">Elige una <b>quincena</b> del calendario (o un rango de fechas), refina por alcance y pulsa <b>Generar</b>.</div>`;
+    body.innerHTML = `<div class="mv-hint">Elige un <b>período</b> del calendario (una quincena o el año completo), refina por alcance y pulsa <b>Generar</b>.</div>`;
     return;
   }
 
@@ -488,6 +499,54 @@ function paintBody() {
     b.addEventListener('click', () => { exMenu.hidden = true; doExport(b.dataset.fmt); }));
 
   paintTable();
+}
+
+/* ---------- pestaña ANALISIS (F1 v5.96): fila de KPIs del mockup ---------- */
+function deltaLine(cur, prev, favorableUp) {
+  // "▲ 12% vs Q anterior (207)" — flecha = direccion real del cambio;
+  // color = favorable (verde) / desfavorable (rojo). Sin delta -> guion.
+  if (prev == null) return 'sin quincena anterior para comparar';
+  if (cur === prev) return `= vs Q anterior (${prev})`;
+  const up = cur > prev;
+  const arrow = up ? '▲' : '▼';
+  const pct = prev > 0 ? ` ${Math.round(Math.abs(cur - prev) / prev * 100)}%` : '';
+  const good = (favorableUp === null) ? null : (up === favorableUp);
+  const cls = good === null ? '' : (good ? 'up' : 'dn');
+  return `<span class="${cls}">${arrow}${pct}</span> vs Q anterior (${prev})`;
+}
+
+function paintAnalisis(body) {
+  if (ROWS === null) {
+    body.innerHTML = `<div class="mv-hint">Elige un <b>período</b> del calendario (una quincena o el año completo), refina por alcance y pulsa <b>Generar</b>.</div>`;
+    return;
+  }
+  if (!STATS || !STATS.kpis) {
+    body.innerHTML = `<div class="mv-empty">No se pudieron calcular los indicadores del período. Vuelve a pulsar <b>Generar</b>.</div>`;
+    return;
+  }
+  const k = STATS.kpis;
+  const p = STATS.prev || null;
+  const pl = STATS.plantilla || null;
+  const neto = (k.neto > 0 ? '+' : k.neto < 0 ? '−' : '') + Math.abs(k.neto);
+
+  body.innerHTML = `
+    <div class="mv-kpis">
+      <div class="mv-kpi"><div class="t"><span class="dot" style="background:var(--ok,#0e9f6e)"></span>INGRESOS</div>
+        <div class="n">${k.ing}</div><div class="d">${deltaLine(k.ing, p && p.ing, true)}</div></div>
+      <div class="mv-kpi"><div class="t"><span class="dot" style="background:#b91c1c"></span>EGRESOS</div>
+        <div class="n">${k.egr}</div><div class="d">${deltaLine(k.egr, p && p.egr, false)}</div></div>
+      <div class="mv-kpi"><div class="t"><span class="dot" style="background:var(--brand,#2563eb)"></span>TRASLADOS</div>
+        <div class="n">${k.tras}</div><div class="d">${deltaLine(k.tras, p && p.tras, null)}</div></div>
+      <div class="mv-kpi"><div class="t"><span class="dot" style="background:#7e22ce"></span>CAMBIOS DE CARGO</div>
+        <div class="n">${k.cargo}</div><div class="d">${deltaLine(k.cargo, p && p.cargo, null)}</div></div>
+      <div class="mv-kpi"><div class="t"><span class="dot" style="background:#b45309"></span>NETO</div>
+        <div class="n">${neto}</div><div class="d">${pl ? `plantilla ${pl.n.toLocaleString('es-VE')} al corte (${esc(ddmm(pl.cut))})` : 'sin corte en el período'}</div></div>
+    </div>
+    <div class="mv-soon">
+      Indicadores del período, dispersión entre tiendas y curva de supervivencia por cohorte — próximas fases (v5.97–v5.98),
+      cada indicador con su “?” hacia la <a href="/guias/indicadores-rotacion.html" target="_blank" rel="noopener">guía de indicadores</a>.
+      El <b>Detalle</b> del período está en su pestaña, con buscador y exportación.
+    </div>`;
 }
 
 /* Filas visibles: chips de tipo + busqueda por coma + orden. */
