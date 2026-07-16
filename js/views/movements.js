@@ -155,6 +155,21 @@ function ensureStyles() {
   .mv-kpi .d .up{color:var(--ok,#0e9f6e);font-weight:700}
   .mv-kpi .d .dn{color:#b91c1c;font-weight:700}
   @media (max-width:900px){.mv-kpis{grid-template-columns:repeat(2,1fr)}}
+  /* Paneles del tablero (mockup v3, F2 v5.97) */
+  .mv-grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
+  @media (max-width:900px){.mv-grid2{grid-template-columns:1fr}}
+  .mv-panel{background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;padding:16px 18px}
+  .mv-panel h3{font-size:13px;margin:0 0 12px;color:var(--ink-soft,#475569)}
+  .mv-rot{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  @media (max-width:520px){.mv-rot{grid-template-columns:1fr}}
+  .mv-rk{border:1px solid var(--border-soft,#eef1f5);border-radius:11px;padding:10px 12px;background:#fbfcfe;position:relative}
+  .mv-rk .v{font-size:19px;font-weight:800;color:var(--ink)}
+  .mv-rk .l{font-size:11px;font-weight:700;color:var(--ink-soft,#475569);margin-top:1px}
+  .mv-rk .e{font-size:10.5px;color:var(--muted);margin-top:3px;line-height:1.4}
+  .mv-rk .q{position:absolute;top:8px;right:9px;width:17px;height:17px;border-radius:50%;
+    background:#eef4ff;color:var(--brand,#2563eb);font-size:11px;font-weight:800;
+    display:flex;align-items:center;justify-content:center;text-decoration:none;line-height:1}
+  .mv-rk .q:hover{background:var(--brand,#2563eb);color:#fff}
   /* Chips-filtro por tipo */
   .mv-typechips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
   .mv-tc{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:6px 12px;
@@ -542,10 +557,52 @@ function paintAnalisis(body) {
       <div class="mv-kpi"><div class="t"><span class="dot" style="background:#b45309"></span>NETO</div>
         <div class="n">${neto}</div><div class="d">${pl ? `plantilla ${pl.n.toLocaleString('es-VE')} al corte (${esc(ddmm(pl.cut))})` : 'sin corte en el período'}</div></div>
     </div>
+    ${paintIndicadores()}
     <div class="mv-soon">
-      Indicadores del período, dispersión entre tiendas y curva de supervivencia por cohorte — próximas fases (v5.97–v5.98),
-      cada indicador con su “?” hacia la <a href="/guias/indicadores-rotacion.html" target="_blank" rel="noopener">guía de indicadores</a>.
+      Dispersión entre tiendas comparables (con ranking clicable) y curva de supervivencia por cohorte — próxima fase (v5.98).
       El <b>Detalle</b> del período está en su pestaña, con buscador y exportación.
+    </div>`;
+}
+
+/* ---------- panel Indicadores del periodo (F2 v5.97, mockup v3) ----------
+   6 tarjetas, cada una con su "?" hacia la guia publicada. Formulas: las
+   de la guia, calculadas por la RPC respetando filtros y alcance. */
+function paintIndicadores() {
+  const i = (STATS && STATS.indicadores) || null;
+  if (!i) return '';
+  const G = '/guias/indicadores-rotacion.html';
+  const v = (x, suf) => (x == null ? '—' : `${x}${suf || ''}`);
+  const rk = (val, lbl, expl, anchor) => `
+    <div class="mv-rk">
+      <a class="q" href="${G}#${anchor}" target="_blank" rel="noopener" title="Qué mide y cómo se calcula">?</a>
+      <div class="v">${val}</div><div class="l">${lbl}</div><div class="e">${expl}</div>
+    </div>`;
+
+  return `
+    <div class="mv-grid2">
+      <div class="mv-panel">
+        <h3>Indicadores del período (metodología estándar)</h3>
+        <div class="mv-rot">
+          ${rk(v(i.rot_anualizada, '%'), 'Rotación anualizada',
+               `${v(i.egr_total)} egresos ÷ plantilla promedio ${i.plantilla_prom ? Number(i.plantilla_prom).toLocaleString('es-VE') : '—'}, a ${v(i.dias_efectivos)} días. Ref. retail: 60–100% ya es alta.`, 'rot')}
+          ${rk(v(i.temprana90, '%'), 'Rotación temprana <90 días',
+               `${v(i.temprana30, '%')} no llega ni al mes. Mediana al egresar: ${v(i.mediana_egreso)} días.`, 'temp')}
+          ${rk(v(i.estabilidad, '%'), 'Índice de estabilidad',
+               `Activos con más de 1 año de contrato, al corte ${i.estab_cut ? esc(ddmm(i.estab_cut)) : '—'}.`, 'estab')}
+          ${rk(v(i.reincidentes), 'Reincidentes',
+               'Personas con 2+ contratos observados (se fueron y volvieron, o rotaron de tienda).', 'boom')}
+          ${rk(`${v(i.temprana_vendedor, '%')} / ${v(i.temprana_gerente, '%')}`, 'Temprana: vendedor vs gerente',
+               'El problema se concentra en la base operativa; el gerente resiste más.', 'temp')}
+          ${rk(v(i.gerentes_egresados), 'Gerentes egresados',
+               'Estabilidad gerencial: el mejor predictor de la rotación del resto del equipo.', 'disp')}
+        </div>
+      </div>
+      <div class="mv-panel" style="border-style:dashed;background:#fbfcfe;display:flex;align-items:center">
+        <p class="mv-note" style="margin:0"><b>La clave diagnóstica — dispersión entre tiendas comparables:</b>
+        llega en la próxima fase (v5.98) con la banda min–mediana–max, el ranking de tiendas clicable hacia Personal
+        y la curva de supervivencia por cohorte. Cada indicador de la izquierda ya tiene su “?” con la
+        <a href="${G}" target="_blank" rel="noopener">guía completa</a>.</p>
+      </div>
     </div>`;
 }
 
