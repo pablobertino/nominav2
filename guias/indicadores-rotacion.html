@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Guía · Indicadores de rotación de personal — Portal de Nómina</title>
+<style>
+  :root{--ink:#0f172a;--ink-soft:#475569;--muted:#64748b;--faint:#94a3b8;--border:#e2e8f0;
+    --border-soft:#eef1f5;--bg:#f6f8fb;--card:#fff;--bg-soft:#f1f5f9;--brand:#2563eb;
+    --ok:#0e9f6e;--warn:#b45309;--bad:#b91c1c}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:var(--bg);color:var(--ink);padding:30px 22px;line-height:1.6}
+  .wrap{max-width:860px;margin:0 auto}
+  h1{font-size:23px;margin:0 0 4px}
+  .sub{color:var(--muted);font-size:13.5px;margin:0 0 26px}
+  h2{font-size:16px;margin:30px 0 6px;color:var(--ink);display:flex;align-items:center;gap:8px}
+  h2 .n{width:24px;height:24px;border-radius:8px;background:#eef4ff;color:var(--brand);font-size:12px;font-weight:800;display:inline-flex;align-items:center;justify-content:center;flex:none}
+  p{font-size:13.5px;color:var(--ink-soft);margin:8px 0}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:18px 22px;margin-bottom:14px}
+  .formula{font-family:ui-monospace,Menlo,monospace;font-size:12.5px;background:var(--bg-soft);border:1px solid var(--border-soft);border-radius:9px;padding:9px 13px;margin:10px 0;color:var(--ink)}
+  .como{font-size:12.5px;color:var(--muted);border-left:3px solid var(--border);padding:2px 0 2px 12px;margin:10px 0}
+  .como b{color:var(--ink-soft)}
+  .refs{font-size:12.5px;margin:10px 0 0;padding:10px 13px;background:#f7faff;border:1px solid #dbe7fb;border-radius:9px}
+  .refs b{font-size:11px;letter-spacing:.4px;color:var(--brand)}
+  .refs ul{margin:6px 0 0;padding-left:18px}
+  .refs li{margin:3px 0;color:var(--ink-soft)}
+  .refs a{color:var(--brand);text-decoration:none;border-bottom:1px dashed #b9cff5}
+  .refs a:hover{border-bottom-style:solid}
+  .refs .q{font-family:ui-monospace,Menlo,monospace;font-size:11px;background:var(--bg-soft);border-radius:5px;padding:1px 6px;color:var(--ink-soft)}
+  .tip{background:#fdfaf4;border:1px solid #f0e2c8;border-radius:11px;padding:11px 15px;font-size:12.5px;color:#7c5a1e;margin:14px 0}
+  .toc{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:14px 20px;margin-bottom:20px;font-size:13px}
+  .toc a{color:var(--brand);text-decoration:none}
+  .back{display:inline-block;font-size:12.5px;color:var(--muted);margin-bottom:14px;text-decoration:none}
+  footer{color:var(--faint);font-size:11.5px;margin-top:30px;border-top:1px solid var(--border);padding-top:12px}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <a class="back" href="javascript:window.close()">← Volver al portal</a>
+  <h1>Indicadores de rotación de personal</h1>
+  <p class="sub">Qué mide cada número de la página <b>Movimientos</b>, cómo se calcula en este portal y dónde estudiar más.</p>
+
+  <div class="toc">
+    <b>Contenido:</b>
+    <a href="#rot">1. Rotación</a> · <a href="#temp">2. Rotación temprana</a> · <a href="#perm">3. Permanencia mediana</a> ·
+    <a href="#estab">4. Estabilidad</a> · <a href="#coho">5. Supervivencia de cohortes</a> · <a href="#disp">6. Dispersión entre tiendas</a> ·
+    <a href="#costo">7. Costo de rotación</a> · <a href="#boom">8. Reincidentes</a> · <a href="#lect">Biblioteca</a>
+  </div>
+
+  <div class="card" id="rot">
+    <h2><span class="n">1</span> Rotación (turnover rate)</h2>
+    <p>El porcentaje de la plantilla que egresó en un período. Es el termómetro general: cuánta gente hay que reemplazar para mantener la operación.</p>
+    <div class="formula">Rotación = Egresos del período ÷ Plantilla promedio × 100<br>Anualizada = Rotación × (365 ÷ días del período)</div>
+    <div class="como"><b>Cómo leerla:</b> en retail global, 60–100% anual ya se considera rotación alta; en supermercados y moda rápida se han reportado cifras mayores. Compárala primero contra tu propio histórico (¿sube o baja?) y entre tus tiendas, no solo contra benchmarks de otros países.</div>
+    <div class="refs"><b>PARA PROFUNDIZAR</b>
+      <ul>
+        <li><a href="https://www.aihr.com" target="_blank" rel="noopener">AIHR — Academy to Innovate HR</a> · buscar <span class="q">employee turnover rate</span> (guía práctica con fórmulas y variantes).</li>
+        <li><a href="https://www.shrm.org" target="_blank" rel="noopener">SHRM</a> · buscar <span class="q">how to determine turnover rate</span> (metodología estándar de la asociación de RRHH más grande).</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card" id="temp">
+    <h2><span class="n">2</span> Rotación temprana (&lt;90 días)</h2>
+    <p>Qué porcentaje de los egresos ocurre antes de cumplir 90 días. En la literatura se llama <i>new hire turnover</i> o <i>90-day turnover</i> y es EL indicador de la calidad de la entrada: selección, expectativas del puesto y onboarding.</p>
+    <div class="formula">Temprana = Egresos con antigüedad &lt; 90 días ÷ Egresos totales × 100</div>
+    <div class="como"><b>Cómo leerla:</b> si es alta, la persona y el puesto "no se conocieron bien" antes de contratar, o el primer mes no cumplió lo prometido. Las intervenciones con más evidencia: entrevista con expectativas realistas (RJP, <i>realistic job preview</i>), onboarding estructurado con acompañante, y check-ins del gerente a los 7 y 30 días.</div>
+    <div class="refs"><b>PARA PROFUNDIZAR</b>
+      <ul>
+        <li><a href="https://hbr.org" target="_blank" rel="noopener">Harvard Business Review</a> · buscar <span class="q">onboarding new hires retention</span>.</li>
+        <li><a href="https://www.gallup.com/workplace" target="_blank" rel="noopener">Gallup Workplace</a> · buscar <span class="q">onboarding experience</span> (series sobre los primeros 90 días y compromiso).</li>
+        <li><a href="https://workinstitute.com" target="_blank" rel="noopener">Work Institute — Retention Report</a> · informe anual con causas declaradas de renuncia (exit interviews a gran escala).</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card" id="perm">
+    <h2><span class="n">3</span> Permanencia mediana al egresar</h2>
+    <p>De todos los que se fueron, cuántos días duró la mitad "más breve". Se usa la <b>mediana</b> y no el promedio porque unos pocos empleados muy antiguos distorsionarían el promedio.</p>
+    <div class="formula">Mediana = percentil 50 de (fecha egreso − fecha ingreso), sobre los egresos del período</div>
+    <div class="como"><b>Cómo leerla:</b> junto con la temprana, dibuja el "punto de fuga": si la mediana es ~60 días, el esfuerzo de retención rinde más en la primera quincena de trabajo que en el aniversario.</div>
+  </div>
+
+  <div class="card" id="estab">
+    <h2><span class="n">4</span> Índice de estabilidad</h2>
+    <p>Qué porcentaje de la plantilla <b>activa</b> tiene más de 1 año en el grupo. Mientras la rotación mira a los que se van, la estabilidad mira a los que se quedan: es la reserva de experiencia del negocio.</p>
+    <div class="formula">Estabilidad = Activos con antigüedad &gt; 12 meses ÷ Activos totales × 100</div>
+    <div class="como"><b>Cómo leerla:</b> una estabilidad baja significa que el conocimiento del puesto (caja, inventario, atención) se está reaprendiendo constantemente — el costo oculto de la rotación.</div>
+    <div class="refs"><b>PARA PROFUNDIZAR</b>
+      <ul>
+        <li><a href="https://www.aihr.com" target="_blank" rel="noopener">AIHR</a> · buscar <span class="q">employee retention rate vs stability index</span>.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card" id="coho">
+    <h2><span class="n">5</span> Supervivencia de cohortes</h2>
+    <p>Se toma una "camada" de ingreso (ej. todos los que entraron en enero) y se mide qué porcentaje sigue activo al mes, a los 3 y a los 6 meses. La curva resultante es una versión simplificada del <b>análisis de supervivencia</b> (Kaplan–Meier), la herramienta estadística estándar para estudiar "cuánto dura" algo.</p>
+    <div class="formula">Supervivencia(t) = Miembros de la cohorte activos en t ÷ Tamaño inicial de la cohorte × 100</div>
+    <div class="como"><b>Cómo leerla:</b> el poder está en <b>comparar curvas</b>: la cohorte de enero vs la de marzo, o la misma cohorte en dos zonas. La curva que "cae menos" señala dónde algo se está haciendo mejor — y eso se puede copiar.</div>
+    <div class="refs"><b>PARA PROFUNDIZAR</b>
+      <ul>
+        <li>Buscar <span class="q">Kaplan-Meier survival analysis HR attrition</span> — el método aplicado a rotación de personal (hay tutoriales aplicados a RRHH en AIHR y en blogs de people analytics).</li>
+        <li><a href="https://www.aihr.com" target="_blank" rel="noopener">AIHR</a> · buscar <span class="q">survival analysis employee turnover</span>.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card" id="disp">
+    <h2><span class="n">6</span> Dispersión entre tiendas (benchmark interno)</h2>
+    <p>La rotación de cada tienda comparable, ordenada de menor a mayor. Es el indicador más accionable de todos: al compartir marca, tabulador salarial y mercado laboral, las diferencias grandes entre tiendas apuntan a factores <b>locales</b> — gerencia, clima, horarios, ubicación.</p>
+    <div class="formula">Por tienda: Egresos ÷ Plantilla promedio de esa tienda × 100 (solo tiendas con plantilla mínima, ej. ≥ 8)</div>
+    <div class="como"><b>Cómo leerla:</b> los extremos son el laboratorio. Estudiar qué hace distinto la tienda que retiene (¿el gerente lleva años? ¿horarios distintos?) vale más que cualquier benchmark externo, porque la solución ya existe dentro del grupo. Cruzar con la rotación del cargo GERENTE: el cambio de gerente suele disparar la rotación del equipo en los ~90 días siguientes.</div>
+    <div class="refs"><b>PARA PROFUNDIZAR</b>
+      <ul>
+        <li><a href="https://www.gallup.com/workplace" target="_blank" rel="noopener">Gallup</a> · buscar <span class="q">manager influence employee turnover</span> — la línea de investigación "la gente no renuncia a las empresas, renuncia a los jefes".</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card" id="costo">
+    <h2><span class="n">7</span> Costo de rotación</h2>
+    <p>Cada reemplazo cuesta: reclutar, seleccionar, documentar, entrenar, y la productividad perdida mientras el nuevo aprende. Las estimaciones de la industria van de <b>30% a 50% del salario anual</b> para posiciones operativas de alta rotación, y mucho más para cargos gerenciales.</p>
+    <div class="formula">Costo estimado = Egresos del período × Costo unitario de reemplazo (parámetro configurable)</div>
+    <div class="como"><b>Cómo leerlo:</b> es el traductor de la rotación al idioma de la directiva. Aunque el costo unitario sea una estimación conservadora, multiplicado por miles de egresos anuales el número resultante justifica (o no) invertir en retención.</div>
+    <div class="refs"><b>PARA PROFUNDIZAR</b>
+      <ul>
+        <li><a href="https://www.shrm.org" target="_blank" rel="noopener">SHRM</a> · buscar <span class="q">cost of employee turnover</span>.</li>
+        <li><a href="https://www.gallup.com/workplace" target="_blank" rel="noopener">Gallup</a> · buscar <span class="q">fixable problem costs businesses trillion</span> (el estudio clásico del costo agregado de la rotación voluntaria).</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="card" id="boom">
+    <h2><span class="n">8</span> Reincidentes (empleados boomerang)</h2>
+    <p>Personas con más de un contrato en el período: se fueron y volvieron (al grupo o a otra tienda). La literatura los llama <i>boomerang employees</i> y los considera una fuente de contratación de bajo riesgo: ya conocen el trabajo, la cultura y el pago, así que su rotación temprana suele ser menor.</p>
+    <div class="como"><b>Cómo leerlo:</b> un número alto de reincidentes sugiere formalizar un "pool de reingreso": ex-empleados con buen desempeño, pre-verificados (el portal ya cuenta con Verificar candidato y No reempleables como filtros). Contratar del pool ataca directamente la rotación temprana.</div>
+    <div class="refs"><b>PARA PROFUNDIZAR</b>
+      <ul>
+        <li><a href="https://hbr.org" target="_blank" rel="noopener">Harvard Business Review</a> · buscar <span class="q">boomerang employees</span>.</li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="tip"><b>Nota metodológica del portal:</b> los indicadores miden el <i>qué</i> (cuánta gente, cuándo, dónde) con datos duros de AX. El <i>porqué</i> — pago, trato, expectativas, estacionalidad — requiere preguntarle a la gente: la <b>encuesta de salida</b> (3 preguntas al egresar) es el complemento natural de esta página. Los datos históricos tienen granularidad quincenal (cortes del padrón); desde julio 2026 los cambios de cargo se registran al día.</div>
+
+  <div class="card" id="lect">
+    <h2><span class="n">📚</span> Biblioteca — puntos de partida</h2>
+    <p style="font-size:13px">Los sitios de referencia en gestión de personas y people analytics (en inglés, que es donde vive la mayoría de la investigación). En cada uno, usar el término de búsqueda indicado en los apartados de arriba:</p>
+    <div class="refs" style="background:var(--bg-soft);border-color:var(--border)">
+      <ul>
+        <li><a href="https://www.aihr.com" target="_blank" rel="noopener">aihr.com</a> — Academy to Innovate HR: la mejor colección de guías prácticas de métricas de RRHH, con fórmulas.</li>
+        <li><a href="https://www.shrm.org" target="_blank" rel="noopener">shrm.org</a> — Society for Human Resource Management: metodologías estándar y toolkits.</li>
+        <li><a href="https://www.gallup.com/workplace" target="_blank" rel="noopener">gallup.com/workplace</a> — investigación sobre compromiso, gerencia y rotación.</li>
+        <li><a href="https://hbr.org" target="_blank" rel="noopener">hbr.org</a> — Harvard Business Review: onboarding, retención, boomerang employees.</li>
+        <li><a href="https://workinstitute.com" target="_blank" rel="noopener">workinstitute.com</a> — Retention Report anual: causas declaradas de renuncia a gran escala.</li>
+        <li><a href="https://www.ilo.org" target="_blank" rel="noopener">ilo.org</a> — OIT: contexto del mercado laboral en América Latina.</li>
+      </ul>
+    </div>
+  </div>
+
+  <footer>Portal de Nómina · Grupo Canaima · Capital Humano — Guía interna de la página Movimientos. Los enlaces abren en pestaña nueva; los términos de búsqueda llevan directo al material aunque las URL internas de cada sitio cambien.</footer>
+</div>
+</body>
+</html>
