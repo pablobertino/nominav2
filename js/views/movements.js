@@ -19,11 +19,13 @@
      ⏳ traslados en curso, fecha exacta/quincenal, alias clicable ->
      Personal (patron v5.89: Volver regresa aqui con todo intacto),
      paginacion 25/50/100 y Exportar xlsx/csv/txt (patron SheetJS).
-   - La pestaña ANALISIS (v5.96, F1): fila de KPIs del mockup v3 — ing/egr/
-     tras/cargo con delta vs la quincena anterior del calendario y NETO con
-     plantilla al corte. Los conteos salen de la MISMA RPC del Detalle
-     (nunca discrepan de los chips). Indicadores, dispersion y curva de
-     supervivencia: F2-F3 (v5.97-v5.98).
+   - La pestaña ANALISIS (v5.96-v5.99, COMPLETA): fila de KPIs con delta vs
+     la quincena anterior y NETO con plantilla al corte (F1); panel de 6
+     indicadores con "?" hacia la guia (F2); dispersion entre tiendas
+     comparables con ranking clicable y curva de supervivencia por cohorte
+     con selector (F3); diagnostico y recomendaciones por motor de reglas
+     en el front (F4). Los conteos salen de la MISMA RPC del Detalle
+     (nunca discrepan de los chips).
 
    Datos por /api/movements (facets + list). Gate: view.movimientos.
    Export: renderMovements(user)
@@ -190,6 +192,15 @@ function ensureStyles() {
   .mv-coh-head select{font:inherit;font-size:12px;padding:6px 9px;border:1px solid var(--border);
     border-radius:9px;background:var(--card,#fff);color:var(--ink);font-weight:600;margin-left:auto}
   .mv-surv text{font-family:inherit}
+  /* Diagnostico y recomendaciones (F4 v5.99, mockup v3) */
+  .mv-diag{border-left:3px solid var(--brand,#2563eb);background:#f7faff;border-radius:0 12px 12px 0;
+    padding:13px 16px;margin-bottom:10px}
+  .mv-diag.w{border-left-color:#b45309;background:#fdfaf4}
+  .mv-diag.g{border-left-color:var(--ok,#0e9f6e);background:#f5fbf8}
+  .mv-diag .h{font-size:12.5px;font-weight:800;margin-bottom:3px;color:var(--ink)}
+  .mv-diag .ev{font-size:11.5px;color:var(--ink-soft,#475569);line-height:1.5;margin-bottom:6px}
+  .mv-diag .ac{font-size:11.5px;color:var(--muted);line-height:1.55}
+  .mv-diag .ac b{color:var(--ink-soft,#475569)}
   /* Chips-filtro por tipo */
   .mv-typechips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
   .mv-tc{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:6px 12px;
@@ -579,10 +590,12 @@ function paintAnalisis(body) {
     </div>
     ${paintIndicadores()}
     ${paintSurvival()}
-    <div class="mv-soon">
-      Diagnóstico y recomendaciones generados de los datos del período — última fase (v5.99).
-      El <b>Detalle</b> del período está en su pestaña, con buscador y exportación.
-    </div>`;
+    ${paintDiagnostico()}
+    <p class="mv-note"><b>Nota honesta sobre las causas:</b> estos indicadores miden el <i>qué</i> con precisión (cuánta gente se va,
+    cuándo y dónde), pero el <i>porqué</i> (¿selección? ¿pago? ¿trato? ¿estacionalidad?) requiere la encuesta de salida o el cruce
+    por tienda/gerente que esta página facilita. La dispersión entre tiendas sugiere que “no se recluta bien” es solo parte de la
+    historia: el mismo reclutamiento produce retención muy distinta según la tienda. El <b>Detalle</b> del período está en su
+    pestaña, con buscador y exportación.</p>`;
 
   // Cableado del tablero: selector de cohorte (repinta la curva sin
   // refetch: todas las cohortes ya vienen en STATS) y tiendas clicables
@@ -647,6 +660,68 @@ function paintSurvival() {
       Los cortes de 1/3/6 meses aparecen cuando la cohorte completa madura hasta ese punto. El poder está en <b>comparar curvas</b>
       con el selector — la cohorte que “cae menos” señala dónde algo se hizo mejor.
       <a class="q" style="position:static;display:inline-flex;width:16px;height:16px;border-radius:50%;background:#eef4ff;color:var(--brand,#2563eb);font-size:10px;font-weight:800;align-items:center;justify-content:center;text-decoration:none;vertical-align:middle" href="/guias/indicadores-rotacion.html#coho" target="_blank" rel="noopener" title="Qué mide y cómo se calcula">?</a></p>
+    </div>`;
+}
+
+/* ---------- Diagnóstico y recomendaciones (F4 v5.99, mockup v3) ----------
+   Motor de reglas EN EL FRONT sobre los stats ya certificados (F1-F3).
+   Cada regla: umbral -> tarjeta hallazgo/evidencia/acción con los textos
+   del mockup v3 y los números vivos del período/filtros elegidos.
+   Umbrales: temprana > 50% · dispersión ≥ 3× (max/mediana, o max/min si
+   min > 0) · reincidentes ≥ 50. Sin hallazgos -> se dice, no se inventa. */
+function paintDiagnostico() {
+  const i = (STATS && STATS.indicadores) || null;
+  if (!i) return '';
+  const d = (STATS && STATS.dispersion) || null;
+  const cards = [];
+  const fmt = (x) => (x == null ? '—' : Number(x).toLocaleString('es-VE'));
+
+  // Regla 1 (⚠ warn): rotación temprana > 50%.
+  if (i.temprana90 != null && i.temprana90 > 50) {
+    const de10 = Math.round(i.temprana90 / 10);
+    cards.push(`
+      <div class="mv-diag w">
+        <div class="h">⚠ ${de10} de cada 10 egresos ocurren antes de los 90 días${i.temprana_vendedor != null ? ` (${i.temprana_vendedor}% en vendedores)` : ''}</div>
+        <div class="ev"><b>Evidencia:</b> ${i.temprana90}% de ${fmt(i.egr_total)} egresos con &lt;90 días${i.mediana_egreso != null ? `; mediana de permanencia ${i.mediana_egreso} días` : ''}${i.temprana30 != null ? `; ${i.temprana30}% no completa el primer mes` : ''}.</div>
+        <div class="ac"><b>Qué se hace en la industria:</b> ① entrevista estructurada con expectativas realistas del puesto (horarios, carga, pago) — reduce la sorpresa de la primera quincena; ② onboarding con “padrino” las primeras 2 semanas; ③ check-in del gerente a los 7 y 30 días; ④ <b>encuesta de salida</b> de 3 preguntas para separar causas (pago vs trato vs expectativa). Sin exit interviews, los datos muestran el patrón pero no la causa.</div>
+      </div>`);
+  }
+
+  // Regla 2 (◆ azul): dispersión entre tiendas ≥ 3x -> factor local.
+  if (d && d.n >= 8) {
+    const ratio = d.min > 0 ? d.max / d.min : (d.mediana > 0 ? d.max / d.mediana : 0);
+    if (ratio >= 3) {
+      const rTxt = d.min > 0 ? `${Math.round(d.max / d.min)}×` : `${Math.round(d.max / Math.max(1, d.mediana))}× sobre la mediana`;
+      const tops = (d.top || []).slice(0, 2).map(x => `${x.code} (${x.rot}%)`).join(' y ');
+      const lows = (d.low || []).slice(0, 2).map(x => `${x.code} (${x.rot}%)`).join(' y ');
+      cards.push(`
+        <div class="mv-diag">
+          <div class="h">◆ La dispersión entre tiendas (${d.min}%–${d.max}%) apunta a factor local, no solo a reclutamiento</div>
+          <div class="ev"><b>Evidencia:</b> con el mismo tabulador y mercado, unas tiendas retienen ${rTxt} mejor que otras (${d.n} tiendas comparables, mediana ${d.mediana}%). Si la causa fuera solo central (selección/salario), la brecha sería pequeña.</div>
+          <div class="ac"><b>Acción sugerida:</b> estudiar los extremos de cada lado — ¿qué hacen ${tops} distinto de ${lows}? (los códigos del panel de dispersión son clicables hacia Personal). Cruzar con la rotación del GERENTE de cada tienda: ${i.gerentes_egresados != null ? `${fmt(i.gerentes_egresados)} gerentes egresaron en el período, y` : ''} la literatura muestra que el cambio de gerente dispara la rotación del equipo en los 90 días siguientes.</div>
+        </div>`);
+    }
+  }
+
+  // Regla 3 (✓ verde): reincidentes -> la puerta giratoria como activo.
+  if (i.reincidentes != null && i.reincidentes >= 50) {
+    cards.push(`
+      <div class="mv-diag g">
+        <div class="h">✓ ${fmt(i.reincidentes)} reincidentes: la puerta giratoria también es un activo</div>
+        <div class="ev"><b>Evidencia:</b> ${fmt(i.reincidentes)} personas tuvieron 2+ contratos observados en el período — el grupo re-contrata gente conocida constantemente.</div>
+        <div class="ac"><b>Oportunidad:</b> formalizar un “pool de reingreso” (ex-empleados con buen desempeño, ya verificados en No reempleables) reduce el costo de selección y el riesgo de rotación temprana: el reincidente ya conoce el trabajo. El portal ya tiene la mitad de la infraestructura (<b>Verificar candidato</b>).</div>
+      </div>`);
+  }
+
+  const body = cards.length
+    ? cards.join('')
+    : `<p class="mv-note" style="margin:0">Ningún hallazgo supera los umbrales con el período y los filtros elegidos
+       (temprana &gt; 50%, dispersión ≥ 3×, reincidentes ≥ 50). Eso también es información.</p>`;
+
+  return `
+    <div class="mv-panel" style="margin-bottom:14px">
+      <h3>Diagnóstico y recomendaciones — generado de los datos del período</h3>
+      ${body}
     </div>`;
 }
 
