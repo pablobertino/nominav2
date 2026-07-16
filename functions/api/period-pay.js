@@ -116,23 +116,40 @@ export async function onRequestPost({ request, env }) {
 
     try {
       const all = await sb(env, `period_pay_status?order=alias.asc,idx.desc&select=*`) || [];
-      // Una fila por empresa: el index mas alto (ya viene ordenado idx desc).
-      const byAlias = {};
-      for (const r of all) {
-        if (!byAlias[r.alias]) byAlias[r.alias] = r;
-      }
-      let rows = Object.values(byAlias);
+      // v5.94: se devuelven TODAS las filas del alcance (idx 0 y -1), no
+      // solo la mas reciente por empresa: la vista filtra por PERIODO DE
+      // PAGO y una empresa puede tener el periodo pedido en cualquiera de
+      // los dos indices. El front decide (default: mas reciente por empresa).
+      let rows = all;
       if (allowed !== null) rows = rows.filter(r => allowed.has(r.alias));
-      // usedFallback global: si TODAS las visibles son anteriores (idx < 0).
-      const usedFallback = rows.length > 0 && rows.every(r => Number(r.idx) < 0);
-      rows = rows.sort((a, b) => (a.alias || '').localeCompare(b.alias || ''));
+      // usedFallback global: si la fila MAS RECIENTE de todas las empresas
+      // visibles es la anterior (idx < 0) — mismo criterio de siempre,
+      // calculado sobre el colapso por alias.
+      const byAlias = {};
+      for (const r of rows) {
+        if (!byAlias[r.alias]) byAlias[r.alias] = r;   // viene idx desc
+      }
+      const latest = Object.values(byAlias);
+      const usedFallback = latest.length > 0 && latest.every(r => Number(r.idx) < 0);
+      rows = rows.slice().sort((a, b) => (a.alias || '').localeCompare(b.alias || '') || (Number(b.idx) - Number(a.idx)));
+
+      // Catalogo de PERIODOS DE PAGO presentes en el alcance (para el combo
+      // del filtro), del mas reciente al mas viejo.
+      const perMap = new Map();
+      rows.forEach(r => {
+        if (!r.periodo_pago) return;
+        if (!perMap.has(r.periodo_pago)) {
+          perMap.set(r.periodo_pago, { code: r.periodo_pago, desde: r.pago_desde || null, hasta: r.pago_hasta || null });
+        }
+      });
+      const periods = [...perMap.values()].sort((a, b) => String(b.code).localeCompare(String(a.code)));
 
       // Enriquecer con datos de la empresa (razon social, RIF, tipo, estatus,
       // zona/subzona/concepto). Se cargan companies + catalogos una vez y se
       // cruzan por codigo en memoria.
       let info = {};
       try {
-        const codes = rows.map(r => r.alias);
+        const codes = [...new Set(rows.map(r => r.alias))];
         if (codes.length) {
           const inList = codes.map(c => encodeURIComponent(c)).join(',');
           const [comps, zones, subs, concepts] = await Promise.all([
@@ -163,7 +180,7 @@ export async function onRequestPost({ request, env }) {
         const ci = info[r.alias] || {};
         return { ...s, ...ci };
       });
-      return json({ ok: true, rows: out, usedFallback });
+      return json({ ok: true, rows: out, periods, usedFallback });
     } catch (e) {
       return json({ ok: false, error: 'No se pudo leer el estado de pago: ' + e.message }, 500);
     }
