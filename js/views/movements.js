@@ -87,12 +87,20 @@ function ddmm(iso) {
 function quincenaLabel(p) {
   return `${p.year}-${String(p.month).padStart(2, '0')}-Q${p.quincena} · ${ddmm(p.range_start)}–${ddmm(p.range_end)} ${MESES[p.month - 1] || ''}`;
 }
+/* ISO timestamptz -> 'dd/mm hh:mm' hora Caracas (nota de la cache). */
+function fmtCache(iso) {
+  const d = new Date(iso); if (isNaN(d)) return '';
+  const c = new Date(d.getTime() - 4 * 3600 * 1000);
+  const z = n => String(n).padStart(2, '0');
+  return `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)} ${z(c.getUTCHours())}:${z(c.getUTCMinutes())}`;
+}
 
 /* ---------- estado del modulo (sobrevive al ir a Personal y Volver) ---------- */
 let USER = null;
 let FACETS = null;       // { zones, subzones, concepts, types, companies }
 let PERIODS = null;      // quincenas del calendario (desc)
 let LAST_CUT = null;     // ultimo corte cargado
+let CACHE_AT = null;     // ultimo recalculo de la cache de movimientos (v5.95)
 let COMPANY_TYPE = null; // Map alias -> company_type (para store/enterprise)
 let C = { period: '', from: '', to: '', zone: '', subzone: '', concept: '', company: '', q: '' };
 let TYPES_ON = new Set(TIPOS.map(t => t.key));   // chips: todos encendidos
@@ -284,6 +292,7 @@ export async function renderMovements(user) {
       FACETS = r.facets || { zones: [], subzones: [], concepts: [], types: [], companies: [] };
       PERIODS = r.periods || [];
       LAST_CUT = r.last_cut || null;
+      CACHE_AT = r.cache_at || null;
       COMPANY_TYPE = new Map((FACETS.companies || []).map(c => [String(c.code), c.type || '']));
     } else {
       FACETS = FACETS || { zones: [], subzones: [], concepts: [], types: [], companies: [] };
@@ -446,7 +455,7 @@ function paintBody() {
     Los mismos iconos viven en los <b>chips-filtro</b> de arriba, con el conteo por tipo (clic para aislar o combinar tipos).
     ⚠ marca los egresos tempranos (&lt;90 días). La columna Fecha indica si es <b>exacta</b> (ingresos/egresos, viene del contrato)
     o <b>quincenal</b> (traslados y cargos históricos${LAST_CUT ? `; último corte cargado: ${esc(ddmm(LAST_CUT))}` : ''};
-    desde el 15/07 el trigger registra los cambios de cargo al día). Alias clicable → Personal.</p>`;
+    desde el 15/07 el trigger registra los cambios de cargo al día). Alias clicable → Personal.${CACHE_AT ? ` Movimientos calculados al ${esc(fmtCache(CACHE_AT))} (se recalculan cada madrugada y al cargar cortes nuevos).` : ''}</p>`;
 
   // Chips: aislar/combinar. Nunca quedan todos apagados: apagar el ultimo
   // vuelve a encenderlos todos (equivale a "todos").

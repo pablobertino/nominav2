@@ -86,7 +86,7 @@ export async function onRequestPost({ request, env }) {
     /* ---------- facets: combos de la vista ---------- */
     if (action === 'facets') {
       const EMPTY = { zones: [], subzones: [], concepts: [], statuses: [], types: [], companies: [] };
-      const [facets, periods, cutRow] = await Promise.all([
+      const [facets, periods, cutRow, metaRow] = await Promise.all([
         (codes !== null && !codes.length)
           ? Promise.resolve(EMPTY)
           : sb(env, 'rpc/personnel_search_facets', {
@@ -100,12 +100,15 @@ export async function onRequestPost({ request, env }) {
           + `&order=range_start.desc&limit=48`),
         // Ultimo corte cargado (nota de hasta donde llegan traslados/cargos).
         sb(env, 'hcm_snapshot?select=cut_date&order=cut_date.desc&limit=1'),
+        // v5.95: cuando se recalculo la cache de movimientos por ultima vez.
+        sb(env, 'personnel_movements_cache_meta?id=eq.1&select=refreshed_at,row_count'),
       ]);
       return json({
         ok: true,
         facets,
         periods: periods || [],
         last_cut: (cutRow && cutRow[0] && cutRow[0].cut_date) || null,
+        cache_at: (metaRow && metaRow[0] && metaRow[0].refreshed_at) || null,
       });
     }
 
