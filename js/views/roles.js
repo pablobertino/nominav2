@@ -63,7 +63,7 @@ Object.entries(IMPLIES).forEach(([u, v]) => { IMPLIED_BY[v] = u; });
 const VIEW_SUBGROUPS = [
   ['Menu principal', ['view.dashboard', 'view.usuarios', 'view.documentos', 'view.calendario']],
   ['Organizacion', ['view.empresas', 'view.estructura']],
-  ['Personal', ['view.buscar', 'view.datosincompletos', 'view.dobleempleo', 'view.egmotivos', 'view.rostersync', 'view.fotos']],
+  ['Personal', ['view.buscar', 'view.datosincompletos', 'view.dobleempleo', 'view.movimientos', 'view.egmotivos', 'view.rostersync', 'view.fotos']],
   ['Reportes', ['view.historial', 'view.estadisticas', 'view.reportempresas', 'view.estadopago', 'view.misstats']],
   ['Comunicacion', ['view.avisos', 'view.avisosconfig']],
   ['Solicitudes', ['view.solicitudes', 'view.firmantes']],
@@ -109,6 +109,9 @@ const MENU_CATALOG = [
     // acciones: la lista se mantiene en el sistema, el portal solo consulta.
     { id: 'norehire', lbl: 'No reempleables', view: 'view.norehire', acts: [] },
     { id: 'norehirecheck', lbl: 'Verificar candidato', view: 'view.norehirecheck', acts: [] },
+    // v5.93: Movimientos. Solo consulta (los movimientos se derivan de los
+    // cortes quincenales del sistema), por eso sin acciones.
+    { id: 'movimientos', lbl: 'Movimientos', view: 'view.movimientos', acts: [] },
     { id: 'egmotivos', lbl: 'Ratificar egresos', view: 'view.egmotivos', acts: ['egress.ratify'] },
     { id: 'rostersync', lbl: 'Carga de personal', view: 'view.rostersync', acts: ['roster.upload', 'roster.upload_ax', 'roster.upload_api', 'roster.manual', 'roster.clear'] },
   ] },
