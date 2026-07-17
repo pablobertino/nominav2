@@ -19,6 +19,12 @@
          nextStatus/nextFrom/nextTo/nextReason y modifiedDateTime como
          fecha-fallback del cambio) y lo upsertea en
          nomina_v2.company_status via company_status_upsert.
+     egresos_cron {source:'cron', adminId, days}  SIN sesion: camino del
+         tick pg_cron nv2_ax_egresos_tick (v6.08). Valida superadmin
+         activo, hace pull (ventana days) + apply + empresas_pull y deja
+         el resultado en ax_sync_config (last_run_at/status/result).
+         Config: nomina_v2.ax_sync_config (enabled, frequency, hora
+         ancla, days_back=30, deep_monthly dia 1 = 365).
 
    Env vars (Cloudflare Pages): usa el secret canaima_apikey YA
    configurado (mismo middleware que las demas APIs del catalogo);
@@ -76,6 +82,60 @@ export async function onRequestPost({ request, env }) {
   const action = body.action || '';
 
   try {
+    /* ---------- egresos_cron: paso automatico (tick propio, v6.08) ---------- */
+    // Invocado por nomina_v2.tick_ax_egresos_sync() via net.http_post con
+    // {source:'cron', adminId, days}. No hay sesion de navegador: se valida
+    // que adminId sea un superadmin ACTIVO (criterio de sync-roster). Hace
+    // pull (ventana days) + apply + empresas_pull y deja el resultado en
+    // ax_sync_config para el log de Configurar.
+    if (action === 'egresos_cron' && body.source === 'cron') {
+      const adminId = parseInt(body.adminId, 10) || 0;
+      const adm = adminId
+        ? await sb(env, `admin_users?id=eq.${adminId}&role=eq.superadmin&is_active=eq.true&select=id`)
+        : null;
+      if (!adm || !adm.length) return json({ ok: false, error: 'egresos_cron: adminId invalido.' }, 403);
+
+      const cfgPatch = (b) => sb(env, 'ax_sync_config?id=eq.1', {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(b),
+      }).catch(() => null);
+
+      const key = env.ax_api_key || env.canaima_apikey;
+      if (!key) {
+        await cfgPatch({ last_run_at: new Date().toISOString(), last_status: 'error', last_error: 'Falta el secret canaima_apikey.' });
+        return json({ ok: false, error: 'Falta el secret canaima_apikey.' }, 500);
+      }
+      const days = Math.max(1, Math.min(365, parseInt(body.days, 10) || 30));
+      const hasta = new Date(Date.now() - 4 * 3600e3).toISOString().slice(0, 10);
+      const desde = new Date(Date.now() - 4 * 3600e3 - days * 86400e3).toISOString().slice(0, 10);
+      const egUrl = env.ax_egresos_url || 'https://api.grupocanaima.com/empleados/egresos/v1';
+      const emUrl = env.ax_empresas_url || 'https://api.grupocanaima.com/empresas/status/v1';
+
+      try {
+        const data = await axGet(egUrl, key, { desde, hasta });
+        const empleos = Array.isArray(data && data.empleos) ? data.empleos : [];
+        const asignaciones = Array.isArray(data && data.asignaciones) ? data.asignaciones : [];
+        const up = await sb(env, 'rpc/ax_egresos_upsert', {
+          method: 'POST', body: JSON.stringify({ p_empleos: empleos, p_asignaciones: asignaciones }),
+        });
+        const ap = await sb(env, 'rpc/ax_egresos_apply', { method: 'POST', body: '{}' });
+        let empresas = null;
+        try {
+          const cat = await axGet(emUrl, key, null);
+          if (Array.isArray(cat) && cat.length) {
+            empresas = await sb(env, 'rpc/company_status_upsert', { method: 'POST', body: JSON.stringify({ p_rows: cat }) });
+          }
+        } catch (_) { /* el catalogo es secundario: no tumba la corrida */ }
+
+        const result = { desde, hasta, days, api: { egresos: empleos.length, asignaciones: asignaciones.length }, upsert: up, apply: ap, empresas };
+        await cfgPatch({ last_run_at: new Date().toISOString(), last_status: 'ok', last_error: null, last_result: result });
+        return json({ ok: true, ...result });
+      } catch (e) {
+        const msg = String(e && e.message ? e.message : e);
+        await cfgPatch({ last_run_at: new Date().toISOString(), last_status: 'error', last_error: msg });
+        return json({ ok: false, error: msg }, 502);
+      }
+    }
+
     const actor = await resolveActor(env, body.user || null);
     if (!actor) return json({ ok: false, error: 'Sesion no valida.' }, 403);
     if (!can(actor, 'hcm.sync')) {
