@@ -20,10 +20,9 @@
          fecha-fallback del cambio) y lo upsertea en
          nomina_v2.company_status via company_status_upsert.
 
-   Env vars nuevas (Cloudflare Pages → Settings → Environment variables):
-     ax_api_key      key ROTADA del middleware (pedir a Sebastian)
-     ax_egresos_url  https://api.grupocanaima.com/empleados/egresos/v1
-     ax_empresas_url URL publica del catalogo (confirmar con Sebastian)
+   Env vars (Cloudflare Pages): usa el secret canaima_apikey YA
+   configurado (mismo middleware que las demas APIs del catalogo);
+   ax_api_key / ax_egresos_url / ax_empresas_url son OVERRIDES opcionales.
    Ya existentes: supabase_url, supabase_service_role.
    ===================================================================== */
 
@@ -82,13 +81,15 @@ export async function onRequestPost({ request, env }) {
     if (!can(actor, 'hcm.sync')) {
       return json({ ok: false, error: 'No tienes permiso para sincronizar con AX (hcm.sync).' }, 403);
     }
-    if (!env.ax_api_key) {
-      return json({ ok: false, error: 'Falta configurar ax_api_key en las variables del proyecto (Cloudflare Pages).' }, 500);
+    const axKey = env.ax_api_key || env.canaima_apikey;
+    if (!axKey) {
+      return json({ ok: false, error: 'Falta el secret canaima_apikey (o ax_api_key) en las variables del proyecto (Cloudflare Pages).' }, 500);
     }
+    const egresosUrl = env.ax_egresos_url || 'https://api.grupocanaima.com/empleados/egresos/v1';
+    const empresasUrl = env.ax_empresas_url || 'https://api.grupocanaima.com/empresas/status/v1';
 
     /* ---------- egresos_pull: rango de egresos con sus cargos ---------- */
     if (action === 'egresos_pull') {
-      if (!env.ax_egresos_url) return json({ ok: false, error: 'Falta ax_egresos_url en las variables del proyecto.' }, 500);
       const desde = isoDate(body.desde);
       const hasta = isoDate(body.hasta);
       if (!desde || !hasta) return json({ ok: false, error: 'Indica desde y hasta (AAAA-MM-DD).' }, 400);
@@ -100,7 +101,7 @@ export async function onRequestPost({ request, env }) {
 
       const params = { desde, hasta };
       if (alias) params.alias = alias;
-      const data = await axGet(env.ax_egresos_url, env.ax_api_key, params);
+      const data = await axGet(egresosUrl, axKey, params);
       const empleos = Array.isArray(data && data.empleos) ? data.empleos : [];
       const asignaciones = Array.isArray(data && data.asignaciones) ? data.asignaciones : [];
       const up = await sb(env, 'rpc/ax_egresos_upsert', {
@@ -119,8 +120,7 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------- empresas_pull: catalogo completo de empresas ---------- */
     if (action === 'empresas_pull') {
-      if (!env.ax_empresas_url) return json({ ok: false, error: 'Falta ax_empresas_url en las variables del proyecto.' }, 500);
-      const data = await axGet(env.ax_empresas_url, env.ax_api_key, null);
+      const data = await axGet(empresasUrl, axKey, null);
       const rows = Array.isArray(data) ? data : [];
       if (!rows.length) return json({ ok: false, error: 'El catalogo llego vacio; no se toca la tabla.' }, 502);
       const up = await sb(env, 'rpc/company_status_upsert', {

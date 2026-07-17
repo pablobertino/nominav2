@@ -41,10 +41,14 @@ const COL_ORDER = [
   'motivoNombre', 'motivoValor', 'observaciones',
   // v5.71 — Departamentos.
   'numeroUnidad', 'nombre',
+  // v6.04 — Egresos del sistema (empleos y asignaciones).
+  'diasEnLaEmpresa', 'inicioAsignacion', 'finAsignacion', 'nroCargo', 'totalCargos',
 ];
 const MONO_COLS = new Set(['ficha', 'cuentaBancaria', 'telefono', 'alias', 'dataArea', 'idCargo', 'idPosicion',
   // v5.71: codigos, no texto.
-  'numeroUnidad', 'motivoValor']);
+  'numeroUnidad', 'motivoValor',
+  // v6.04: numeros de secuencia de los egresos.
+  'nroCargo', 'totalCargos', 'diasEnLaEmpresa']);
 
 function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>

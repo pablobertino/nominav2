@@ -175,9 +175,14 @@ export async function onRequestPost({ request, env }) {
       }, 502);
     }
 
-    // Tal cual llega: si no es array, intentar los envoltorios conocidos,
-    // pero SIN transformar los objetos. Si es un objeto suelto, una fila.
+    // Tal cual llega: si no es array, intentar primero la lista que el
+    // catalogo declara (rows_key, v6.04: la API de egresos responde
+    // {empleos, asignaciones}), luego los envoltorios conocidos, SIN
+    // transformar los objetos. Si es un objeto suelto, una fila.
     let rows = data;
+    if (!Array.isArray(rows) && api.rows_key && data && typeof data === 'object' && Array.isArray(data[api.rows_key])) {
+      rows = data[api.rows_key];
+    }
     if (!Array.isArray(rows)) rows = data.empleados || data.data || data.items || null;
     if (!Array.isArray(rows)) rows = (data && typeof data === 'object') ? [data] : [];
 
