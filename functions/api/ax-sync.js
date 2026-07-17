@@ -118,6 +118,15 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
+    /* ---------- egresos_apply: cerrar en el portal lo confirmado ---------- */
+    // v6.07: aplica ax_egresos a store_workers (end_date + is_active=false,
+    // solo fines pasados, tolerancia 3 dias). Es SINCRONIZAR desde AX: dato
+    // explicito de la API, jamas por ausencia (regla sync-roster v5.31).
+    if (action === 'egresos_apply') {
+      const up = await sb(env, 'rpc/ax_egresos_apply', { method: 'POST', body: '{}' });
+      return json({ ok: true, apply: up || null });
+    }
+
     /* ---------- empresas_pull: catalogo completo de empresas ---------- */
     if (action === 'empresas_pull') {
       const data = await axGet(empresasUrl, axKey, null);

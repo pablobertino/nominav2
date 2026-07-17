@@ -21,7 +21,11 @@
    invisible para el padron — la de egresos tiene la fecha de fin. Boton
    "Verificar contra el sistema": pull de los ultimos 60 dias via
    /api/ax-sync y repinta. Badge azul = contrato ya cerrado en el sistema,
-   desaparece solo en la proxima sincronizacion. SIGUE SIENDO SOLO LECTURA.
+   v6.07: el boton ademas APLICA lo confirmado: cierra en store_workers
+   (end_date + is_active=false) los contratos con fin PASADO confirmado
+   por la API — eso ES sincronizar desde AX (dato explicito, jamas por
+   ausencia; regla sync-roster v5.31), no corregir. Los de fin FUTURO
+   quedan solo marcados con el badge hasta que llegue la fecha.
    ===================================================================== */
 import { $ } from '../core/dom.js';
 
@@ -340,7 +344,7 @@ export async function renderDoubleEmployment(user) {
 
     <div class="de-filters">
       <input type="text" id="deQ" placeholder="Buscar por cédula o nombre" style="width:230px">
-      <button class="btn" id="deVerify" title="Consulta a la API dedicada de egresos (últimos 60 días) y marca los contratos que ya tienen fecha de fin en el sistema">Verificar contra el sistema</button>
+      <button class="btn" id="deVerify" title="Consulta la API dedicada de egresos (últimos 60 días), cierra en el portal los contratos que el sistema ya terminó y marca los de fin futuro">Verificar contra el sistema</button>
       <span id="deVerifyMsg" style="font-size:12px;color:var(--muted)"></span>
     </div>
 
@@ -398,7 +402,19 @@ export async function renderDoubleEmployment(user) {
       msg.textContent = (rr && rr.error) || 'No se pudo consultar el sistema.';
       return;
     }
-    msg.textContent = `Egresos recibidos: ${(rr.api && rr.api.totalEgresos) ?? '—'}. Actualizando…`;
+    msg.textContent = `Egresos recibidos: ${(rr.api && rr.api.totalEgresos) ?? '—'}. Aplicando al portal…`;
+    // v6.07: aplicar lo confirmado (cierra end_date en el roster; el caso
+    // desaparece de verdad). Dato explicito de la API, jamas por ausencia.
+    let ap = null;
+    try {
+      ap = await fetch('/api/ax-sync', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'egresos_apply', user }),
+      }).then(x => x.json());
+    } catch (_) { /* el repintado muestra el estado real */ }
+    msg.textContent = (ap && ap.ok)
+      ? `Cerrados en el portal: ${(ap.apply && ap.apply.cerrados) ?? 0}. Actualizando…`
+      : 'No se pudo aplicar al portal; se muestra solo el cruce.';
     renderDoubleEmployment(user);
   });
 
