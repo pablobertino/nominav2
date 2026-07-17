@@ -101,7 +101,7 @@ export async function onRequestPost({ request, env }) {
 
       const key = env.ax_api_key || env.canaima_apikey;
       if (!key) {
-        await cfgPatch({ last_run_at: new Date().toISOString(), last_status: 'error', last_error: 'Falta el secret canaima_apikey.' });
+        await cfgPatch({ last_run_at: new Date().toISOString(), last_source: body.manual ? 'manual' : 'cron', last_status: 'error', last_error: 'Falta el secret canaima_apikey.' });
         return json({ ok: false, error: 'Falta el secret canaima_apikey.' }, 500);
       }
       const days = Math.max(1, Math.min(365, parseInt(body.days, 10) || 30));
@@ -127,11 +127,11 @@ export async function onRequestPost({ request, env }) {
         } catch (_) { /* el catalogo es secundario: no tumba la corrida */ }
 
         const result = { desde, hasta, days, api: { egresos: empleos.length, asignaciones: asignaciones.length }, upsert: up, apply: ap, empresas };
-        await cfgPatch({ last_run_at: new Date().toISOString(), last_status: 'ok', last_error: null, last_result: result });
+        await cfgPatch({ last_run_at: new Date().toISOString(), last_source: body.manual ? 'manual' : 'cron', last_status: 'ok', last_error: null, last_result: result });
         return json({ ok: true, ...result });
       } catch (e) {
         const msg = String(e && e.message ? e.message : e);
-        await cfgPatch({ last_run_at: new Date().toISOString(), last_status: 'error', last_error: msg });
+        await cfgPatch({ last_run_at: new Date().toISOString(), last_source: body.manual ? 'manual' : 'cron', last_status: 'error', last_error: msg });
         return json({ ok: false, error: msg }, 502);
       }
     }
@@ -176,6 +176,29 @@ export async function onRequestPost({ request, env }) {
         },
         upsert: up || null,
       });
+    }
+
+    /* ---------- cfg_get / cfg_set: tarjeta de Configurar (v6.09) ---------- */
+    if (action === 'cfg_get') {
+      const rows = await sb(env, 'ax_sync_config?id=eq.1&select=*');
+      return json({ ok: true, config: (rows && rows[0]) || null });
+    }
+    if (action === 'cfg_set') {
+      const c = body.config || {};
+      const patch = {};
+      if ('enabled' in c) patch.enabled = !!c.enabled;
+      if (c.frequency && ['daily', '2d', '3d', 'weekly'].includes(c.frequency)) patch.frequency = c.frequency;
+      if (c.daily_hour != null) patch.daily_hour = Math.max(0, Math.min(23, parseInt(c.daily_hour, 10) || 0));
+      if (c.daily_minute != null) patch.daily_minute = Math.max(0, Math.min(59, parseInt(c.daily_minute, 10) || 0));
+      if (c.days_back != null) patch.days_back = Math.max(1, Math.min(365, parseInt(c.days_back, 10) || 30));
+      if ('deep_monthly' in c) patch.deep_monthly = !!c.deep_monthly;
+      if (c.deep_days != null) patch.deep_days = Math.max(1, Math.min(365, parseInt(c.deep_days, 10) || 180));
+      if (c.retry_minutes != null) patch.retry_minutes = Math.max(0, Math.min(720, parseInt(c.retry_minutes, 10) || 0));
+      if ('endpoint_url' in c) patch.endpoint_url = String(c.endpoint_url || '').trim() || null;
+      await sb(env, 'ax_sync_config?id=eq.1', {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(patch),
+      });
+      return json({ ok: true });
     }
 
     /* ---------- egresos_apply: cerrar en el portal lo confirmado ---------- */

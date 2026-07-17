@@ -575,7 +575,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.08</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.09</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4882,6 +4882,11 @@ async function viewSync(user) {
     <!-- v5.75: tarjeta de No reempleables. El placeholder vive en este
          template pero la tarjeta la monta no-rehire.js (mountNoRehireConfigCard,
          llamada desde navigate al entrar a 'sync'), para no engordar viewSync. -->
+    <!-- v6.09: tarjeta "Egresos del sistema". Placeholder aqui; la monta
+         ax-egresos-card.js (import dinamico tras renderPaySyncCard), patron
+         v5.75 de No reempleables: viewSync no engorda. -->
+    <div id="axEgCfgCard"></div>
+
     <div id="norehireCfgCard"></div>
 
     <!-- v5.58 — SE SACAN LAS DOS TABLAS DE HISTORIAL (Pablo).
@@ -5277,6 +5282,9 @@ async function viewSync(user) {
   })();
   // Tarjeta de programacion del Estado de pago (cron aparte, config propia).
   renderPaySyncCard(user);
+  // v6.09: tarjeta "Egresos del sistema" (cron propio, ax_sync_config).
+  // Modulo aparte con import dinamico: viewSync no engorda (patron v5.75).
+  import('./ax-egresos-card.js').then(m => m.mountAxEgresosCard(user)).catch(() => {});
 
   // Mostrar/ocultar la hora según la frecuencia elegida
   $('#syncFreq').addEventListener('change', (e) => {
