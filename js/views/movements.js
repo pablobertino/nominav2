@@ -37,6 +37,13 @@
      (Volver al tablero intacto; el Volver de Personal regresa aqui), con
      columnas Razon social/Zona/Subzona/Concepto, filtro en vivo, orden y
      Exportar xlsx/csv/txt (motor comun exportTable; exporta lo visible).
+   - v6.02: Exportar PDF en la pestaña Analisis (SOLO el analisis, sin el
+     detalle nominal): jsPDF desde cdnjs (patron SheetJS), reporte
+     dibujado programaticamente (membrete con periodo/alcance/fecha
+     Caracas, KPIs con delta, 6 indicadores con severidad, banda y
+     ranking de dispersion, curva de supervivencia redibujada + tabla de
+     cohortes, tarjetas de diagnostico, pie numerado). Los textos salen
+     del MISMO html de pantalla (pdfText): PDF y tablero no discrepan.
 
    Datos por /api/movements (facets + list). Gate: view.movimientos.
    Export: renderMovements(user)
@@ -671,6 +678,9 @@ function paintAnalisis(body) {
   const neto = (k.neto > 0 ? '+' : k.neto < 0 ? '−' : '') + Math.abs(k.neto);
 
   body.innerHTML = `
+    <div style="display:flex;justify-content:flex-end;margin:0 0 8px">
+      <button class="mv-export-btn" id="mvPdfBtn" type="button" title="Reporte PDF del análisis (sin el detalle nominal)">Exportar PDF</button>
+    </div>
     <div class="mv-kpis">
       <div class="mv-kpi"><div class="t"><span class="dot" style="background:var(--ok,#0e9f6e)"></span>INGRESOS</div>
         <div class="n">${k.ing}</div><div class="d">${deltaLine(k.ing, p && p.ing, true)}</div></div>
@@ -700,6 +710,7 @@ function paintAnalisis(body) {
   cs?.addEventListener('change', () => { COHORT_SEL = cs.value; paintAnalisis(body); });
   const cc = $('#mvCohCargo');
   cc?.addEventListener('change', () => { COHORT_CARGO = cc.value; paintAnalisis(body); });
+  $('#mvPdfBtn')?.addEventListener('click', doExportPDF);
   $('#mvDispAll')?.addEventListener('click', () => {
     SUBVIEW = 'tiendas'; TQ = ''; TSORT = 'rot';
     renderMovements(USER);
@@ -1034,6 +1045,278 @@ function paintTiendasTable() {
   </table>`;
   wrap.querySelectorAll('.mv-al[data-code]').forEach(a =>
     a.addEventListener('click', () => openCompany(a.dataset.code)));
+}
+
+/* ---------- v6.02: Exportar el ANALISIS a PDF (patron CDN de SheetJS) --
+   SOLO el analisis, sin el detalle largo (decision 16/07). El reporte se
+   DIBUJA programaticamente con jsPDF; los textos de indicadores y
+   diagnostico se extraen del MISMO html que pinta la pantalla (pdfText),
+   asi el PDF y el tablero no pueden discrepar. Helvetica es WinAnsi:
+   pdfSan traduce los simbolos fuera del encoding. */
+const PDF_C = {
+  ink: [15, 23, 42], soft: [71, 85, 105], muted: [100, 116, 139],
+  faint: [148, 163, 184], brand: [37, 99, 235], red: [185, 28, 28],
+  amber: [180, 83, 9], green: [14, 159, 110], border: [226, 232, 240],
+};
+function pdfSan(s) {
+  return String(s == null ? '' : s)
+    .replace(/▲/g, '+').replace(/▼/g, '-').replace(/Δ/g, 'Delta ')
+    .replace(/≈/g, '~').replace(/≥/g, '>=').replace(/≤/g, '<=')
+    .replace(/×/g, 'x').replace(/→/g, '->').replace(/←/g, '<-')
+    .replace(/⚠/g, '(!)').replace(/✓/g, '(ok)').replace(/◆/g, '•')
+    .replace(/①/g, '1)').replace(/②/g, '2)').replace(/③/g, '3)').replace(/④/g, '4)');
+}
+function pdfText(html) {
+  const t = document.createElement('div');
+  t.innerHTML = html;
+  return pdfSan((t.textContent || '').replace(/\s+/g, ' ').trim());
+}
+function nowCaracas() {
+  const d = new Date(Date.now() - 4 * 3600 * 1000);
+  const z = (n) => String(n).padStart(2, '0');
+  return `${z(d.getUTCDate())}/${z(d.getUTCMonth() + 1)}/${d.getUTCFullYear()} ${z(d.getUTCHours())}:${z(d.getUTCMinutes())}`;
+}
+function scopeLabel() {
+  const f = FACETS || {};
+  const nm = (arr, id) => (((arr || []).find(x => String(x.id) === String(id))) || {}).name;
+  const parts = [];
+  if (C.zone) parts.push(`Zona ${nm(f.zones, C.zone) || C.zone}`);
+  if (C.subzone) parts.push(`Subzona ${nm(f.subzones, C.subzone) || C.subzone}`);
+  if (C.concept) parts.push(`Concepto ${nm(f.concepts, C.concept) || C.concept}`);
+  if (C.company) parts.push(`Empresa ${C.company}`);
+  return parts.length ? parts.join(' · ') : 'Todo el grupo';
+}
+async function ensureJsPDF() {
+  if (window.jspdf && window.jspdf.jsPDF) return window.jspdf.jsPDF;
+  await new Promise((resolve, reject) => {
+    const s = document.createElement('script');
+    s.src = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+    s.onload = resolve; s.onerror = () => reject(new Error('No se pudo cargar la librería PDF.'));
+    document.head.appendChild(s);
+  });
+  return window.jspdf.jsPDF;
+}
+async function doExportPDF() {
+  if (!STATS || !STATS.kpis) { showMsg('Genera el análisis primero (elige período y pulsa Generar).'); return; }
+  showMsg('');
+  let JsPDF;
+  try { JsPDF = await ensureJsPDF(); }
+  catch (e) { showMsg(e.message + ' Revisa tu conexión e inténtalo de nuevo.'); return; }
+
+  const doc = new JsPDF({ unit: 'mm', format: 'a4' });   // 210 x 297
+  const M = 14, W = 210 - M * 2;
+  let y = 16;
+  const C3 = (c) => doc.setTextColor(c[0], c[1], c[2]);
+  const F3 = (c) => doc.setFillColor(c[0], c[1], c[2]);
+  const D3 = (c) => doc.setDrawColor(c[0], c[1], c[2]);
+  const need = (h) => { if (y + h > 283) { doc.addPage(); y = 16; } };
+  const txt = (s, size, color, opts) => {
+    doc.setFontSize(size); C3(color || PDF_C.ink);
+    doc.setFont('helvetica', (opts && opts.bold) ? 'bold' : 'normal');
+    const lines = doc.splitTextToSize(pdfSan(s), W);
+    need(lines.length * size * 0.42 + 2);
+    doc.text(lines, M, y);
+    y += lines.length * size * 0.42 + ((opts && opts.gap) != null ? opts.gap : 1.5);
+  };
+
+  // Membrete
+  txt('Movimientos de personal — Análisis del período', 16, PDF_C.ink, { bold: true, gap: 1 });
+  txt(`Período ${ddmm(C.from)}–${ddmm(C.to)} ${String(C.to).slice(0, 4)} · ${scopeLabel()}`, 10.5, PDF_C.soft, { gap: 0.5 });
+  txt(`Portal de Nómina · Grupo Canaima · generado el ${nowCaracas()} (Caracas)`, 8.5, PDF_C.faint, { gap: 2 });
+  D3(PDF_C.border); doc.setLineWidth(0.3); doc.line(M, y, M + W, y); y += 5;
+
+  // Fila de KPIs (mismos deltas de pantalla; color por favorabilidad)
+  const k = STATS.kpis, p = STATS.prev || null, pl = STATS.plantilla || null;
+  const kpis = [
+    ['INGRESOS', k.ing, deltaLine(k.ing, p && p.ing, true), PDF_C.green],
+    ['EGRESOS', k.egr, deltaLine(k.egr, p && p.egr, false), PDF_C.red],
+    ['TRASLADOS', k.tras, deltaLine(k.tras, p && p.tras, null), PDF_C.brand],
+    ['CAMBIOS DE CARGO', k.cargo, deltaLine(k.cargo, p && p.cargo, null), [126, 34, 206]],
+    ['NETO', (k.neto > 0 ? '+' : '') + k.neto, pl ? `plantilla ${pl.n} al corte (${ddmm(pl.cut)})` : 'sin corte en el período', PDF_C.amber],
+  ];
+  need(26);
+  const bw = (W - 12) / 5;
+  kpis.forEach((kp, i) => {
+    const x = M + i * (bw + 3);
+    D3(PDF_C.border); F3([251, 252, 254]); doc.setLineWidth(0.25);
+    doc.roundedRect(x, y, bw, 21, 1.6, 1.6, 'FD');
+    doc.setFontSize(6.4); C3(PDF_C.faint); doc.setFont('helvetica', 'bold');
+    doc.text(pdfSan(kp[0]), x + 2.5, y + 4.5);
+    doc.setFontSize(14); C3(kp[3]); doc.text(String(kp[1]), x + 2.5, y + 11.5);
+    const dH = String(kp[2]);
+    const dc = dH.includes('class="up"') ? PDF_C.green : dH.includes('class="dn"') ? PDF_C.red : PDF_C.muted;
+    doc.setFontSize(6.2); C3(dc); doc.setFont('helvetica', 'normal');
+    doc.text(doc.splitTextToSize(pdfText(dH), bw - 5), x + 2.5, y + 15.2);
+  });
+  y += 25;
+  const dn = pdfText(deltaNote()).replace(/\s*\?\s*$/, '');
+  if (dn) txt(dn, 8, PDF_C.muted, { gap: 2.5 });
+
+  // Indicadores del periodo: tarjetas extraidas del html de pantalla
+  txt('Indicadores del período (metodología estándar)', 11.5, PDF_C.ink, { bold: true, gap: 2 });
+  const tmpI = document.createElement('div');
+  tmpI.innerHTML = paintIndicadores();
+  const cards = [...tmpI.querySelectorAll('.mv-rot .mv-rk')].map(el => {
+    const v = el.querySelector('.v');
+    return {
+      val: v ? v.textContent : '',
+      col: v && v.classList.contains('bad') ? PDF_C.red
+         : v && v.classList.contains('warn') ? PDF_C.amber
+         : v && v.classList.contains('ok') ? PDF_C.green : PDF_C.ink,
+      l: (el.querySelector('.l') || { textContent: '' }).textContent,
+      e: (el.querySelector('.e') || { textContent: '' }).textContent,
+    };
+  });
+  const cw = (W - 4) / 2;
+  for (let r = 0; r < cards.length; r += 2) {
+    const pair = cards.slice(r, r + 2);
+    doc.setFontSize(7);
+    const hs = pair.map(cd => 15 + doc.splitTextToSize(pdfSan(cd.e), cw - 6).length * 2.9);
+    const ch = Math.max(...hs);
+    need(ch + 3);
+    pair.forEach((cd, i) => {
+      const x = M + i * (cw + 4);
+      D3(PDF_C.border); F3([251, 252, 254]); doc.setLineWidth(0.25);
+      doc.roundedRect(x, y, cw, ch, 1.6, 1.6, 'FD');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(13); C3(cd.col);
+      doc.text(pdfSan(cd.val), x + 3, y + 6.5);
+      doc.setFontSize(8); C3(PDF_C.soft);
+      doc.text(pdfSan(cd.l), x + 3, y + 11);
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7); C3(PDF_C.muted);
+      doc.text(doc.splitTextToSize(pdfSan(cd.e), cw - 6), x + 3, y + 15);
+    });
+    y += ch + 3;
+  }
+  y += 2;
+
+  // Dispersion entre tiendas comparables: banda + ranking 2 columnas
+  const d = STATS.dispersion;
+  if (d && Array.isArray(d.list) && d.list.length) {
+    need(20);
+    txt('La clave diagnóstica: dispersión entre tiendas comparables', 11.5, PDF_C.ink, { bold: true, gap: 2.5 });
+    const bx = M + 14, bwd = W - 28, by = y;
+    F3([191, 227, 212]); doc.rect(bx, by, bwd / 3, 4.5, 'F');
+    F3([243, 224, 192]); doc.rect(bx + bwd / 3, by, bwd / 3, 4.5, 'F');
+    F3([236, 200, 200]); doc.rect(bx + 2 * bwd / 3, by, bwd / 3, 4.5, 'F');
+    const mp = bx + Math.max(0, Math.min(1, (d.mediana - d.min) / Math.max(1, d.max - d.min))) * bwd;
+    F3(PDF_C.ink); doc.rect(mp - 0.5, by - 1.2, 1, 6.9, 'F');
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); C3(PDF_C.muted);
+    doc.text(`${d.min}%`, bx - 2, by + 3.4, { align: 'right' });
+    doc.text(`${d.max}%`, bx + bwd + 2, by + 3.4);
+    y += 9;
+    txt(`mediana ${d.mediana}% · ${d.n} tiendas comparables (plantilla >=8) · tasa del período · misma marca, mismo tabulador, mismo mercado`, 7.5, PDF_C.faint, { gap: 2.5 });
+    const topL = d.list.slice(0, 6), lowL = d.list.slice(-6).reverse();
+    const colw = (W - 6) / 2;
+    need(6 + Math.max(topL.length, lowL.length) * 4);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); C3(PDF_C.faint);
+    doc.text('ROTAN MÁS', M, y); doc.text('RETIENEN MEJOR', M + colw + 6, y);
+    y += 3.8;
+    const rline = (x, t, rot, col) => {
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(7.6); C3(PDF_C.soft);
+      doc.text(doc.splitTextToSize(pdfSan(t), colw - 13)[0], x, y);
+      doc.setFont('helvetica', 'bold'); C3(col);
+      doc.text(`${rot}%`, x + colw - 1, y, { align: 'right' });
+    };
+    for (let i = 0; i < Math.max(topL.length, lowL.length); i++) {
+      if (topL[i]) rline(M, `${topL[i].code} · ${topL[i].concepto || topL[i].zona || ''} · pl. ${topL[i].plantilla} · ${topL[i].egresos} egr.`, topL[i].rot, PDF_C.red);
+      if (lowL[i]) rline(M + colw + 6, `${lowL[i].code} · ${lowL[i].concepto || lowL[i].zona || ''} · pl. ${lowL[i].plantilla} · ${lowL[i].egresos} egr.`, lowL[i].rot, PDF_C.green);
+      y += 4;
+    }
+    y += 1;
+    txt('La ficha completa (razón social, zona, subzona, concepto, las N tiendas) se exporta a Excel desde "Ver la ficha completa" en el portal.', 7, PDF_C.faint, { gap: 3 });
+  }
+
+  // Supervivencia: curva redibujada nativa + tabla compacta de cohortes
+  const all = Array.isArray(STATS.cohortes) ? STATS.cohortes : [];
+  if (all.length) {
+    const porCargo = Array.isArray(STATS.cohortes_cargo) ? STATS.cohortes_cargo : [];
+    let src = COHORT_CARGO ? porCargo.filter(x => x.cargo === COHORT_CARGO) : all;
+    if (!src.length) src = all;
+    const c = src.find(x => x.mes === COHORT_SEL) || src[0];
+    need(56);
+    txt(`Supervivencia · cohorte de ingreso ${mesLabel(c.mes)}${COHORT_CARGO ? ' · ' + COHORT_CARGO : ''} (${c.size} personas)`, 11.5, PDF_C.ink, { bold: true, gap: 3 });
+    const pts = [
+      { lbl: 'Ingreso', v: 100 }, { lbl: '1 mes', v: c.s30 }, { lbl: '3 meses', v: c.s90 },
+      { lbl: '6 meses', v: c.s180 }, { lbl: 'Hoy', v: c.vivos, hoy: true },
+    ].filter(q => q.v != null);
+    const gx = M + 10, gw = W - 20, gy = y + 3, gh = 32;
+    const GX = (i) => gx + (pts.length > 1 ? i * (gw / (pts.length - 1)) : 0);
+    const GY = (v) => gy + gh - (v / 100) * gh;
+    D3(PDF_C.border); doc.setLineWidth(0.25);
+    [0, 50, 100].forEach(g => {
+      doc.line(gx - 2, GY(g), gx + gw, GY(g));
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); C3(PDF_C.faint);
+      doc.text(`${g}%`, gx - 3, GY(g) + 1, { align: 'right' });
+    });
+    D3(PDF_C.brand); doc.setLineWidth(0.7);
+    for (let i = 1; i < pts.length; i++) doc.line(GX(i - 1), GY(pts[i - 1].v), GX(i), GY(pts[i].v));
+    pts.forEach((q, i) => {
+      F3(q.hoy ? PDF_C.amber : PDF_C.brand);
+      doc.circle(GX(i), GY(q.v), q.hoy ? 1.3 : 1, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5); C3(q.hoy ? PDF_C.amber : PDF_C.ink);
+      doc.text(`${q.v}%`, GX(i), Math.max(gy - 1, GY(q.v) - 2.4), { align: 'center' });
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(6.8); C3(PDF_C.faint);
+      doc.text(pdfSan(q.lbl), GX(i), gy + gh + 4, { align: 'center' });
+    });
+    y = gy + gh + 9;
+    // tabla de cohortes (todas las del segmento elegido)
+    need(6 + src.length * 3.8);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(6.8); C3(PDF_C.faint);
+    const cxs = [M, M + 46, M + 76, M + 102, M + 130, M + 158];
+    ['COHORTE', 'PERSONAS', '1 MES', '3 MESES', '6 MESES', 'HOY'].forEach((h, i) => doc.text(h, cxs[i], y));
+    y += 3.8;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.2); C3(PDF_C.soft);
+    src.forEach(r => {
+      doc.text(pdfSan(mesLabel(r.mes)), cxs[0], y);
+      doc.text(String(r.size), cxs[1], y);
+      doc.text(r.s30 == null ? '—' : `${r.s30}%`, cxs[2], y);
+      doc.text(r.s90 == null ? '—' : `${r.s90}%`, cxs[3], y);
+      doc.text(r.s180 == null ? '—' : `${r.s180}%`, cxs[4], y);
+      doc.text(`${r.vivos}%`, cxs[5], y);
+      y += 3.8;
+    });
+    y += 2;
+    txt('Supervivencia en el grupo: la recontratación (misma u otra empresa) cuenta como seguir; los cortes de 1/3/6 meses aparecen cuando la cohorte completa madura hasta ese punto.', 7, PDF_C.faint, { gap: 3 });
+  }
+
+  // Diagnostico y recomendaciones (mismas tarjetas de pantalla)
+  need(12);
+  txt('Diagnóstico y recomendaciones — generado de los datos del período', 11.5, PDF_C.ink, { bold: true, gap: 2.5 });
+  const tmpD = document.createElement('div');
+  tmpD.innerHTML = paintDiagnostico();
+  const diags = [...tmpD.querySelectorAll('.mv-diag')];
+  if (!diags.length) {
+    txt('Ningún hallazgo supera los umbrales con el período y los filtros elegidos (temprana > 50%, dispersión >= 3x, reincidentes >= 50). Eso también es información.', 8, PDF_C.muted, { gap: 2 });
+  }
+  diags.forEach(el => {
+    const col = el.classList.contains('w') ? PDF_C.amber : el.classList.contains('g') ? PDF_C.green : PDF_C.brand;
+    doc.setFontSize(8.5);
+    const lh = doc.splitTextToSize(pdfText((el.querySelector('.h') || { innerHTML: '' }).innerHTML), W - 8);
+    doc.setFontSize(7.5);
+    const lev = doc.splitTextToSize(pdfText((el.querySelector('.ev') || { innerHTML: '' }).innerHTML), W - 8);
+    const lac = doc.splitTextToSize(pdfText((el.querySelector('.ac') || { innerHTML: '' }).innerHTML), W - 8);
+    const bh = 4 + lh.length * 3.5 + 1 + lev.length * 3 + 1 + lac.length * 3 + 2;
+    need(bh + 3);
+    F3(col); doc.rect(M, y, 1.2, bh, 'F');
+    let yy = y + 4;
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(8.5); C3(PDF_C.ink);
+    doc.text(lh, M + 4, yy); yy += lh.length * 3.5 + 1;
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5); C3(PDF_C.soft);
+    doc.text(lev, M + 4, yy); yy += lev.length * 3 + 1;
+    C3(PDF_C.muted); doc.text(lac, M + 4, yy);
+    y += bh + 3;
+  });
+  txt('Nota: estos indicadores miden el QUÉ con precisión; el porqué (selección, pago, trato, estacionalidad) requiere la encuesta de salida. El detalle nominal del período se consulta y exporta desde la pestaña Detalle del portal.', 7, PDF_C.faint, { gap: 2 });
+
+  // Pie de pagina con numeracion en todas las paginas
+  const ver = (document.querySelector('.pnl-bver') || { textContent: '' }).textContent || '';
+  const pages = doc.getNumberOfPages();
+  for (let i = 1; i <= pages; i++) {
+    doc.setPage(i);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(7); C3(PDF_C.faint);
+    doc.text(pdfSan(`Portal de Nómina ${ver} · Movimientos — Análisis · pág. ${i} de ${pages}`), 105, 292, { align: 'center' });
+  }
+  doc.save(`analisis_movimientos_${tstamp()}.pdf`);
 }
 
 /* Filas visibles: chips de tipo + busqueda por coma + orden. */
