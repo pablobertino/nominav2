@@ -33,6 +33,10 @@
      vivo, codigo clicable -> Personal); indicadores con severidad por
      color y textos contra referencia; supervivencia segmentable por
      CARGO del primer ingreso (RPC cohortes_cargo, celdas >=5).
+   - v6.01: la ficha de tiendas comparables pasa de modal a PAGINA propia
+     (Volver al tablero intacto; el Volver de Personal regresa aqui), con
+     columnas Razon social/Zona/Subzona/Concepto, filtro en vivo, orden y
+     Exportar xlsx/csv/txt (motor comun exportTable; exporta lo visible).
 
    Datos por /api/movements (facets + list). Gate: view.movimientos.
    Export: renderMovements(user)
@@ -129,6 +133,9 @@ let PREV_REASON = '';    // '' | 'anio' | 'nohist' cuando no hay bloque anterior
 let PAGE = 1;
 let PER = 50;
 let TAB = 'detalle';     // detalle | analisis
+let SUBVIEW = 'main';    // main | tiendas (ficha de comparables como pagina, v6.01)
+let TQ = '';             // filtro en vivo de la ficha de tiendas
+let TSORT = 'rot';       // orden de la ficha de tiendas
 
 function ensureStyles() {
   if (document.getElementById('mvStyles')) return;
@@ -213,27 +220,18 @@ function ensureStyles() {
   .mv-diag .ev{font-size:11.5px;color:var(--ink-soft,#475569);line-height:1.5;margin-bottom:6px}
   .mv-diag .ac{font-size:11.5px;color:var(--muted);line-height:1.55}
   .mv-diag .ac b{color:var(--ink-soft,#475569)}
-  /* Modal ficha completa de tiendas (v6.00) */
-  .mv-modal-ov{position:fixed;inset:0;background:rgba(15,23,42,.45);z-index:900;
-    display:flex;align-items:center;justify-content:center;padding:20px}
-  .mv-modal{background:var(--card,#fff);border-radius:16px;max-width:960px;width:100%;
-    max-height:88vh;display:flex;flex-direction:column;box-shadow:0 18px 60px rgba(15,23,42,.3)}
-  .mv-modal-head{display:flex;align-items:center;gap:10px;padding:15px 20px;border-bottom:1px solid var(--border)}
-  .mv-modal-head h3{margin:0;font-size:14.5px;color:var(--ink)}
-  .mv-modal-head input{font:inherit;font-size:12.5px;padding:7px 11px;border:1px solid var(--border);
-    border-radius:9px;min-width:180px;margin-left:auto}
-  .mv-modal-close{font:inherit;font-size:13px;font-weight:700;border:1px solid var(--border);border-radius:9px;
-    background:var(--card,#fff);padding:7px 14px;cursor:pointer;color:var(--ink-soft,#475569)}
-  .mv-modal-close:hover{background:var(--bg-soft,#f1f5f9)}
-  .mv-modal-body{overflow:auto;padding:6px 20px 18px}
-  .mv-modal table{width:100%;border-collapse:collapse;font-size:12px}
-  .mv-modal th{position:sticky;top:0;background:var(--bg-soft,#f1f5f9);font-size:10px;letter-spacing:.4px;
-    text-transform:uppercase;color:var(--ink-soft,#475569);padding:8px 10px;text-align:left;white-space:nowrap}
-  .mv-modal td{padding:8px 10px;border-top:1px solid var(--border-soft,#eef1f5);vertical-align:middle}
-  .mv-modal td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
-  .mv-modal .rk-n{color:var(--faint,#94a3b8);font-size:11px}
-  .mv-modal .rz{color:var(--ink,#0f172a)}
-  .mv-modal .ub{font-size:10.5px;color:var(--muted)}
+  /* Ficha de tiendas comparables como PAGINA (v6.01, antes modal v6.00) */
+  .mv-tp-bar{display:flex;gap:8px;align-items:center;margin:0 0 12px;flex-wrap:wrap}
+  .mv-tp-bar .mv-search{max-width:380px}
+  .mv-tp-table{width:100%;border-collapse:collapse;font-size:12.5px;background:var(--card,#fff);
+    border:1px solid var(--border);border-radius:13px;overflow:hidden}
+  .mv-tp-table th{background:var(--bg-soft,#f1f5f9);font-size:10px;letter-spacing:.4px;text-transform:uppercase;
+    color:var(--ink-soft,#475569);padding:8px 12px;text-align:left;white-space:nowrap}
+  .mv-tp-table td{padding:9px 12px;border-top:1px solid var(--border-soft,#eef1f5);vertical-align:middle}
+  .mv-tp-table tr:hover td{background:#fbfcfe}
+  .mv-tp-table td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+  .mv-tp-table .rk-n{color:var(--faint,#94a3b8);font-size:11px}
+  .mv-tp-table .rz{color:var(--ink,#0f172a);font-weight:600}
   /* Chips-filtro por tipo */
   .mv-typechips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
   .mv-tc{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:6px 12px;
@@ -358,6 +356,16 @@ export async function renderMovements(user) {
   USER = user;
   ensureStyles();
 
+  // v6.01: sub-pagina Ficha de tiendas comparables (se entra desde el
+  // tablero; el Volver de Personal regresa aqui porque SUBVIEW persiste).
+  if (SUBVIEW === 'tiendas') {
+    if (STATS && STATS.dispersion && Array.isArray(STATS.dispersion.list) && STATS.dispersion.list.length) {
+      renderTiendasPage();
+      return;
+    }
+    SUBVIEW = 'main';   // sin stats vivos: de vuelta al tablero
+  }
+
   $('#pnlMain').innerHTML = `
     <div class="mv-head"><h1>Movimientos de personal</h1>
       <p>Ingresos, egresos, traslados y cambios de cargo del período, derivados de los cortes quincenales del sistema.</p></div>
@@ -452,7 +460,8 @@ export async function renderMovements(user) {
   $('#mvClear')?.addEventListener('click', () => {
     C = { p1: '', p2: '', from: '', to: '', zone: '', subzone: '', concept: '', company: '', q: '' };
     TYPES_ON = new Set(TIPOS.map(t => t.key));
-    SORT = 'fecha'; ROWS = null; PAGE = 1;
+    SORT = 'fecha'; ROWS = null; STATS = null; PAGE = 1;
+    SUBVIEW = 'main'; TQ = ''; TSORT = 'rot';
     renderMovements(USER);
   });
 
@@ -691,7 +700,10 @@ function paintAnalisis(body) {
   cs?.addEventListener('change', () => { COHORT_SEL = cs.value; paintAnalisis(body); });
   const cc = $('#mvCohCargo');
   cc?.addEventListener('change', () => { COHORT_CARGO = cc.value; paintAnalisis(body); });
-  $('#mvDispAll')?.addEventListener('click', showDispModal);
+  $('#mvDispAll')?.addEventListener('click', () => {
+    SUBVIEW = 'tiendas'; TQ = ''; TSORT = 'rot';
+    renderMovements(USER);
+  });
   body.querySelectorAll('.mv-al[data-code]').forEach(a =>
     a.addEventListener('click', () => openCompany(a.dataset.code)));
 }
@@ -924,53 +936,104 @@ function paintDispersion() {
     <button class="mv-clear" id="mvDispAll" type="button" style="margin-top:12px">Ver la ficha completa (${d.n} tiendas)</button>`;
 }
 
-/* Modal del portal con la ficha completa de tiendas comparables (v6.00):
-   ranking entero con razon social, zona/subzona/concepto, plantilla,
-   egresos y rotacion; codigo clicable -> Personal. Solo se cierra con su
-   boton (regla de la casa: nada de click-afuera ni alert nativos). */
-function showDispModal() {
+/* ---------- v6.01: Ficha de tiendas comparables como PAGINA ----------
+   Reemplaza al modal v6.00. Volver regresa al tablero intacto (estado de
+   modulo) y el Volver de Personal regresa a ESTA pagina (SUBVIEW
+   persiste). Filtro en vivo + orden + Exportar xlsx/csv/txt (patron del
+   portal: exporta LO VISIBLE). Codigo clicable -> Personal. */
+function tiendasVisibles() {
   const d = (STATS && STATS.dispersion) || null;
-  if (!d || !Array.isArray(d.list)) return;
-  const old = document.getElementById('mvDispModal');
-  if (old) old.remove();
-  const ov = document.createElement('div');
-  ov.className = 'mv-modal-ov';
-  ov.id = 'mvDispModal';
-  const row = (x, i) => `<tr>
-    <td class="rk-n">${i + 1}</td>
-    <td><span class="mv-al" data-code="${esc(x.code)}">${esc(x.code)}</span></td>
-    <td><div class="rz">${esc(x.name || '—')}</div><div class="ub">${[x.zona, x.subzona, x.concepto].filter(Boolean).map(esc).join(' · ')}</div></td>
-    <td class="num">${x.plantilla}</td>
-    <td class="num">${x.egresos}</td>
-    <td class="num"><b style="color:${x.rot > d.mediana ? '#b91c1c' : 'var(--ok,#0e9f6e)'}">${x.rot}%</b></td>
-  </tr>`;
-  ov.innerHTML = `
-    <div class="mv-modal">
-      <div class="mv-modal-head">
-        <h3>Tiendas comparables — rotación del período (${d.n})</h3>
-        <input type="text" id="mvDispQ" placeholder="Filtrar por código, razón social, zona…" autocomplete="off">
-        <button class="mv-modal-close" id="mvDispClose" type="button">Cerrar</button>
+  if (!d || !Array.isArray(d.list)) return [];
+  const q = normSearch(TQ);
+  const out = d.list.filter(x => !q ||
+    normSearch(`${x.code} ${x.name || ''} ${x.zona || ''} ${x.subzona || ''} ${x.concepto || ''}`).includes(q));
+  const by = {
+    rot:       (a, b) => b.rot - a.rot || b.plantilla - a.plantilla,
+    rot_asc:   (a, b) => a.rot - b.rot || b.plantilla - a.plantilla,
+    plantilla: (a, b) => b.plantilla - a.plantilla || b.rot - a.rot,
+    egresos:   (a, b) => b.egresos - a.egresos || b.rot - a.rot,
+    codigo:    (a, b) => String(a.code).localeCompare(String(b.code)),
+    empresa:   (a, b) => String(a.name || '').localeCompare(String(b.name || ''), 'es'),
+  };
+  return out.slice().sort(by[TSORT] || by.rot);
+}
+function renderTiendasPage() {
+  const d = STATS.dispersion;
+  $('#pnlMain').innerHTML = `
+    <div class="mv-head"><h1>Tiendas comparables — rotación del período</h1>
+      <p>${C.from && C.to ? `Período ${esc(ddmm(C.from))}–${esc(ddmm(C.to))} · ` : ''}mediana ${d.mediana}% · ${d.n} tiendas comparables (plantilla ≥8) · tasa del período: egresos ÷ plantilla promedio de la tienda · misma marca, mismo tabulador, mismo mercado.</p></div>
+    <div class="mv-tp-bar">
+      <button class="mv-clear" id="mvTpBack" type="button">← Volver al tablero</button>
+      <div class="mv-search">
+        <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input id="mvTpQ" type="text" placeholder="Filtrar por código, razón social, zona, subzona o concepto…" autocomplete="off">
       </div>
-      <div class="mv-modal-body">
-        <table><thead><tr><th>#</th><th>Código</th><th>Empresa / ubicación</th><th style="text-align:right">Plantilla</th><th style="text-align:right">Egresos</th><th style="text-align:right">Rotación</th></tr></thead>
-        <tbody id="mvDispRows">${d.list.map(row).join('')}</tbody></table>
+      <select id="mvTpSort">
+        <option value="rot">Orden: Rotación (mayor primero)</option>
+        <option value="rot_asc">Orden: Rotación (menor primero)</option>
+        <option value="plantilla">Orden: Plantilla</option>
+        <option value="egresos">Orden: Egresos</option>
+        <option value="codigo">Orden: Código</option>
+        <option value="empresa">Orden: Razón social A→Z</option>
+      </select>
+      <div class="mv-export-wrap">
+        <button class="mv-export-btn" id="mvTpExportBtn" type="button">Exportar ▾</button>
+        <div class="mv-export-menu" id="mvTpExportMenu" hidden>
+          <button data-fmt="xlsx">Excel (.xlsx)</button>
+          <button data-fmt="csv">CSV (.csv)</button>
+          <button data-fmt="txt">Texto (.txt)</button>
+        </div>
       </div>
-    </div>`;
-  document.body.appendChild(ov);
-  ov.querySelector('#mvDispClose').addEventListener('click', () => ov.remove());
-  // Filtro en vivo dentro del modal (cliente, sobre la lista ya cargada).
-  ov.querySelector('#mvDispQ').addEventListener('input', (e) => {
-    const q = normSearch(e.target.value);
-    const rows = d.list.filter(x => !q ||
-      normSearch(`${x.code} ${x.name || ''} ${x.zona || ''} ${x.subzona || ''} ${x.concepto || ''}`).includes(q));
-    ov.querySelector('#mvDispRows').innerHTML = rows.map(row).join('');
-    bindCodes();
-  });
-  function bindCodes() {
-    ov.querySelectorAll('.mv-al[data-code]').forEach(a =>
-      a.addEventListener('click', () => { const c = a.dataset.code; ov.remove(); openCompany(c); }));
+    </div>
+    <div class="mv-msg" id="mvMsg" hidden></div>
+    <div class="mv-wrap" id="mvTpWrap"></div>
+    <p class="mv-note">La <b>rotación del período</b> de cada tienda es la fórmula de la guía (egresos del período ÷ plantilla promedio de esa tienda), sin anualizar — por eso es comparable entre tiendas del mismo rango de fechas. Rojo = por encima de la mediana del grupo; verde = en la mediana o por debajo. Código clicable → Personal (su Volver regresa aquí). El export respeta el filtro y el orden aplicados.
+    <a class="q" style="position:static;display:inline-flex;width:15px;height:15px;border-radius:50%;background:#eef4ff;color:var(--brand,#2563eb);font-size:10px;font-weight:800;align-items:center;justify-content:center;text-decoration:none;vertical-align:middle" href="/guias/indicadores-rotacion.html#disp" target="_blank" rel="noopener" title="Qué mide y cómo se calcula">?</a></p>`;
+
+  $('#mvTpBack')?.addEventListener('click', () => { SUBVIEW = 'main'; renderMovements(USER); });
+  const qEl = $('#mvTpQ');
+  if (qEl) {
+    qEl.value = TQ || '';
+    qEl.addEventListener('input', () => { TQ = qEl.value; paintTiendasTable(); });
   }
-  bindCodes();
+  const sEl = $('#mvTpSort');
+  if (sEl) {
+    sEl.value = TSORT;
+    sEl.addEventListener('change', () => { TSORT = sEl.value; paintTiendasTable(); });
+  }
+  const exBtn = $('#mvTpExportBtn'), exMenu = $('#mvTpExportMenu');
+  exBtn?.addEventListener('click', (e) => { e.stopPropagation(); exMenu.hidden = !exMenu.hidden; });
+  exMenu?.addEventListener('click', (e) => e.stopPropagation());
+  exMenu?.querySelectorAll('button').forEach(b =>
+    b.addEventListener('click', () => { exMenu.hidden = true; doExportTiendas(b.dataset.fmt); }));
+  paintTiendasTable();
+}
+function paintTiendasTable() {
+  const wrap = $('#mvTpWrap');
+  if (!wrap) return;
+  const d = STATS.dispersion;
+  const rows = tiendasVisibles();
+  if (!rows.length) {
+    wrap.innerHTML = `<div class="mv-empty">Ninguna tienda coincide con el filtro.</div>`;
+    return;
+  }
+  wrap.innerHTML = `<table class="mv-tp-table">
+    <tr><th>#</th><th>Código</th><th>Razón social</th><th>Zona</th><th>Subzona</th><th>Concepto</th>
+    <th style="text-align:right">Plantilla</th><th style="text-align:right">Egresos</th><th style="text-align:right">Rotación</th></tr>
+    ${rows.map((x, i) => `<tr>
+      <td class="rk-n">${i + 1}</td>
+      <td><span class="mv-al" data-code="${esc(x.code)}">${esc(x.code)}</span></td>
+      <td class="rz">${esc(x.name || '—')}</td>
+      <td>${esc(x.zona || '—')}</td>
+      <td>${esc(x.subzona || '—')}</td>
+      <td>${esc(x.concepto || '—')}</td>
+      <td class="num">${x.plantilla}</td>
+      <td class="num">${x.egresos}</td>
+      <td class="num"><b style="color:${x.rot > d.mediana ? '#b91c1c' : 'var(--ok,#0e9f6e)'}">${x.rot}%</b></td>
+    </tr>`).join('')}
+  </table>`;
+  wrap.querySelectorAll('.mv-al[data-code]').forEach(a =>
+    a.addEventListener('click', () => openCompany(a.dataset.code)));
 }
 
 /* Filas visibles: chips de tipo + busqueda por coma + orden. */
@@ -1197,8 +1260,36 @@ async function doExport(fmt) {
   const data = exportRows();
   if (!data.length) { showMsg('No hay filas para exportar. Genera el reporte primero.'); return; }
   showMsg('');
+  await exportTable(fmt, data, `movimientos_${tstamp()}`, 'Movimientos');
+}
+
+/* v6.01: exportacion de la ficha de tiendas comparables (misma mecanica;
+   exporta LO VISIBLE: filtro y orden aplicados). */
+function tiendasExportRows() {
+  const d = (STATS && STATS.dispersion) || { mediana: null };
+  return tiendasVisibles().map((x, i) => ({
+    '#': i + 1,
+    'Código': x.code,
+    'Razón social': x.name || '',
+    'Zona': x.zona || '',
+    'Subzona': x.subzona || '',
+    'Concepto': x.concepto || '',
+    'Plantilla': x.plantilla,
+    'Egresos': x.egresos,
+    'Rotación %': x.rot,
+    'Vs mediana': d.mediana == null ? '' : (x.rot > d.mediana ? 'Por encima' : 'Por debajo'),
+  }));
+}
+async function doExportTiendas(fmt) {
+  const data = tiendasExportRows();
+  if (!data.length) { showMsg('No hay tiendas para exportar con ese filtro.'); return; }
+  showMsg('');
+  await exportTable(fmt, data, `tiendas_comparables_${tstamp()}`, 'Tiendas');
+}
+
+/* Motor comun de exportacion (xlsx/csv/txt, patron del portal). */
+async function exportTable(fmt, data, fname, sheet) {
   const headers = Object.keys(data[0]);
-  const fname = `movimientos_${tstamp()}`;
 
   if (fmt === 'csv') {
     const escv = (v) => {
@@ -1229,7 +1320,7 @@ async function doExport(fmt) {
       }
       const ws = window.XLSX.utils.json_to_sheet(data, { header: headers });
       const wb = window.XLSX.utils.book_new();
-      window.XLSX.utils.book_append_sheet(wb, ws, 'Movimientos');
+      window.XLSX.utils.book_append_sheet(wb, ws, sheet);
       window.XLSX.writeFile(wb, `${fname}.xlsx`);
     } catch (e) {
       showMsg(e.message + ' Revisa tu conexión e inténtalo de nuevo.');
