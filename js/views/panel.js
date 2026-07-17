@@ -575,7 +575,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.05</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.06</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3977,6 +3977,7 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store', origi
   SCOPE = {
     target: targetId, targetUser, origin,
     kind, isEnt: kind === 'enterprise',
+    sel: new Set(),   // v6.06: seleccion multiple (checkboxes) de la lista superior
     include: d.include.map(x => ({ ...x })),
     exclude: d.exclude.map(x => ({ ...x })),
     zones: d.zones, subzones: d.subzones, companies: d.companies,
@@ -4041,7 +4042,7 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store', origi
   function syncNewDeptBtn() {
     if (newDeptBtn) newDeptBtn.style.display = (lvl.value === 'department') ? '' : 'none';
   }
-  lvl.addEventListener('change', () => { search.value = ''; syncNewDeptBtn(); renderScResults(); });
+  lvl.addEventListener('change', () => { search.value = ''; SCOPE.sel = new Set(); syncNewDeptBtn(); renderScResults(); });
   search.addEventListener('input', renderScResults);
   if (newDeptBtn) newDeptBtn.addEventListener('click', () => openScNewDeptModal(user));
   syncNewDeptBtn();
@@ -4150,33 +4151,87 @@ function renderScResults() {
       : !NON_STORE_TYPES.has(c.company_type));
     opts = comps.map(c => ({ value: c.company_code, label: `${c.company_code} · ${c.business_name}` }));
   }
+  // v6.06: LISTAS DISJUNTAS — lo ya incluido o excluido NO se ofrece de
+  // nuevo: la lista superior es siempre "lo pendiente por decidir".
+  const taken = new Set(
+    [...SCOPE.include, ...SCOPE.exclude]
+      .filter(x => x.scope_type === level)
+      .map(x => String(x.scope_value)));
+  const total = opts.length;
+  opts = opts.filter(o => !taken.has(String(o.value)));
+  const pend = opts.length;
   if (q) opts = opts.filter(o => o.label.toLowerCase().includes(q));
-  opts = opts.slice(0, 30);
+  const MAXV = 400;
+  const overflow = opts.length > MAXV;
+  opts = opts.slice(0, MAXV);
+  if (!(SCOPE.sel instanceof Set)) SCOPE.sel = new Set();
+  [...SCOPE.sel].forEach(v => { if (taken.has(v)) SCOPE.sel.delete(v); });
+  const selN = SCOPE.sel.size;
+  const allVis = opts.length > 0 && opts.every(o => SCOPE.sel.has(String(o.value)));
 
-  $('#scResults').innerHTML = opts.map(o =>
+  $('#scResults').innerHTML = `
+    <div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap;padding:7px 10px 9px;border-bottom:1px solid var(--border);margin-bottom:4px;font-size:12.5px">
+      <label style="display:inline-flex;align-items:center;gap:6px;font-weight:600;cursor:pointer"><input type="checkbox" id="scSelAll" ${allVis ? 'checked' : ''} ${opts.length ? '' : 'disabled'}> Seleccionar visibles</label>
+      <span class="muted">Quedan <b>${pend}</b> sin decidir de ${total}${overflow ? ` (mostrando ${MAXV})` : ''}</span>
+      <span style="flex:1"></span>
+      <button class="btn btn-mini" id="scBulkInc" ${selN ? '' : 'disabled'} style="color:var(--success)">+ Incluir seleccionados (${selN})</button>
+      <button class="btn btn-mini" id="scBulkExc" ${selN ? '' : 'disabled'} style="color:var(--danger)">&minus; Excluir seleccionados (${selN})</button>
+    </div>
+    ${opts.map(o =>
     `<div class="sc-res-row">
-       <span>${o.label}</span>
+       <label style="display:inline-flex;align-items:center;margin-right:4px;cursor:pointer"><input type="checkbox" data-ck="${o.value}" ${SCOPE.sel.has(String(o.value)) ? 'checked' : ''}></label>
+       <span style="flex:1">${o.label}</span>
        <span class="sc-res-btns">
          <button class="sc-inc" data-v="${o.value}" title="Incluir">+ incluir</button>
-         <button class="sc-exc" data-v="${o.value}" title="Excluir">− excluir</button>
+         <button class="sc-exc" data-v="${o.value}" title="Excluir">&minus; excluir</button>
        </span>
-     </div>`).join('') || '<div class="muted" style="padding:8px">Sin coincidencias.</div>';
+     </div>`).join('') || `<div class="muted" style="padding:8px">${(pend === 0 && total > 0) ? 'Todo decidido en este nivel: no queda nada pendiente.' : 'Sin coincidencias.'}</div>`}`;
 
   $('#scResults').querySelectorAll('.sc-inc').forEach(b =>
     b.addEventListener('click', () => addScope('include', level, b.dataset.v)));
   $('#scResults').querySelectorAll('.sc-exc').forEach(b =>
     b.addEventListener('click', () => addScope('exclude', level, b.dataset.v)));
+  // v6.06: seleccion multiple + acciones en lote.
+  $('#scResults').querySelectorAll('input[data-ck]').forEach(ck =>
+    ck.addEventListener('change', () => {
+      const v = String(ck.dataset.ck);
+      if (ck.checked) SCOPE.sel.add(v); else SCOPE.sel.delete(v);
+      renderScResults();
+    }));
+  const selAll = document.getElementById('scSelAll');
+  if (selAll) selAll.addEventListener('change', (e) => {
+    opts.forEach(o => { if (e.target.checked) SCOPE.sel.add(String(o.value)); else SCOPE.sel.delete(String(o.value)); });
+    renderScResults();
+  });
+  document.getElementById('scBulkInc')?.addEventListener('click', () => addScopeBulk('include', level));
+  document.getElementById('scBulkExc')?.addEventListener('click', () => addScopeBulk('exclude', level));
 }
 
 function addScope(bucket, type, value) {
   const list = SCOPE[bucket];
-  if (list.some(x => x.scope_type === type && String(x.scope_value) === String(value))) return; // ya está
-  list.push({ scope_type: type, scope_value: String(value) });
+  if (!list.some(x => x.scope_type === type && String(x.scope_value) === String(value))) {
+    list.push({ scope_type: type, scope_value: String(value) });
+  }
+  if (SCOPE.sel instanceof Set) SCOPE.sel.delete(String(value));
   renderScopeLists();
+  renderScResults();   // v6.06: lo decidido desaparece de la lista superior
+}
+/* v6.06: accion en lote sobre los checkboxes de la lista superior. */
+function addScopeBulk(bucket, type) {
+  const sel = (SCOPE.sel instanceof Set) ? [...SCOPE.sel] : [];
+  sel.forEach(v => {
+    if (!SCOPE[bucket].some(x => x.scope_type === type && String(x.scope_value) === String(v))) {
+      SCOPE[bucket].push({ scope_type: type, scope_value: String(v) });
+    }
+  });
+  SCOPE.sel = new Set();
+  renderScopeLists();
+  renderScResults();
 }
 function removeScope(bucket, type, value) {
   SCOPE[bucket] = SCOPE[bucket].filter(x => !(x.scope_type === type && String(x.scope_value) === String(value)));
   renderScopeLists();
+  renderScResults();   // v6.06: al quitarlo, vuelve a la lista superior
 }
 
 // Filtra que items de alcance se MUESTRAN segun el modo (Tiendas/Empresas).
