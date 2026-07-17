@@ -14,6 +14,14 @@
    caso desaparece solo en la siguiente sincronizacion.
 
    Gate: view.dobleempleo (enforced).
+
+   v6.05: cruce con la API DEDICADA de egresos (tabla nomina_v2.ax_egresos,
+   RPC enriquecida con ax_fin/ax_inicio por empresa, tolerancia de 3 dias
+   en el inicio). El padron HCM solo dice quien ESTA; el que ya se fue es
+   invisible para el padron — la de egresos tiene la fecha de fin. Boton
+   "Verificar contra el sistema": pull de los ultimos 60 dias via
+   /api/ax-sync y repinta. Badge azul = contrato ya cerrado en el sistema,
+   desaparece solo en la proxima sincronizacion. SIGUE SIENDO SOLO LECTURA.
    ===================================================================== */
 import { $ } from '../core/dom.js';
 
@@ -98,6 +106,9 @@ function ensureStyles() {
   .de-tag.open{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
   .de-tag.closed{background:#fef2f2;color:#b91c1c;border:1px solid #fecaca}
   .de-tag.tmp{background:#fff7ed;color:#c2410c;border:1px solid #fed7aa}
+  .de-tag.ax{background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;display:block;width:fit-content}
+  .de-kpi.okx{border-color:#bfdbfe;background:#eff6ff}
+  .de-kpi.okx b{color:#1d4ed8}
   .de-note{font-size:11.5px;color:var(--muted);margin:10px 2px 0;line-height:1.6}
   .de-empty{padding:52px 20px;text-align:center}
   .de-empty .big{font-size:38px;margin-bottom:10px}
@@ -138,6 +149,7 @@ function storeCard(c, isLast) {
       <div class="bn">${esc(c.business_name || '')}</div>
       <div class="dt">desde ${fmtDate(c.start_date)}</div>
       ${statusTag(c.status)}
+      ${c.ax_fin ? `<span class="de-tag ax" title="La API de egresos confirma que este contrato ya tiene fecha de fin en el sistema. El caso desaparecerá en la próxima sincronización.">egresado en el sistema · ${fmtDate(c.ax_fin)}</span>` : ''}
     </div>`;
 }
 
@@ -156,6 +168,7 @@ function rowHtml(r) {
         <div class="de-nm">${esc(r.full_name || '')}</div>
         <div class="de-ced">${ced}</div>
         <div class="de-role ${isGer ? 'ger' : ''}">${esc(r.role || '')}</div>
+        ${comps.some(c => c.ax_fin) ? `<span class="de-tag ax" style="margin-top:5px">traslado ya cerrado en el sistema</span>` : ''}
       </td>
       <td><div class="de-two">${cards}</div></td>
       <td style="color:var(--muted);font-size:12px">${esc(loc)}</td>
@@ -183,6 +196,7 @@ function flatten(rows) {
         'Razón social': c.business_name || '',
         'Estado empresa': c.status || '',
         'Ingresó': fmtDate(c.start_date),
+        'Egresado en el sistema': c.ax_fin ? fmtDate(c.ax_fin) : '',
         'Cuál es': i === (r.companies.length - 1) ? 'La nueva' : 'La anterior',
         'Zona': c.zone || '',
         'Subzona': c.subzone || '',
@@ -318,10 +332,16 @@ export async function renderDoubleEmployment(user) {
         <small>El más antiguo</small><b style="font-size:19px">${fmtDate(oldest)}</b>
         <div class="sub">${dias === null ? '—' : (dias === 0 ? 'hoy' : `hace ${dias} día${dias === 1 ? '' : 's'}`)}</div>
       </div>
+      <div class="de-kpi okx">
+        <small>Ya cerrados en el sistema</small><b id="deKpiAx">${rows.filter(x => (x.companies || []).some(c => c.ax_fin)).length}</b>
+        <div class="sub">desaparecen en la próxima sincronización</div>
+      </div>
     </div>
 
     <div class="de-filters">
       <input type="text" id="deQ" placeholder="Buscar por cédula o nombre" style="width:230px">
+      <button class="btn" id="deVerify" title="Consulta a la API dedicada de egresos (últimos 60 días) y marca los contratos que ya tienen fecha de fin en el sistema">Verificar contra el sistema</button>
+      <span id="deVerifyMsg" style="font-size:12px;color:var(--muted)"></span>
     </div>
 
     <div class="de-card">
@@ -355,6 +375,32 @@ export async function renderDoubleEmployment(user) {
   } else {
     foot.textContent = `${rows.length} caso${rows.length === 1 ? '' : 's'}. Se listan para que se corrijan en el sistema; el portal no los modifica.`;
   }
+
+  // v6.05: Verificar contra el sistema — trae los egresos recientes de la
+  // API dedicada (via /api/ax-sync, gate hcm.sync; la key nunca llega al
+  // navegador), los upsertea en ax_egresos y repinta con el cruce fresco.
+  // SOLO LECTURA se mantiene: esto marca, no corrige.
+  $('#deVerify')?.addEventListener('click', async () => {
+    const btn = $('#deVerify'), msg = $('#deVerifyMsg');
+    btn.disabled = true;
+    msg.textContent = 'Consultando los egresos recientes del sistema…';
+    const hoy = new Date(Date.now() - 4 * 3600 * 1000).toISOString().slice(0, 10);
+    const desde = new Date(Date.now() - (4 * 3600 * 1000) - (60 * 86400000)).toISOString().slice(0, 10);
+    let rr = null;
+    try {
+      rr = await fetch('/api/ax-sync', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'egresos_pull', desde, hasta: hoy, user }),
+      }).then(x => x.json());
+    } catch (_) { /* cae al mensaje de error */ }
+    if (!rr || !rr.ok) {
+      btn.disabled = false;
+      msg.textContent = (rr && rr.error) || 'No se pudo consultar el sistema.';
+      return;
+    }
+    msg.textContent = `Egresos recibidos: ${(rr.api && rr.api.totalEgresos) ?? '—'}. Actualizando…`;
+    renderDoubleEmployment(user);
+  });
 
   // Buscador (filtra en cliente: son pocos casos).
   $('#deQ')?.addEventListener('input', e => {
