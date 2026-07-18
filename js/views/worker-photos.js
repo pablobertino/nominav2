@@ -200,9 +200,9 @@ function miniRowHtml(w) {
     // v5.92 (mockup A3 aprobado): si el ingreso es de la quincena calendario
     // en curso y la persona esta activa, la celda se pinta verde y la
     // etiqueta pasa de ANT a NUEVO. Al cambiar la quincena vuelve sola a ANT.
-    const isNew = isVigente(w) && isCurrentFortnight(w.start_date);  // v6.15: vigente, no solo sin fin
+    const isNew = isVigente(w) && isNuevoIngreso(w);  // v6.20: nuevo = ANT < 30 dias (la regla de quincena degradaba al dia 16)
     if (isNew) {
-      items.push(`<div class="wp-mini-c wp-ant-new" title="Ingresó el ${fmtDate(w.start_date)} · esta quincena"><div class="wp-mini-l">Nuevo</div><div class="wp-mini-v">${ant}</div></div>`);
+      items.push(`<div class="wp-mini-c wp-ant-new" title="Ingresó el ${fmtDate(w.start_date)} · hace menos de un mes"><div class="wp-mini-l">Nuevo</div><div class="wp-mini-v">${ant}</div></div>`);
     } else {
       items.push(`<div class="wp-mini-c" title="Ingresó el ${fmtDate(w.start_date)}"><div class="wp-mini-l">Ant</div><div class="wp-mini-v">${ant}</div></div>`);
     }
@@ -262,6 +262,21 @@ function caracasYMD(d) {
 function isVigente(w) {
   if (!w || !w.end_date) return true;
   return String(w.end_date).slice(0, 10) >= caracasYMD(new Date());
+}
+/* v6.20: "INGRESADO/NUEVO" = antigüedad menor a 30 días (mientras la
+   antigüedad todavía se cuenta en días, la persona es nueva). Reemplaza a
+   la regla de quincena calendario (v5.92) en PERSONAL: con aquella, el
+   gerente que ingresó el 15/07 perdía la etiqueta NUEVO el día 16 con solo
+   1 día de antigüedad (caso real de Pablo en AA03). La barrita de Empresas
+   conserva su regla de quincena: allá se mide el flujo del ciclo de nómina;
+   acá se describe a la persona. */
+function isNuevoIngreso(w) {
+  if (!w || !w.start_date) return false;
+  const sd = String(w.start_date).slice(0, 10);
+  const hoy = caracasYMD(new Date());
+  if (sd > hoy) return false;
+  const dias = Math.floor((Date.parse(hoy) - Date.parse(sd)) / 86400000);
+  return dias < 30;
 }
 function updFootbarHtml(w) {
   // v4.77: el pie refleja el ESTADO DE PUBLICACION de la ficha (mockup
@@ -453,7 +468,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   } catch (_) { /* sin red: UI historica, el server protege */ }
 
   STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, isSuper, isGestor, canEditDept, can: CANP, departments: [], cargoRanks: [], selMode: false, selected: new Set(),
-    sortKey: mode === 'enterprise' ? 'name_az' : 'rank', fPhoto: 'all', fGender: 'all', fCargo: 'ALL', fDept: 'ALL', fStatus: new Set(['active']) };  // v6.15: checkboxes multi-estado; nace en Activos
+    sortKey: mode === 'enterprise' ? 'name_az' : 'rank', fPhoto: 'all', fGender: 'all', fCargo: 'ALL', fDept: 'ALL', fStatus: new Set(['active', 'new']) };  // v6.20: nace mostrando Activos + Ingresados (= todos los vigentes)
 
   const back = onExit
     ? `<button class="btn" id="wpBack" style="margin-bottom:14px">← Volver</button>`
@@ -494,11 +509,12 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
         <select id="wpfDept" style="display:none"><option value="ALL">Todos los deptos.</option></select>
         <div id="wpfStatus" class="wp-stdd">
           <button type="button" class="wp-stdd-btn" id="wpfStatusBtn" title="Estados a mostrar — podés combinar varios">
-            <span id="wpfStatusLbl">Activos</span>
+            <span id="wpfStatusLbl">Activos + Ingresados</span>
             <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
           </button>
           <div class="wp-stdd-pop" id="wpfStatusPop" hidden>
             <label><input type="checkbox" value="active" checked> Activos</label>
+            <label><input type="checkbox" value="new" checked> Ingresados</label>
             <label><input type="checkbox" value="transfer"> Traslados</label>
             <label><input type="checkbox" value="inactive"> Egresados</label>
           </div>
@@ -561,12 +577,12 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   // abierto al marcar (para combinar varios); cierra con clic afuera o Esc.
   {
     const stBtn = $('#wpfStatusBtn'), stPop = $('#wpfStatusPop');
-    const stNames = { active: 'Activos', transfer: 'Traslados', inactive: 'Egresados' };
+    const stNames = { active: 'Activos', new: 'Ingresados', transfer: 'Traslados', inactive: 'Egresados' };
     const stLabel = () => {
       const el = $('#wpfStatusLbl');
       if (!el) return;
       const on = [...document.querySelectorAll('#wpfStatusPop input:checked')].map(i => stNames[i.value]);
-      el.textContent = on.length === 3 ? 'Estado: todos' : on.length === 0 ? 'Estado: ninguno' : on.join(' + ');
+      el.textContent = on.length === 4 ? 'Estado: todos' : on.length === 0 ? 'Estado: ninguno' : on.length === 3 ? '3 estados' : on.join(' + ');
     };
     if (stBtn && stPop) {
       stBtn.addEventListener('click', (ev) => { ev.stopPropagation(); stPop.hidden = !stPop.hidden; });
@@ -861,13 +877,16 @@ function currentFiltered() {
       if (STATE.fDept === '__none') { if (w.department_name) return false; }
       else if (w.department_name !== fDepName) return false;
     }
-    // v6.15 (checkboxes multi): cada persona tiene UN estado y se muestra
-    // si su checkbox está marcado. active = VIGENTE a la fecha (sin fin o
-    // fin futuro); transfer = fin cumplido + activa en otra empresa del
-    // grupo (now_at); inactive = fin cumplido sin traslado (egreso real).
-    // Sin ningún checkbox marcado no se muestra nadie (decisión del user).
+    // v6.15/v6.20 (checkboxes multi): cada persona tiene UN estado y se
+    // muestra si su checkbox está marcado. new = vigente con menos de 30
+    // días de antigüedad (Ingresado, celda verde NUEVO); active = vigente
+    // estable; transfer = fin cumplido + activa en otra empresa del grupo
+    // (now_at); inactive = fin cumplido sin traslado (egreso real). Sin
+    // ningún checkbox marcado no se muestra nadie (decisión del usuario).
     {
-      const kind = isVigente(w) ? 'active' : (w.now_at ? 'transfer' : 'inactive');
+      const kind = isVigente(w)
+        ? (isNuevoIngreso(w) ? 'new' : 'active')
+        : (w.now_at ? 'transfer' : 'inactive');
       if (!(STATE.fStatus instanceof Set) || !STATE.fStatus.has(kind)) return false;
     }
     return true;
