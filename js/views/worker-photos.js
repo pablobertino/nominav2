@@ -1713,6 +1713,8 @@ function fichaHtml(w, c) {
         <div class="ff-sec">Registro</div>
         <div class="ff-grid">
           <div class="ff-row"><span class="ff-lbl">Ingreso</span><span class="ff-val" data-v="start_date"></span></div>
+          <div class="ff-row"><span class="ff-lbl">Antigüedad en el Grupo</span><span class="ff-val" data-v="group_tenure"></span></div>
+          <div class="ff-row full"><span class="ff-lbl">Historia en el Grupo</span><span class="ff-val" data-v="group_bar"></span></div>
           <div class="ff-row"><span class="ff-lbl">Ficha actualizada por</span><span class="ff-val" data-v="profile_updated_by"></span></div>
           <div class="ff-row"><span class="ff-lbl">Foto cargada por</span><span class="ff-val" data-v="photo_uploaded_by"></span></div>
           <div class="ff-row"><span class="ff-lbl">Última actualización</span><span class="ff-val" data-v="updated_at"></span></div>
@@ -1741,12 +1743,53 @@ function paintFichaValues(host, w) {
     ? `${w.photo_uploaded_by}${w.photo_uploaded_at ? ' · ' + fmtDateTime(w.photo_uploaded_at) : ''}`
     : '');
   setVal(host, 'updated_at', fmtDateTime(w.updated_at));
-  // v5.92: fila Ingreso en Registro: fecha + antiguedad (en dias si <1 mes) y
-  // la marca de quincena calendario en curso (misma regla que la tarjeta).
+  // v5.92/v6.27: fila Ingreso en Registro: fecha + antiguedad; la marca de
+  // ingreso reciente usa la regla v6.20 (menos de 30 dias, no quincena).
   const ingFecha = w.start_date ? fmtDate(w.start_date) : '';
   const ingTen = tenureLabel(w.start_date);
-  const ingNew = (!w.end_date && isCurrentFortnight(w.start_date)) ? ' · Nuevo esta quincena' : '';
+  const ingNew = (isVigente(w) && isNuevoIngreso(w)) ? ' · Ingreso reciente (menos de un mes)' : '';
   setVal(host, 'start_date', ingFecha ? `${ingFecha}${ingTen ? ' · ' + ingTen : ''}${ingNew}` : '');
+  // v6.27: ANTIGÜEDAD EN EL GRUPO (RPC get_group_tenure v6.24 vía directory
+  // v6.26). Fila de texto con el detalle completo + barra "Historia en el
+  // Grupo" SOLO cuando hay historia previa al tramo continuo (si todo es un
+  // solo tramo, la barra no agrega nada y la fila se oculta).
+  {
+    const gEl = host.querySelector('[data-v="group_tenure"]');
+    if (gEl) {
+      if (typeof w.cont_days === 'number') {
+        const parts = [`<b>${esc(tenureLong(w.cont_days))}</b>`];
+        if (w.cont_since) parts.push(`tramo continuo desde el ${esc(fmtDate(w.cont_since))}`);
+        parts.push(w.grp_int
+          ? '⏸ intermitente'
+          : '✓ continuo' + ((w.grp_periods || 1) > 1 ? ` (${w.grp_periods} períodos)` : ''));
+        if (w.grp_int) {
+          if (w.grp_since) parts.push(`nos conoce desde el ${esc(fmtDate(w.grp_since))}`);
+          if (typeof w.grp_days === 'number') parts.push(`${esc(tenureLong(w.grp_days))} efectivos`);
+          if (w.grp_periods) parts.push(`${w.grp_periods} períodos`);
+        }
+        gEl.innerHTML = parts.join(' · ');
+        gEl.classList.remove('empty');
+      } else { gEl.textContent = 'Sin dato'; gEl.classList.add('empty'); }
+    }
+    const bEl = host.querySelector('[data-v="group_bar"]');
+    if (bEl) {
+      const row = bEl.closest('.ff-row');
+      const spanDays = w.grp_since ? daysFrom(w.grp_since) : null;
+      if (typeof w.cont_days === 'number' && spanDays && spanDays > w.cont_days + 3) {
+        const contPct = Math.max(4, Math.min(96, Math.round(w.cont_days / spanDays * 100)));
+        const effPrev = Math.max(0, (typeof w.grp_days === 'number' ? w.grp_days : w.cont_days) - w.cont_days);
+        const prevDays = spanDays - w.cont_days;
+        bEl.innerHTML = `
+          <div style="display:flex;align-items:center;height:10px;border-radius:99px;overflow:hidden;background:#e2e8f0" title="Desde el ${esc(fmtDate(w.grp_since))} hasta hoy">
+            <div style="width:${100 - contPct}%;height:100%;background:${w.grp_int ? 'repeating-linear-gradient(45deg,#94a3b8 0 6px,#cbd5e1 6px 12px)' : '#8bd8c7'}" title="Historia previa: ${esc(tenureLong(effPrev))} efectivos en ${esc(tenureLong(prevDays))}${w.grp_int ? ' · con pausas que cortaron la continuidad' : ''}"></div>
+            <div style="width:${contPct}%;height:100%;background:#0f766e" title="Tramo continuo actual: ${esc(tenureLong(w.cont_days))}${w.cont_since ? ' (desde el ' + esc(fmtDate(w.cont_since)) + ')' : ''}"></div>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-size:10.5px;color:#94a3b8;margin-top:3px"><span>${esc(fmtDate(w.grp_since))}</span><span>tramo actual → hoy</span></div>`;
+        bEl.classList.remove('empty');
+        if (row) row.style.display = '';
+      } else if (row) { row.style.display = 'none'; }
+    }
+  }
   // v4.20: quien edito la ficha de ultimo (tienda/admin/gestor) y cuando.
   setVal(host, 'profile_updated_by', w.profile_updated_by
     ? `${w.profile_updated_by}${w.profile_updated_at ? ' · ' + fmtDateTime(w.profile_updated_at) : ''}`
