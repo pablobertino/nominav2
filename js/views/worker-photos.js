@@ -200,7 +200,7 @@ function miniRowHtml(w) {
     // v5.92 (mockup A3 aprobado): si el ingreso es de la quincena calendario
     // en curso y la persona esta activa, la celda se pinta verde y la
     // etiqueta pasa de ANT a NUEVO. Al cambiar la quincena vuelve sola a ANT.
-    const isNew = !w.end_date && isCurrentFortnight(w.start_date);
+    const isNew = isVigente(w) && isCurrentFortnight(w.start_date);  // v6.15: vigente, no solo sin fin
     if (isNew) {
       items.push(`<div class="wp-mini-c wp-ant-new" title="Ingresó el ${fmtDate(w.start_date)} · esta quincena"><div class="wp-mini-l">Nuevo</div><div class="wp-mini-v">${ant}</div></div>`);
     } else {
@@ -231,6 +231,10 @@ function ensureFootStyles() {
   .wp-footdot.mid{background:#f59e0b}
   .wp-footdot.old{background:#cbd5e1}
   .wp-footdot.none{width:6px;height:6px;background:transparent;border:1.5px solid #d3dae4}
+  /* v6.15: checkboxes de estado en la barra de filtros */
+  .wp-stchk{display:flex;align-items:center;gap:12px;padding:0 12px;border:1px solid var(--border,#e5e7eb);border-radius:10px;background:var(--surface,#fff);font-size:12.5px;color:var(--ink-soft,#475569);flex:none}
+  .wp-stchk label{display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap;padding:7px 0;user-select:none}
+  .wp-stchk input{accent-color:var(--brand,#2563eb);width:14px;height:14px;cursor:pointer;margin:0}
   /* v5.92: celda ANT de ingreso en la quincena en curso (mockup A3) */
   .wp-mini-c.wp-ant-new{background:#e9f7f1}
   .wp-mini-c.wp-ant-new .wp-mini-l{color:#0e9f6e}
@@ -244,6 +248,14 @@ function caracasYMD(d) {
   const c = new Date(d.getTime() - 4 * 3600 * 1000);
   const z = n => String(n).padStart(2, '0');
   return `${c.getUTCFullYear()}-${z(c.getUTCMonth() + 1)}-${z(c.getUTCDate())}`;
+}
+/* v6.15: "activo" = VIGENTE A LA FECHA (hora Caracas): sin fecha de fin,
+   o con fin FUTURO aún no cumplido (contrato con fin conocido que sigue
+   corriendo, badge v6.05). El fin cumplido es egreso — o traslado si la
+   persona está activa en otra empresa del grupo (now_at). */
+function isVigente(w) {
+  if (!w || !w.end_date) return true;
+  return String(w.end_date).slice(0, 10) >= caracasYMD(new Date());
 }
 function updFootbarHtml(w) {
   // v4.77: el pie refleja el ESTADO DE PUBLICACION de la ficha (mockup
@@ -435,7 +447,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   } catch (_) { /* sin red: UI historica, el server protege */ }
 
   STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, isSuper, isGestor, canEditDept, can: CANP, departments: [], cargoRanks: [], selMode: false, selected: new Set(),
-    sortKey: mode === 'enterprise' ? 'name_az' : 'rank', fPhoto: 'all', fGender: 'all', fCargo: 'ALL', fDept: 'ALL', fStatus: 'active' };  // v6.13: la vista NACE en Solo activos
+    sortKey: mode === 'enterprise' ? 'name_az' : 'rank', fPhoto: 'all', fGender: 'all', fCargo: 'ALL', fDept: 'ALL', fStatus: new Set(['active']) };  // v6.15: checkboxes multi-estado; nace en Activos
 
   const back = onExit
     ? `<button class="btn" id="wpBack" style="margin-bottom:14px">← Volver</button>`
@@ -474,12 +486,11 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
         </select>
         <select id="wpfCargo"><option value="ALL">Todos los cargos</option></select>
         <select id="wpfDept" style="display:none"><option value="ALL">Todos los deptos.</option></select>
-        <select id="wpfStatus">
-          <option value="active" selected>Solo activos</option>
-          <option value="transfer">Traslados</option>
-          <option value="inactive">Solo egresados</option>
-          <option value="all">Activos y egresados</option>
-        </select>
+        <div id="wpfStatus" class="wp-stchk" title="Estados a mostrar — podés combinar">
+          <label><input type="checkbox" value="active" checked> Activos</label>
+          <label><input type="checkbox" value="transfer"> Traslados</label>
+          <label><input type="checkbox" value="inactive"> Egresados</label>
+        </div>
         <select id="wpSort">
           ${mode !== 'enterprise' ? '<option value="rank">Orden: Jerarquía de cargo</option>' : ''}
           <option value="name_az">Orden: Nombre (A→Z)</option>
@@ -524,7 +535,9 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
     STATE.fGender = $('#wpfGender').value;
     STATE.fCargo = $('#wpfCargo').value;
     const ds = $('#wpfDept'); STATE.fDept = ds ? ds.value : 'ALL';
-    STATE.fStatus = $('#wpfStatus').value;
+    // v6.15: estados por checkbox (multi-selección; el change burbujea
+    // desde los inputs al div, mismo listener).
+    STATE.fStatus = new Set([...document.querySelectorAll('#wpfStatus input[type="checkbox"]:checked')].map(i => i.value));
     paintGrid();
   };
   ['#wpfPhoto', '#wpfGender', '#wpfCargo', '#wpfDept', '#wpfStatus'].forEach(id => {
@@ -629,8 +642,8 @@ function paintRosterBar() {
     return;
   }
   const total = (STATE.workers || []).length;
-  const activos = (STATE.workers || []).filter(w => !w.end_date).length;
-  const traslados = (STATE.workers || []).filter(w => w.end_date && w.now_at).length;  // v6.13
+  const activos = (STATE.workers || []).filter(w => isVigente(w)).length;  // v6.15: vigentes a la fecha
+  const traslados = (STATE.workers || []).filter(w => !isVigente(w) && w.now_at).length;
 
   let when = 'sin registro de carga';
   if (meta && meta.uploaded_at) {
@@ -814,13 +827,15 @@ function currentFiltered() {
       if (STATE.fDept === '__none') { if (w.department_name) return false; }
       else if (w.department_name !== fDepName) return false;
     }
-    // v6.13: estados. active = sin fin AQUÍ; transfer = egresó de esta
-    // empresa pero está activo en otra del grupo (now_at del directory);
-    // inactive = egreso REAL (sin fila activa en otra empresa); all = todo,
-    // con el chip de cada tarjeta contando la historia.
-    if (STATE.fStatus === 'active' && w.end_date) return false;
-    if (STATE.fStatus === 'transfer' && !(w.end_date && w.now_at)) return false;
-    if (STATE.fStatus === 'inactive' && (!w.end_date || w.now_at)) return false;
+    // v6.15 (checkboxes multi): cada persona tiene UN estado y se muestra
+    // si su checkbox está marcado. active = VIGENTE a la fecha (sin fin o
+    // fin futuro); transfer = fin cumplido + activa en otra empresa del
+    // grupo (now_at); inactive = fin cumplido sin traslado (egreso real).
+    // Sin ningún checkbox marcado no se muestra nadie (decisión del user).
+    {
+      const kind = isVigente(w) ? 'active' : (w.now_at ? 'transfer' : 'inactive');
+      if (!(STATE.fStatus instanceof Set) || !STATE.fStatus.has(kind)) return false;
+    }
     return true;
   });
 }
@@ -940,12 +955,15 @@ function paintGrid() {
           + `<div class="wp-initials" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>`
           + `<span class="wp-nophoto"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>Sin foto</span>`
           + `</div>`;
-    // v6.13: si egresó ACÁ pero está activo en otra empresa del grupo, el
-    // chip cuenta la historia completa: fue un traslado, no un egreso.
+    // v6.13/v6.15: el chip cuenta la historia de cada uno. Fin FUTURO
+    // (vigente) = ámbar "fin dd/mm" (contrato con fin conocido que sigue
+    // corriendo); fin cumplido = azul traslado o rojo egreso real.
     const egr = !w.end_date ? ''
-      : w.now_at
-        ? `<span class="pill" style="margin-top:4px;display:inline-block;background:#e8effc;color:#1d4ed8" title="Egresó de ${esc(STATE.cc)} el ${fmtDate(w.end_date)} · activo en ${esc(w.now_at)}${w.now_since ? ' desde el ' + fmtDate(w.now_since) : ''}">traslado ${fmtDate(w.end_date)} → ahora en ${esc(w.now_at)}</span>`
-        : `<span class="pill pill-out" style="margin-top:4px;display:inline-block">egresó ${fmtDate(w.end_date)}</span>`;
+      : isVigente(w)
+        ? `<span class="pill" style="margin-top:4px;display:inline-block;background:#fdf3e7;color:#b45309" title="Contrato con fin ${fmtDate(w.end_date)} — sigue vigente a la fecha">fin ${fmtDate(w.end_date)}</span>`
+        : w.now_at
+          ? `<span class="pill" style="margin-top:4px;display:inline-block;background:#e8effc;color:#1d4ed8" title="Egresó de ${esc(STATE.cc)} el ${fmtDate(w.end_date)} · activo en ${esc(w.now_at)}${w.now_since ? ' desde el ' + fmtDate(w.now_since) : ''}">traslado ${fmtDate(w.end_date)} → ahora en ${esc(w.now_at)}</span>`
+          : `<span class="pill pill-out" style="margin-top:4px;display:inline-block">egresó ${fmtDate(w.end_date)}</span>`;
     const manualTag = w.source === 'manual' ? '<span class="pill wp-pill-manual" style="margin-top:4px;display:inline-block">manual</span>' : '';
     // Barra de departamento ARRIBA de la tarjeta.
     //  - Con departamento: etiqueta gris discreta (solo lectura).
