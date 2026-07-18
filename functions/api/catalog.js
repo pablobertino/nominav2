@@ -193,7 +193,7 @@ export async function onRequestPost({ request, env }) {
 
     const [companies, zones, subzones, concepts, users,
            storeMeta, entMeta, staffCounts, depts, photoCov, breakdown] = await Promise.all([
-      sb(env, 'companies?select=company_code,business_name,tax_id,data_area,zone_id,subzone_id,concept_id,company_type,status,is_active,email,phone,phone2,address,city,state,municipality&order=company_code'),
+      sb(env, 'companies?select=company_code,business_name,tax_id,data_area,zone_id,subzone_id,concept_id,company_type,status,is_active,email,phone,phone2,address,city,state,municipality,ax_modified_at&order=company_code'),
       sb(env, 'zones?select=id,name,letter&order=name'),
       sb(env, 'subzones?select=id,name,letter,zone_id&order=name'),
       sb(env, 'concepts?select=id,name&order=name'),
@@ -264,7 +264,15 @@ export async function onRequestPost({ request, env }) {
       };
     });
 
-    let rows = companies.map(c => {
+    let rows = companies
+      // v6.18 (pedido de Pablo): las empresas de tipo "Ninguno" (nuevas de
+      // AX sin configurar: sin lista, sin contacto) NO viajan al front. Con
+      // este unico corte desaparecen de la vista Empresas, de las stat
+      // cards, de los conteos y del modal Sincronizar personal (que opera
+      // sobre las visibles). En BD siguen vivas: el pull las mantiene, y el
+      // dia que en AX les asignen tipo aparecen solas.
+      .filter(c => (c.company_type || '') !== 'Ninguno')
+      .map(c => {
       const meta = metaByCompany[c.company_code] || null;
       return {
         code: c.company_code,
@@ -307,6 +315,9 @@ export async function onRequestPost({ request, env }) {
         bkNew: (bkByCompany[c.company_code] || {}).nue || 0,
         bkTras: (bkByCompany[c.company_code] || {}).tra || 0,
         bkEgr: (bkByCompany[c.company_code] || {}).egr || 0,
+        // v6.18: ultima modificacion de la empresa en AX (modifiedDateTime;
+        // 1900-01-01 ya llega como NULL desde sync-companies).
+        axModifiedAt: c.ax_modified_at || null,
       };
     });
 

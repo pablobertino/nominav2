@@ -203,6 +203,11 @@ export async function onRequestPost({ request, env }) {
       }
 
       const status = c.status || '';
+      // v6.18: modifiedDateTime de la API = ultima modificacion de la
+      // empresa en AX. 1900-01-01 es el dateNull de AX (sin fecha) -> NULL.
+      const modRaw = String(c.modifiedDateTime || '').trim();
+      const axModified = (modRaw && !modRaw.startsWith('1900-01-01') && !isNaN(Date.parse(modRaw)))
+        ? new Date(modRaw).toISOString() : null;
       companyRows.push({
         company_code: c.alias,
         data_area: c.companyId || null,
@@ -215,6 +220,7 @@ export async function onRequestPost({ request, env }) {
         comp_group: c.compGroup || null,
         status,
         is_active: status.toLowerCase().includes('abier'),
+        ax_modified_at: axModified,   // v6.18
         synced_at: new Date().toISOString(),
       });
     }

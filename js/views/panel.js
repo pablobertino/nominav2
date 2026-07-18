@@ -575,7 +575,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.17</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.18</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -865,6 +865,19 @@ function statusPill(s) {
   // que zona/subzona/concepto cuando no existen.
   if (!s || x.includes('nulo') || x.includes('vac')) return '<span class="muted">—</span>';
   return `<span class="pill pill-gray">${s}</span>`;
+}
+
+/* v6.18: fecha de ultima modificacion de la empresa en AX (modifiedDateTime
+   de la API de Catalogos), pintada DEBAJO del Estado. NULL = sin fecha (el
+   1900-01-01, dateNull de AX, ya llega como NULL desde sync-companies) ->
+   no se pinta nada, ni un guion. Hora Caracas. */
+function axModCell(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (isNaN(d) || d.getUTCFullYear() <= 1900) return '';
+  const c = new Date(d.getTime() - 4 * 3600 * 1000);
+  const z = n => String(n).padStart(2, '0');
+  return `<div style="font-size:10.5px;color:var(--faint,#94a3b8);margin-top:3px;white-space:nowrap" title="Última modificación de la empresa en AX">mod. ${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${c.getUTCFullYear()}</div>`;
 }
 
 /* Color del alias segun el tipo de empresa, para identificarlas de un vistazo
@@ -1285,7 +1298,7 @@ async function viewTiendas(user) {
         <td class="zc-cell"><div class="zc1">${c.zone || '—'}${c.subzone ? ' · ' + c.subzone : ''}</div><div class="zc2">${c.concept || '—'}</div></td>
         <td>${contacto}</td>
         <td>${personalCell(c)}</td>
-        <td>${statusPill(c.status)}</td>
+        <td>${statusPill(c.status)}${axModCell(c.axModifiedAt)}</td>
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
         <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" title="Personal / fichas" style="margin-right:4px">${I.photo} Personal</button>${(canDepartments && NON_STORE_TYPES.has(c.type)) ? `<button class="btn btn-mini" data-dep-code="${c.code}" title="Departamentos" style="margin-right:4px">${I.grid} Deptos${c.deptCount ? ` <span class="dep-count">${c.deptCount}</span>` : ''}</button>` : ''}${canReport ? `<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}" title="Reportar" style="margin-right:4px">${I.bizreport} Reportar</button>` : ''}<button class="btn btn-mini" data-addr-code="${c.code}" data-addr-name="${(c.name||'').replace(/"/g,'')}" title="${canEditCompany ? 'Editar direccion y contacto' : 'Ver direccion y contacto'}">${I.pin} Direcci\u00f3n</button></td>
       </tr>`;
@@ -1311,6 +1324,8 @@ async function viewTiendas(user) {
     rows.push(['Acceso', c.hasAccess
       ? `<span class="emp-acc yes">${I.check} con acceso</span>`
       : `<span class="emp-acc no">${I.circle} sin usuario</span>`]);
+    // v6.18: ultima modificacion de la empresa en AX (solo si hay fecha).
+    if (c.axModifiedAt) rows.push(['Mod. en AX', axModCell(c.axModifiedAt)]);
     const grid = rows.map(([k, v]) => `<span class="hc-k">${k}</span><span class="hc-v">${v}</span>`).join('');
 
     const nameEsc = (c.name || '').replace(/"/g, '');
