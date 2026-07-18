@@ -192,14 +192,14 @@ export async function onRequestPost({ request, env }) {
     }
 
     const [companies, zones, subzones, concepts, users,
-           storeMeta, entMeta, staffCounts, depts, photoCov] = await Promise.all([
+           storeMeta, entMeta, staffCounts, depts, photoCov, breakdown] = await Promise.all([
       sb(env, 'companies?select=company_code,business_name,tax_id,data_area,zone_id,subzone_id,concept_id,company_type,status,is_active,email,phone,phone2,address,city,state,municipality&order=company_code'),
       sb(env, 'zones?select=id,name,letter&order=name'),
       sb(env, 'subzones?select=id,name,letter,zone_id&order=name'),
       sb(env, 'concepts?select=id,name&order=name'),
       sb(env, 'company_users?select=company_code'),
       // Metadatos de la ultima carga de personal (tienda / empresa no-tienda).
-      sb(env, 'store_roster_meta?select=company_code,uploaded_at,uploaded_by,total_count,source'),
+      sb(env, 'store_roster_meta?select=company_code,uploaded_at,uploaded_by,total_count,source,auto_refreshed_at'),
       sb(env, 'enterprise_roster_meta?select=company_code,uploaded_at,uploaded_by,row_count,source'),
       // Conteo de personal por empresa, AGREGADO en la BD (vista). Antes se
       // traia todo store_workers para contar en el cliente, pero PostgREST
@@ -213,6 +213,10 @@ export async function onRequestPost({ request, env }) {
       // Personal): total del roster vs cuantos tienen photo_key en
       // workers_master. Una sola llamada agregada (rpc get_photo_coverage).
       sb(env, 'rpc/get_photo_coverage', { method: 'POST', body: '{}' }),
+      // v6.17: desglose de la QUINCENA EN CURSO por empresa (barrita de la
+      // celda Personal): estables / nuevos / traslados / egresos. Una sola
+      // llamada agregada (rpc get_roster_breakdown, quincena Caracas).
+      sb(env, 'rpc/get_roster_breakdown', { method: 'POST', body: '{}' }),
     ]);
 
     const withAccess = new Set(users.map(u => u.company_code));
@@ -234,6 +238,15 @@ export async function onRequestPost({ request, env }) {
     const photoByCompany = {};
     (photoCov || []).forEach(p => { photoByCompany[p.company_code] = { total: p.total || 0, withPhoto: p.with_photo || 0 }; });
 
+    // v6.17: desglose de la quincena en curso por empresa (barrita).
+    const bkByCompany = {};
+    (breakdown || []).forEach(b => {
+      bkByCompany[b.company_code] = {
+        est: b.estables || 0, nue: b.nuevos || 0,
+        tra: b.traslados_q || 0, egr: b.egresos_q || 0,
+      };
+    });
+
     // Meta (fecha, quien, metodo) por empresa. Cada empresa esta en UNA de las
     // dos tablas segun su tipo, asi que no hay colision.
     const metaByCompany = {};
@@ -241,6 +254,7 @@ export async function onRequestPost({ request, env }) {
       metaByCompany[m.company_code] = {
         count: m.total_count, uploaded_at: m.uploaded_at,
         uploaded_by: m.uploaded_by, source: m.source || null,
+        auto_refreshed_at: m.auto_refreshed_at || null,   // v6.17: frescura 🔄
       };
     });
     (entMeta || []).forEach(m => {
@@ -286,6 +300,13 @@ export async function onRequestPost({ request, env }) {
         rosterAt: meta ? meta.uploaded_at : null,
         rosterBy: meta ? meta.uploaded_by : null,
         rosterSource: meta ? meta.source : null,
+        // v6.17: frescura de la corrida automatica + barrita de la quincena
+        // en curso (estables / nuevos / traslados / egresos).
+        autoRefreshedAt: meta ? (meta.auto_refreshed_at || null) : null,
+        bkEst: (bkByCompany[c.company_code] || {}).est || 0,
+        bkNew: (bkByCompany[c.company_code] || {}).nue || 0,
+        bkTras: (bkByCompany[c.company_code] || {}).tra || 0,
+        bkEgr: (bkByCompany[c.company_code] || {}).egr || 0,
       };
     });
 

@@ -575,7 +575,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.16</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.17</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -910,13 +910,33 @@ function rosterFresh(iso) {
   else cls = 'fresh-old';
   return `<span class="${cls}">${when}${tail}</span>`;
 }
+/* v6.17: etiqueta de la quincena calendario en curso (hora Caracas) para
+   el tooltip de la barrita: "01–15 jul" o "16–31 jul". */
+function qLabel() {
+  const car = new Date(Date.now() - 4 * 3600 * 1000);
+  const d = car.getUTCDate(), m = car.getUTCMonth(), y = car.getUTCFullYear();
+  const meses = ['ene', 'feb', 'mar', 'abr', 'may', 'jun', 'jul', 'ago', 'sep', 'oct', 'nov', 'dic'];
+  if (d <= 15) return `01–15 ${meses[m]}`;
+  const last = new Date(Date.UTC(y, m + 1, 0)).getUTCDate();
+  return `16–${last} ${meses[m]}`;
+}
 function personalCell(c) {
-  if (!c.staffCount) return '<span class="muted">— sin lista —</span>';
+  /* v6.17 (mockup aprobado): numero grande = activos VIGENTES hoy (v6.15)
+     + chip % foto, y debajo la BARRITA DE LA QUINCENA EN CURSO con los 4
+     estados (rpc get_roster_breakdown via /api/catalog):
+       verde  estables  = vigentes que ya estaban antes de la quincena
+       agua   nuevos    = ingresaron esta quincena y siguen
+       azul   traslados = fin cumplido esta quincena, activos en otra empresa
+       rojo   egresos   = fin cumplido esta quincena sin destino
+     La barra SOLO aparece si hubo movimiento (nuevos+tras+egr > 0): empresa
+     quieta = celda limpia, y al cambiar la quincena todas arrancan limpias.
+     "Quincena en curso (fechas)" va en el TOOLTIP, no en texto (Pablo).
+     Frescura: si la corrida automatica refresco en <=2 dias, la linea de
+     abajo dice "\u{1F504} al dia" en verde en vez del "hace Nd" que asustaba. */
+  const est = c.bkEst || 0, nue = c.bkNew || 0, tra = c.bkTras || 0, egr = c.bkEgr || 0;
+  const moved = (nue + tra + egr) > 0;
+  if (!c.staffCount && !c.rosterAt && !moved) return '<span class="muted">— sin lista —</span>';
   const by = c.rosterBy ? `<br>${String(c.rosterBy).replace(/</g, '&lt;')}` : '';
-  // Chip "% con foto" (opcion C del mockup empresas_personal_foto):
-  // cobertura de fotos del roster (photoCount/photoTotal de /api/catalog).
-  // Semaforo: verde >=90, ambar 50-89, rojo <50. El detalle exacto va en
-  // el title. Si el RPC no trae datos (photoTotal 0), no se muestra nada.
   let photoChip = '';
   if (c.photoTotal > 0) {
     const pct = Math.round((c.photoCount / c.photoTotal) * 100);
@@ -924,9 +944,47 @@ function personalCell(c) {
     photoChip = `<span class="ph-chip ${cls}" title="${c.photoCount} de ${c.photoTotal} con foto">`
       + `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>${pct}%</span>`;
   }
+  // Numero grande: 0 activos se pinta apagado (sin drama, inconfundible).
+  const num = c.staffCount
+    ? `${c.staffCount}`
+    : `<span style="color:var(--faint,#94a3b8)">0</span>`;
+  // Barrita de la quincena (solo con movimiento). Estilos inline a proposito:
+  // la celda vive dentro de la grilla de Empresas y asi no depende del bloque
+  // CSS de la vista.
+  let bar = '';
+  if (moved) {
+    const tot = est + nue + tra + egr;
+    const segs = [[est, '#0e9f6e'], [nue, '#5eead4'], [tra, '#3b82f6'], [egr, '#ef4444']]
+      .filter(s => s[0] > 0)
+      .map(s => `<i style="display:block;height:100%;width:${(s[0] / tot * 100).toFixed(1)}%;background:${s[1]}"></i>`)
+      .join('');
+    const leg = [
+      est ? `<span style="color:#0e9f6e"><b>${est}</b> est.</span>` : '',
+      nue ? `<span style="color:#0d9488"><b>${nue}</b> nuevos</span>` : '',
+      tra ? `<span style="color:#1d4ed8"><b>${tra}</b> tras.</span>` : '',
+      egr ? `<span style="color:#b91c1c"><b>${egr}</b> egr.</span>` : '',
+    ].filter(Boolean).join('');
+    const tip = `Quincena en curso (${qLabel()}): ${est} estables · ${nue} nuevos · ${tra} traslados · ${egr} egresos · Activos hoy: ${c.staffCount || 0}`;
+    bar = `<div style="margin-top:4px;max-width:160px" title="${tip}">`
+      + `<div style="display:flex;height:6px;border-radius:4px;overflow:hidden;background:#eef1f5">${segs}</div>`
+      + `<div style="display:flex;gap:7px;font-size:10px;margin-top:2px;flex-wrap:wrap">${leg}</div>`
+      + `</div>`;
+  }
+  // Frescura de la corrida automatica (<=2 dias): la lista esta al dia
+  // aunque la CARGA manual sea vieja; no hay que invitar a recargar.
+  let l2;
+  const ar = c.autoRefreshedAt ? new Date(c.autoRefreshedAt) : null;
+  if (ar && !isNaN(ar) && (Date.now() - ar.getTime()) <= 2 * 86400000) {
+    const cd = new Date(ar.getTime() - 4 * 3600 * 1000);
+    const z = n => String(n).padStart(2, '0');
+    l2 = `<span style="color:#0e9f6e;font-weight:600" title="La corrida automática mantiene esta lista (último refresco ${z(cd.getUTCDate())}/${z(cd.getUTCMonth() + 1)})">\u{1F504} al día</span> · ${methodChip(c.rosterSource)} ${rosterFresh(c.rosterAt)}${by}`;
+  } else {
+    l2 = `${methodChip(c.rosterSource)} ${rosterFresh(c.rosterAt)}${by}`;
+  }
   return `<div class="cell-personal">`
-    + `<div class="l1">${c.staffCount}${photoChip}</div>`
-    + `<div class="l2">${methodChip(c.rosterSource)} ${rosterFresh(c.rosterAt)}${by}</div>`
+    + `<div class="l1">${num}${photoChip}</div>`
+    + bar
+    + `<div class="l2">${l2}</div>`
     + `</div>`;
 }
 
