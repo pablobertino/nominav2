@@ -487,6 +487,42 @@ async function directory(env, cc, table, deptScope) {
     });
   }
 
+  // v6.23: ORIGEN DEL TRASLADO (la otra mitad del espejo v6.13) — para los
+  // VIGENTES con ingreso reciente (<= 45 días), ¿la cédula tiene una fila
+  // CERRADA en otra empresa del grupo con el fin pegado a este ingreso? Si
+  // sí, este "ingresado" es en realidad un TRASLADO RECIBIDO: from_at = de
+  // dónde vino, from_role = el cargo que tenía allá, from_end = cuándo
+  // egresó allá. (Caso Herrera: uniforme de AA01 en la lista de AA08.)
+  // Se tolera un fin hasta 7 días DESPUÉS del ingreso: AX a veces registra
+  // el egreso de origen con rezago (Marval: fin 14/07, ingreso 15/07).
+  // 1 subrequest extra solo si la lista tiene ingresos recientes.
+  const hoyISO = new Date().toISOString().slice(0, 10);
+  const cut45 = new Date(Date.now() - 45 * 86400000).toISOString().slice(0, 10);
+  const startByCed = {};
+  (workers || []).forEach(w => {
+    if (!w.id_number || !w.start_date) return;
+    const st = String(w.start_date).slice(0, 10);
+    const vig = !w.end_date || String(w.end_date).slice(0, 10) >= hoyISO;
+    if (vig && st >= cut45 && st <= hoyISO) startByCed[w.id_number] = st;
+  });
+  const fromByCed = {};
+  const nuevosCeds = Object.keys(startByCed);
+  if (nuevosCeds.length) {
+    const inNew = [...new Set(nuevosCeds)].map(c => `"${c}"`).join(',');
+    const closed = await sb(env,
+      `store_workers?id_number=in.(${inNew})&company_code=neq.${encodeURIComponent(cc)}`
+      + `&end_date=gte.${cut45}&select=id_number,company_code,role,end_date`);
+    (closed || []).forEach(a => {
+      const st = startByCed[a.id_number];
+      if (!st || !a.end_date) return;
+      const fin = String(a.end_date).slice(0, 10);
+      const lim = new Date(Date.parse(st) + 7 * 86400000).toISOString().slice(0, 10);
+      if (fin > lim) return;   // el fin de allá es muy posterior al ingreso: no es el origen
+      const prev = fromByCed[a.id_number];
+      if (!prev || fin > String(prev.end_date).slice(0, 10)) fromByCed[a.id_number] = a;
+    });
+  }
+
   // Resolucion de la foto en el directory:
   //  - Esquema NUEVO (tiene photo_key): la miniatura esta en el bucket
   //    publico como "<photo_key>.jpg" -> URL publica directa, sin firmar,
@@ -518,6 +554,11 @@ async function directory(env, cc, table, deptScope) {
       // v6.13: si egresó acá pero está activo en otra empresa = traslado.
       now_at: (w.end_date && nowByCed[w.id_number]) ? nowByCed[w.id_number].company_code : null,
       now_since: (w.end_date && nowByCed[w.id_number]) ? (nowByCed[w.id_number].start_date || null) : null,
+      // v6.23: si el ingreso reciente vino de otra empresa del grupo =
+      // traslado RECIBIDO: de dónde vino, con qué cargo y cuándo egresó allá.
+      from_at: fromByCed[w.id_number] ? fromByCed[w.id_number].company_code : null,
+      from_role: fromByCed[w.id_number] ? (fromByCed[w.id_number].role || null) : null,
+      from_end: fromByCed[w.id_number] ? (fromByCed[w.id_number].end_date || null) : null,
       birth_date: pick('birth_date'),
       gender: pick('gender'),
       marital_status: pick('marital_status'),

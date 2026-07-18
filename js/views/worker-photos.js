@@ -1017,6 +1017,14 @@ function paintGrid() {
         : w.now_at
           ? `<span class="pill" style="margin-top:4px;display:inline-block;background:#e8effc;color:#1d4ed8" title="Egresó de ${esc(STATE.cc)} el ${fmtDate(w.end_date)} · activo en ${esc(w.now_at)}${w.now_since ? ' desde el ' + fmtDate(w.now_since) : ''}">traslado ${fmtDate(w.end_date)} → ahora en ${esc(w.now_at)}</span>`
           : `<span class="pill pill-out" style="margin-top:4px;display:inline-block">egresó ${fmtDate(w.end_date)}</span>`;
+    // v6.23: la otra mitad del espejo — TRASLADO RECIBIDO. Si un ingresado
+    // reciente venía de otra empresa del grupo (fila cerrada allá con el fin
+    // pegado a este ingreso), el chip teal dice de dónde vino y qué cargo
+    // tenía allá — el actual ya lo muestra la tarjeta. (Caso Herrera:
+    // uniforme de AA01 en la lista de AA08.)
+    const origen = (isVigente(w) && w.from_at)
+      ? `<span class="pill" style="margin-top:4px;display:inline-block;background:#e6fbf7;color:#0f766e" title="Ingreso por traslado: venía de ${esc(w.from_at)}${w.from_role ? ' como ' + esc(w.from_role) : ''}${w.from_end ? ' · egresó de allá el ' + fmtDate(w.from_end) : ''}${w.start_date ? ' · ingresó acá el ' + fmtDate(w.start_date) : ''}">vino de ${esc(w.from_at)}${w.from_role ? ' · ' + esc(w.from_role) : ''}</span>`
+      : '';
     const manualTag = w.source === 'manual' ? '<span class="pill wp-pill-manual" style="margin-top:4px;display:inline-block">manual</span>' : '';
     // Barra de departamento ARRIBA de la tarjeta.
     //  - Con departamento: etiqueta gris discreta (solo lectura).
@@ -1055,7 +1063,7 @@ function paintGrid() {
         <p class="wp-name">${esc(w.full_name)}</p>
         <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}<button type="button" data-copyced="${w.id_number}" title="Copiar datos" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:5px;padding:0;border:1px solid var(--border);border-radius:6px;background:var(--surface,#fff);color:var(--ink-soft,#475569);cursor:pointer;vertical-align:middle"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></span>
         ${w.role ? `<div class="wp-role"${(rkColor && rk !== RANK_NONE) ? ` style="color:${rkColor};font-weight:700"` : ''}>${esc(w.role)}</div>` : ''}
-        ${egr}${manualTag}
+        ${egr}${origen}${manualTag}
         <div class="wp-spacer"></div>
         ${miniRowHtml(w)}
       </div>
