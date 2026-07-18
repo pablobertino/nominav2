@@ -35,6 +35,11 @@
    Reglas de seguridad:
    - Egreso SOLO con dato EXPLICITO (finContrato pasada). JAMAS por
      ausencia en la respuesta (una respuesta parcial no egresa a nadie).
+   - v6.21 (plan PLAN_BLINDAJE_SYNC_EGRESOS_2026-07-18): el REINGRESO solo
+     toca filas REALMENTE egresadas (una vigente con fin futuro no se toca),
+     no reabre egresos de hace <= 7 dias (lag entre modulos AX, no reingreso)
+     y los egresados de HCM SIN fila en el portal se insertan CERRADOS
+     (ventana 45 dias) para que la historia no quede invisible.
    - Umbral anti-vaciado: si la API devuelve menos del 70% de los activos
      de una tienda (y la tienda tiene 5+), esa tienda se SALTA con alerta.
    - Centinelas: la API devuelve '-' / 'None' / 'No' / '0' cuando no hay dato.
@@ -363,18 +368,64 @@ async function processStore(env, cc) {
 
     // INGRESOS: vigentes del sistema que el roster no tiene (o tiene egresados
     // -> reingreso). NO se toca a los que ya estan activos.
+    //
+    // v6.21 — BLINDAJE DEL REINGRESO (PLAN_BLINDAJE_SYNC_EGRESOS_2026-07-18):
+    //
+    // P1: una fila VIGENTE con FIN FUTURO (contrato a termino, badge v6.05:
+    //     is_active=true + end_date futura) caia aca "por tener end_date" y
+    //     el PATCH le borraba el fin EN CADA CORRIDA. No es un reingreso:
+    //     esta trabajando. Solo reingresa una fila REALMENTE egresada
+    //     (cerrada, o con fin ya cumplido).
+    //
+    // P2: si el egreso es RECIENTE (<= 7 dias), que HCM traiga a la persona
+    //     "vigente" es casi siempre LAG entre modulos de AX (el espejo de
+    //     egresos ya proceso; el modulo de empleados aun no). Reabrirla
+    //     desharia lo que ax_egresos_apply cerro y arrancaria un ping-pong
+    //     cerrar/abrir hasta que AX se ponga al dia. Se deja quieta y se
+    //     AVISA; si pasados los 7 dias HCM la sigue trayendo vigente, es un
+    //     reingreso real y entra solo.
+    const REENTER_GUARD_DAYS = 7;
+    const guardFrom = new Date(Date.now() - REENTER_GUARD_DAYS * 86400000)
+      .toISOString().slice(0, 10);
     const toInsert = [];
     const toReenter = [];
+    const lagHold = [];   // reingresos retenidos por la guardia (solo aviso)
     for (const [ced, r] of vig) {
       const w = curByCed.get(ced);
-      if (!w) toInsert.push([ced, r]);
-      else if (w.is_active === false || w.end_date) toReenter.push([ced, r]);
+      if (!w) { toInsert.push([ced, r]); continue; }
+      const egresada = w.is_active === false
+        || (w.end_date && String(w.end_date).slice(0, 10) <= today);
+      if (!egresada) continue;   // activa (o vigente con fin futuro): intocable
+      const finReciente = w.end_date && String(w.end_date).slice(0, 10) >= guardFrom;
+      if (finReciente) { lagHold.push(ced); continue; }
+      toReenter.push([ced, r]);
+    }
+    if (lagHold.length) {
+      out.alert = `Reingreso retenido ${REENTER_GUARD_DAYS}d (egreso reciente en el portal, posible lag del sistema): ${lagHold.join(', ')}`;
+      out.detail.lag_hold = lagHold;
     }
     // EGRESOS: SOLO con finContrato explicita, sobre los que siguen activos.
     const toEgress = [];
+    // v6.21 — HUERFANOS (P4, caso Gamez/Pinto en AA03): la persona egreso
+    // ANTES de existir en el portal. Su row de HCM viene COMPLETO (nombre,
+    // cargo, fechas) y antes se descartaba porque solo se cerraban filas
+    // existentes — quedaba invisible para siempre. Ahora se INSERTA
+    // directamente CERRADA (is_active=false + end_date), con ventana de 45
+    // dias para no arrastrar historico masivo si la API lo mandara.
+    const HUERFANO_DIAS = 45;
+    const huerfFrom = new Date(Date.now() - HUERFANO_DIAS * 86400000)
+      .toISOString().slice(0, 10);
+    const toInsertClosed = [];
     for (const [ced, f] of fin) {
       const w = curByCed.get(ced);
-      if (w && w.is_active !== false && !w.end_date) toEgress.push([ced, f]);
+      if (w) {
+        if (w.is_active !== false && !w.end_date) toEgress.push([ced, f]);
+        continue;
+      }
+      if (f >= huerfFrom) {
+        const r = rows.find(x => digits(x.ficha || x.cedula || x.id_number) === ced);
+        if (r) toInsertClosed.push([ced, r, f]);
+      }
     }
 
     /* v5.34: ya no se puede cortar aca. Antes, si no habia ingresos ni egresos,
@@ -383,7 +434,7 @@ async function processStore(env, cc) {
        El relleno corre SIEMPRE que la tienda tenga gente vigente. */
     const hayMovimiento = toInsert.length || toReenter.length || toEgress.length;
 
-    const deptId = (toInsert.length || toReenter.length) ? await retailDeptId(env, cc) : null;
+    const deptId = (toInsert.length || toReenter.length || toInsertClosed.length) ? await retailDeptId(env, cc) : null;
     const fullNameOf = (r) => String(r.nombreCompleto
       || [r.primerNombre, r.segundoNombre, r.apellidos || [r.primerApellido, r.segundoApellido].filter(Boolean).join(' ')]
         .filter(Boolean).join(' ')).trim();
@@ -498,6 +549,71 @@ async function processStore(env, cc) {
       });
       out.added += toInsert.length;
       out.detail.added = toInsert.map(([c]) => c);
+    }
+
+    /* v6.21 — HUERFANOS CERRADOS (P4). La ficha entra completa y CERRADA:
+       nunca estuvo en el portal y ya egreso; se inserta como HISTORIA para
+       que Personal la muestre (filtros Egresados/Traslados), la barrita de
+       la quincena la cuente y el matching del apply la encuentre. Mismos
+       normalizadores que el INSERT normal; NO se cuentan rechazos de formato
+       (es historia, no una ficha operativa que alguien vaya a corregir). */
+    if (toInsertClosed.length) {
+      const accOf = (r) => cleanAccount(r.cuentaBancaria);
+      const bodyClosed = toInsertClosed.map(([ced, r, f]) => ({
+        company_code: cc,
+        id_number: ced,
+        full_name: fullNameOf(r) || ced,
+        first_name: r.primerNombre || null,
+        second_name: r.segundoNombre || null,
+        last_names: r.apellidos || [r.primerApellido, r.segundoApellido].filter(Boolean).join(' ') || null,
+        first_lastname: upperOrNull(r.primerApellido),
+        role: upperOrNull(r.idCargo),
+        birth_date: iso10(r.fechaNacimiento),
+        gender: genderCode(r.genero),
+        marital_status: maritalCode(r.estadoCivil),
+        todo_ticket: todoTicketCode(r.todoTicket),
+        data_id: clean(r.dataArea),
+        start_date: iso10(r.inicioContrato),
+        end_date: f,
+        account_number: accOf(r),
+        phone: cleanPhone(r.telefono),
+        email: cleanEmail(r.correo),
+        is_active: false,
+        department_id: deptId,
+        source: 'auto_sync',
+      }));
+      await sb(env, 'store_workers', {
+        method: 'POST', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify(bodyClosed),
+      });
+      // Maestro: crear SOLO si no existe (ignore-duplicates, jamas pisar).
+      const masterClosed = toInsertClosed.map(([ced, r]) => ({
+        id_number: ced,
+        ced_kind: cedKind(ced),
+        full_name: fullNameOf(r) || ced,
+        first_name: r.primerNombre || null,
+        second_name: r.segundoNombre || null,
+        last_names: r.apellidos || null,
+        first_lastname: upperOrNull(r.primerApellido),
+        role: upperOrNull(r.idCargo),
+        birth_date: iso10(r.fechaNacimiento),
+        gender: genderCode(r.genero),
+        marital_status: maritalCode(r.estadoCivil),
+        account_number: accOf(r),
+        bank_code: accOf(r) ? accOf(r).slice(0, 4) : null,
+        todo_ticket: todoTicketCode(r.todoTicket),
+        data_id: clean(r.dataArea),
+        phone: cleanPhone(r.telefono),
+        email: cleanEmail(r.correo),
+        last_source_company: cc,
+      }));
+      await sb(env, 'workers_master?on_conflict=id_number', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=ignore-duplicates,return=minimal' },
+        body: JSON.stringify(masterClosed),
+      });
+      out.removed += toInsertClosed.length;
+      out.detail.closed_inserted = toInsertClosed.map(([c]) => c);
     }
 
     /* REINGRESO: la persona ya existe en el roster de esta tienda (egresada) y
