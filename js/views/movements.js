@@ -44,6 +44,13 @@
      ranking de dispersion, curva de supervivencia redibujada + tabla de
      cohortes, tarjetas de diagnostico, pie numerado). Los textos salen
      del MISMO html de pantalla (pdfText): PDF y tablero no discrepan.
+   - v6.10: dispersion IDENTIFICABLE a todo el ancho (Variante A del
+     mockup movimientos_dispersion_mockup.html): filas de dos lineas
+     (codigo+marca+subzona·zona / Nº+razon social+RIF, campos nro/rif
+     nuevos en la RPC), strip con un punto por tienda (hover identifica)
+     y mediana; CLIC en la fila -> Detalle filtrado a esa empresa
+     (goDetalleCompany). Indicadores y Dispersion apilados (sin mv-grid2),
+     indicadores a 3 columnas.
 
    Datos por /api/movements (facets + list). Gate: view.movimientos.
    Export: renderMovements(user)
@@ -188,7 +195,8 @@ function ensureStyles() {
   @media (max-width:900px){.mv-grid2{grid-template-columns:1fr}}
   .mv-panel{background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;padding:16px 18px}
   .mv-panel h3{font-size:13px;margin:0 0 12px;color:var(--ink-soft,#475569)}
-  .mv-rot{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+  .mv-rot{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+  @media (max-width:900px){.mv-rot{grid-template-columns:1fr 1fr}}
   @media (max-width:520px){.mv-rot{grid-template-columns:1fr}}
   .mv-rk{border:1px solid var(--border-soft,#eef1f5);border-radius:11px;padding:12px 14px;background:#fbfcfe;position:relative}
   .mv-rk .v{font-size:23px;font-weight:800;color:var(--ink);letter-spacing:-.02em}
@@ -239,6 +247,28 @@ function ensureStyles() {
   .mv-tp-table td.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
   .mv-tp-table .rk-n{color:var(--faint,#94a3b8);font-size:11px}
   .mv-tp-table .rz{color:var(--ink,#0f172a);font-weight:600}
+  /* v6.10: dispersion a TODO EL ANCHO, filas identificables (Variante A del
+     mockup movimientos_dispersion_mockup.html) + strip con un punto por tienda */
+  .mv-strip svg{display:block;width:100%;height:56px}
+  .mv-strip-leg{display:flex;justify-content:space-between;gap:10px;font-size:10.5px;color:var(--faint,#94a3b8);margin:2px 0 10px}
+  .mv-dacols{display:grid;grid-template-columns:1fr 1fr;gap:6px 26px}
+  @media (max-width:900px){.mv-dacols{grid-template-columns:1fr}}
+  .mv-dah{font-size:10.5px;letter-spacing:.4px;text-transform:uppercase;color:var(--faint,#94a3b8);margin:0 0 5px;font-weight:700}
+  .mv-dar{display:flex;align-items:center;gap:12px;padding:8px 10px;border-radius:9px;border:1px solid transparent;cursor:pointer}
+  .mv-dar:hover{background:#fbfcfe;border-color:var(--border)}
+  .mv-dar .id{flex:1;min-width:0}
+  .mv-dar .l1{display:flex;align-items:center;gap:7px;flex-wrap:wrap}
+  .mv-dar .l1 .cod{font-weight:800;color:var(--brand,#2563eb);font-size:13px;font-family:ui-monospace,Menlo,monospace}
+  .mv-dar .chip{display:inline-block;border:1px solid var(--border);background:var(--bg-soft,#f1f5f9);color:var(--ink-soft,#475569);border-radius:6px;padding:0 6px;font-size:10px;font-weight:700;white-space:nowrap}
+  .mv-dar .loc{font-size:12px;color:var(--ink-soft,#475569);font-weight:600}
+  .mv-dar .l2{font-size:10.5px;color:var(--faint,#94a3b8);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .mv-dar .met{text-align:right;flex:0 0 132px}
+  .mv-dar .pct{font-size:15px;font-weight:800;font-variant-numeric:tabular-nums}
+  .mv-dar.hi .pct{color:#b91c1c}.mv-dar.lo .pct{color:var(--ok,#0e9f6e)}
+  .mv-dar .mini{height:5px;border-radius:999px;background:var(--border-soft,#eef1f5);overflow:hidden;margin:4px 0 3px}
+  .mv-dar .mini i{display:block;height:100%;background:linear-gradient(90deg,#f87171,#dc2626)}
+  .mv-dar.lo .mini i{background:linear-gradient(90deg,#6ee7b7,#0e9f6e)}
+  .mv-dar .frac{font-size:10px;color:var(--faint,#94a3b8)}
   /* Chips-filtro por tipo */
   .mv-typechips{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:12px}
   .mv-tc{display:flex;align-items:center;gap:6px;font-size:11.5px;font-weight:700;padding:6px 12px;
@@ -717,6 +747,9 @@ function paintAnalisis(body) {
   });
   body.querySelectorAll('.mv-al[data-code]').forEach(a =>
     a.addEventListener('click', () => openCompany(a.dataset.code)));
+  // v6.10: fila de la dispersion -> pestaña DETALLE filtrada a esa tienda.
+  body.querySelectorAll('.mv-dar[data-code]').forEach(r =>
+    r.addEventListener('click', () => goDetalleCompany(r.dataset.code)));
 }
 
 /* ---------- curva de supervivencia por cohorte (F3 v5.98, mockup v3) ---------- */
@@ -898,28 +931,53 @@ function paintIndicadores() {
   const gPorTienda = (i.gerentes_egresados != null && d && d.n) ? (i.gerentes_egresados / d.n).toFixed(1).replace('.', ',') : null;
   const gTxt = `Estabilidad gerencial: el mejor predictor de la rotación del resto del equipo${gPorTienda ? ` — ≈${gPorTienda} egresos de gerente por tienda comparable en el período` : ''}. El cambio de gerente suele disparar la rotación del equipo en los ~90 días siguientes.`;
 
+  /* v6.10: adios mv-grid2 aqui — Indicadores y Dispersion van APILADOS a
+     todo el ancho (pedido de Pablo 17/07: la dispersion es la clave
+     diagnostica y estaba apretada en media columna; los 6 indicadores
+     pasan a 3 columnas). */
   return `
-    <div class="mv-grid2">
-      <div class="mv-panel">
-        <h3>Indicadores del período (metodología estándar)</h3>
-        <div class="mv-rot">
-          ${rk(v(i.rot_anualizada, '%'), rotSev, 'Rotación anualizada', rotTxt, 'rot')}
-          ${rk(v(i.temprana90, '%'), tSev, 'Rotación temprana <90 días', tTxt, 'temp')}
-          ${rk(v(i.estabilidad, '%'), eSev, 'Índice de estabilidad', eTxt, 'estab')}
-          ${rk(v(i.reincidentes), '', 'Reincidentes', reTxt, 'boom')}
-          ${rk(`${v(i.temprana_vendedor, '%')} / ${v(i.temprana_gerente, '%')}`, vgSev, 'Temprana: vendedor vs gerente', vgTxt, 'temp')}
-          ${rk(v(i.gerentes_egresados), '', 'Gerentes egresados', gTxt, 'disp')}
-        </div>
+    <div class="mv-panel" style="margin-bottom:14px">
+      <h3>Indicadores del período (metodología estándar)</h3>
+      <div class="mv-rot">
+        ${rk(v(i.rot_anualizada, '%'), rotSev, 'Rotación anualizada', rotTxt, 'rot')}
+        ${rk(v(i.temprana90, '%'), tSev, 'Rotación temprana <90 días', tTxt, 'temp')}
+        ${rk(v(i.estabilidad, '%'), eSev, 'Índice de estabilidad', eTxt, 'estab')}
+        ${rk(v(i.reincidentes), '', 'Reincidentes', reTxt, 'boom')}
+        ${rk(`${v(i.temprana_vendedor, '%')} / ${v(i.temprana_gerente, '%')}`, vgSev, 'Temprana: vendedor vs gerente', vgTxt, 'temp')}
+        ${rk(v(i.gerentes_egresados), '', 'Gerentes egresados', gTxt, 'disp')}
       </div>
-      <div class="mv-panel">
-        ${paintDispersion()}
-      </div>
+    </div>
+    <div class="mv-panel" style="margin-bottom:14px">
+      ${paintDispersion()}
     </div>`;
 }
 
-/* ---------- panel Dispersión entre tiendas comparables (F3 v5.98) ----------
-   v6.00: la RPC manda la LISTA COMPLETA (list, orden rot desc); top/low se
-   rebanan aca y el boton abre la ficha completa en un modal del portal. */
+/* v6.10: clic en una tienda de la dispersion -> pestaña DETALLE con la
+   EMPRESA filtrada a esa tienda (mismo periodo). Se RE-CONSULTA al server
+   para que chips, conteos y stats queden consistentes con el filtro (los
+   filtros del tablero son globales: al volver a Analisis, el analisis es
+   el de esa tienda — comportamiento honesto, no un atajo visual). */
+async function goDetalleCompany(code) {
+  if (!code) return;
+  C.company = String(code);
+  TAB = 'detalle';
+  TYPES_ON = new Set(TIPOS.map(t => t.key));
+  C.q = ''; PAGE = 1;
+  await renderMovements(USER);
+  run();
+}
+
+/* ---------- panel Dispersión entre tiendas comparables ----------
+   v6.10 (Variante A del mockup movimientos_dispersion_mockup.html):
+   - Panel a TODO EL ANCHO (ya no comparte fila con Indicadores).
+   - Strip con UN PUNTO POR TIENDA sobre el gradiente (hover identifica:
+     código · marca · tasa) + línea de mediana. Escala 0 → máximo real.
+   - Filas de DOS LÍNEAS identificables: código + marca + subzona · zona
+     arriba; Nº de tienda + razón social + RIF abajo (nro/rif los manda
+     la RPC desde companies, v610). CLIC en la fila → pestaña DETALLE
+     filtrada a esa empresa (goDetalleCompany), pedido de Pablo: "que
+     vaya al detalle de eso que muestra". Código → Personal sigue en la
+     ficha completa. */
 function paintDispersion() {
   const d = (STATS && STATS.dispersion) || null;
   const G = '/guias/indicadores-rotacion.html';
@@ -927,22 +985,42 @@ function paintDispersion() {
     <p class="mv-note" style="margin:0">Sin tiendas comparables (plantilla ≥ 8) dentro de los filtros elegidos.</p>`;
   const top = d.list.slice(0, 6);
   const low = d.list.slice(-6).reverse();
-  const span = Math.max(1, d.max - d.min);
-  const medPos = Math.round((d.mediana - d.min) / span * 100);
-  const li = (x) => `<li><span class="mv-al" data-code="${esc(x.code)}" title="${esc(x.name || '')} · ${esc(x.zona || '')} · ${esc(x.concepto || '')}">${esc(x.code)}</span>
-      <span class="pl">${esc(x.concepto || x.zona || '')} · plantilla ${x.plantilla} · ${x.egresos} egr.</span><span class="rt">${x.rot}%</span></li>`;
+  const topSet = new Set(top.map(x => x.code));
+  const lowSet = new Set(low.map(x => x.code));
+  const maxR = Math.max(1, d.max);
+  const X = (rot) => Math.round(8 + (rot / maxR) * 984);
+  const dots = d.list.map(x => {
+    const hot = topSet.has(x.code), cold = lowSet.has(x.code);
+    return `<circle cx="${X(x.rot)}" cy="27" r="${hot || cold ? 4 : 3}" fill="${hot ? '#dc2626' : cold ? '#0e9f6e' : '#94a3b8'}" opacity=".85"><title>${esc(x.code)} · ${esc(x.concepto || '')} · ${x.rot}%</title></circle>`;
+  }).join('');
+  const medX = X(d.mediana);
+  const fila = (x, cls) => `
+    <div class="mv-dar ${cls}" data-code="${esc(x.code)}" title="Ver el detalle de ${esc(x.code)} en el período">
+      <div class="id">
+        <div class="l1"><span class="cod">${esc(x.code)}</span><span class="chip">${esc(x.concepto || '—')}</span><span class="loc">${esc([x.subzona, x.zona].filter(Boolean).join(' · ') || '—')}</span></div>
+        <div class="l2">Nº ${esc(x.nro || '—')} · ${esc(x.name || '—')} · ${esc(x.rif || '—')}</div>
+      </div>
+      <div class="met"><div class="pct">${x.rot}%</div><div class="mini"><i style="width:${Math.max(4, Math.min(100, Math.round(x.rot / maxR * 100)))}%"></i></div><div class="frac">${x.egresos} egr. · plantilla ${x.plantilla}</div></div>
+    </div>`;
   return `
     <h3>La clave diagnóstica: dispersión entre tiendas comparables
       <a class="q" style="position:static;display:inline-flex;margin-left:6px;vertical-align:middle;width:17px;height:17px;border-radius:50%;background:#eef4ff;color:var(--brand,#2563eb);font-size:11px;font-weight:800;align-items:center;justify-content:center;text-decoration:none" href="${G}#disp" target="_blank" rel="noopener" title="Qué mide y cómo se calcula">?</a></h3>
-    <div class="mv-band-wrap">
-      <span>${d.min}%</span>
-      <div class="mv-band"><span class="med" style="left:${medPos}%" title="Mediana ${d.mediana}%"></span></div>
-      <span>${d.max}%</span>
+    <div class="mv-strip">
+      <svg viewBox="0 0 1000 56" preserveAspectRatio="none">
+        <defs><linearGradient id="mvDispG" x1="0" x2="1">
+          <stop offset="0" stop-color="#d3ead9"/><stop offset=".35" stop-color="#f4ecc8"/>
+          <stop offset=".7" stop-color="#f3d9b9"/><stop offset="1" stop-color="#eec7c7"/>
+        </linearGradient></defs>
+        <rect x="0" y="20" width="1000" height="14" rx="7" fill="url(#mvDispG)"/>
+        ${dots}
+        <line x1="${medX}" y1="8" x2="${medX}" y2="46" stroke="#0f172a" stroke-width="2"/>
+        <text x="${Math.min(medX + 8, 870)}" y="14" font-size="11" fill="#0f172a" font-weight="700">mediana ${d.mediana}%</text>
+      </svg>
+      <div class="mv-strip-leg"><span>0%</span><span>cada punto = una tienda comparable · pasa el mouse para identificarla · ${d.n} tiendas (plantilla ≥8) · tasa del período · misma marca, mismo tabulador, mismo mercado</span><span>${d.max}%</span></div>
     </div>
-    <div class="mv-band-cap">mediana ${d.mediana}% · ${d.n} tiendas comparables (plantilla ≥8) · tasa del período · misma marca, mismo tabulador, mismo mercado</div>
-    <div class="mv-displists">
-      <div><h4>Rotan más</h4><ul class="mv-dl hi">${top.map(li).join('')}</ul></div>
-      <div><h4>Retienen mejor</h4><ul class="mv-dl lo">${low.map(li).join('')}</ul></div>
+    <div class="mv-dacols">
+      <div><p class="mv-dah">Rotan más</p>${top.map(x => fila(x, 'hi')).join('')}</div>
+      <div><p class="mv-dah">Retienen mejor</p>${low.map(x => fila(x, 'lo')).join('')}</div>
     </div>
     <button class="mv-clear" id="mvDispAll" type="button" style="margin-top:12px">Ver la ficha completa (${d.n} tiendas)</button>`;
 }
