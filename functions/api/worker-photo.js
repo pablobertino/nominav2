@@ -468,6 +468,25 @@ async function directory(env, cc, table, deptScope) {
     (master || []).forEach(m => { masterByCed[m.id_number] = m; });
   }
 
+  // v6.13: TRASLADOS — para los egresados de ESTA empresa, ¿la cédula
+  // está activa HOY en otra empresa del grupo? (fila viva en store_workers;
+  // la corrida automática mantiene el roster al día). Si sí, el "egreso"
+  // local fue en realidad un traslado: now_at = a dónde fue, now_since =
+  // desde cuándo. Con varias filas activas (doble empleo) gana la del
+  // ingreso más reciente. 1 subrequest solo si hay egresados en la lista.
+  const egresadosCeds = (workers || []).filter(w => w.end_date && w.id_number).map(w => w.id_number);
+  const nowByCed = {};
+  if (egresadosCeds.length) {
+    const inEgr = [...new Set(egresadosCeds)].map(c => `"${c}"`).join(',');
+    const act = await sb(env,
+      `store_workers?id_number=in.(${inEgr})&is_active=eq.true&end_date=is.null`
+      + `&company_code=neq.${encodeURIComponent(cc)}&select=id_number,company_code,start_date`);
+    (act || []).forEach(a => {
+      const prev = nowByCed[a.id_number];
+      if (!prev || String(a.start_date || '') > String(prev.start_date || '')) nowByCed[a.id_number] = a;
+    });
+  }
+
   // Resolucion de la foto en el directory:
   //  - Esquema NUEVO (tiene photo_key): la miniatura esta en el bucket
   //    publico como "<photo_key>.jpg" -> URL publica directa, sin firmar,
@@ -496,6 +515,9 @@ async function directory(env, cc, table, deptScope) {
       last_names: pick('last_names'),
       role: pick('role'),
       end_date: w.end_date || null,
+      // v6.13: si egresó acá pero está activo en otra empresa = traslado.
+      now_at: (w.end_date && nowByCed[w.id_number]) ? nowByCed[w.id_number].company_code : null,
+      now_since: (w.end_date && nowByCed[w.id_number]) ? (nowByCed[w.id_number].start_date || null) : null,
       birth_date: pick('birth_date'),
       gender: pick('gender'),
       marital_status: pick('marital_status'),

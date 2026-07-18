@@ -435,7 +435,7 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   } catch (_) { /* sin red: UI historica, el server protege */ }
 
   STATE = { user, cc: companyCode, onExit: onExit || null, workers: [], q: '', company: null, bankMap: {}, mode, adminId, isAdmin, isSuper, isGestor, canEditDept, can: CANP, departments: [], cargoRanks: [], selMode: false, selected: new Set(),
-    sortKey: mode === 'enterprise' ? 'name_az' : 'rank', fPhoto: 'all', fGender: 'all', fCargo: 'ALL', fDept: 'ALL', fStatus: 'all' };
+    sortKey: mode === 'enterprise' ? 'name_az' : 'rank', fPhoto: 'all', fGender: 'all', fCargo: 'ALL', fDept: 'ALL', fStatus: 'active' };  // v6.13: la vista NACE en Solo activos
 
   const back = onExit
     ? `<button class="btn" id="wpBack" style="margin-bottom:14px">← Volver</button>`
@@ -475,9 +475,10 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
         <select id="wpfCargo"><option value="ALL">Todos los cargos</option></select>
         <select id="wpfDept" style="display:none"><option value="ALL">Todos los deptos.</option></select>
         <select id="wpfStatus">
-          <option value="all">Activos y egresados</option>
-          <option value="active">Solo activos</option>
+          <option value="active" selected>Solo activos</option>
+          <option value="transfer">Traslados</option>
           <option value="inactive">Solo egresados</option>
+          <option value="all">Activos y egresados</option>
         </select>
         <select id="wpSort">
           ${mode !== 'enterprise' ? '<option value="rank">Orden: Jerarquía de cargo</option>' : ''}
@@ -629,6 +630,7 @@ function paintRosterBar() {
   }
   const total = (STATE.workers || []).length;
   const activos = (STATE.workers || []).filter(w => !w.end_date).length;
+  const traslados = (STATE.workers || []).filter(w => w.end_date && w.now_at).length;  // v6.13
 
   let when = 'sin registro de carga';
   if (meta && meta.uploaded_at) {
@@ -661,7 +663,7 @@ function paintRosterBar() {
   bar.style.display = 'flex';
   bar.innerHTML = `
     <span class="rb-ic">📋</span>
-    <span><b>${total}</b> en la lista · <b>${activos}</b> activo${activos === 1 ? '' : 's'}${manual ? ` · ${manual} manual${manual === 1 ? '' : 'es'}` : ''} · última carga: <b>${srcName}</b> el <b>${when}</b></span>
+    <span><b>${total}</b> en la lista · <b>${activos}</b> activo${activos === 1 ? '' : 's'}${traslados ? ` · ${traslados} traslado${traslados === 1 ? '' : 's'}` : ''}${manual ? ` · ${manual} manual${manual === 1 ? '' : 'es'}` : ''} · última carga: <b>${srcName}</b> el <b>${when}</b></span>
     ${freshTxt ? `<span class="rb-sep"></span>${freshTxt}` : ''}`;
 }
 
@@ -810,8 +812,13 @@ function currentFiltered() {
       if (STATE.fDept === '__none') { if (w.department_name) return false; }
       else if (w.department_name !== fDepName) return false;
     }
+    // v6.13: estados. active = sin fin AQUÍ; transfer = egresó de esta
+    // empresa pero está activo en otra del grupo (now_at del directory);
+    // inactive = egreso REAL (sin fila activa en otra empresa); all = todo,
+    // con el chip de cada tarjeta contando la historia.
     if (STATE.fStatus === 'active' && w.end_date) return false;
-    if (STATE.fStatus === 'inactive' && !w.end_date) return false;
+    if (STATE.fStatus === 'transfer' && !(w.end_date && w.now_at)) return false;
+    if (STATE.fStatus === 'inactive' && (!w.end_date || w.now_at)) return false;
     return true;
   });
 }
@@ -931,7 +938,12 @@ function paintGrid() {
           + `<div class="wp-initials" style="background:${AVATAR_BG[ci]};color:${AVATAR_FG[ci]}">${esc(initialsOf(w.full_name))}</div>`
           + `<span class="wp-nophoto"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>Sin foto</span>`
           + `</div>`;
-    const egr = w.end_date ? `<span class="pill pill-out" style="margin-top:4px;display:inline-block">egresó ${fmtDate(w.end_date)}</span>` : '';
+    // v6.13: si egresó ACÁ pero está activo en otra empresa del grupo, el
+    // chip cuenta la historia completa: fue un traslado, no un egreso.
+    const egr = !w.end_date ? ''
+      : w.now_at
+        ? `<span class="pill" style="margin-top:4px;display:inline-block;background:#e8effc;color:#1d4ed8" title="Egresó de ${esc(STATE.cc)} el ${fmtDate(w.end_date)} · activo en ${esc(w.now_at)}${w.now_since ? ' desde el ' + fmtDate(w.now_since) : ''}">traslado ${fmtDate(w.end_date)} → ahora en ${esc(w.now_at)}</span>`
+        : `<span class="pill pill-out" style="margin-top:4px;display:inline-block">egresó ${fmtDate(w.end_date)}</span>`;
     const manualTag = w.source === 'manual' ? '<span class="pill wp-pill-manual" style="margin-top:4px;display:inline-block">manual</span>' : '';
     // Barra de departamento ARRIBA de la tarjeta.
     //  - Con departamento: etiqueta gris discreta (solo lectura).
