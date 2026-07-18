@@ -575,7 +575,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.24</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.25</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -6168,6 +6168,7 @@ async function viewConfig(user) {
         <div class="cfg-side-group">Sistema</div>
         <button class="cfg-side-item" data-tab="constancias"><span class="cfg-side-ic">📄</span> Constancias</button>
         <button class="cfg-side-item" data-tab="cor"><span class="cfg-side-ic">📆</span> Corte y períodos</button>
+        <button class="cfg-side-item" data-tab="params"><span class="cfg-side-ic">⚙️</span> Parámetros</button>
         <button class="cfg-side-item" data-tab="int"><span class="cfg-side-ic">🔌</span> Integraciones</button>
       </nav>
       <div class="cfg-panel-wrap" id="cfgBody"></div>
@@ -6193,7 +6194,58 @@ function cfgRenderTab(user) {
   else if (CFG_TAB === 'motegreso') cfgRenderEgressReasons(user, body);
   else if (CFG_TAB === 'constancias') cfgRenderConstancias(user, body);
   else if (CFG_TAB === 'cor') cfgRenderCorte(user, body);
+  else if (CFG_TAB === 'params') cfgRenderParams(user, body);
   else if (CFG_TAB === 'int') cfgRenderIntegraciones(user, body);
+}
+
+/* v6.25: PARÁMETROS DEL PORTAL (tabla portal_params, endpoint
+   /api/portal-params, solo superadmin). Valores que gobiernan reglas del
+   portal; el primero es gap_continuidad_dias=30 (antigüedad de Grupo:
+   pausas de hasta N días entre empleos no cortan el tramo continuo).
+   Los parámetros se CREAN por migración; acá solo se editan valores. */
+function cfgParamsApi(payload) {
+  return fetch('/api/portal-params', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload) }).then(r => r.json());
+}
+async function cfgRenderParams(user, body) {
+  body.innerHTML = '<div class="pnl-loading">Cargando…</div>';
+  const r = await cfgParamsApi({ action: 'list', adminId: user.id });
+  if (!r.ok) { body.innerHTML = `<div class="pnl-loading">Error: ${r.error || 'no se pudo cargar'}</div>`; return; }
+  const escP = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const fmtTs = ts => { if (!ts) return ''; const d = new Date(ts); return isNaN(d) ? '' : d.toLocaleString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+  body.innerHTML = `
+    <div class="card">
+      <h3 style="margin:0 0 4px">⚙️ Parámetros del portal</h3>
+      <p class="muted" style="margin:0 0 6px;font-size:12.5px">Valores que gobiernan reglas del portal. Los cambios aplican de inmediato en los cálculos que los usan. Los parámetros nuevos se crean por migración; acá se editan sus valores.</p>
+      ${(r.params || []).map(p => `
+        <div style="display:flex;gap:12px;align-items:flex-start;padding:12px 0;border-top:1px solid #eef1f5">
+          <div style="flex:1;min-width:0">
+            <div style="font-weight:700;font-size:13px">${escP(p.label || p.key)}</div>
+            <div class="muted" style="font-size:11px;margin-top:2px">clave: ${escP(p.key)}${p.updated_at ? ` · último cambio: ${escP(fmtTs(p.updated_at))}${p.updated_by ? ' por ' + escP(p.updated_by) : ''}` : ''}</div>
+          </div>
+          <input data-pkey="${escP(p.key)}" type="${/_dias$/.test(p.key) ? 'number' : 'text'}" ${/_dias$/.test(p.key) ? 'min="0" max="365"' : ''} value="${escP(p.value)}"
+                 style="width:110px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;font-size:13px;text-align:center">
+          <button data-psave="${escP(p.key)}" style="padding:8px 16px;border:none;border-radius:10px;background:#2563eb;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Guardar</button>
+          <span data-pmsg="${escP(p.key)}" style="font-size:12px;align-self:center;min-width:110px"></span>
+        </div>`).join('') || '<p class="muted">Sin parámetros.</p>'}
+    </div>`;
+  body.querySelectorAll('[data-psave]').forEach(btn => btn.addEventListener('click', async () => {
+    const key = btn.dataset.psave;
+    const inp = body.querySelector(`[data-pkey="${key}"]`);
+    const msg = body.querySelector(`[data-pmsg="${key}"]`);
+    const value = (inp.value || '').trim();
+    if (/_dias$/.test(key) && (!/^\d{1,3}$/.test(value) || Number(value) > 365)) {
+      msg.textContent = '✗ Número de días (0-365)'; msg.style.color = '#b91c1c'; return;
+    }
+    btn.disabled = true; msg.textContent = 'Guardando…'; msg.style.color = '#64748b';
+    const res = await cfgParamsApi({ action: 'save', adminId: user.id, key, value });
+    btn.disabled = false;
+    if (res.ok) {
+      msg.textContent = '✓ Guardado'; msg.style.color = '#0e9f6e';
+      const audit = body.querySelector(`[data-pkey="${key}"]`).closest('div[style*="border-top"]').querySelector('.muted');
+      if (audit && res.param) audit.textContent = `clave: ${key} · último cambio: ${fmtTs(res.param.updated_at)} por ${res.param.updated_by || ''}`;
+    } else { msg.textContent = `✗ ${res.error || 'Error'}`; msg.style.color = '#b91c1c'; }
+  }));
 }
 
 /* ---- helpers de settings (corte / integraciones) ---- */
