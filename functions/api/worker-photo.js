@@ -447,7 +447,10 @@ async function directory(env, cc, table, deptScope) {
   } else {
     const metaArr = await sb(env,
       `store_roster_meta?company_code=eq.${encodeURIComponent(cc)}`
-      + `&select=uploaded_at,uploaded_by,total_count,source_file`);
+      // v6.12: + fuente REAL de la carga (source: ax_api vs reporte) y
+      // frescura del sistema: la corrida automatica de egresos refresca
+      // active_count/auto_refreshed_at a diario (migracion v612).
+      + `&select=uploaded_at,uploaded_by,total_count,active_count,source_file,source,auto_refreshed_at`);
     meta = metaArr && metaArr[0] ? metaArr[0] : null;
   }
 

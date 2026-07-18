@@ -610,20 +610,27 @@ function refreshPublishBtn() {
   btn.disabled = n === 0;
 }
 
-/* Barra de estado del roster: cuando se cargo el Reporte 10, cuantos del
-   reporte + cuantos manuales, y aviso si la lista esta vieja. */
+/* Barra de estado del roster (v6.12): la fuente de verdad es el roster
+   VIVO — la corrida automatica de egresos lo mantiene a diario y refresca
+   store_roster_meta (active_count + auto_refreshed_at). La barra dice
+   cuantos ACTIVOS hay AHORA, de donde vino la ultima carga (API AX /
+   Reporte 10) y si el sistema la esta manteniendo. El "conviene
+   actualizar" solo aparece cuando NI la carga NI el refresco automatico
+   son recientes: el Reporte 10 es el mecanismo de emergencia, no la
+   rutina (pedido de Pablo 18/07). */
 function paintRosterBar() {
   const bar = $('#wpRosterBar');
   if (!bar) return;
   const meta = STATE.meta;
   const manual = STATE.manualCount || 0;
-  const report = STATE.reportCount || 0;
   if (!meta && !STATE.workers.length) {
     bar.style.display = 'none';
     return;
   }
+  const total = (STATE.workers || []).length;
+  const activos = (STATE.workers || []).filter(w => !w.end_date).length;
+
   let when = 'sin registro de carga';
-  let ageTxt = '';
   if (meta && meta.uploaded_at) {
     const d = new Date(meta.uploaded_at);
     if (!isNaN(d)) {
@@ -631,19 +638,31 @@ function paintRosterBar() {
       const z = n => String(n).padStart(2, '0');
       when = `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${c.getUTCFullYear()}`;
     }
+  }
+  const srcName = (meta && meta.source === 'ax_api') ? 'API AX (en vivo)'
+    : (STATE.mode === 'enterprise' ? 'Reporte AX' : 'Reporte 10');
+
+  // Frescura: refresco automatico reciente (<=2 dias) => el sistema esta
+  // manteniendo la lista y no se invita a cargar nada. Sin refresco
+  // reciente (o modo empresa, sin corrida) => criterio historico por edad.
+  let freshTxt = '';
+  const ref = meta && meta.auto_refreshed_at ? new Date(meta.auto_refreshed_at) : null;
+  const refOk = ref && !isNaN(ref) && (Date.now() - ref.getTime()) <= 2 * 86400000;
+  if (refOk) {
+    freshTxt = `<span class="rb-ok">🔄 al día por la corrida automática (${fmtDateTime(meta.auto_refreshed_at)})</span>`;
+  } else {
     const age = rosterAgeDays(meta);
     if (age != null) {
-      if (age <= 0) ageTxt = '<span class="rb-ok">al día</span>';
-      else if (age <= 7) ageTxt = `<span class="rb-ok">hace ${age} día${age === 1 ? '' : 's'}</span>`;
-      else ageTxt = `<span class="rb-old">⚠ hace ${age} días — conviene actualizar</span>`;
+      if (age <= 7) freshTxt = `<span class="rb-ok">carga de hace ${age} día${age === 1 ? '' : 's'}</span>`;
+      else freshTxt = `<span class="rb-old">⚠ carga de hace ${age} días — conviene actualizar</span>`;
     }
   }
+
   bar.style.display = 'flex';
-  const repName = STATE.mode === 'enterprise' ? 'Reporte AX' : 'Reporte 10';
   bar.innerHTML = `
     <span class="rb-ic">📋</span>
-    <span>Lista cargada del <b>${repName}</b> el <b>${when}</b> · <b>${report}</b> del reporte${manual ? ` + <b>${manual}</b> manual${manual === 1 ? '' : 'es'}` : ''}</span>
-    ${ageTxt ? `<span class="rb-sep"></span>${ageTxt}` : ''}`;
+    <span><b>${total}</b> en la lista · <b>${activos}</b> activo${activos === 1 ? '' : 's'}${manual ? ` · ${manual} manual${manual === 1 ? '' : 'es'}` : ''} · última carga: <b>${srcName}</b> el <b>${when}</b></span>
+    ${freshTxt ? `<span class="rb-sep"></span>${freshTxt}` : ''}`;
 }
 
 function updateInfo(d) {
