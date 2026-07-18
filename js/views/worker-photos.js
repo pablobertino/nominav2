@@ -641,7 +641,9 @@ function paintRosterBar() {
       when = `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${c.getUTCFullYear()}`;
     }
   }
-  const srcName = (meta && meta.source === 'ax_api') ? 'API AX (en vivo)'
+  // v6.14: sin nombres técnicos en la leyenda (pedido de Pablo): la carga
+  // que hizo el sistema se dice "automática", no "API AX".
+  const srcName = (meta && meta.source === 'ax_api') ? 'automática'
     : (STATE.mode === 'enterprise' ? 'Reporte AX' : 'Reporte 10');
 
   // Frescura: refresco automatico reciente (<=2 dias) => el sistema esta
