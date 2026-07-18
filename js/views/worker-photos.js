@@ -168,6 +168,38 @@ function tenureLabel(ymd) {
   if (y === 0) return `${m} m`;
   return m > 0 ? `${y}a ${m}m` : `${y}a`;
 }
+/* v6.26: días corridos desde una fecha (hora Caracas). null si falta o es
+   futura — base de las celdas ANT y GRUPO del mockup v3. */
+function daysFrom(ymd) {
+  if (!ymd) return null;
+  const sd = String(ymd).slice(0, 10);
+  const hoy = caracasYMD(new Date());
+  if (sd > hoy) return null;
+  const d = Math.floor((Date.parse(hoy) - Date.parse(sd)) / 86400000);
+  return isNaN(d) ? null : d;
+}
+/* v6.26: antigüedad COMPACTA de UNA sola unidad (regla anti-deformación del
+   mockup v3 aprobado): días (<1 mes: "3 d"), meses hasta los 2 años
+   ("15 m", nunca "1a 3m"), años redondos de ahí en más ("6 a"). El valor
+   exacto vive en el tooltip (tenureLong) y en la ficha. */
+function tenureShort(days) {
+  if (days == null || isNaN(days) || days < 0) return '—';
+  if (days === 0) return 'hoy';
+  if (days < 30) return `${Math.floor(days)} d`;
+  if (days < 730) return `${Math.floor(days / 30.44)} m`;
+  return `${Math.floor(days / 365.25)} a`;
+}
+/* v6.26: antigüedad LARGA para tooltips y ficha ("2 años y 1 mes"). */
+function tenureLong(days) {
+  if (days == null || isNaN(days) || days < 0) return '';
+  if (days === 0) return 'hoy';
+  if (days < 30) return `${Math.floor(days)} día${Math.floor(days) === 1 ? '' : 's'}`;
+  const m = Math.floor(days / 30.44);
+  if (m < 24) return `${m} mes${m === 1 ? '' : 'es'}`;
+  const y = Math.floor(days / 365.25);
+  const rm = Math.floor((days - y * 365.25) / 30.44);
+  return rm > 0 ? `${y} año${y === 1 ? '' : 's'} y ${rm} mes${rm === 1 ? '' : 'es'}` : `${y} año${y === 1 ? '' : 's'}`;
+}
 /* v5.92: ¿la fecha cae en la QUINCENA CALENDARIO en curso? (1-15 / 16-fin
    del mes actual, hora Caracas — misma regla que la nomina). La marca se
    apaga sola al cambiar de quincena. */
@@ -182,33 +214,48 @@ function isCurrentFortnight(ymd) {
   const sd = Number(s[2]);
   return (td <= 15) === (sd <= 15);
 }
-/* Mini-fila SEXO / EDAD / ANT bajo el cargo. Solo muestra los datos que
-   existen: si falta uno, esa columna no aparece; si faltan todos, no se
-   muestra la fila (no inventamos lo que no sabemos). */
+/* v6.26: Mini-fila del mockup v3 APROBADO — SIEMPRE TRES CELDAS:
+   [M 21] [ANT/NUEVO] [GRUPO], en toda la grilla sin excepción.
+   - Celda fusionada SEXO+EDAD sin etiqueta (el color dice el sexo), valor
+     centrado; cualquier dato ausente = "—", la celda nunca desaparece.
+   - ANT/NUEVO: antigüedad EN LA TIENDA, formato compacto de una unidad.
+   - GRUPO: antigüedad continua EN EL GRUPO (RPC get_group_tenure v6.24).
+     Si coincide con la tienda REPITE en celda neutra; si hay historia
+     extra va en TEAL; sin dato "—"; intermitente = puntito ámbar. */
 function miniRowHtml(w) {
-  const items = [];
-  if (w.gender === 'M' || w.gender === 'F') {
-    items.push(`<div class="wp-mini-c"><div class="wp-mini-l">Sexo</div><div class="wp-mini-v ${w.gender === 'M' ? 'm' : 'f'}">${w.gender}</div></div>`);
-  }
+  // Celda 1 — SEXO+EDAD fusionada.
+  const g = (w.gender === 'M' || w.gender === 'F') ? w.gender : null;
   const age = ageFrom(w.birth_date);
-  if (age != null && age >= 0 && age <= 120) {
-    const bday = isBirthday(w.birth_date);
-    items.push(`<div class="wp-mini-c"><div class="wp-mini-l">Edad</div><div class="wp-mini-v${bday ? ' bday' : ''}">${age}${bday ? ' \uD83C\uDF82' : ''}</div></div>`);
+  const okAge = age != null && age >= 0 && age <= 120;
+  const bday = okAge && isBirthday(w.birth_date);
+  const seTitle = `${g === 'M' ? 'Masculino' : g === 'F' ? 'Femenino' : 'Sexo sin dato'} · ${okAge ? age + ' años' : 'sin fecha de nacimiento'}${bday ? ' · ¡cumple hoy!' : ''}`;
+  const seVal = `${g ? `<span class="${g === 'M' ? 'm' : 'f'}">${g}</span>` : '—'} ${okAge ? age : '—'}${bday ? ' \uD83C\uDF82' : ''}`;
+  // Celda 2 — ANT/NUEVO de la tienda.
+  const dTienda = daysFrom(w.start_date);
+  const antVal = dTienda == null ? '—' : tenureShort(dTienda);
+  const isNew = dTienda != null && isVigente(w) && isNuevoIngreso(w);
+  const antTitle = w.start_date
+    ? `Ingresó el ${fmtDate(w.start_date)} (${tenureLong(dTienda) || 'hoy'})${isNew ? ' · hace menos de un mes' : ''}`
+    : 'Sin fecha de ingreso';
+  // Celda 3 — GRUPO (tramo continuo vigente).
+  const dGrupo = (typeof w.cont_days === 'number') ? w.cont_days : null;
+  const hasExtra = dGrupo != null && dTienda != null && dGrupo > dTienda + 3;
+  const grpVal = dGrupo == null ? '—' : tenureShort(dGrupo);
+  let grpTitle = 'Antigüedad en el Grupo: sin datos';
+  if (dGrupo != null) {
+    grpTitle = `En el Grupo: ${tenureLong(dGrupo)}`
+      + (w.cont_since ? ` · tramo continuo desde el ${fmtDate(w.cont_since)}` : '')
+      + (w.grp_int
+        ? ` · INTERMITENTE (${w.grp_periods || 2} períodos${w.grp_since ? ', nos conoce desde el ' + fmtDate(w.grp_since) : ''}${typeof w.grp_days === 'number' ? ', ' + tenureLong(w.grp_days) + ' efectivos' : ''})`
+        : ` · continuo${(w.grp_periods || 1) > 1 ? ` (${w.grp_periods} períodos)` : ''}`);
   }
-  const ant = tenureLabel(w.start_date);
-  if (ant) {
-    // v5.92 (mockup A3 aprobado): si el ingreso es de la quincena calendario
-    // en curso y la persona esta activa, la celda se pinta verde y la
-    // etiqueta pasa de ANT a NUEVO. Al cambiar la quincena vuelve sola a ANT.
-    const isNew = isVigente(w) && isNuevoIngreso(w);  // v6.20: nuevo = ANT < 30 dias (la regla de quincena degradaba al dia 16)
-    if (isNew) {
-      items.push(`<div class="wp-mini-c wp-ant-new" title="Ingresó el ${fmtDate(w.start_date)} · hace menos de un mes"><div class="wp-mini-l">Nuevo</div><div class="wp-mini-v">${ant}</div></div>`);
-    } else {
-      items.push(`<div class="wp-mini-c" title="Ingresó el ${fmtDate(w.start_date)}"><div class="wp-mini-l">Ant</div><div class="wp-mini-v">${ant}</div></div>`);
-    }
-  }
-  if (!items.length) return '';
-  return `<div class="wp-mini" style="grid-template-columns:repeat(${items.length},1fr)">${items.join('')}</div>`;
+  return `<div class="wp-mini" style="grid-template-columns:repeat(3,1fr)">`
+    + `<div class="wp-mini-c wp-mini-fused" title="${esc(seTitle)}"><div class="wp-mini-v">${seVal}</div></div>`
+    + (isNew
+      ? `<div class="wp-mini-c wp-ant-new" title="${esc(antTitle)}"><div class="wp-mini-l">Nuevo</div><div class="wp-mini-v">${antVal}</div></div>`
+      : `<div class="wp-mini-c" title="${esc(antTitle)}"><div class="wp-mini-l">Ant</div><div class="wp-mini-v">${antVal}</div></div>`)
+    + `<div class="wp-mini-c${hasExtra ? ' wp-grp-extra' : ''}" title="${esc(grpTitle)}">${w.grp_int ? '<span class="wp-idot"></span>' : ''}<div class="wp-mini-l">Grupo</div><div class="wp-mini-v">${grpVal}</div></div>`
+    + `</div>`;
 }
 /* ===================== v4.21: franja "Actualizó" (semáforo) =====================
    Pie de TODAS las tarjetas de la grilla (espejo de la barra de departamento):
@@ -245,6 +292,27 @@ function ensureFootStyles() {
   .wp-mini-c.wp-ant-new{background:#e9f7f1}
   .wp-mini-c.wp-ant-new .wp-mini-l{color:#0e9f6e}
   .wp-mini-c.wp-ant-new .wp-mini-v{color:#0e9f6e}
+  /* v6.26: TARJETA DE ALTO FIJO (mockup v3 aprobado) — reservas fijas por
+     bloque para que NINGUNA tarjeta quede más alta que otra: nombre SIEMPRE
+     2 líneas (clamp con …), cargo 1 línea con ellipsis (reservada aunque
+     vacía), franja de chips SIEMPRE presente (1 línea, los chips se
+     comprimen con … antes que crecer), mini-fila de altura fija con las 3
+     celdas centradas. El detalle completo vive en los tooltips. */
+  .wp-card .wp-name{height:34px;line-height:17px;overflow:hidden;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical}
+  .wp-card .wp-ced{display:block;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wp-card .wp-role{height:18px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .wp-chips{height:26px;display:flex;align-items:center;gap:4px;overflow:hidden}
+  .wp-chips .pill{margin-top:0!important;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;flex:0 1 auto}
+  .wp-mini{height:46px}
+  .wp-mini .wp-mini-c{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;position:relative;min-width:0}
+  .wp-mini .wp-mini-v{white-space:nowrap}
+  .wp-mini-fused .wp-mini-v{font-size:13.5px}
+  .wp-mini-fused .m{color:#2563eb}
+  .wp-mini-fused .f{color:#ec4899}
+  .wp-grp-extra{background:#e6fbf7}
+  .wp-grp-extra .wp-mini-l{color:#0f766e}
+  .wp-grp-extra .wp-mini-v{color:#0f766e}
+  .wp-idot{position:absolute;top:3px;right:4px;width:7px;height:7px;border-radius:50%;background:#f59e0b}
   @media (max-width:768px){ .wp-footbar{padding:5px 8px;font-size:9.5px;gap:5px} }
   `;
   document.head.appendChild(st);
@@ -1038,6 +1106,10 @@ function paintGrid() {
     } else if (STATE.isAdmin && !STATE.isGestor && STATE.can.photo) {
       const label = STATE.mode === 'enterprise' ? 'Asignar departamento' : 'Asignar Retail';
       deptBar = `<div class="wp-deptbar assign" data-assigndept="${w.id_number}"><svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg><span>${label}</span></div>`;
+    } else {
+      // v6.26 (alto fijo): la barra existe SIEMPRE — invisible pero con su
+      // alto — para que la tarjeta sin departamento no quede más baja.
+      deptBar = `<div class="wp-deptbar" style="visibility:hidden"><span>·</span></div>`;
     }
     const checked = STATE.selected.has(String(w.id_number));
     const chk = sel
@@ -1062,8 +1134,8 @@ function paintGrid() {
       <div class="wp-body">
         <p class="wp-name">${esc(w.full_name)}</p>
         <span class="wp-ced">${w.ced_kind || ''}-${w.id_number}<button type="button" data-copyced="${w.id_number}" title="Copiar datos" style="display:inline-flex;align-items:center;justify-content:center;width:20px;height:20px;margin-left:5px;padding:0;border:1px solid var(--border);border-radius:6px;background:var(--surface,#fff);color:var(--ink-soft,#475569);cursor:pointer;vertical-align:middle"><svg viewBox="0 0 24 24" width="11" height="11" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg></button></span>
-        ${w.role ? `<div class="wp-role"${(rkColor && rk !== RANK_NONE) ? ` style="color:${rkColor};font-weight:700"` : ''}>${esc(w.role)}</div>` : ''}
-        ${egr}${origen}${manualTag}
+        ${`<div class="wp-role"${(w.role && rkColor && rk !== RANK_NONE) ? ` style="color:${rkColor};font-weight:700"` : ''} title="${esc(w.role || '')}">${w.role ? esc(w.role) : '&nbsp;'}</div>`}
+        <div class="wp-chips">${egr}${origen}${manualTag}</div>
         <div class="wp-spacer"></div>
         ${miniRowHtml(w)}
       </div>

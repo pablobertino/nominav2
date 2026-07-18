@@ -523,6 +523,26 @@ async function directory(env, cc, table, deptScope) {
     });
   }
 
+  // v6.26: ANTIGÜEDAD EN EL GRUPO (RPC get_group_tenure, v6.24) — UNA sola
+  // llamada con todas las cédulas de la lista. La RPC une roster + espejos
+  // (ax_egresos/ax_asignaciones), fusiona períodos y corta tramos según el
+  // parámetro gap_continuidad_dias (Configuración > Parámetros). Devuelve
+  // por cédula: primer ingreso, días efectivos, tramo continuo vigente,
+  // nº de períodos, mayor pausa y bandera intermitente.
+  const allCeds = [...new Set((workers || []).map(w => w.id_number).filter(Boolean))];
+  const tenureByCed = {};
+  if (allCeds.length) {
+    try {
+      const ten = await sb(env, 'rpc/get_group_tenure', {
+        method: 'POST', body: JSON.stringify({ p_ceds: allCeds }),
+      });
+      (ten || []).forEach(t => { if (t && t.id_number) tenureByCed[t.id_number] = t; });
+    } catch (e) {
+      // sin antigüedad de grupo la lista sigue sirviendo: celdas "—"
+      console.log('get_group_tenure fallo:', String(e && e.message || e));
+    }
+  }
+
   // Resolucion de la foto en el directory:
   //  - Esquema NUEVO (tiene photo_key): la miniatura esta en el bucket
   //    publico como "<photo_key>.jpg" -> URL publica directa, sin firmar,
@@ -559,6 +579,13 @@ async function directory(env, cc, table, deptScope) {
       from_at: fromByCed[w.id_number] ? fromByCed[w.id_number].company_code : null,
       from_role: fromByCed[w.id_number] ? (fromByCed[w.id_number].role || null) : null,
       from_end: fromByCed[w.id_number] ? (fromByCed[w.id_number].end_date || null) : null,
+      // v6.26: antigüedad en el GRUPO (tramo continuo vigente + banderas).
+      grp_since: tenureByCed[w.id_number] ? (tenureByCed[w.id_number].group_since || null) : null,
+      cont_since: tenureByCed[w.id_number] ? (tenureByCed[w.id_number].cont_since || null) : null,
+      cont_days: tenureByCed[w.id_number] ? (tenureByCed[w.id_number].cont_days ?? null) : null,
+      grp_days: tenureByCed[w.id_number] ? (tenureByCed[w.id_number].group_days ?? null) : null,
+      grp_periods: tenureByCed[w.id_number] ? (tenureByCed[w.id_number].n_periods ?? null) : null,
+      grp_int: tenureByCed[w.id_number] ? !!tenureByCed[w.id_number].intermittent : false,
       birth_date: pick('birth_date'),
       gender: pick('gender'),
       marital_status: pick('marital_status'),
