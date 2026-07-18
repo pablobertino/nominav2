@@ -231,10 +231,16 @@ function ensureFootStyles() {
   .wp-footdot.mid{background:#f59e0b}
   .wp-footdot.old{background:#cbd5e1}
   .wp-footdot.none{width:6px;height:6px;background:transparent;border:1.5px solid #d3dae4}
-  /* v6.15: checkboxes de estado en la barra de filtros */
-  .wp-stchk{display:flex;align-items:center;gap:12px;padding:0 12px;border:1px solid var(--border,#e5e7eb);border-radius:10px;background:var(--surface,#fff);font-size:12.5px;color:var(--ink-soft,#475569);flex:none}
-  .wp-stchk label{display:flex;align-items:center;gap:5px;cursor:pointer;white-space:nowrap;padding:7px 0;user-select:none}
-  .wp-stchk input{accent-color:var(--brand,#2563eb);width:14px;height:14px;cursor:pointer;margin:0}
+  /* v6.16: combo desplegable de estado (checkboxes ADENTRO, pedido de
+     Pablo: un solo control del tamaño de un select, multi-selección) */
+  .wp-stdd{position:relative;flex:none}
+  .wp-stdd-btn{display:flex;align-items:center;gap:6px;padding:8px 11px;border:1px solid var(--border,#e5e7eb);border-radius:10px;background:var(--surface,#fff);font-size:13px;color:var(--ink,#0f172a);cursor:pointer;white-space:nowrap}
+  .wp-stdd-btn:hover{background:var(--bg-soft,#f8fafc)}
+  .wp-stdd-btn svg{color:var(--muted,#64748b);flex:none}
+  .wp-stdd-pop{position:absolute;top:calc(100% + 6px);left:0;z-index:40;min-width:185px;background:var(--card,#fff);border:1px solid var(--border,#e5e7eb);border-radius:10px;box-shadow:0 10px 26px rgba(15,23,42,.14);padding:6px}
+  .wp-stdd-pop label{display:flex;align-items:center;gap:8px;padding:8px 10px;border-radius:8px;cursor:pointer;font-size:13px;color:var(--ink-soft,#475569);user-select:none}
+  .wp-stdd-pop label:hover{background:var(--bg-soft,#f1f5f9)}
+  .wp-stdd-pop input{accent-color:var(--brand,#2563eb);width:14px;height:14px;cursor:pointer;margin:0}
   /* v5.92: celda ANT de ingreso en la quincena en curso (mockup A3) */
   .wp-mini-c.wp-ant-new{background:#e9f7f1}
   .wp-mini-c.wp-ant-new .wp-mini-l{color:#0e9f6e}
@@ -486,10 +492,16 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
         </select>
         <select id="wpfCargo"><option value="ALL">Todos los cargos</option></select>
         <select id="wpfDept" style="display:none"><option value="ALL">Todos los deptos.</option></select>
-        <div id="wpfStatus" class="wp-stchk" title="Estados a mostrar — podés combinar">
-          <label><input type="checkbox" value="active" checked> Activos</label>
-          <label><input type="checkbox" value="transfer"> Traslados</label>
-          <label><input type="checkbox" value="inactive"> Egresados</label>
+        <div id="wpfStatus" class="wp-stdd">
+          <button type="button" class="wp-stdd-btn" id="wpfStatusBtn" title="Estados a mostrar — podés combinar varios">
+            <span id="wpfStatusLbl">Activos</span>
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
+          </button>
+          <div class="wp-stdd-pop" id="wpfStatusPop" hidden>
+            <label><input type="checkbox" value="active" checked> Activos</label>
+            <label><input type="checkbox" value="transfer"> Traslados</label>
+            <label><input type="checkbox" value="inactive"> Egresados</label>
+          </div>
         </div>
         <select id="wpSort">
           ${mode !== 'enterprise' ? '<option value="rank">Orden: Jerarquía de cargo</option>' : ''}
@@ -543,6 +555,28 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   ['#wpfPhoto', '#wpfGender', '#wpfCargo', '#wpfDept', '#wpfStatus'].forEach(id => {
     const el = $(id); if (el) el.addEventListener('change', onFilterChange);
   });
+  // v6.16: mecánica del combo de estado (checkboxes adentro). El change de
+  // los checkboxes burbujea a #wpfStatus (listener de arriba); acá solo va
+  // abrir/cerrar el popover y el resumen del botón. El popover queda
+  // abierto al marcar (para combinar varios); cierra con clic afuera o Esc.
+  {
+    const stBtn = $('#wpfStatusBtn'), stPop = $('#wpfStatusPop');
+    const stNames = { active: 'Activos', transfer: 'Traslados', inactive: 'Egresados' };
+    const stLabel = () => {
+      const el = $('#wpfStatusLbl');
+      if (!el) return;
+      const on = [...document.querySelectorAll('#wpfStatusPop input:checked')].map(i => stNames[i.value]);
+      el.textContent = on.length === 3 ? 'Estado: todos' : on.length === 0 ? 'Estado: ninguno' : on.join(' + ');
+    };
+    if (stBtn && stPop) {
+      stBtn.addEventListener('click', (ev) => { ev.stopPropagation(); stPop.hidden = !stPop.hidden; });
+      stPop.addEventListener('click', (ev) => ev.stopPropagation());
+      document.addEventListener('click', () => { if (stPop.isConnected && !stPop.hidden) stPop.hidden = true; });
+      document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape' && stPop.isConnected && !stPop.hidden) stPop.hidden = true; });
+      stPop.addEventListener('change', stLabel);
+      stLabel();
+    }
+  }
   $('#wpSort').addEventListener('change', e => { STATE.sortKey = e.target.value; paintGrid(); });
   const reporteBtn = $('#wpReporte');
   if (reporteBtn) reporteBtn.addEventListener('click', STATE.mode === 'enterprise' ? openReporteAXModal : openReporteModal);
