@@ -51,6 +51,13 @@
      y mediana; CLIC en la fila -> Detalle filtrado a esa empresa
      (goDetalleCompany). Indicadores y Dispersion apilados (sin mv-grid2),
      indicadores a 3 columnas.
+   - v6.11: KPIs con CONTEXTO y mini-tendencia (mockup secc. 3-4): la RPC
+     manda trend (6 quincenas que terminan en el HASTA, ing/egr/tras/
+     cargo por quincena, alcance respetado); sparkline por KPI (title
+     lista los valores) + linea ctx (% de la plantilla del corte, ritmo
+     vs mediana 6Q solo si PREV_N>=1, direccion de la entrada, racha del
+     neto). Indicadores: numero + UNA frase visibles, explicacion en
+     details "Como se calcula" (.e2); el PDF junta .e+.e2 al extraer.
 
    Datos por /api/movements (facets + list). Gate: view.movimientos.
    Export: renderMovements(user)
@@ -189,6 +196,11 @@ function ensureStyles() {
   .mv-kpi .d{font-size:11px;color:var(--muted);margin-top:2px}
   .mv-kpi .d .up{color:var(--ok,#0e9f6e);font-weight:700}
   .mv-kpi .d .dn{color:#b91c1c;font-weight:700}
+  .mv-kpi .t .spk{margin-left:auto;flex:none}
+  .mv-kpi .ctx{font-size:11px;color:var(--muted);margin-top:6px;border-top:1px dashed var(--border-soft,#eef1f5);padding-top:6px;line-height:1.5}
+  .mv-rk details{margin-top:7px}
+  .mv-rk summary{cursor:pointer;font-size:11px;color:var(--brand,#2563eb);font-weight:700;user-select:none}
+  .mv-rk .e2{font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5}
   @media (max-width:900px){.mv-kpis{grid-template-columns:repeat(2,1fr)}}
   /* Paneles del tablero (mockup v3, F2 v5.97) */
   .mv-grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px;margin-bottom:14px}
@@ -693,6 +705,43 @@ function deltaNote() {
   return `<p class="mv-note" style="margin:-4px 2px 14px">${parts.join(' ')}</p>`;
 }
 
+/* ---------- v6.11: KPIs con contexto y mini-tendencia (mockup secc. 3) ----------
+   La RPC manda STATS.trend = las 6 quincenas que terminan en la quincena
+   del HASTA elegido (viejas -> nuevas), con ing/egr/tras/cargo por
+   quincena y respetando el alcance. Con eso: sparkline por KPI (el title
+   lista los valores) y linea de contexto que responde "¿esto es mucho?". */
+function sparkline(vals, color, title) {
+  if (!Array.isArray(vals) || vals.length < 2) return '';
+  const min = Math.min(...vals), max = Math.max(...vals);
+  const span = Math.max(1, max - min);
+  const X = (i) => (2 + i * (82 / (vals.length - 1))).toFixed(1);
+  const Y = (v) => (22 - ((v - min) / span) * 18).toFixed(1);
+  const pts = vals.map((v2, i) => `${X(i)},${Y(v2)}`).join(' ');
+  return `<svg class="spk" width="86" height="26" viewBox="0 0 86 26"><title>${esc(title || '')}</title>`
+    + `<polyline points="${pts}" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>`
+    + `<circle cx="${X(vals.length - 1)}" cy="${Y(vals[vals.length - 1])}" r="2.6" fill="${color}"/></svg>`;
+}
+function medianOf(arr) {
+  if (!arr || !arr.length) return null;
+  const s = arr.slice().sort((a, b) => a - b);
+  const m = s.length >> 1;
+  return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2);
+}
+function kpiTrend() {
+  const t = (STATS && Array.isArray(STATS.trend)) ? STATS.trend : [];
+  return {
+    ing: t.map(x => x.ing || 0), egr: t.map(x => x.egr || 0),
+    tras: t.map(x => x.tras || 0), cargo: t.map(x => x.cargo || 0),
+    neto: t.map(x => (x.ing || 0) - (x.egr || 0)),
+    lbls: t.map(x => `${ddmm(x.s)}–${ddmm(x.e)}`), raw: t,
+  };
+}
+function pctPl(x, pl) {
+  if (!pl || !pl.n || x == null) return null;
+  return Math.round(x / pl.n * 1000) / 10;
+}
+const fmtPct = (p2) => String(p2).replace('.', ',');
+
 function paintAnalisis(body) {
   if (ROWS === null) {
     body.innerHTML = `<div class="mv-hint">Elige el <b>período</b>: una quincena, un rango de quincenas (desde → hasta) o el año completo; refina por alcance y pulsa <b>Generar</b>.</div>`;
@@ -707,21 +756,63 @@ function paintAnalisis(body) {
   const pl = STATS.plantilla || null;
   const neto = (k.neto > 0 ? '+' : k.neto < 0 ? '−' : '') + Math.abs(k.neto);
 
+  /* v6.11: contextos honestos por KPI. Solo se afirma lo que los datos
+     permiten: % contra la plantilla del corte; ritmo vs la mediana de 6
+     quincenas SOLO cuando el periodo se mide en quincenas (PREV_N>=1);
+     direccion de la entrada por mitades de la serie; racha del neto. */
+  const T = kpiTrend();
+  const tTitle = (serie, nombre) => T.raw.length
+    ? `${nombre} por quincena — ` + T.raw.map((x, i2) => `${T.lbls[i2]}: ${serie[i2]}`).join(' · ')
+    : '';
+  const pIng = pctPl(k.ing, pl), pEgr = pctPl(k.egr, pl), pTras = pctPl(k.tras, pl), pCargo = pctPl(k.cargo, pl);
+  const medEgrQ = medianOf(T.egr);
+  const perQEgr = PREV_N >= 1 ? Math.round(k.egr / PREV_N) : null;
+  let egrCmp = '';
+  if (perQEgr != null && medEgrQ != null && medEgrQ > 0) {
+    const r2 = perQEgr / medEgrQ;
+    egrCmp = ` · ≈${perQEgr}/quincena vs mediana de 6 Q (${medEgrQ}) — ${r2 > 1.15 ? 'por encima de lo habitual' : r2 < 0.85 ? 'por debajo de lo habitual' : 'ritmo habitual'}`;
+  }
+  let ingDir = '';
+  if (T.ing.length >= 4) {
+    const h2 = T.ing.length >> 1;
+    const a2 = T.ing.slice(0, h2).reduce((x, y2) => x + y2, 0) / h2;
+    const b2 = T.ing.slice(-h2).reduce((x, y2) => x + y2, 0) / h2;
+    ingDir = b2 < a2 * 0.85 ? ' · 6 quincenas: la entrada viene cayendo'
+           : b2 > a2 * 1.15 ? ' · 6 quincenas: la entrada viene subiendo'
+           : ' · 6 quincenas: entrada estable';
+  }
+  let netoStreak = '';
+  {
+    let ns = 0;
+    for (let i2 = T.neto.length - 1; i2 >= 0 && T.neto[i2] < 0; i2--) ns++;
+    if (ns >= 2) netoStreak = ` · ${ns} quincenas seguidas en negativo`;
+  }
+  const netoPct = (pl && pl.n && k.neto) ? Math.round(Math.abs(k.neto) / pl.n * 1000) / 10 : null;
+  const netoCtx = netoPct != null
+    ? `La plantilla se ${k.neto < 0 ? 'achicó' : 'agrandó'} ≈${fmtPct(netoPct)}% en el período${netoStreak}`
+    : (netoStreak ? netoStreak.replace(/^ · /, '') : '');
+  const ctx = (s2) => s2 ? `<div class="ctx">${s2}</div>` : '';
+
   body.innerHTML = `
     <div style="display:flex;justify-content:flex-end;margin:0 0 8px">
       <button class="mv-export-btn" id="mvPdfBtn" type="button" title="Reporte PDF del análisis (sin el detalle nominal)">Exportar PDF</button>
     </div>
     <div class="mv-kpis">
-      <div class="mv-kpi"><div class="t"><span class="dot" style="background:var(--ok,#0e9f6e)"></span>INGRESOS</div>
-        <div class="n">${k.ing}</div><div class="d">${deltaLine(k.ing, p && p.ing, true)}</div></div>
-      <div class="mv-kpi"><div class="t"><span class="dot" style="background:#b91c1c"></span>EGRESOS</div>
-        <div class="n">${k.egr}</div><div class="d">${deltaLine(k.egr, p && p.egr, false)}</div></div>
-      <div class="mv-kpi"><div class="t"><span class="dot" style="background:var(--brand,#2563eb)"></span>TRASLADOS</div>
-        <div class="n">${k.tras}</div><div class="d">${deltaLine(k.tras, p && p.tras, null)}</div></div>
-      <div class="mv-kpi"><div class="t"><span class="dot" style="background:#7e22ce"></span>CAMBIOS DE CARGO</div>
-        <div class="n">${k.cargo}</div><div class="d">${deltaLine(k.cargo, p && p.cargo, null)}</div></div>
-      <div class="mv-kpi"><div class="t"><span class="dot" style="background:#b45309"></span>NETO</div>
-        <div class="n">${neto}</div><div class="d">${pl ? `plantilla ${pl.n.toLocaleString('es-VE')} al corte (${esc(ddmm(pl.cut))})` : 'sin corte en el período'}</div></div>
+      <div class="mv-kpi"><div class="t"><span class="dot" style="background:var(--ok,#0e9f6e)"></span>INGRESOS${sparkline(T.ing, '#0e9f6e', tTitle(T.ing, 'Ingresos'))}</div>
+        <div class="n">${k.ing}</div><div class="d">${deltaLine(k.ing, p && p.ing, true)}</div>
+        ${ctx(pIng != null ? `= ${fmtPct(pIng)}% de la plantilla del corte${ingDir}` : '')}</div>
+      <div class="mv-kpi"><div class="t"><span class="dot" style="background:#b91c1c"></span>EGRESOS${sparkline(T.egr, '#b91c1c', tTitle(T.egr, 'Egresos'))}</div>
+        <div class="n">${k.egr}</div><div class="d">${deltaLine(k.egr, p && p.egr, false)}</div>
+        ${ctx(pEgr != null ? `= ${fmtPct(pEgr)}% de la plantilla del corte${egrCmp}` : '')}</div>
+      <div class="mv-kpi"><div class="t"><span class="dot" style="background:var(--brand,#2563eb)"></span>TRASLADOS${sparkline(T.tras, '#2563eb', tTitle(T.tras, 'Traslados'))}</div>
+        <div class="n">${k.tras}</div><div class="d">${deltaLine(k.tras, p && p.tras, null)}</div>
+        ${ctx(pTras != null ? `= ${fmtPct(pTras)}% de la plantilla del corte` : '')}</div>
+      <div class="mv-kpi"><div class="t"><span class="dot" style="background:#7e22ce"></span>CAMBIOS DE CARGO${sparkline(T.cargo, '#7e22ce', tTitle(T.cargo, 'Cambios de cargo'))}</div>
+        <div class="n">${k.cargo}</div><div class="d">${deltaLine(k.cargo, p && p.cargo, null)}</div>
+        ${ctx(pCargo != null ? `= ${fmtPct(pCargo)}% de la plantilla del corte` : '')}</div>
+      <div class="mv-kpi"><div class="t"><span class="dot" style="background:#b45309"></span>NETO${sparkline(T.neto, '#b45309', tTitle(T.neto, 'Neto'))}</div>
+        <div class="n">${neto}</div><div class="d">${pl ? `plantilla ${pl.n.toLocaleString('es-VE')} al corte (${esc(ddmm(pl.cut))})` : 'sin corte en el período'}</div>
+        ${ctx(netoCtx)}</div>
     </div>
     ${deltaNote()}
     ${paintIndicadores()}
@@ -899,37 +990,46 @@ function paintIndicadores() {
   const G = '/guias/indicadores-rotacion.html';
   const v = (x, suf) => (x == null ? '—' : `${x}${suf || ''}`);
   const fmt = (x) => (x == null ? '—' : Number(x).toLocaleString('es-VE'));
-  const rk = (val, sev, lbl, expl, anchor) => `
+  /* v6.11 (mockup secc. 4): numero + UNA frase de lectura visibles; la
+     explicacion metodologica va plegada en "¿Como se calcula?". El PDF
+     junta .e y .e2 al extraer (nada se pierde en el reporte). */
+  const rk = (val, sev, lbl, frase, expl, anchor) => `
     <div class="mv-rk">
       <a class="q" href="${G}#${anchor}" target="_blank" rel="noopener" title="Qué mide y cómo se calcula">?</a>
-      <div class="v ${sev || ''}">${val}</div><div class="l">${lbl}</div><div class="e">${expl}</div>
+      <div class="v ${sev || ''}">${val}</div><div class="l">${lbl}</div><div class="e">${frase}</div>
+      <details><summary>¿Cómo se calcula?</summary><div class="e2">${expl}</div></details>
     </div>`;
 
-  // Severidades y textos con referencia.
+  // Severidades y textos: FRASE de lectura (visible) + EXPLICACION (plegada).
   const rotSev = i.rot_anualizada == null ? '' : (i.rot_anualizada > 100 ? 'bad' : i.rot_anualizada >= 60 ? 'warn' : 'ok');
   const rotMult = i.rot_anualizada != null ? (i.rot_anualizada / 100).toFixed(1).replace('.', ',') : null;
-  const rotTxt = `${fmt(i.egr_total)} egresos ÷ plantilla promedio ${fmt(i.plantilla_prom)}, a ${v(i.dias_efectivos)} días.`
-    + (rotMult && i.rot_anualizada > 100 ? ` <b>≈${rotMult}× el techo de la banda alta del retail global</b> (60–100% anual ya se considera alta).`
-       : ' Referencia retail: 60–100% anual ya es alta.');
+  const rotFr = rotSev === 'bad' && rotMult ? `≈${rotMult}× el techo de la banda alta del retail global — el nivel es crítico.`
+    : rotSev === 'warn' ? 'Dentro de la banda alta del retail global (60–100% anual).'
+    : rotSev === 'ok' ? 'Por debajo de la banda alta del retail global.' : '—';
+  const rotEx = `${fmt(i.egr_total)} egresos ÷ plantilla promedio ${fmt(i.plantilla_prom)}, a ${v(i.dias_efectivos)} días, llevado a un año. Referencia retail: 60–100% anual ya se considera alta.`;
 
   const tSev = i.temprana90 == null ? '' : (i.temprana90 > 50 ? 'bad' : i.temprana90 > 35 ? 'warn' : 'ok');
-  const tHead = i.temprana90 != null && i.temprana90 > 50 ? 'Más de la mitad de los egresos no llega a los 3 meses. ' : '';
-  const tTxt = `${tHead}${v(i.temprana30, '%')} no completa ni el primer mes · mediana al egresar ${v(i.mediana_egreso)} días — el esfuerzo de retención rinde más en las primeras semanas que en el aniversario.`;
+  const tFr = i.temprana90 == null ? '—' : (i.temprana90 > 50 ? 'Más de la mitad de los egresos no llega a los 3 meses.' : `${i.temprana90}% de los egresos no llega a los 3 meses.`);
+  const tEx = `${v(i.temprana30, '%')} no completa ni el primer mes · mediana al egresar ${v(i.mediana_egreso)} días — el esfuerzo de retención rinde más en las primeras semanas que en el aniversario.`;
 
   const eSev = i.estabilidad == null ? '' : (i.estabilidad < 25 ? 'bad' : i.estabilidad < 40 ? 'warn' : 'ok');
   const de4 = i.estabilidad != null ? Math.max(1, Math.round(i.estabilidad / 25)) : null;
-  const eTxt = `Solo ~${de4 != null ? de4 : '—'} de cada 4 activos supera el año de contrato (al corte ${i.estab_cut ? esc(ddmm(i.estab_cut)) : '—'}): la experiencia del puesto se está reaprendiendo constantemente — el costo oculto de la rotación.`;
+  const eFr = `Solo ~${de4 != null ? de4 : '—'} de cada 4 activos supera el año de contrato.`;
+  const eEx = `Al corte ${i.estab_cut ? esc(ddmm(i.estab_cut)) : '—'}: la experiencia del puesto se está reaprendiendo constantemente — el costo oculto de la rotación.`;
 
   const rePct = (i.reincidentes != null && i.plantilla_prom) ? Math.round(i.reincidentes / i.plantilla_prom * 100) : null;
-  const reTxt = `Personas con 2+ contratos observados${rePct != null ? ` (≈${rePct}% de la plantilla promedio)` : ''}: se fueron y volvieron, o rotaron de tienda — también es un pool de reingreso ya conocido.`;
+  const reFr = rePct != null ? `≈${rePct}% de la plantilla promedio se fue y volvió, o rotó de tienda.` : 'Se fueron y volvieron, o rotaron de tienda.';
+  const reEx = `Personas con 2+ contratos observados en el período — también es un pool de reingreso ya conocido.`;
 
   const brecha = (i.temprana_vendedor != null && i.temprana_gerente != null) ? i.temprana_vendedor - i.temprana_gerente : null;
   const vgSev = brecha == null ? '' : (brecha > 20 ? 'bad' : brecha > 10 ? 'warn' : 'ok');
-  const vgTxt = `${brecha != null ? `Brecha de ${brecha} puntos: ` : ''}el problema se concentra en la base operativa; el gerente resiste más. La entrada del vendedor es donde más rinde intervenir.`;
+  const vgFr = brecha != null ? `Brecha de ${brecha} puntos: el problema se concentra en la base operativa.` : 'El problema se concentra en la base operativa.';
+  const vgEx = `El gerente resiste más; la entrada del vendedor es donde más rinde intervenir.`;
 
   const d = (STATS && STATS.dispersion) || null;
   const gPorTienda = (i.gerentes_egresados != null && d && d.n) ? (i.gerentes_egresados / d.n).toFixed(1).replace('.', ',') : null;
-  const gTxt = `Estabilidad gerencial: el mejor predictor de la rotación del resto del equipo${gPorTienda ? ` — ≈${gPorTienda} egresos de gerente por tienda comparable en el período` : ''}. El cambio de gerente suele disparar la rotación del equipo en los ~90 días siguientes.`;
+  const gFr = gPorTienda ? `≈${gPorTienda} egresos de gerente por tienda comparable en el período.` : 'El mejor predictor de la rotación del resto del equipo.';
+  const gEx = `La estabilidad gerencial es el mejor predictor de la rotación del resto del equipo; el cambio de gerente suele disparar la del equipo en los ~90 días siguientes.`;
 
   /* v6.10: adios mv-grid2 aqui — Indicadores y Dispersion van APILADOS a
      todo el ancho (pedido de Pablo 17/07: la dispersion es la clave
@@ -939,12 +1039,12 @@ function paintIndicadores() {
     <div class="mv-panel" style="margin-bottom:14px">
       <h3>Indicadores del período (metodología estándar)</h3>
       <div class="mv-rot">
-        ${rk(v(i.rot_anualizada, '%'), rotSev, 'Rotación anualizada', rotTxt, 'rot')}
-        ${rk(v(i.temprana90, '%'), tSev, 'Rotación temprana <90 días', tTxt, 'temp')}
-        ${rk(v(i.estabilidad, '%'), eSev, 'Índice de estabilidad', eTxt, 'estab')}
-        ${rk(v(i.reincidentes), '', 'Reincidentes', reTxt, 'boom')}
-        ${rk(`${v(i.temprana_vendedor, '%')} / ${v(i.temprana_gerente, '%')}`, vgSev, 'Temprana: vendedor vs gerente', vgTxt, 'temp')}
-        ${rk(v(i.gerentes_egresados), '', 'Gerentes egresados', gTxt, 'disp')}
+        ${rk(v(i.rot_anualizada, '%'), rotSev, 'Rotación anualizada', rotFr, rotEx, 'rot')}
+        ${rk(v(i.temprana90, '%'), tSev, 'Rotación temprana <90 días', tFr, tEx, 'temp')}
+        ${rk(v(i.estabilidad, '%'), eSev, 'Índice de estabilidad', eFr, eEx, 'estab')}
+        ${rk(v(i.reincidentes), '', 'Reincidentes', reFr, reEx, 'boom')}
+        ${rk(`${v(i.temprana_vendedor, '%')} / ${v(i.temprana_gerente, '%')}`, vgSev, 'Temprana: vendedor vs gerente', vgFr, vgEx, 'temp')}
+        ${rk(v(i.gerentes_egresados), '', 'Gerentes egresados', gFr, gEx, 'disp')}
       </div>
     </div>
     <div class="mv-panel" style="margin-bottom:14px">
@@ -1242,7 +1342,9 @@ async function doExportPDF() {
          : v && v.classList.contains('warn') ? PDF_C.amber
          : v && v.classList.contains('ok') ? PDF_C.green : PDF_C.ink,
       l: (el.querySelector('.l') || { textContent: '' }).textContent,
-      e: (el.querySelector('.e') || { textContent: '' }).textContent,
+      // v6.11: frase (.e) + explicacion plegada (.e2) — el PDF las junta,
+      // nada del reporte se pierde con el plegado de pantalla.
+      e: [...el.querySelectorAll('.e, .e2')].map(x => x.textContent).join(' '),
     };
   });
   const cw = (W - 4) / 2;
