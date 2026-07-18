@@ -575,7 +575,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.18</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.19</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -941,8 +941,11 @@ function personalCell(c) {
        agua   nuevos    = ingresaron esta quincena y siguen
        azul   traslados = fin cumplido esta quincena, activos en otra empresa
        rojo   egresos   = fin cumplido esta quincena sin destino
-     La barra SOLO aparece si hubo movimiento (nuevos+tras+egr > 0): empresa
-     quieta = celda limpia, y al cambiar la quincena todas arrancan limpias.
+     La barra aparece SIEMPRE que la quincena tenga a alguien (v6.19,
+     feedback de Pablo sobre la v6.17: "sin movimiento = sin barra" hacia
+     parecer que faltaba un dato al lado de las filas que si la tenian).
+     Empresa quieta = barra ENTERA VERDE con "N est.": estabilidad visible.
+     Solo sin nadie en la quincena (0 en los 4) no hay nada que pintar.
      "Quincena en curso (fechas)" va en el TOOLTIP, no en texto (Pablo).
      Frescura: si la corrida automatica refresco en <=2 dias, la linea de
      abajo dice "\u{1F504} al dia" en verde en vez del "hace Nd" que asustaba. */
@@ -965,7 +968,7 @@ function personalCell(c) {
   // la celda vive dentro de la grilla de Empresas y asi no depende del bloque
   // CSS de la vista.
   let bar = '';
-  if (moved) {
+  if ((est + nue + tra + egr) > 0) {   // v6.19: estables solos tambien pintan
     const tot = est + nue + tra + egr;
     const segs = [[est, '#0e9f6e'], [nue, '#5eead4'], [tra, '#3b82f6'], [egr, '#ef4444']]
       .filter(s => s[0] > 0)
