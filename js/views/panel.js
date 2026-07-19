@@ -585,7 +585,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.43</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.44</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3365,12 +3365,13 @@ function ensureEqCss() {
     .eq-pop .eq-danger{color:#b91c1c}
     .eq-pop .eq-danger:hover{background:#fef2f2}
     .eq-empty{padding:16px;text-align:center;color:var(--muted,#64748b);font-size:12.5px}
-    .alc-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:6px}
-    .alc-card{display:flex;flex-direction:column;align-items:flex-start;gap:6px;background:var(--card,#fff);border:1px solid var(--border,#e6eaf0);border-radius:14px;padding:18px;cursor:pointer;text-align:left;font-family:inherit}
-    .alc-card:hover{border-color:var(--brand,#2563eb);box-shadow:0 6px 18px rgba(37,99,235,.08)}
-    .alc-ic{font-size:22px}
-    .alc-t{font-size:15px;font-weight:800;color:var(--ink,#0f172a)}
-    .alc-d{font-size:12.5px;color:var(--muted,#64748b);line-height:1.5}`;
+    .alc-back{display:inline-flex;align-items:center;gap:7px;background:none;border:0;color:var(--brand,#2563eb);font-size:13.5px;font-weight:700;cursor:pointer;padding:0;margin-bottom:12px;font-family:inherit}
+    .alc-back:hover{text-decoration:underline}
+    .alc-card2{background:var(--card,#fff);border:1px solid var(--border,#e6eaf0);border-radius:14px;overflow:hidden}
+    .alc-tabs{display:flex;gap:2px;padding:6px 16px 0;background:#fbfcfe;border-bottom:1px solid var(--border,#e6eaf0);flex-wrap:wrap}
+    .alc-tab{padding:10px 15px;font-size:13px;font-weight:700;color:var(--muted,#64748b);cursor:pointer;border:0;background:none;border-bottom:2.5px solid transparent;margin-bottom:-1px;font-family:inherit}
+    .alc-tab.on{color:var(--brand,#2563eb);border-bottom-color:var(--brand,#2563eb)}
+    .alc-body{padding:18px 20px}`;
   document.head.appendChild(st);
 }
 // Menu ⋯ de la fila: flotante position:fixed, asi NINGUNA grilla ni overflow
@@ -3431,37 +3432,41 @@ async function eqTogglePermPanel(user, btn) {
     : '<span style="color:var(--faint,#94a3b8)">Este rol no tiene permisos concedidos.</span>';
   panel.dataset.loaded = '1';
 }
-/* v6.43: PAGINA DE ALCANCE unificada de un miembro (con ← Volver). Un solo
-   punto de entrada por fila; desde aqui se abren los tres editores completos
-   (tiendas / empresas / por seccion) y cada uno vuelve a esta pagina. */
-function renderAlcancePage(user, m) {
+/* v6.44: PAGINA DE ALCANCE unificada de un miembro — UNA sola pantalla con
+   ← Volver y PESTAÑAS (mockup equipo_reforma): Tiendas · Empresas · Por
+   seccion. Cada pestaña monta el editor REAL adentro (#alcBody) en modo
+   embedded; al guardar se vuelve a esta misma pagina con la pestaña activa.
+   Cambiar de pestaña o ← Volver descartan lo no guardado (como el mockup). */
+function renderAlcancePage(user, m, active) {
   ensureEqCss();
   const kind = m.kind || 'agent';
+  const tabs = [];
+  if (kind !== 'client') tabs.push(['store', '\u{1F3EC} Tiendas']);
+  tabs.push(['ent', '\u{1F3E2} Empresas']);
+  tabs.push(['scov', '\u26a1 Por secci\u00f3n']);
+  const first = tabs.some(t => t[0] === active) ? active : tabs[0][0];
   $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Alcance \u00b7 ${esc(m.name || m.username)}</h1>
-      <p>Todo el alcance de este miembro en un solo lugar: tiendas, empresas (con departamentos) y overrides por secci\u00f3n.</p></div>
-      <button class="btn" id="alcBack">\u2190 Volver a Equipo</button></div>
-    <div class="alc-cards">
-      ${kind !== 'client' ? `<button class="alc-card" data-alc="store" type="button">
-        <span class="alc-ic">\u{1F3EC}</span><span class="alc-t">Tiendas</span>
-        <span class="alc-d">Zonas, subzonas y tiendas incluidas o excluidas de su alcance.</span></button>` : ''}
-      <button class="alc-card" data-alc="ent" type="button">
-        <span class="alc-ic">\u{1F3E2}</span><span class="alc-t">Empresas</span>
-        <span class="alc-d">Empresas no-tienda y sus departamentos.</span></button>
-      <button class="alc-card" data-alc="scov" type="button">
-        <span class="alc-ic">\u26a1</span><span class="alc-t">Por secci\u00f3n</span>
-        <span class="alc-d">Overrides: darle a una secci\u00f3n del portal un alcance distinto al base (Heredado, Solo tiendas, Por tipos, Personalizado\u2026).</span></button>
+    <button class="alc-back" id="alcBack" type="button">\u2190 Volver a Equipo</button>
+    <div class="pnl-head" style="margin-bottom:10px"><div><h1>Alcance \u00b7 ${esc(m.name || m.username)}</h1>
+      <p>Tiendas, empresas (con departamentos) y overrides por secci\u00f3n \u2014 todo en una sola p\u00e1gina.</p></div></div>
+    <div class="alc-card2">
+      <div class="alc-tabs">${tabs.map(([k, t]) => `<button class="alc-tab${k === first ? ' on' : ''}" data-tab="${k}" type="button">${t}</button>`).join('')}</div>
+      <div class="alc-body" id="alcBody"><div class="pnl-loading">Cargando\u2026</div></div>
     </div>`;
-  const back = () => renderAlcancePage(user, m);
   $('#alcBack').addEventListener('click', () => viewEquipo(user));
-  $('#pnlMain').querySelectorAll('[data-alc]').forEach(b => b.addEventListener('click', () => {
-    const k = b.dataset.alc;
+  const mount = (k) => {
+    const back = () => renderAlcancePage(user, m, k);
     if (k === 'scov') {
-      renderScopeOverridesEditor(user, { id: parseInt(m.id, 10), username: m.username || '', name: m.name || '', role: m.role || '' }, back);
+      renderScopeOverridesEditor(user, { id: parseInt(m.id, 10), username: m.username || '', name: m.name || '', role: m.role || '' }, back, { host: '#alcBody', embedded: true });
     } else {
-      openScopeEditor(user, m.id, m.username, k === 'ent' ? 'enterprise' : 'store', back);
+      openScopeEditor(user, m.id, m.username, k === 'ent' ? 'enterprise' : 'store', back, { host: '#alcBody', embedded: true });
     }
+  };
+  $('#pnlMain').querySelectorAll('.alc-tab').forEach(b => b.addEventListener('click', () => {
+    document.querySelectorAll('.alc-tab').forEach(x => x.classList.toggle('on', x === b));
+    mount(b.dataset.tab);
   }));
+  mount(first);
 }
 
 async function viewEquipo(user) {
@@ -4265,13 +4270,18 @@ async function viewPermisos(user) {
     b.addEventListener('click', () => openScopeEditor(user, b.dataset.id, b.dataset.u, b.dataset.kind || 'store')));
 }
 
-async function openScopeEditor(user, targetId, targetUser, kind = 'store', origin = 'permisos') {
-  $('#pnlMain').innerHTML = `<div class="pnl-loading">Cargando alcance\u2026</div>`;
+async function openScopeEditor(user, targetId, targetUser, kind = 'store', origin = 'permisos', opts = {}) {
+  /* v6.44: el editor puede montarse DENTRO de un host (la pestaña Tiendas o
+     Empresas de la pagina de Alcance) en modo embedded: sin su pnl-head ni
+     ← propios — el shell de pestañas ya los tiene. Suelto (#pnlMain) sigue
+     funcionando exactamente igual que siempre. */
+  const HOST = opts.host || '#pnlMain';
+  $(HOST).innerHTML = `<div class="pnl-loading">Cargando alcance\u2026</div>`;
   const d = await fetch('/api/admin-scope', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ action: 'get', adminId: user.id, targetId }),
   }).then(r => r.json());
-  if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
+  if (!d.ok) { $(HOST).innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
 
   SCOPE = {
     target: targetId, targetUser, origin,
@@ -4301,10 +4311,10 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store', origi
     + `Al guardar se crea/actualiza el agente y se sincroniza su bandeja. `
     + `${SCOPE.isEnt ? 'Aunque estas sean empresas (no tiendas), tambien aportan su remitente a la bandeja.' : ''}</div></div>`;
 
-  $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Alcance de ${SCOPE.isEnt ? 'Empresas' : 'Tiendas'} \u00b7 ${targetUser}</h1>
+  $(HOST).innerHTML = `
+    ${opts.embedded ? `<p class="muted" style="font-size:12.5px;margin:0 0 12px">${SCOPE.isEnt ? 'Define qu\u00e9 empresas (no tiendas) o departamentos puede gestionar. Alcance final = incluidos \u2212 excluidos.' : 'Define qu\u00e9 tiendas puede gestionar. Alcance final = incluidos \u2212 excluidos.'}</p>` : `<div class="pnl-head"><div><h1>Alcance de ${SCOPE.isEnt ? 'Empresas' : 'Tiendas'} \u00b7 ${targetUser}</h1>
       <p>${SCOPE.isEnt ? 'Define qu\u00e9 empresas (no tiendas) o departamentos puede gestionar. Alcance final = incluidos \u2212 excluidos.' : 'Define qu\u00e9 tiendas puede gestionar. Alcance final = incluidos \u2212 excluidos.'}</p></div>
-      <button class="btn" id="scBack">\u2190 Volver</button></div>
+      <button class="btn" id="scBack">\u2190 Volver</button></div>`}
     ${ostInfo}
     <div class="card">
       <div class="sc-add">
@@ -4334,7 +4344,8 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store', origi
       <button class="btn btn-primary" id="scSave">Guardar alcance</button>
     </div>`;
 
-  $('#scBack').addEventListener('click', backTo);
+  const scBk = $('#scBack');
+  if (scBk) scBk.addEventListener('click', backTo);
   $('#scCancel').addEventListener('click', backTo);
   $('#scSave').addEventListener('click', () => saveScope(user));
 

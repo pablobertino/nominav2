@@ -149,17 +149,24 @@ export async function decorateScovBadges(user) {
   });
 }
 
-/* Editor de página completa para un miembro (todas las secciones). */
-export async function renderScopeOverridesEditor(user, member, onBack) {
+/* Editor de página completa para un miembro (todas las secciones).
+   v6.44: acepta opts.host (selector o nodo) y opts.embedded para montarse
+   DENTRO de la pestaña ⚡ de la página de Alcance de Equipo: en ese modo se
+   omiten la cabecera y el ← propios (el shell de pestañas ya los tiene). */
+export async function renderScopeOverridesEditor(user, member, onBack, opts = {}) {
   ensureStyles();
-  const main = document.getElementById('pnlMain');
+  const embedded = !!opts.embedded;
+  const main = (opts.host
+    ? (typeof opts.host === 'string' ? document.querySelector(opts.host) : opts.host)
+    : document.getElementById('pnlMain'));
   if (!main || !member || !member.id) return;
 
-  main.innerHTML = `<div class="scovp"><div class="phead">
+  main.innerHTML = `<div class="scovp">${embedded ? '' : `<div class="phead">
     <button class="back" id="scovBack" title="Volver a Equipo">←</button>
-    <h1>⚡ Alcances por sección</h1></div>
-    <p class="sub">Cargando…</p></div>`;
-  document.getElementById('scovBack').addEventListener('click', onBack);
+    <h1>⚡ Alcances por sección</h1></div>`}
+    <p class="sub"${embedded ? ' style="padding-left:0"' : ''}>Cargando…</p></div>`;
+  const bk0 = document.getElementById('scovBack');
+  if (bk0) bk0.addEventListener('click', onBack);
 
   const [lst, comp] = await Promise.all([
     api(user, { action: 'list', admin_ids: [member.id] }),
@@ -254,11 +261,11 @@ export async function renderScopeOverridesEditor(user, member, onBack) {
   };
 
   main.innerHTML = `<div class="scovp">
-    <div class="phead">
+    ${embedded ? '' : `<div class="phead">
       <button class="back" id="scovBack" title="Volver a Equipo">←</button>
       <h1>⚡ Alcances por sección</h1>
-    </div>
-    <p class="sub">Excepciones de alcance por sección para este miembro.${canEdit ? '' : '<span class="ro">Solo lectura: requiere el permiso team.scope_override.</span>'}</p>
+    </div>`}
+    <p class="sub"${embedded ? ' style="padding-left:0"' : ''}>Excepciones de alcance por sección para este miembro. Cada sección guarda por separado, independiente de Tiendas/Empresas.${canEdit ? '' : '<span class="ro">Solo lectura: requiere el permiso team.scope_override.</span>'}</p>
 
     <div class="who">
       <span class="av">${esc(initials)}</span>
@@ -270,7 +277,8 @@ export async function renderScopeOverridesEditor(user, member, onBack) {
   </div>`;
 
   const q = id => document.getElementById(id);
-  q('scovBack').addEventListener('click', onBack);
+  const bk1 = q('scovBack');
+  if (bk1) bk1.addEventListener('click', onBack);
 
   // alcance base en cabecera (independiente de secciones)
   (async () => {
