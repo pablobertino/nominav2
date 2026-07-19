@@ -1841,10 +1841,13 @@ function paintTrayectoria(host, w) {
     if (w.grp_periods) parts.push(`${w.grp_periods} períodos`);
   }
   line.innerHTML = parts.join(' · ');
-  // ¿Hay algo que desplegar? Varios períodos o historia previa al tramo
-  // continuo (con UN solo empleo el detalle no agrega nada).
+  // ¿Hay algo que desplegar? MÁS DE UN EMPLEO (v6.31: cubre traslados
+  // empalmados tipo Marval AA08→AA03, que son 1 solo período continuo),
+  // varios períodos o historia previa al tramo continuo.
   const spanDays = w.grp_since ? daysFrom(w.grp_since) : null;
-  const hay = ((w.grp_periods || 1) > 1) || (spanDays != null && spanDays > w.cont_days + 3);
+  const hay = ((Number(w.grp_jobs) || 1) > 1)
+    || ((w.grp_periods || 1) > 1)
+    || (spanDays != null && spanDays > w.cont_days + 3);
   det.style.display = hay ? '' : 'none';
   det.open = false;
   det.dataset.loaded = '';

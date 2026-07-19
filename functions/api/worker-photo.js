@@ -616,6 +616,9 @@ async function directory(env, cc, table, deptScope) {
       grp_int: tenureByCed[w.id_number] ? !!tenureByCed[w.id_number].intermittent : false,
       // v6.29: ¿alcanzó el umbral de resaltado? (cont_days >= grupo_resalte_dias)
       grp_hl: tenureByCed[w.id_number] ? ((tenureByCed[w.id_number].cont_days ?? -1) >= grpHlDays) : false,
+      // v6.31: empleos distintos en el Grupo — con >1 la ficha muestra el
+      // desplegable aunque la trayectoria sea continua (traslados empalmados).
+      grp_jobs: tenureByCed[w.id_number] ? (tenureByCed[w.id_number].n_jobs ?? null) : null,
       birth_date: pick('birth_date'),
       gender: pick('gender'),
       marital_status: pick('marital_status'),
