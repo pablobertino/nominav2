@@ -352,8 +352,9 @@ function ensureFootStyles() {
   .ff-hrow .hc{color:var(--ink-soft,#475569);font-size:11px;background:var(--bg-soft,#f1f5f9);border-radius:6px;padding:0 6px;white-space:nowrap}
   .ff-hrow .hdur{margin-left:auto;color:var(--ink,#334155);white-space:nowrap}
   .ff-hpause{background:#fffbeb;color:#92400e;font-size:11px;padding:5px 11px;border-top:1px dashed #fcd34d}
-  /* v6.33: desplegable a todo el ancho, fuera del bloque foto/nombre */
-  .ff-trj-wide{margin:2px 0 8px}
+  /* v6.34: desplegable al tope de ff-body — hereda la sangría de las
+     secciones; solo aire abajo para separarlo de Identidad */
+  .ff-trj-wide{margin:0 0 14px}
   .ff-trj-wide #ffTrjBody{max-width:100%}
   @media (max-width:768px){ .wp-footbar{padding:5px 8px;font-size:9.5px;gap:5px} }
   `;
@@ -1712,20 +1713,20 @@ function fichaHtml(w, c) {
         </div>
       </div>
 
-      <!-- v6.33: el desplegable de trayectoria vive FUERA del bloque
-           foto/nombre/acciones, a todo el ancho: al abrirse no empuja la
-           foto ni comprime la lista (reporte de Pablo, caso Figueredo). -->
-      <details class="ff-trj-det ff-trj-wide" id="ffTrjDet" style="display:none">
-        <summary>Ver trayectoria completa</summary>
-        <div id="ffTrjBody"></div>
-      </details>
-
       <div class="ff-note" id="ffNote" style="display:none">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
         <span id="ffNoteTxt"></span>
       </div>
 
       <div class="ff-body">
+
+        <!-- v6.34: el desplegable vive al tope de ff-body: hereda la MISMA
+             sangría que las secciones (nada de full-bleed) y al abrirse no
+             toca la foto ni el bloque del nombre. -->
+        <details class="ff-trj-det ff-trj-wide" id="ffTrjDet" style="display:none">
+          <summary>Ver trayectoria completa</summary>
+          <div id="ffTrjBody"></div>
+        </details>
 
         <div class="ff-sec">Identidad</div>
         <div class="ff-grid">
