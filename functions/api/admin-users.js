@@ -122,9 +122,11 @@ async function getActiveAdmin(env, adminId) {
 }
 
 // Set de ids de gestor_empresa entrelazados con el alcance de un admin (via
-// RPC gestores_in_admin_scope). Para superadmin devuelve null (sin limite).
+// RPC gestores_in_admin_scope). Para superadmin y coordinador devuelve null
+// (sin limite: ambos ven a todo el equipo; a quien puede TOCAR el coordinador
+// lo decide canTouchTarget, no este set).
 async function gestorScopeSet(env, admin) {
-  if (admin.role === 'superadmin') return null;
+  if (admin.role === 'superadmin' || admin.role === 'coordinador') return null;
   const r = await sb(env, 'rpc/gestores_in_admin_scope', {
     method: 'POST', body: JSON.stringify({ p_admin_id: admin.id }),
   });
@@ -207,6 +209,13 @@ export async function onRequestPost({ request, env }) {
     const me = await getActiveAdmin(env, adminId);
     if (!me) return json({ ok: false, error: 'No autorizado.' }, 401);
     const isSuper = me.role === 'superadmin';
+    /* v6.41: COORDINADOR — administrador especial que gestiona el Equipo.
+       Ve a todos los miembros (como superadmin) pero solo puede TOCAR roles
+       por debajo del suyo: nunca superadmins ni otros coordinadores, y no
+       puede crear ni asignar el rol coordinador. La matriz (can) ya le exige
+       team.create/reset/toggle/role/scope ademas de esta jerarquia. */
+    const isCoord = me.role === 'coordinador';
+    const isMgr = isSuper || isCoord;
 
     // v4.73: CORTE del shadow (Lote 3). Cada accion EXIGE su permiso de la
     // matriz (can): list->view.equipo; create->team.create; reset->team.reset;
@@ -229,14 +238,21 @@ export async function onRequestPost({ request, env }) {
     // superadmin siempre pasa.
     const canTouchTarget = async (targetId) => {
       if (isSuper) return true;
+      if (isCoord) {
+        // v6.41: jerarquia — el coordinador no toca superadmins ni pares.
+        const t = await sb(env, `admin_users?id=eq.${encodeURIComponent(targetId)}&select=role`);
+        const r = t && t.length ? t[0].role : null;
+        return !!r && r !== 'superadmin' && r !== 'coordinador';
+      }
       if (!gestorSet || !gestorSet.has(Number(targetId))) return false;
       return true;
     };
 
     if (action === 'list') {
       let rows = await sb(env, 'admin_users?select=id,username,name,email,phone,role,is_active,osticket_staff_id,osticket_user_id,osticket_user_synced_at,last_login_at&order=role.desc,username');
-      // admin no-super: solo los gestores entrelazados con su alcance.
-      if (!isSuper) {
+      // admin no-super (y no coordinador): solo los gestores entrelazados con
+      // su alcance. superadmin y coordinador ven a todo el equipo.
+      if (!isMgr) {
         rows = (rows || []).filter(a => a.role === 'gestor_empresa' && gestorSet.has(Number(a.id)));
       }
       // Resumen de alcance por admin. Se cuenta el alcance REALMENTE resuelto
@@ -284,8 +300,11 @@ export async function onRequestPost({ request, env }) {
       // aqui (se nace superadmin, no se crea desde el modal) y tienda es el
       // login de empresa, no un rol del equipo.
       const catalog = await sb(env, 'roles?is_active=eq.true&select=code');
+      // v6.41: el coordinador tampoco crea pares — 'coordinador' solo lo
+      // asigna el superadmin.
       const allowed = (catalog || []).map(x => x.code)
-        .filter(c => c !== 'superadmin' && c !== 'tienda');
+        .filter(c => c !== 'superadmin' && c !== 'tienda')
+        .filter(c => isSuper || c !== 'coordinador');
       if (!role || !allowed.includes(role)) {
         return json({ ok: false, error: 'Rol no válido. Roles asignables: ' + allowed.join(', ') + '.' }, 400);
       }
@@ -517,12 +536,16 @@ export async function onRequestPost({ request, env }) {
         'roles?is_active=eq.true&select=code,osticket_kind');
       const kindBy = {};
       (catalog || []).forEach(r => { kindBy[r.code] = r.osticket_kind || 'none'; });
+      // v6.41: mismo criterio que en create — el coordinador no asigna su
+      // propio rol ni superadmin; y solo toca miembros bajo su jerarquia.
       const allowed = (catalog || []).map(r => r.code)
-        .filter(c => c !== 'superadmin' && c !== 'tienda');
+        .filter(c => c !== 'superadmin' && c !== 'tienda')
+        .filter(c => isSuper || c !== 'coordinador');
       if (!allowed.includes(role)) {
         return json({ ok: false, error: 'Rol no válido. Roles asignables: ' + allowed.join(', ') + '.' }, 400);
       }
       if (String(id) === String(adminId)) return json({ ok: false, error: 'No puedes cambiar tu propio rol.' }, 400);
+      if (!(await canTouchTarget(id))) return json({ ok: false, error: 'Ese usuario esta fuera de tu alcance.' }, 403);
       const target = await sb(env, `admin_users?id=eq.${encodeURIComponent(id)}&select=id,username,name,email,role,is_active,osticket_staff_id,osticket_user_id`);
       if (!target || !target.length) return json({ ok: false, error: 'Usuario no encontrado.' }, 404);
       const u = target[0];
