@@ -266,7 +266,6 @@ const NAV_GROUPS = [
   ] },
   { title: 'Administración', items: [
     ['equipo', I.team, 'Equipo'],
-    ['permisos', I.shield, 'Permisos', 'superonly'],
     ['roles', I.shield, 'Roles', 'superonly'],
     ['config', I.cog, 'Configuración', 'superonly'],
     ['resetdata', I.trash, 'Reiniciar datos', 'superonly'],
@@ -458,9 +457,10 @@ function modalErrAu(sel, txt) {
    los roles de SISTEMA. 'superadmin' no se asigna desde el modal (el server lo
    rechaza en create y en update_role) y 'tienda' es el login de empresa: si
    aparecian en el combo, era ofrecer algo que iba a fallar. */
-function adminRoleOptionsHtml(selected) {
+function adminRoleOptionsHtml(selected, hideCoord = false) {
   return (ADMIN_ROLES || ADMIN_ROLES_FALLBACK)
     .filter(r => !r.is_system)
+    .filter(r => !hideCoord || r.code !== 'coordinador')
     .map(r => `<option value="${r.code}"${r.code === selected ? ' selected' : ''}>${escRoleLbl(r.label)}</option>`).join('');
 }
 /* Etiqueta visible de un rol (topbar). v5.06: sale del catalogo vivo, asi un
@@ -585,7 +585,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.41</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.42</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3295,7 +3295,8 @@ async function openEquipoScovModal(user) {
   const sel = document.getElementById('scovMember');
   if (!sel) return; // modal cerrado antes de cargar
   if (!d || !d.ok) { sel.innerHTML = '<option value="">No se pudo cargar el equipo</option>'; return; }
-  const members = (d.rows || []).filter(a => a.role !== 'superadmin' && a.is_active !== false);
+  const members = (d.rows || []).filter(a => a.role !== 'superadmin' && a.is_active !== false
+    && (user.role === 'superadmin' || a.role !== 'coordinador'));
   if (!members.length) { sel.innerHTML = '<option value="">Sin miembros elegibles</option>'; return; }
   sel.innerHTML = '<option value="">— Elige un miembro —</option>'
     + members.map(a => `<option value="${a.id}">${(a.name || a.username || ('#' + a.id))} · ${a.role || ''}</option>`).join('');
@@ -3338,6 +3339,17 @@ async function viewEquipo(user) {
   // gestionar (reset/toggle/osTicket) SOLO los gestores de su alcance; el
   // backend ya le devuelve unicamente esos gestores.
   const isSuper = user.role === 'superadmin';
+  /* v6.42: el COORDINADOR gestiona el Equipo como el superadmin (ve a todos,
+     crea miembros, cambia roles, alcances, claves) con UNA regla de
+     jerarquia: no toca superadmins ni a otros coordinadores, y no asigna el
+     rol coordinador. El backend (admin-users v6.41) ya lo exige; aqui la UI
+     deja de ofrecer botones que van a fallar. */
+  const isCoord = user.role === 'coordinador';
+  const isMgr = isSuper || isCoord;
+  // ¿Este usuario puede TOCAR a este miembro? superadmin: a todos. admin
+  // no-super: su lista ya viene filtrada a lo tocable. coordinador: solo
+  // roles por debajo del suyo.
+  const canTouch = (a) => isCoord ? (a.role !== 'superadmin' && a.role !== 'coordinador') : true;
 
   const supers = rows.filter(a => a.role === 'superadmin');
 
@@ -3371,7 +3383,7 @@ async function viewEquipo(user) {
         ${lastLoginLabel(a.last_login_at)}
       </div>
       <div class="su-acts">
-        <button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>
+        ${isSuper ? `<button class="btn btn-mini" data-act="reset" data-id="${a.id}" data-u="${a.username}">${I.key} Resetear</button>` : ''}
       </div>
     </div>`;
   }).join('');
@@ -3388,17 +3400,25 @@ async function viewEquipo(user) {
 
   function roleRowHtml(a, kind) {
     const self = String(a.id) === String(user.id);
-    const { roleBtn, editBtn, resetBtn, toggleBtn } = auRowCommonActs(a, self, isSuper);
+    /* v6.42: jerarquia por fila — si este usuario no puede tocar a este
+       miembro (coordinador frente a un superadmin o a un par), la fila se
+       muestra SIN acciones. */
+    const touch = canTouch(a);
+    const { roleBtn, editBtn, resetBtn, toggleBtn } = touch
+      ? auRowCommonActs(a, self, isMgr)
+      : { roleBtn: '', editBtn: '', resetBtn: '', toggleBtn: '' };
     const scopeTd = kind === 'client'
       ? `<td data-label="Alcance">${scopeCellEnt(a)}</td>`
       : `<td data-label="Alcance">${scopeCellBoth(a)}</td>`;
     const ostTd = kind === 'agent' ? `<td data-label="osTicket">${ostAgentCell(a)}</td>`
       : kind === 'client' ? `<td data-label="osTicket">${ostClientCell(a)}</td>` : '';
-    const scopeBtns = kind === 'client'
-      ? (isSuper ? `<button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>` : '')
+    const scopeBtns = !touch ? ''
+      : kind === 'client'
+      ? (isMgr ? `<button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>` : '')
       : `<button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas">${I.sliders} Tiendas</button>
         <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>`;
-    const ostBtn = kind === 'agent'
+    const ostBtn = !touch ? ''
+      : kind === 'agent'
       ? `<button class="btn btn-mini" data-act="osticket-agent" data-id="${a.id}" data-u="${a.username}" data-staff="${a.osticket_staff_id || ''}" title="Agente osTicket (crear/resetear; se sincroniza al guardar el alcance)">osTicket</button>`
       : kind === 'client'
       ? `<button class="btn btn-mini" data-act="osticket" data-id="${a.id}" data-u="${a.username}" title="Crear/actualizar como cliente de osTicket">osTicket</button>`
@@ -3470,7 +3490,7 @@ async function viewEquipo(user) {
     .concat(orphanCodes.map(c => ({ code: c, label: c + ' (rol fuera de catalogo)', osticket_kind: 'none', readonly_scope: false })));
   const blocksHtml = blockDefs.map(r => {
     const members = rows.filter(a => a.role === r.code);
-    if (!isSuper) {
+    if (!isMgr) {
       // Admin no-super: SOLO su bloque de gestores (visible aunque vacio).
       return r.code === 'gestor_empresa' ? roleBlockHtml(r, members) : '';
     }
@@ -3478,19 +3498,19 @@ async function viewEquipo(user) {
   }).join('');
 
   $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Equipo</h1><p>${isSuper ? `${rows.length} miembros \u00b7 un bloque por rol, seg\u00fan el cat\u00e1logo de Roles` : `${gestoresCount} gestor${gestoresCount === 1 ? '' : 'es'} de empresa en tu alcance`}</p></div>
-      ${isSuper ? `<div class="head-actions">
-        <button class="btn" id="auSyncClients" title="Crear/actualizar los gestores de empresa como clientes de osTicket">${I.sync} Gestores osTicket</button>
+    <div class="pnl-head"><div><h1>Equipo</h1><p>${isMgr ? `${rows.length} miembros \u00b7 un bloque por rol, seg\u00fan el cat\u00e1logo de Roles` : `${gestoresCount} gestor${gestoresCount === 1 ? '' : 'es'} de empresa en tu alcance`}</p></div>
+      ${isMgr ? `<div class="head-actions">
+        ${isSuper ? `<button class="btn" id="auSyncClients" title="Crear/actualizar los gestores de empresa como clientes de osTicket">${I.sync} Gestores osTicket</button>` : ''}
         <button class="btn btn-primary" id="auNew">${I.plus} Nuevo miembro</button>
       </div>` : ''}</div>
 
-    ${isSuper ? suHtml : ''}
+    ${isMgr ? suHtml : ''}
 
     ${blocksHtml}`;
 
-  if (isSuper) {
+  if (isMgr) {
     $('#auNew').addEventListener('click', () => auCreateModal(user));
-    $('#auSyncClients').addEventListener('click', () => auSyncClientsAll(user));
+    if (isSuper) $('#auSyncClients').addEventListener('click', () => auSyncClientsAll(user));
   }
   $('#pnlMain').querySelectorAll('button[data-act]').forEach(b =>
     b.addEventListener('click', () => auAction(b.dataset, user)));
@@ -3504,7 +3524,7 @@ function auCreateModal(user) {
     <label class="flabel">Correo <span class="muted">(opcional)</span></label><input id="auE" placeholder="correo@grupocanaima.com" style="margin-bottom:12px">
     <label class="flabel">Teléfono <span class="muted">(opcional · para enviarle sus datos por WhatsApp)</span></label><input id="auT" placeholder="ej. 0414-1234567" style="margin-bottom:12px">
     <label class="flabel">Rol</label>
-    <select id="auR" style="margin-bottom:14px;width:100%">${adminRoleOptionsHtml('admin')}</select>
+    <select id="auR" style="margin-bottom:14px;width:100%">${adminRoleOptionsHtml('admin', user.role !== 'superadmin')}</select>
     ${pwdBlockHtml()}
     <p id="auNewErr" style="color:var(--danger);font-size:12.5px;margin:10px 0 0;display:none"></p>
     <div class="modal-actions"><button class="btn" id="mCancel">Cancelar</button><button class="btn btn-primary" id="mOk">Crear</button></div>`);
@@ -3873,9 +3893,11 @@ async function credModal(user, opts) {
 
 function auRoleModal(ds, user) {
   // Roles desde la BD (cache ADMIN_ROLES, cargado al entrar a Equipo).
-  // superadmin no es elegible aqui (se excluye). Fallback: lista historica.
+  // superadmin no es elegible aqui (se excluye). v6.42: 'coordinador' solo
+  // lo asigna el superadmin (el backend lo rechaza para otros).
   const ROLE_OPTS = (ADMIN_ROLES || ADMIN_ROLES_FALLBACK)
     .filter(r => r.code !== 'superadmin')
+    .filter(r => user.role === 'superadmin' || r.code !== 'coordinador')
     .map(r => ({ v: r.code, l: r.label }));
   const cur = ds.role || '';
   const opts = ROLE_OPTS.map(o =>
@@ -7059,7 +7081,9 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'quincenas') viewPeriods(user);
   else if (view === 'calendario') viewPeriods(user);
   else if (view === 'equipo') { await ensureAdminRoles(user); await viewEquipo(user); decorateScovBadges(user); }
-  else if (view === 'permisos') viewPermisos(user);
+  /* v6.42: 'permisos' muere del menu y del router. Era el editor de alcance
+     como pagina suelta; el alcance se gestiona fila por fila en Equipo
+     (Tiendas / Empresas / ⚡), que siempre fue el mismo editor. */
   else if (view === 'firmantes') renderCertSigners(user);
   else if (view === 'constancias') renderCertRequests(user);
   else if (view === 'sync') { await viewSync(user); if (currentView === 'sync') mountNoRehireConfigCard(user); }
