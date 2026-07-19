@@ -113,6 +113,8 @@ const MENU_CATALOG = [
     // cortes quincenales del sistema), por eso sin acciones.
     // v6.36: etiqueta renombrada a "Rotacion"; id y permiso NO cambian.
     { id: 'movimientos', lbl: 'Rotación', view: 'view.movimientos', acts: [] },
+    // v6.37: Movimientos de la quincena (vista operativa). Solo consulta.
+    { id: 'movquincena', lbl: 'Movimientos', view: 'view.movquincena', acts: [] },
     { id: 'egmotivos', lbl: 'Ratificar egresos', view: 'view.egmotivos', acts: ['egress.ratify'] },
     { id: 'rostersync', lbl: 'Carga de personal', view: 'view.rostersync', acts: ['roster.upload', 'roster.upload_ax', 'roster.upload_api', 'roster.manual', 'roster.clear'] },
   ] },

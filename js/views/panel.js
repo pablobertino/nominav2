@@ -27,6 +27,7 @@ import { renderDoubleEmployment } from './double-employment.js';
 import { renderNoRehire, mountNoRehireConfigCard } from './no-rehire.js';
 import { renderNoRehireVerify } from './no-rehire-verify.js';
 import { renderMovements } from './movements.js';
+import { renderMovQuincena } from './mov-quincena.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { renderCertSigners } from './cert-signers.js';
@@ -121,6 +122,8 @@ const I = {
   usercheck: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><polyline points="16 11 18 13 22 9"/></svg>',
   // v5.93: flechas ida/vuelta (vista Movimientos).
   moves: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8 3 4 7l4 4"/><path d="M4 7h16"/><path d="m16 21 4-4-4-4"/><path d="M20 17H4"/></svg>',
+  // v6.37: persona con flecha (vista Movimientos de la quincena).
+  movesq: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M15 11h7"/><path d="m19 7 3 4-3 4"/></svg>',
 };
 
 /* ---------- NAVEGACION (admin / superadmin) ----------
@@ -161,6 +164,11 @@ const NAV_GROUPS = [
     // v6.36: etiqueta renombrada a "Rotacion" (la clave interna NO cambia).
     // "Movimientos" pasa a ser la futura vista operativa de quincena.
     ['movimientos', I.moves, 'Rotación'],
+    // v6.37: Movimientos de la quincena (vista operativa: ingresados,
+    // trasladados, egresados y cambios de cargo con fichas). Permiso propio
+    // view.movquincena, gobernable desde Roles. Fuente: roster vivo (RPC
+    // get_quincena_moves), NO los cortes de snapshot de Rotacion.
+    ['movquincena', I.movesq, 'Movimientos'],
     ['egmotivos', I.check, 'Ratificar egresos'],
     ['rostersync', I.sync, 'Carga de personal'],
   ] },
@@ -577,7 +585,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.36</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.37</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -7094,6 +7102,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'norehire') renderNoRehire(user);
   else if (view === 'norehirecheck') renderNoRehireVerify(user);
   else if (view === 'movimientos') renderMovements(user);
+  else if (view === 'movquincena') renderMovQuincena(user);
   else if (view === 'documentos') renderPersonnelDocs(user, null);
   else if (view === 'miempresa') viewMiEmpresa(user);
   else if (view === 'fotos') {
@@ -7433,6 +7442,7 @@ export function renderPanel() {
       norehire: 'view.norehire',
       norehirecheck: 'view.norehirecheck',
       movimientos: 'view.movimientos',
+      movquincena: 'view.movquincena',
       rostersync: 'view.rostersync',
       historial: 'view.historial', estadisticas: 'view.estadisticas',
       misstats: 'view.misstats', reportempresas: 'view.reportempresas',
