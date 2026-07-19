@@ -1595,6 +1595,27 @@ let CUR = null;
    tarjeta): naranja "N cambio(s) sin publicar · editado por quien · fecha"
    o verde "✓ Publicado al sistema · editado por quien · fecha". El bloque
    REGISTRO de abajo queda igual; esto es el vistazo rapido. */
+/* v6.39: chip de ESTADO LABORAL en la cabecera de la ficha (pedido de
+   Pablo: al abrir la ficha de un egresado no se notaba su condición).
+   Misma semántica y colores que los chips de la grilla (v6.13/v6.15/v6.23):
+   - Vigente sin fin: verde "Activo".
+   - Vigente con fin FUTURO conocido: ámbar "Activo · fin dd/mm/aaaa".
+   - Fin cumplido + activo en otra empresa del grupo (now_at): azul traslado.
+   - Fin cumplido sin traslado: rojo "Egresado el dd/mm/aaaa".
+   Va PRIMERO en la línea .meta, antes del cargo: es lo primero que hay
+   que notar al entrar. */
+function fichaEstadoChip(w) {
+  if (isVigente(w)) {
+    if (w.end_date) {
+      return `<span class="pill" style="background:#fdf3e7;color:#b45309;border:1px solid #f3ddc0;font-weight:800" title="Contrato con fin ${fmtDate(w.end_date)} — sigue vigente a la fecha">● Activo · fin ${fmtDate(w.end_date)}</span>`;
+    }
+    return `<span class="pill" style="background:#e9f7f1;color:#0e9f6e;border:1px solid #c4e8d9;font-weight:800" title="Vigente a la fecha${w.start_date ? ' · ingresó el ' + fmtDate(w.start_date) : ''}">● Activo</span>`;
+  }
+  if (w.now_at) {
+    return `<span class="pill" style="background:#e8effc;color:#1d4ed8;border:1px solid #c7d8f7;font-weight:800" title="Egresó de ${esc(STATE.cc)} el ${fmtDate(w.end_date)} · activo en ${esc(w.now_at)}${w.now_since ? ' desde el ' + fmtDate(w.now_since) : ''}">Traslado · ahora en ${esc(w.now_at)}</span>`;
+  }
+  return `<span class="pill pill-out" style="font-weight:800" title="Fin de contrato cumplido, sin registro de traslado a otra empresa del grupo">● Egresado el ${fmtDate(w.end_date)}</span>`;
+}
 function fichaRolePill(w) {
   const rk = STATE.mode === 'enterprise' ? RANK_NONE : workerRank(w);
   if (STATE.mode === 'enterprise' || rk === RANK_NONE || !w.role) {
@@ -1700,7 +1721,7 @@ function fichaHtml(w, c) {
         <div class="ff-id">
           <h2>${esc(w.full_name || '—')}</h2>
           <div class="ced">${w.ced_kind || ''}-${w.id_number}</div>
-          <div class="meta">${fichaRolePill(w)}${fichaStatusChip(w)}</div>
+          <div class="meta">${fichaEstadoChip(w)}${fichaRolePill(w)}${fichaStatusChip(w)}</div>
           <div class="ff-trj" data-v="trj_line"></div>
         </div>
         <div class="ff-actions">
