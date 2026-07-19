@@ -348,7 +348,8 @@ function ensureFootStyles() {
   .ff-hrow .hd{color:var(--ink,#334155);font-weight:700;white-space:nowrap}
   .ff-hrow .ha{font-weight:800;color:#4f46e5;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:0 6px}
   .ff-hrow.now .ha{background:#fff}
-  .ff-hrow .hr{color:var(--muted,#64748b);flex:1 1 auto;min-width:0}
+  .ff-hrow .hr{color:var(--muted,#64748b);flex:0 1 auto;min-width:0}
+  .ff-hrow .hz{color:var(--faint,#94a3b8);font-size:11px;white-space:nowrap;flex:1 1 auto}
   .ff-hrow .hc{color:var(--ink-soft,#475569);font-size:11px;background:var(--bg-soft,#f1f5f9);border-radius:6px;padding:0 6px;white-space:nowrap}
   .ff-hrow .hdur{margin-left:auto;color:var(--ink,#334155);white-space:nowrap}
   .ff-hpause{background:#fffbeb;color:#92400e;font-size:11px;padding:5px 11px;border-top:1px dashed #fcd34d}
@@ -1915,7 +1916,7 @@ function trayectoriaHtml(items) {
     const wPct = Math.max(2, Math.round(((finD - toD(it.ini)) / 86400000 + 1) / span * 100));
     const vig = !!it.vigente;
     segs += `<div style="width:${wPct}%;height:100%;background:${vig ? '#0f766e' : 'repeating-linear-gradient(45deg,#94a3b8 0 6px,#cbd5e1 6px 12px)'}" title="${esc(it.alias || '')} · ${esc(fmtDate(it.ini))} → ${it.fin ? esc(fmtDate(it.fin)) : 'hoy'}"></div>`;
-    rows += `<div class="ff-hrow${vig ? ' now' : ''}"><span class="hd">${esc(fmtDate(it.ini))} → ${it.fin ? esc(fmtDate(it.fin)) : 'hoy'}</span><span class="ha">${esc(it.alias || '—')}</span><span class="hr">${esc(it.empresa || '')}</span>${it.cargo ? `<span class="hc">${esc(it.cargo)}</span>` : ''}<span class="hdur">${vig ? '<b>' : ''}${esc(tenureShort(it.dias != null ? it.dias : 0))}${vig ? ' · vigente</b>' : ''}</span></div>`;
+    rows += `<div class="ff-hrow${vig ? ' now' : ''}"><span class="hd">${esc(fmtDate(it.ini))} → ${it.fin ? esc(fmtDate(it.fin)) : 'hoy'}</span><span class="ha">${esc(it.alias || '—')}</span><span class="hr">${esc(it.empresa || '')}</span>${(it.zona || it.subzona) ? `<span class="hz">${esc([it.zona, it.subzona].filter(Boolean).join(' · '))}</span>` : ''}${it.cargo ? `<span class="hc">${esc(it.cargo)}</span>` : ''}<span class="hdur">${vig ? '<b>' : ''}${esc(tenureShort(it.dias != null ? it.dias : 0))}${vig ? ' · vigente</b>' : ''}</span></div>`;
     const nx = items[i + 1];
     if (nx) {
       const gap = Math.round((toD(nx.ini) - finD) / 86400000) - 1;
