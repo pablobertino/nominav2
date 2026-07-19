@@ -214,22 +214,26 @@ function isCurrentFortnight(ymd) {
   const sd = Number(s[2]);
   return (td <= 15) === (sd <= 15);
 }
-/* v6.26: Mini-fila del mockup v3 APROBADO — SIEMPRE TRES CELDAS:
-   [M 21] [ANT/NUEVO] [GRUPO], en toda la grilla sin excepción.
-   - Celda fusionada SEXO+EDAD sin etiqueta (el color dice el sexo), valor
-     centrado; cualquier dato ausente = "—", la celda nunca desaparece.
+/* v6.29: Mini-fila de CUATRO chips — [S] [E] [ANT/NUEVO] [GRUPO], en toda
+   la grilla sin excepción (mockup intermitencia_historia aprobado):
+   - S y E separados, cada uno con su letra arriba; dato ausente = "—";
+     las celdas nunca desaparecen ni cambian de alto. Cumpleaños: 🎂.
    - ANT/NUEVO: antigüedad EN LA TIENDA, formato compacto de una unidad.
-   - GRUPO: antigüedad continua EN EL GRUPO (RPC get_group_tenure v6.24).
-     Si coincide con la tienda REPITE en celda neutra; si hay historia
-     extra va en TEAL; sin dato "—"; intermitente = puntito ámbar. */
+   - GRUPO: tramo continuo EN EL GRUPO (get_group_tenure). ÍNDIGO cuando
+     alcanza el umbral grupo_resalte_dias (365 = 1 año, Configuración >
+     Parámetros, bandera grp_hl del endpoint); intermitente = mini-barra
+     MONO (los cortes son los espacios); sin dato "—". El teal y el
+     puntito ámbar mueren en esta versión. */
 function miniRowHtml(w) {
-  // Celda 1 — SEXO+EDAD fusionada.
+  // Celdas 1 y 2 — SEXO y EDAD separadas (v6.29).
   const g = (w.gender === 'M' || w.gender === 'F') ? w.gender : null;
   const age = ageFrom(w.birth_date);
   const okAge = age != null && age >= 0 && age <= 120;
   const bday = okAge && isBirthday(w.birth_date);
-  const seTitle = `${g === 'M' ? 'Masculino' : g === 'F' ? 'Femenino' : 'Sexo sin dato'} · ${okAge ? age + ' años' : 'sin fecha de nacimiento'}${bday ? ' · ¡cumple hoy!' : ''}`;
-  const seVal = `${g ? `<span class="${g === 'M' ? 'm' : 'f'}">${g}</span>` : '—'} ${okAge ? age : '—'}${bday ? ' \uD83C\uDF82' : ''}`;
+  const sTitle = g === 'M' ? 'Masculino' : g === 'F' ? 'Femenino' : 'Sexo sin dato';
+  const eTitle = `${okAge ? age + ' años' : 'Sin fecha de nacimiento'}${bday ? ' · ¡cumple hoy!' : ''}`;
+  const sVal = g ? `<span class="${g === 'M' ? 'm' : 'f'}">${g}</span>` : '—';
+  const eVal = okAge ? `${age}${bday ? ' \uD83C\uDF82' : ''}` : '—';
   // Celda 2 — ANT/NUEVO de la tienda.
   const dTienda = daysFrom(w.start_date);
   const antVal = dTienda == null ? '—' : tenureShort(dTienda);
@@ -237,9 +241,10 @@ function miniRowHtml(w) {
   const antTitle = w.start_date
     ? `Ingresó el ${fmtDate(w.start_date)} (${tenureLong(dTienda) || 'hoy'})${isNew ? ' · hace menos de un mes' : ''}`
     : 'Sin fecha de ingreso';
-  // Celda 3 — GRUPO (tramo continuo vigente).
+  // Celda 4 — GRUPO (tramo continuo vigente). v6.29: ÍNDIGO por umbral
+  // parametrizado (grp_hl = cont_days >= grupo_resalte_dias, del endpoint).
   const dGrupo = (typeof w.cont_days === 'number') ? w.cont_days : null;
-  const hasExtra = dGrupo != null && dTienda != null && dGrupo > dTienda + 3;
+  const grpHl = !!w.grp_hl;
   const grpVal = dGrupo == null ? '—' : tenureShort(dGrupo);
   let grpTitle = 'Antigüedad en el Grupo: sin datos';
   if (dGrupo != null) {
@@ -249,12 +254,25 @@ function miniRowHtml(w) {
         ? ` · INTERMITENTE (${w.grp_periods || 2} períodos${w.grp_since ? ', nos conoce desde el ' + fmtDate(w.grp_since) : ''}${typeof w.grp_days === 'number' ? ', ' + tenureLong(w.grp_days) + ' efectivos' : ''})`
         : ` · continuo${(w.grp_periods || 1) > 1 ? ` (${w.grp_periods} períodos)` : ''}`);
   }
-  return `<div class="wp-mini" style="grid-template-columns:repeat(3,1fr)">`
-    + `<div class="wp-mini-c wp-mini-fused" title="${esc(seTitle)}"><div class="wp-mini-v">${seVal}</div></div>`
+  // v6.29: mini-barra MONO solo en intermitentes — piezas del mismo gris,
+  // los CORTES (espacios) comunican; la pieza final ∝ tramo continuo actual.
+  let ibar = '';
+  if (w.grp_int && dGrupo != null) {
+    const per = Math.max(2, Math.min(4, Number(w.grp_periods) || 2));
+    const prevDays = Math.max(1, (Number(w.grp_days) || dGrupo) - dGrupo);
+    const wCur = Math.max(16, Math.min(84, Math.round(dGrupo / (prevDays + dGrupo) * 100)));
+    const piece = Math.max(6, Math.floor((100 - wCur) / (per - 1)) - 3);
+    let segs = '';
+    for (let i = 0; i < per - 1; i++) segs += `<i style="width:${piece}%"></i>`;
+    ibar = `<div class="wp-ibar">${segs}<i style="width:${wCur}%"></i></div>`;
+  }
+  return `<div class="wp-mini" style="grid-template-columns:repeat(4,1fr)">`
+    + `<div class="wp-mini-c" title="${esc(sTitle)}"><div class="wp-mini-l">S</div><div class="wp-mini-v">${sVal}</div></div>`
+    + `<div class="wp-mini-c" title="${esc(eTitle)}"><div class="wp-mini-l">E</div><div class="wp-mini-v">${eVal}</div></div>`
     + (isNew
       ? `<div class="wp-mini-c wp-ant-new" title="${esc(antTitle)}"><div class="wp-mini-l">Nuevo</div><div class="wp-mini-v">${antVal}</div></div>`
       : `<div class="wp-mini-c" title="${esc(antTitle)}"><div class="wp-mini-l">Ant</div><div class="wp-mini-v">${antVal}</div></div>`)
-    + `<div class="wp-mini-c${hasExtra ? ' wp-grp-extra' : ''}" title="${esc(grpTitle)}">${w.grp_int ? '<span class="wp-idot"></span>' : ''}<div class="wp-mini-l">Grupo</div><div class="wp-mini-v">${grpVal}</div></div>`
+    + `<div class="wp-mini-c${grpHl ? ' wp-grp-hl' : ''}" title="${esc(grpTitle)}"><div class="wp-mini-l">Grupo</div><div class="wp-mini-v">${grpVal}</div>${ibar}</div>`
     + `</div>`;
 }
 /* ===================== v4.21: franja "Actualizó" (semáforo) =====================
@@ -306,13 +324,16 @@ function ensureFootStyles() {
   .wp-mini{height:46px}
   .wp-mini .wp-mini-c{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:1px;position:relative;min-width:0}
   .wp-mini .wp-mini-v{white-space:nowrap}
-  .wp-mini-fused .wp-mini-v{font-size:13.5px}
-  .wp-mini-fused .m{color:#2563eb}
-  .wp-mini-fused .f{color:#ec4899}
-  .wp-grp-extra{background:#e6fbf7}
-  .wp-grp-extra .wp-mini-l{color:#0f766e}
-  .wp-grp-extra .wp-mini-v{color:#0f766e}
-  .wp-idot{position:absolute;top:3px;right:4px;width:7px;height:7px;border-radius:50%;background:#f59e0b}
+  /* v6.29: 4 chips — sexo coloreado en su celda propia; GRUPO ÍNDIGO al
+     alcanzar grupo_resalte_dias; mini-barra MONO solo en intermitentes
+     (piezas del mismo gris, los cortes/espacios comunican). */
+  .wp-mini .m{color:#2563eb}
+  .wp-mini .f{color:#ec4899}
+  .wp-grp-hl{background:#eef2ff}
+  .wp-grp-hl .wp-mini-l{color:#6366f1}
+  .wp-grp-hl .wp-mini-v{color:#4f46e5}
+  .wp-ibar{display:flex;gap:2px;height:3.5px;margin-top:2px;width:calc(100% - 12px);justify-content:center}
+  .wp-ibar i{background:#94a3b8;border-radius:2px}
   @media (max-width:768px){ .wp-footbar{padding:5px 8px;font-size:9.5px;gap:5px} }
   `;
   document.head.appendChild(st);
@@ -1087,11 +1108,11 @@ function paintGrid() {
           : `<span class="pill pill-out" style="margin-top:4px;display:inline-block">egresó ${fmtDate(w.end_date)}</span>`;
     // v6.23: la otra mitad del espejo — TRASLADO RECIBIDO. Si un ingresado
     // reciente venía de otra empresa del grupo (fila cerrada allá con el fin
-    // pegado a este ingreso), el chip teal dice de dónde vino y qué cargo
+    // pegado a este ingreso), el chip índigo dice de dónde vino y qué cargo
     // tenía allá — el actual ya lo muestra la tarjeta. (Caso Herrera:
     // uniforme de AA01 en la lista de AA08.)
     const origen = (isVigente(w) && w.from_at)
-      ? `<span class="pill" style="margin-top:4px;display:inline-block;background:#e6fbf7;color:#0f766e" title="Ingreso por traslado: venía de ${esc(w.from_at)}${w.from_role ? ' como ' + esc(w.from_role) : ''}${w.from_end ? ' · egresó de allá el ' + fmtDate(w.from_end) : ''}${w.start_date ? ' · ingresó acá el ' + fmtDate(w.start_date) : ''}">vino de ${esc(w.from_at)}${w.from_role ? ' · ' + esc(w.from_role) : ''}</span>`
+      ? `<span class="pill" style="margin-top:4px;display:inline-block;background:#eef2ff;color:#4f46e5" title="Ingreso por traslado: venía de ${esc(w.from_at)}${w.from_role ? ' como ' + esc(w.from_role) : ''}${w.from_end ? ' · egresó de allá el ' + fmtDate(w.from_end) : ''}${w.start_date ? ' · ingresó acá el ' + fmtDate(w.start_date) : ''}">vino de ${esc(w.from_at)}${w.from_role ? ' · ' + esc(w.from_role) : ''}</span>`
       : '';
     const manualTag = w.source === 'manual' ? '<span class="pill wp-pill-manual" style="margin-top:4px;display:inline-block">manual</span>' : '';
     // Barra de departamento ARRIBA de la tarjeta.

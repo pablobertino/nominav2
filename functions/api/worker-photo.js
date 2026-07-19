@@ -543,6 +543,17 @@ async function directory(env, cc, table, deptScope) {
     }
   }
 
+  // v6.29: umbral del RESALTADO ÍNDIGO de la celda GRUPO (portal_params
+  // grupo_resalte_dias, Configuración > Parámetros). 365 = la celda se
+  // pinta cuando el tramo continuo en el Grupo alcanza 1 año (hito LOTTT).
+  // Se lee UNA vez por directory y viaja como bandera grp_hl por persona.
+  let grpHlDays = 365;
+  try {
+    const pp = await sb(env, 'portal_params?key=eq.grupo_resalte_dias&select=value');
+    const v = pp && pp[0] ? parseInt(pp[0].value, 10) : NaN;
+    if (!isNaN(v) && v >= 0) grpHlDays = v;
+  } catch { /* queda el umbral por defecto */ }
+
   // Resolucion de la foto en el directory:
   //  - Esquema NUEVO (tiene photo_key): la miniatura esta en el bucket
   //    publico como "<photo_key>.jpg" -> URL publica directa, sin firmar,
@@ -586,6 +597,8 @@ async function directory(env, cc, table, deptScope) {
       grp_days: tenureByCed[w.id_number] ? (tenureByCed[w.id_number].group_days ?? null) : null,
       grp_periods: tenureByCed[w.id_number] ? (tenureByCed[w.id_number].n_periods ?? null) : null,
       grp_int: tenureByCed[w.id_number] ? !!tenureByCed[w.id_number].intermittent : false,
+      // v6.29: ¿alcanzó el umbral de resaltado? (cont_days >= grupo_resalte_dias)
+      grp_hl: tenureByCed[w.id_number] ? ((tenureByCed[w.id_number].cont_days ?? -1) >= grpHlDays) : false,
       birth_date: pick('birth_date'),
       gender: pick('gender'),
       marital_status: pick('marital_status'),
