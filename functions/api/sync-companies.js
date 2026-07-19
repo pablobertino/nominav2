@@ -2,7 +2,9 @@
    functions/api/sync-companies.js  →  POST /api/sync-companies
    Sincroniza el catálogo (zones, subzones, concepts, companies) desde la
    API de AX hacia Supabase (schema nomina_v2). Upsert puro: actualiza lo
-   que viene, no desactiva ausentes. Excluye SIEMPRE la company 'DAT'.
+   que viene, no desactiva ausentes. Excluye SIEMPRE las companies 'DAT' y
+   'DUMMY' (cuentas tecnicas), las de alias vacio y las de tipoEmpresa
+   'Ninguno' (v6.40), y limpia del catalogo cualquier 'Ninguno' residual.
 
    Protección: requiere { adminId } de un superadmin activo (se re-valida
    contra la base). Cuando endurezcamos auth, pasará a token firmado.
@@ -173,10 +175,18 @@ export async function onRequestPost({ request, env }) {
     let data = await apiRes.json();
     if (!Array.isArray(data)) data = data.empresas || data.data || data.items || [];
 
-    // 3) Excluir DAT y mapear
+    // 3) Excluir registros basura de AX y mapear. v6.40 (pedido de Pablo
+    //    19/07): ademas de DAT (cuenta tecnica de AX) y alias vacio, se
+    //    excluyen DUMMY y las empresas con tipoEmpresa 'Ninguno' (registros
+    //    en creacion: status Nulo, sin personal). No deben entrar a ningun
+    //    total, lista ni estadistica. Cuando AX les asigne tipo real,
+    //    entran solas como "empresa nueva" en novedades.
     const companies = data.filter(c => {
       const id = String(c.companyId || c.alias || '').toUpperCase();
-      return id !== 'DAT' && (c.alias || '').trim() !== '';
+      const tipo = String(c.tipoEmpresa || '').trim().toLowerCase();
+      return id !== 'DAT' && id !== 'DUMMY'
+        && (c.alias || '').trim() !== ''
+        && tipo !== 'ninguno';
     });
 
     // Acumular catálogos únicos
@@ -255,6 +265,22 @@ export async function onRequestPost({ request, env }) {
     await upsert(env, 'subzones', [...subzones.values()]);
     await upsert(env, 'concepts', [...concepts.values()]);
     await upsert(env, 'companies', companyRows);
+
+    // v6.40: autolimpieza — si alguna empresa tipo 'Ninguno' quedo en el
+    // catalogo (carga vieja o cambio de tipo en AX), se borra. No tienen
+    // personal ni usuarios; si algun dia tuvieran dependencias, el DELETE
+    // falla por FK y se ignora sin romper la sincronizacion.
+    try {
+      await fetch(`${env.supabase_url}/rest/v1/companies?company_type=eq.Ninguno`, {
+        method: 'DELETE',
+        headers: {
+          apikey: env.supabase_service_role,
+          Authorization: `Bearer ${env.supabase_service_role}`,
+          'Content-Profile': 'nomina_v2',
+          Prefer: 'return=minimal',
+        },
+      });
+    } catch (_) { /* limpieza best-effort */ }
 
     const synced = {
       companies: companyRows.length,
