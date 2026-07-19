@@ -84,6 +84,7 @@ const AX_DESTRUCTIVE = new Set(['first_name', 'second_name', 'last_names', 'acco
 const WP_CODE_BY_ACTION = {
   directory: 'view.fotos',
   sign: 'view.fotos',
+  group_history: 'view.fotos',
   save: 'photo.manage',
   remove: 'photo.manage',
   set_department: 'photo.manage',
@@ -336,6 +337,7 @@ export async function onRequestPost({ request, env }) {
     const deptScope = await allowedDeptIds(env, user, cc);
 
     if (action === 'directory') return await directory(env, cc, table, deptScope);
+    if (action === 'group_history') return await groupHistory(env, body);
     if (action === 'sign') return await signPhotos(env, cc, body, table, deptScope);
     if (action === 'save') return await savePhoto(env, cc, body, table, deptScope);
     if (action === 'save_profile') return await saveProfile(env, cc, body, table, deptScope);
@@ -347,6 +349,21 @@ export async function onRequestPost({ request, env }) {
   } catch (e) {
     return json({ ok: false, error: String(e.message || e) }, 500);
   }
+}
+
+/* ---------- GROUP HISTORY (v6.30) ---------- */
+/* Historia detallada de UNA cédula en el Grupo (RPC get_group_history):
+   empleos crudos con alias + razón social histórica (ax_egresos.empresa_nombre
+   = cómo se llamaba la empresa al momento del egreso) + cargo + días +
+   vigente. Se llama UNA vez al abrir la ficha (lazy), nunca en masa. El
+   acceso ya pasó por userCanAccess + view.fotos en el handler. */
+async function groupHistory(env, body) {
+  const ced = String(body.id_number || '').trim();
+  if (!ced) return json({ ok: false, error: 'Falta la cédula.' }, 400);
+  const rows = await sb(env, 'rpc/get_group_history', {
+    method: 'POST', body: JSON.stringify({ p_ced: ced }),
+  });
+  return json({ ok: true, items: rows || [] });
 }
 
 /* ---------- DIRECTORY ---------- */

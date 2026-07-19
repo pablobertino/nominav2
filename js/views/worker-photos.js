@@ -334,6 +334,24 @@ function ensureFootStyles() {
   .wp-grp-hl .wp-mini-v{color:#4f46e5}
   .wp-ibar{display:flex;gap:2px;height:3.5px;margin-top:2px;width:calc(100% - 12px);justify-content:center}
   .wp-ibar i{background:#94a3b8;border-radius:2px}
+  /* v6.30: trayectoria en la cabecera de la ficha + desplegable */
+  .ff-trj{font-size:12.5px;color:var(--ink-soft,#475569);margin-top:7px;line-height:1.5}
+  .ff-trj-det{margin-top:4px}
+  .ff-trj-det summary{cursor:pointer;font-size:12.5px;color:#4f46e5;font-weight:700;list-style:none;user-select:none;width:max-content}
+  .ff-trj-det summary::-webkit-details-marker{display:none}
+  .ff-trj-det summary::before{content:'▸ '}
+  .ff-trj-det[open] summary::before{content:'▾ '}
+  .ff-hist{border:1px solid var(--border,#e5e7eb);border-radius:10px;overflow:hidden}
+  .ff-hrow{display:flex;gap:9px;padding:7px 11px;border-top:1px solid var(--border-soft,#eef1f5);font-size:12px;align-items:center;flex-wrap:wrap}
+  .ff-hrow:first-child{border-top:0}
+  .ff-hrow.now{background:#eef2ff}
+  .ff-hrow .hd{color:var(--ink,#334155);font-weight:700;white-space:nowrap}
+  .ff-hrow .ha{font-weight:800;color:#4f46e5;background:#eef2ff;border:1px solid #c7d2fe;border-radius:6px;padding:0 6px}
+  .ff-hrow.now .ha{background:#fff}
+  .ff-hrow .hr{color:var(--muted,#64748b);flex:1 1 auto;min-width:0}
+  .ff-hrow .hc{color:var(--ink-soft,#475569);font-size:11px;background:var(--bg-soft,#f1f5f9);border-radius:6px;padding:0 6px;white-space:nowrap}
+  .ff-hrow .hdur{margin-left:auto;color:var(--ink,#334155);white-space:nowrap}
+  .ff-hpause{background:#fffbeb;color:#92400e;font-size:11px;padding:5px 11px;border-top:1px dashed #fcd34d}
   @media (max-width:768px){ .wp-footbar{padding:5px 8px;font-size:9.5px;gap:5px} }
   `;
   document.head.appendChild(st);
@@ -1668,6 +1686,11 @@ function fichaHtml(w, c) {
           <h2>${esc(w.full_name || '—')}</h2>
           <div class="ced">${w.ced_kind || ''}-${w.id_number}</div>
           <div class="meta">${fichaRolePill(w)}${fichaStatusChip(w)}</div>
+          <div class="ff-trj" data-v="trj_line"></div>
+          <details class="ff-trj-det" id="ffTrjDet" style="display:none">
+            <summary>Ver trayectoria completa</summary>
+            <div id="ffTrjBody"></div>
+          </details>
         </div>
         <div class="ff-actions">
           <button class="btn btn-ghost-danger" id="ffDel" style="display:none">Quitar foto</button>
@@ -1734,8 +1757,6 @@ function fichaHtml(w, c) {
         <div class="ff-sec">Registro</div>
         <div class="ff-grid">
           <div class="ff-row"><span class="ff-lbl">Ingreso</span><span class="ff-val" data-v="start_date"></span></div>
-          <div class="ff-row"><span class="ff-lbl">Antigüedad en el Grupo</span><span class="ff-val" data-v="group_tenure"></span></div>
-          <div class="ff-row full"><span class="ff-lbl">Historia en el Grupo</span><span class="ff-val" data-v="group_bar"></span></div>
           <div class="ff-row"><span class="ff-lbl">Ficha actualizada por</span><span class="ff-val" data-v="profile_updated_by"></span></div>
           <div class="ff-row"><span class="ff-lbl">Foto cargada por</span><span class="ff-val" data-v="photo_uploaded_by"></span></div>
           <div class="ff-row"><span class="ff-lbl">Última actualización</span><span class="ff-val" data-v="updated_at"></span></div>
@@ -1770,47 +1791,11 @@ function paintFichaValues(host, w) {
   const ingTen = tenureLabel(w.start_date);
   const ingNew = (isVigente(w) && isNuevoIngreso(w)) ? ' · Ingreso reciente (menos de un mes)' : '';
   setVal(host, 'start_date', ingFecha ? `${ingFecha}${ingTen ? ' · ' + ingTen : ''}${ingNew}` : '');
-  // v6.27: ANTIGÜEDAD EN EL GRUPO (RPC get_group_tenure v6.24 vía directory
-  // v6.26). Fila de texto con el detalle completo + barra "Historia en el
-  // Grupo" SOLO cuando hay historia previa al tramo continuo (si todo es un
-  // solo tramo, la barra no agrega nada y la fila se oculta).
-  {
-    const gEl = host.querySelector('[data-v="group_tenure"]');
-    if (gEl) {
-      if (typeof w.cont_days === 'number') {
-        const parts = [`<b>${esc(tenureLong(w.cont_days))}</b>`];
-        if (w.cont_since) parts.push(`tramo continuo desde el ${esc(fmtDate(w.cont_since))}`);
-        parts.push(w.grp_int
-          ? '⏸ intermitente'
-          : '✓ continuo' + ((w.grp_periods || 1) > 1 ? ` (${w.grp_periods} períodos)` : ''));
-        if (w.grp_int) {
-          if (w.grp_since) parts.push(`nos conoce desde el ${esc(fmtDate(w.grp_since))}`);
-          if (typeof w.grp_days === 'number') parts.push(`${esc(tenureLong(w.grp_days))} efectivos`);
-          if (w.grp_periods) parts.push(`${w.grp_periods} períodos`);
-        }
-        gEl.innerHTML = parts.join(' · ');
-        gEl.classList.remove('empty');
-      } else { gEl.textContent = 'Sin dato'; gEl.classList.add('empty'); }
-    }
-    const bEl = host.querySelector('[data-v="group_bar"]');
-    if (bEl) {
-      const row = bEl.closest('.ff-row');
-      const spanDays = w.grp_since ? daysFrom(w.grp_since) : null;
-      if (typeof w.cont_days === 'number' && spanDays && spanDays > w.cont_days + 3) {
-        const contPct = Math.max(4, Math.min(96, Math.round(w.cont_days / spanDays * 100)));
-        const effPrev = Math.max(0, (typeof w.grp_days === 'number' ? w.grp_days : w.cont_days) - w.cont_days);
-        const prevDays = spanDays - w.cont_days;
-        bEl.innerHTML = `
-          <div style="display:flex;align-items:center;height:10px;border-radius:99px;overflow:hidden;background:#e2e8f0" title="Desde el ${esc(fmtDate(w.grp_since))} hasta hoy">
-            <div style="width:${100 - contPct}%;height:100%;background:${w.grp_int ? 'repeating-linear-gradient(45deg,#94a3b8 0 6px,#cbd5e1 6px 12px)' : '#8bd8c7'}" title="Historia previa: ${esc(tenureLong(effPrev))} efectivos en ${esc(tenureLong(prevDays))}${w.grp_int ? ' · con pausas que cortaron la continuidad' : ''}"></div>
-            <div style="width:${contPct}%;height:100%;background:#0f766e" title="Tramo continuo actual: ${esc(tenureLong(w.cont_days))}${w.cont_since ? ' (desde el ' + esc(fmtDate(w.cont_since)) + ')' : ''}"></div>
-          </div>
-          <div style="display:flex;justify-content:space-between;font-size:10.5px;color:#94a3b8;margin-top:3px"><span>${esc(fmtDate(w.grp_since))}</span><span>tramo actual → hoy</span></div>`;
-        bEl.classList.remove('empty');
-        if (row) row.style.display = '';
-      } else if (row) { row.style.display = 'none'; }
-    }
-  }
+  // v6.30: la TRAYECTORIA EN EL GRUPO vive en la CABECERA (línea fija bajo
+  // el cargo + desplegable "Ver trayectoria completa" con barra y lista
+  // "Dónde trabajó" vía acción group_history, lazy: 1 request al abrir).
+  // Las filas de Registro v6.27 murieron: Registro conserva solo el Ingreso.
+  paintTrayectoria(host, w);
   // v4.20: quien edito la ficha de ultimo (tienda/admin/gestor) y cuando.
   setVal(host, 'profile_updated_by', w.profile_updated_by
     ? `${w.profile_updated_by}${w.profile_updated_at ? ' · ' + fmtDateTime(w.profile_updated_at) : ''}`
@@ -1831,6 +1816,98 @@ function paintFichaValues(host, w) {
   // Lapiz naranja en los campos con cambios sin publicar (ax_pending_fields).
   // Los campos de nombre (first/second/last) marcan la fila "Nombre completo".
   markPendingFields(host, w);
+}
+
+/* v6.30: línea de trayectoria FIJA en la cabecera + desplegable con la
+   historia detallada. La línea siempre está; el detalle (barra + "Dónde
+   trabajó") no se ve hasta desplegar y se carga lazy (acción group_history,
+   1 request la primera vez). Sin historia previa ni cortes, el desplegable
+   ni aparece. */
+function paintTrayectoria(host, w) {
+  const line = host.querySelector('[data-v="trj_line"]');
+  const det = host.querySelector('#ffTrjDet');
+  if (!line || !det) return;
+  if (typeof w.cont_days !== 'number') {
+    line.innerHTML = '<span style="color:var(--faint,#94a3b8)">Antigüedad en el Grupo: sin dato</span>';
+    det.style.display = 'none';
+    return;
+  }
+  const parts = [`<b>En el Grupo: ${esc(tenureLong(w.cont_days))}</b>`];
+  if (w.cont_since) parts.push(`tramo continuo desde el ${esc(fmtDate(w.cont_since))}`);
+  parts.push(w.grp_int ? '⏸ intermitente' : '✓ continuo');
+  if (w.grp_int) {
+    if (w.grp_since) parts.push(`nos conoce desde el ${esc(fmtDate(w.grp_since))}`);
+    if (typeof w.grp_days === 'number') parts.push(`${esc(tenureLong(w.grp_days))} efectivos`);
+    if (w.grp_periods) parts.push(`${w.grp_periods} períodos`);
+  }
+  line.innerHTML = parts.join(' · ');
+  // ¿Hay algo que desplegar? Varios períodos o historia previa al tramo
+  // continuo (con UN solo empleo el detalle no agrega nada).
+  const spanDays = w.grp_since ? daysFrom(w.grp_since) : null;
+  const hay = ((w.grp_periods || 1) > 1) || (spanDays != null && spanDays > w.cont_days + 3);
+  det.style.display = hay ? '' : 'none';
+  det.open = false;
+  det.dataset.loaded = '';
+  det.dataset.ced = w.id_number || '';
+  const body = det.querySelector('#ffTrjBody');
+  if (body) body.innerHTML = '';
+  if (!det.dataset.bound) {
+    det.dataset.bound = '1';
+    det.addEventListener('toggle', () => {
+      if (det.open && !det.dataset.loaded) loadTrayectoria(det);
+    });
+  }
+}
+
+/* v6.30: carga lazy de la historia (acción group_history del endpoint). */
+async function loadTrayectoria(det) {
+  const body = det.querySelector('#ffTrjBody');
+  if (!body) return;
+  det.dataset.loaded = '1';
+  body.innerHTML = '<div style="font-size:12px;color:var(--faint,#94a3b8);padding:6px 0">Cargando trayectoria…</div>';
+  let items = [];
+  try {
+    const r = await api({ action: 'group_history', company_code: STATE.cc, user: sessionUserPayload(STATE.user), id_number: det.dataset.ced });
+    if (r && r.ok) items = r.items || [];
+    else throw new Error((r && r.error) || 'sin respuesta');
+  } catch (e) {
+    det.dataset.loaded = '';   // permite reintentar al volver a desplegar
+    body.innerHTML = `<div style="font-size:12px;color:#b91c1c;padding:6px 0">No se pudo cargar la trayectoria: ${esc(String(e && e.message || e))}</div>`;
+    return;
+  }
+  body.innerHTML = trayectoriaHtml(items);
+}
+
+/* v6.30: barra de línea de tiempo (empleos rayados / pausas lisas / vigente
+   índigo-teal) + lista "Dónde trabajó": fechas, Alias, razón social del
+   momento (ax_egresos.empresa_nombre para cerrados; companies para el
+   vigente), cargo si existe, duración y pausas intercaladas. */
+function trayectoriaHtml(items) {
+  if (!items || !items.length) return '<div style="font-size:12px;color:var(--faint,#94a3b8);padding:6px 0">Sin historia registrada en el Grupo.</div>';
+  const hoy = caracasYMD(new Date());
+  const toD = s => Date.parse(String(s).slice(0, 10));
+  const span = Math.max(1, (Date.parse(hoy) - toD(items[0].ini)) / 86400000 + 1);
+  let segs = '', rows = '';
+  for (let i = 0; i < items.length; i++) {
+    const it = items[i];
+    const finD = it.fin ? toD(it.fin) : Date.parse(hoy);
+    const wPct = Math.max(2, Math.round(((finD - toD(it.ini)) / 86400000 + 1) / span * 100));
+    const vig = !!it.vigente;
+    segs += `<div style="width:${wPct}%;height:100%;background:${vig ? '#0f766e' : 'repeating-linear-gradient(45deg,#94a3b8 0 6px,#cbd5e1 6px 12px)'}" title="${esc(it.alias || '')} · ${esc(fmtDate(it.ini))} → ${it.fin ? esc(fmtDate(it.fin)) : 'hoy'}"></div>`;
+    rows += `<div class="ff-hrow${vig ? ' now' : ''}"><span class="hd">${esc(fmtDate(it.ini))} → ${it.fin ? esc(fmtDate(it.fin)) : 'hoy'}</span><span class="ha">${esc(it.alias || '—')}</span><span class="hr">${esc(it.empresa || '')}</span>${it.cargo ? `<span class="hc">${esc(it.cargo)}</span>` : ''}<span class="hdur">${vig ? '<b>' : ''}${esc(tenureShort(it.dias != null ? it.dias : 0))}${vig ? ' · vigente</b>' : ''}</span></div>`;
+    const nx = items[i + 1];
+    if (nx) {
+      const gap = Math.round((toD(nx.ini) - finD) / 86400000) - 1;
+      if (gap > 0) {
+        segs += `<div style="width:${Math.max(1, Math.round(gap / span * 100))}%;height:100%;background:#e2e8f0" title="Pausa · ${gap} día${gap === 1 ? '' : 's'}"></div>`;
+        rows += `<div class="ff-hpause">⏸ pausa de ${gap} día${gap === 1 ? '' : 's'} (${esc(fmtDate(new Date(finD + 86400000).toISOString()))} → ${esc(fmtDate(new Date(toD(nx.ini) - 86400000).toISOString()))})</div>`;
+      }
+    }
+  }
+  return `<div style="display:flex;align-items:center;height:10px;border-radius:99px;overflow:hidden;background:#e2e8f0;margin-top:8px" title="Desde el ${esc(fmtDate(items[0].ini))} hasta hoy">${segs}</div>`
+    + `<div style="display:flex;justify-content:space-between;font-size:10.5px;color:#94a3b8;margin:3px 0 7px"><span>${esc(fmtDate(items[0].ini))}</span><span>hoy</span></div>`
+    + `<div class="ff-hist">${rows}</div>`
+    + `<div style="font-size:11px;color:var(--faint,#94a3b8);margin-top:5px">Razón social del momento según el sistema · el empleo vigente muestra la razón social actual.</div>`;
 }
 
 /* Pinta un lapiz junto a los valores (modo lectura) de los campos que tienen
