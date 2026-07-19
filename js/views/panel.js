@@ -35,7 +35,7 @@ import { renderCertRequests } from './cert-requests.js';
 import { renderAxReview, renderAxCompare, renderAxHistory } from './ax-review.js';
 import { renderBankStats } from './bank-stats.js';
 import { renderBankAccounts } from './bank-accounts.js';
-import { renderScopeOverridesEditor, decorateScovBadges } from './scope-overrides.js';
+import { renderScopeOverridesEditor, decorateScovBadges, countScovOverrides } from './scope-overrides.js';
 import { renderWaSend } from './wa-send.js';
 import { renderWaGroups } from './wa-groups.js';
 import { renderWaTemplates } from './wa-templates.js';
@@ -585,7 +585,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.44</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.45</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3467,6 +3467,16 @@ function renderAlcancePage(user, m, active) {
     mount(b.dataset.tab);
   }));
   mount(first);
+
+  /* v6.45: contador de overrides en la pestaña ⚡ (mockup: "⚡ Por sección · N").
+     Una sola consulta al montar la página; si el miembro no tiene overrides se
+     deja la etiqueta limpia (sin "· 0"). Silencioso ante error. */
+  (async () => {
+    const tabBtn = $('#pnlMain').querySelector('.alc-tab[data-tab="scov"]');
+    if (!tabBtn) return;
+    const n = await countScovOverrides(user, m.id);
+    if (n > 0 && tabBtn.isConnected) tabBtn.textContent = `\u26a1 Por secci\u00f3n \u00b7 ${n}`;
+  })();
 }
 
 async function viewEquipo(user) {

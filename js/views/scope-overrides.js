@@ -129,6 +129,17 @@ function ensureStyles() {
   document.head.appendChild(st);
 }
 
+/* v6.45: cuenta cuántas secciones tienen override para UN miembro. Lo usa la
+   pestaña ⚡ de la página de Alcance (Equipo) para mostrar "⚡ Por sección · N".
+   Reusa el mismo endpoint/list; devuelve 0 ante cualquier fallo (nunca lanza). */
+export async function countScovOverrides(user, adminId) {
+  const id = parseInt(adminId, 10);
+  if (!Number.isFinite(id)) return 0;
+  const r = await api(user, { action: 'list', admin_ids: [id] });
+  if (!r || !r.ok) return 0;
+  return (r.overrides || []).filter(o => o.admin_id === id || o.admin_id == null).length;
+}
+
 /* Marca .has-ov en los botones ⚡ de la grilla de Equipo cuyos miembros
    tienen algún override (cualquier sección). */
 export async function decorateScovBadges(user) {
