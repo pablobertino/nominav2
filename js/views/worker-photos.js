@@ -352,6 +352,9 @@ function ensureFootStyles() {
   .ff-hrow .hc{color:var(--ink-soft,#475569);font-size:11px;background:var(--bg-soft,#f1f5f9);border-radius:6px;padding:0 6px;white-space:nowrap}
   .ff-hrow .hdur{margin-left:auto;color:var(--ink,#334155);white-space:nowrap}
   .ff-hpause{background:#fffbeb;color:#92400e;font-size:11px;padding:5px 11px;border-top:1px dashed #fcd34d}
+  /* v6.33: desplegable a todo el ancho, fuera del bloque foto/nombre */
+  .ff-trj-wide{margin:2px 0 8px}
+  .ff-trj-wide #ffTrjBody{max-width:100%}
   @media (max-width:768px){ .wp-footbar{padding:5px 8px;font-size:9.5px;gap:5px} }
   `;
   document.head.appendChild(st);
@@ -1697,10 +1700,6 @@ function fichaHtml(w, c) {
           <div class="ced">${w.ced_kind || ''}-${w.id_number}</div>
           <div class="meta">${fichaRolePill(w)}${fichaStatusChip(w)}</div>
           <div class="ff-trj" data-v="trj_line"></div>
-          <details class="ff-trj-det" id="ffTrjDet" style="display:none">
-            <summary>Ver trayectoria completa</summary>
-            <div id="ffTrjBody"></div>
-          </details>
         </div>
         <div class="ff-actions">
           <button class="btn btn-ghost-danger" id="ffDel" style="display:none">Quitar foto</button>
@@ -1712,6 +1711,14 @@ function fichaHtml(w, c) {
           <a class="pm-guia" href="/guias/foto-carnet.html" target="_blank" rel="noopener"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg> Ver la guía: cómo tomar la foto <span class="pm-guia-arrow">→</span></a>
         </div>
       </div>
+
+      <!-- v6.33: el desplegable de trayectoria vive FUERA del bloque
+           foto/nombre/acciones, a todo el ancho: al abrirse no empuja la
+           foto ni comprime la lista (reporte de Pablo, caso Figueredo). -->
+      <details class="ff-trj-det ff-trj-wide" id="ffTrjDet" style="display:none">
+        <summary>Ver trayectoria completa</summary>
+        <div id="ffTrjBody"></div>
+      </details>
 
       <div class="ff-note" id="ffNote" style="display:none">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
