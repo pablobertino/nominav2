@@ -585,7 +585,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.42</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.43</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3328,7 +3328,144 @@ if (!window.__scovEquipoWired) {
   });
 }
 
+/* ===================== v6.43: EQUIPO REFORMADO (mockup equipo_reforma) ====
+   La fila queda con DOS controles (boton Alcance + menu ⋯), los bloques por
+   rol explican en lenguaje llano con "Ver permisos" en solo lectura, la barra
+   trae buscador + combo de rol con contadores + filtro de estado, y todo el
+   alcance de un miembro vive en su PAGINA de Alcance con ← Volver. */
+function ensureEqCss() {
+  if (document.getElementById('eqRevampCss')) return;
+  const st = document.createElement('style');
+  st.id = 'eqRevampCss';
+  st.textContent = `
+    .eq-ctl{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:0 0 16px}
+    .eq-search{display:flex;align-items:center;gap:7px;background:var(--card,#fff);border:1px solid var(--border,#e6eaf0);border-radius:10px;padding:8px 11px;flex:1;min-width:230px}
+    .eq-search input{border:0;outline:0;font:inherit;font-size:13px;width:100%;background:transparent;color:var(--ink,#0f172a)}
+    .eq-search svg{color:var(--muted,#64748b);flex:none}
+    .eq-sel{padding:8px 11px;border:1px solid var(--border,#e6eaf0);border-radius:10px;background:var(--card,#fff);font:inherit;font-size:13px;color:var(--ink,#0f172a)}
+    .eq-desc{font-size:12.8px;color:var(--ink-soft,#475569);margin-top:6px;line-height:1.55;max-width:920px}
+    .eq-meta{display:flex;gap:14px;align-items:center;margin-top:7px;flex-wrap:wrap;font-size:12px;color:var(--muted,#64748b)}
+    .eq-meta b{color:var(--ink,#0f172a)}
+    .eq-permlnk{font-size:12px;color:var(--brand,#2563eb);font-weight:700;cursor:pointer;background:none;border:0;padding:0;font-family:inherit}
+    .eq-permlnk:hover{text-decoration:underline}
+    .eq-permpanel{background:#fbfcfe;border-top:1px dashed var(--border,#e6eaf0);padding:12px 18px;font-size:12.3px;color:var(--ink-soft,#475569)}
+    .eq-permpanel .dom{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--faint,#94a3b8);margin:10px 0 5px}
+    .eq-perm{display:inline-block;padding:3px 9px;border-radius:8px;border:1px solid #c4e8d9;background:#e9f7f1;color:#0e7a55;font-size:11.5px;margin:0 5px 5px 0}
+    .eq-permnote{margin-top:8px;font-size:11.5px;color:var(--faint,#94a3b8)}
+    .eq-acts{display:inline-flex;gap:6px;align-items:center}
+    .eq-scope-btn{display:inline-flex;align-items:center;gap:6px;padding:6px 12px;border:1px solid #c7d8f7;border-radius:9px;background:#eff4ff;color:#1e40af;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap;font-family:inherit}
+    .eq-scope-btn:hover{background:#e0ebff}
+    .eq-kb{width:30px;height:30px;border:1px solid var(--border,#e6eaf0);border-radius:9px;background:var(--card,#fff);cursor:pointer;font-size:16px;line-height:1;color:var(--muted,#64748b);display:inline-flex;align-items:center;justify-content:center}
+    .eq-kb:hover{color:var(--ink,#0f172a);border-color:var(--muted,#64748b)}
+    .eq-pop{position:fixed;z-index:95;min-width:195px;background:var(--card,#fff);border:1px solid var(--border,#e6eaf0);border-radius:11px;box-shadow:0 10px 26px rgba(15,23,42,.15);padding:5px;display:none;text-align:left}
+    .eq-pop.open{display:block}
+    .eq-pop button{display:flex;align-items:center;gap:9px;width:100%;text-align:left;padding:8px 11px;border:0;background:none;border-radius:8px;font:inherit;font-size:12.5px;color:var(--ink-soft,#475569);cursor:pointer}
+    .eq-pop button:hover{background:var(--bg-soft,#f1f5f9)}
+    .eq-sep{height:1px;background:var(--border-soft,#f1f4f8);margin:4px 6px}
+    .eq-pop .eq-danger{color:#b91c1c}
+    .eq-pop .eq-danger:hover{background:#fef2f2}
+    .eq-empty{padding:16px;text-align:center;color:var(--muted,#64748b);font-size:12.5px}
+    .alc-cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:14px;margin-top:6px}
+    .alc-card{display:flex;flex-direction:column;align-items:flex-start;gap:6px;background:var(--card,#fff);border:1px solid var(--border,#e6eaf0);border-radius:14px;padding:18px;cursor:pointer;text-align:left;font-family:inherit}
+    .alc-card:hover{border-color:var(--brand,#2563eb);box-shadow:0 6px 18px rgba(37,99,235,.08)}
+    .alc-ic{font-size:22px}
+    .alc-t{font-size:15px;font-weight:800;color:var(--ink,#0f172a)}
+    .alc-d{font-size:12.5px;color:var(--muted,#64748b);line-height:1.5}`;
+  document.head.appendChild(st);
+}
+// Menu ⋯ de la fila: flotante position:fixed, asi NINGUNA grilla ni overflow
+// puede taparlo o recortarlo. Instalacion unica; cierra con clic afuera y con
+// cualquier scroll (incluido el scroll-x interno de las tablas: capture).
+if (typeof window !== 'undefined' && !window.__eqKebabWired) {
+  window.__eqKebabWired = true;
+  document.addEventListener('click', (e) => {
+    const kb = e.target && e.target.closest ? e.target.closest('.eq-kb') : null;
+    document.querySelectorAll('.eq-pop.open').forEach(p => { if (!kb || p !== kb.nextElementSibling) p.classList.remove('open'); });
+    if (kb) {
+      const pop = kb.nextElementSibling;
+      const open = pop.classList.toggle('open');
+      if (open) {
+        const r = kb.getBoundingClientRect();
+        pop.style.top = (r.bottom + 5) + 'px';
+        pop.style.left = Math.max(8, r.right - 200) + 'px';
+      }
+    }
+  });
+  window.addEventListener('scroll', () => {
+    document.querySelectorAll('.eq-pop.open').forEach(p => p.classList.remove('open'));
+  }, { passive: true, capture: true });
+}
+/* Matriz de permisos (solo lectura) para el "Ver permisos" de los bloques.
+   /api/roles action=matrix esta gateada por view.roles: el coordinador la
+   tiene en LECTURA (v6.43); editar sigue en la vista Roles, solo superadmin. */
+let EQ_MATRIX = null;
+async function eqEnsureMatrix(user) {
+  if (EQ_MATRIX) return EQ_MATRIX;
+  try {
+    const d = await fetch('/api/roles', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'matrix', user: { kind: user.kind, id: user.id || null } }),
+    }).then(r => r.json());
+    if (d && d.ok) EQ_MATRIX = d;
+  } catch (_) { /* el panel muestra el aviso */ }
+  return EQ_MATRIX;
+}
+async function eqTogglePermPanel(user, btn) {
+  const code = btn.dataset.pp;
+  const panel = document.getElementById('pp-' + code);
+  if (!panel) return;
+  if (panel.style.display !== 'none') { panel.style.display = 'none'; btn.textContent = 'Ver permisos \u25be'; return; }
+  btn.textContent = 'Ver permisos \u25b4';
+  panel.style.display = '';
+  if (panel.dataset.loaded) return;
+  panel.innerHTML = '<span style="color:var(--faint,#94a3b8)">Cargando permisos\u2026</span>';
+  const m = await eqEnsureMatrix(user);
+  if (!m) { panel.innerHTML = '<span style="color:var(--faint,#94a3b8)">No se pudo cargar la matriz de permisos.</span>'; return; }
+  const granted = new Set((m.grants && m.grants[code]) || []);
+  const byDomain = {};
+  (m.permissions || []).forEach(p => { if (granted.has(p.code)) (byDomain[p.domain] = byDomain[p.domain] || []).push(p); });
+  const doms = Object.keys(byDomain).sort();
+  panel.innerHTML = doms.length
+    ? doms.map(d => `<div class="dom">${esc(d)}</div>` + byDomain[d].map(p => `<span class="eq-perm">${esc(p.label)}</span>`).join('')).join('')
+      + `<div class="eq-permnote">${granted.size} permisos concedidos \u00b7 solo lectura \u2014 se editan en <b>Administraci\u00f3n \u2192 Roles</b>.</div>`
+    : '<span style="color:var(--faint,#94a3b8)">Este rol no tiene permisos concedidos.</span>';
+  panel.dataset.loaded = '1';
+}
+/* v6.43: PAGINA DE ALCANCE unificada de un miembro (con ← Volver). Un solo
+   punto de entrada por fila; desde aqui se abren los tres editores completos
+   (tiendas / empresas / por seccion) y cada uno vuelve a esta pagina. */
+function renderAlcancePage(user, m) {
+  ensureEqCss();
+  const kind = m.kind || 'agent';
+  $('#pnlMain').innerHTML = `
+    <div class="pnl-head"><div><h1>Alcance \u00b7 ${esc(m.name || m.username)}</h1>
+      <p>Todo el alcance de este miembro en un solo lugar: tiendas, empresas (con departamentos) y overrides por secci\u00f3n.</p></div>
+      <button class="btn" id="alcBack">\u2190 Volver a Equipo</button></div>
+    <div class="alc-cards">
+      ${kind !== 'client' ? `<button class="alc-card" data-alc="store" type="button">
+        <span class="alc-ic">\u{1F3EC}</span><span class="alc-t">Tiendas</span>
+        <span class="alc-d">Zonas, subzonas y tiendas incluidas o excluidas de su alcance.</span></button>` : ''}
+      <button class="alc-card" data-alc="ent" type="button">
+        <span class="alc-ic">\u{1F3E2}</span><span class="alc-t">Empresas</span>
+        <span class="alc-d">Empresas no-tienda y sus departamentos.</span></button>
+      <button class="alc-card" data-alc="scov" type="button">
+        <span class="alc-ic">\u26a1</span><span class="alc-t">Por secci\u00f3n</span>
+        <span class="alc-d">Overrides: darle a una secci\u00f3n del portal un alcance distinto al base (Heredado, Solo tiendas, Por tipos, Personalizado\u2026).</span></button>
+    </div>`;
+  const back = () => renderAlcancePage(user, m);
+  $('#alcBack').addEventListener('click', () => viewEquipo(user));
+  $('#pnlMain').querySelectorAll('[data-alc]').forEach(b => b.addEventListener('click', () => {
+    const k = b.dataset.alc;
+    if (k === 'scov') {
+      renderScopeOverridesEditor(user, { id: parseInt(m.id, 10), username: m.username || '', name: m.name || '', role: m.role || '' }, back);
+    } else {
+      openScopeEditor(user, m.id, m.username, k === 'ent' ? 'enterprise' : 'store', back);
+    }
+  }));
+}
+
 async function viewEquipo(user) {
+  ensureEqCss();
   $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Equipo</h1><p>Miembros del portal por rol</p></div></div><div class="pnl-loading">Cargando\u2026</div>`;
   const d = await auApi({ action: 'list', adminId: user.id });
   if (!d.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${d.error}</div>`; return; }
@@ -3391,53 +3528,57 @@ async function viewEquipo(user) {
   // ---- Bloques DINAMICOS por rol (v5.00) ----
   // Overrides cosmeticos de los 3 roles historicos (titulos y badges de
   // siempre); cualquier otro rol usa su label de la tabla y estilo estandar.
-  const TITLE_BY_CODE = { admin: 'Administradores', gestor_empresa: 'Gestores de empresa', editor_personal: 'Editores de personal' };
+  const TITLE_BY_CODE = { admin: 'Administradores', gestor_empresa: 'Gestores de empresa', editor_personal: 'Editores de personal', coordinador: 'Coordinador', auditor: 'Auditores', gerente_zona: 'Gerentes de Zona', supervisor_tiendas: 'Supervisores de Tiendas' };
   const BADGE_BY_CODE = { admin: 'rb-admin', gestor_empresa: 'rb-gestor', editor_personal: 'rb-editor' };
   const STAT_BY_CODE = { admin: 'Administradores', gestor_empresa: 'Gestores', editor_personal: 'Editores' };
+  /* v6.43: cada bloque explica en LENGUAJE LLANO que hace el rol (mockup).
+     Los que no esten aqui usan un fallback armado de osticket_kind. */
+  const DESC_BY_CODE = {
+    coordinador: 'Todo lo del Administrador <b>más la gestión del Equipo</b>: crea miembros, resetea claves, cambia alcances y activa o desactiva usuarios. No toca superadmins ni a otros coordinadores, ni Roles / Configuración / Reiniciar datos.',
+    admin: 'Operan el día a día de su alcance: <b>editan fichas</b>, publican cambios al sistema, cargan personal y atienden tickets como <b>agentes de osTicket</b>. No gestionan usuarios del Equipo.',
+    auditor: '<b>Solo consulta</b>: personal, movimientos, rotación y estadísticas de su alcance, sin editar fichas ni publicar al sistema. Sin osTicket.',
+    editor_personal: 'Cargan y corrigen datos del personal de su alcance. Sin publicación al sistema ni osTicket.',
+    gestor_empresa: 'Ven <b>solo su empresa y sus departamentos</b>: gestionan la ficha y las fotos de su gente, y abren tickets como <b>clientes de osTicket</b>.',
+    gerente_zona: 'Consultan y gestionan <b>las tiendas de su zona</b>. Sin osTicket.',
+    supervisor_tiendas: 'Supervisan las tiendas de su alcance en modo consulta. Sin osTicket.',
+  };
 
   const pillAgente = '<span style="display:inline-flex;align-items:center;padding:1px 9px;border-radius:999px;background:#eff4ff;color:#1e40af;font-weight:600">Agente</span>';
   const pillCliente = '<span style="display:inline-flex;align-items:center;padding:1px 9px;border-radius:999px;background:#f0fdf4;color:#15803d;font-weight:600">Usuario</span>';
 
   function roleRowHtml(a, kind) {
     const self = String(a.id) === String(user.id);
-    /* v6.42: jerarquia por fila — si este usuario no puede tocar a este
-       miembro (coordinador frente a un superadmin o a un par), la fila se
-       muestra SIN acciones. */
+    /* v6.43 (mockup): la fila queda con DOS controles — el boton Alcance
+       (pagina unificada) y el menu ⋯ con el resto de las acciones.
+       Jerarquia por fila: sin acciones si este usuario no puede tocarlo. */
     const touch = canTouch(a);
-    const { roleBtn, editBtn, resetBtn, toggleBtn } = touch
-      ? auRowCommonActs(a, self, isMgr)
-      : { roleBtn: '', editBtn: '', resetBtn: '', toggleBtn: '' };
     const scopeTd = kind === 'client'
       ? `<td data-label="Alcance">${scopeCellEnt(a)}</td>`
       : `<td data-label="Alcance">${scopeCellBoth(a)}</td>`;
     const ostTd = kind === 'agent' ? `<td data-label="osTicket">${ostAgentCell(a)}</td>`
       : kind === 'client' ? `<td data-label="osTicket">${ostClientCell(a)}</td>` : '';
-    const scopeBtns = !touch ? ''
-      : kind === 'client'
-      ? (isMgr ? `<button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>` : '')
-      : `<button class="btn btn-mini" data-act="scope-store" data-id="${a.id}" data-u="${a.username}" title="Alcance de tiendas">${I.sliders} Tiendas</button>
-        <button class="btn btn-mini" data-act="scope-ent" data-id="${a.id}" data-u="${a.username}" title="Alcance de empresas">${I.sliders} Empresas</button>`;
-    const ostBtn = !touch ? ''
-      : kind === 'agent'
-      ? `<button class="btn btn-mini" data-act="osticket-agent" data-id="${a.id}" data-u="${a.username}" data-staff="${a.osticket_staff_id || ''}" title="Agente osTicket (crear/resetear; se sincroniza al guardar el alcance)">osTicket</button>`
-      : kind === 'client'
-      ? `<button class="btn btn-mini" data-act="osticket" data-id="${a.id}" data-u="${a.username}" title="Crear/actualizar como cliente de osTicket">osTicket</button>`
+    const dd = `data-id="${a.id}" data-u="${a.username}" data-name="${(a.name || '').replace(/"/g, '&quot;')}" data-role="${a.role}"`;
+    const alcBtn = isMgr
+      ? `<button class="eq-scope-btn" data-act="alcance" ${dd} data-kind="${kind}" title="Alcance de tiendas, empresas y por sección">◩ Alcance</button>`
       : '';
-    return `<tr>
+    const kebab = `<div class="eq-kebab" style="display:inline-block"><button class="eq-kb" type="button" title="Más acciones">⋯</button>
+      <div class="eq-pop">
+        ${(isMgr && !self) ? `<button data-act="role" ${dd}>🎭 Cambiar rol</button>` : ''}
+        <button data-act="edit" ${dd} data-mail="${(a.email || '').replace(/"/g, '&quot;')}" data-tel="${(a.phone || '').replace(/"/g, '&quot;')}">✎ Editar datos</button>
+        ${kind === 'agent' ? `<button data-act="osticket-agent" ${dd} data-staff="${a.osticket_staff_id || ''}">🎫 osTicket</button>`
+          : kind === 'client' ? `<button data-act="osticket" ${dd}>🎫 osTicket</button>` : ''}
+        <button data-act="reset" ${dd}>🔑 Resetear clave</button>
+        ${self ? '' : `<div class="eq-sep"></div>
+        <button class="eq-danger" data-act="toggle" data-id="${a.id}" data-active="${a.is_active}">${a.is_active ? '○ Desactivar' : '● Activar'}</button>`}
+      </div></div>`;
+    return `<tr data-eqrow data-txt="${((a.username || '') + ' ' + (a.name || '') + ' ' + (a.email || '')).toLowerCase().replace(/"/g, '')}" data-on="${a.is_active ? '1' : '0'}">
       <td class="code" data-label="Usuario">${a.username}</td>
       <td class="cell-name" data-label="Nombre">${a.name || '\u2014'}</td>
       ${emailCell(a)}
       ${scopeTd}
       ${ostTd}
       <td data-label="Estado">${estadoPill(a)}${lastLoginLabel(a.last_login_at)}</td>
-      <td class="cell-actcell" style="text-align:right"><div class="cell-actions">
-        ${scopeBtns}
-        ${roleBtn}
-        ${editBtn}
-        ${ostBtn}
-        ${resetBtn}
-        ${toggleBtn}
-      </div></td>
+      <td class="cell-actcell" style="text-align:right">${touch ? `<div class="eq-acts">${alcBtn}${kebab}</div>` : ''}</td>
     </tr>`;
   }
 
@@ -3445,34 +3586,35 @@ async function viewEquipo(user) {
     const kind = r.osticket_kind || 'none';
     const title = TITLE_BY_CODE[r.code] || r.label || r.code;
     const badgeCls = BADGE_BY_CODE[r.code] || 'rb-admin';
-    const statLbl = STAT_BY_CODE[r.code] || 'Miembros';
-    const ro = r.readonly_scope ? ' \u00b7 solo lectura' : '';
-    const desc = kind === 'agent'
-      ? `Alcance de Tiendas y Empresas${ro} \u00b7 osTicket: ${pillAgente}`
-      : kind === 'client'
-      ? `Alcance solo de Empresas / departamentos${ro} \u00b7 osTicket: ${pillCliente}`
-      : `Alcance de Tiendas y Empresas${ro} \u00b7 sin osTicket`;
     const off = members.filter(a => !a.is_active).length;
-    const stats = kind === 'agent'
-      ? `<div class="sum-cards c4">${statCard('total', members.length, statLbl)}${statCard('ok', members.filter(a => a.osticket_staff_id).length, 'Con agente osTicket')}${statCard('none', members.filter(a => !a.osticket_staff_id).length, 'Sin agente')}${statCard('off', off, 'Inactivos')}</div>`
-      : kind === 'client'
-      ? `<div class="sum-cards c4">${statCard('total', members.length, statLbl)}${statCard('acc', members.filter(a => a.osticket_user_id).length, 'Con cliente osTicket')}${statCard('none', members.filter(a => !a.osticket_user_id).length, 'Sin cliente')}${statCard('off', off, 'Inactivos')}</div>`
-      : `<div class="sum-cards c3">${statCard('total', members.length, statLbl)}${statCard('ok', members.length - off, 'Activos')}${statCard('off', off, 'Inactivos')}</div>`;
+    /* v6.43 (mockup): la cabecera del bloque explica el rol en lenguaje
+       llano, resume en una linea (miembros/activos/osTicket) y ofrece
+       "Ver permisos" en solo lectura. Las stat-cards grandes se van: eran
+       cuatro tarjetas para decir lo que ahora dice una linea. */
+    const desc = DESC_BY_CODE[r.code]
+      || `${kind === 'client' ? 'Alcance solo de empresas y departamentos' : 'Alcance de tiendas y empresas'}${r.readonly_scope ? ' \u00b7 solo lectura' : ''}${kind === 'agent' ? ' \u00b7 atiende tickets como agente de osTicket.' : kind === 'client' ? ' \u00b7 abre tickets como cliente de osTicket.' : ' \u00b7 sin osTicket.'}`;
+    const ostMeta = kind === 'agent' ? ` \u00b7 <b>${members.filter(a => a.osticket_staff_id).length}</b> con agente osTicket`
+      : kind === 'client' ? ` \u00b7 <b>${members.filter(a => a.osticket_user_id).length}</b> con cliente osTicket` : '';
+    const permBtn = isMgr ? `<button class="eq-permlnk" data-pp="${r.code}" type="button">Ver permisos \u25be</button>` : '';
     const ostTh = kind === 'agent' ? '<th>osTicket (agente)</th>' : kind === 'client' ? '<th>osTicket (cliente)</th>' : '';
     const scopeTh = kind === 'client' ? '<th>Alcance (empresas)</th>' : '<th>Alcance</th>';
     const cols = kind === 'none' ? 6 : 7;
     const bodyRows = members.map(a => roleRowHtml(a, kind)).join('')
       || `<tr><td colspan="${cols}" class="empty">Sin miembros con este rol.</td></tr>`;
-    return `<div class="role-block">
-      <div class="role-head">
-        <span class="role-title">${escRoleLbl(title)}</span>
-        <span class="role-badge ${badgeCls}">${escRoleLbl(r.code)}</span>
-        <span class="role-desc">${desc}</span>
+    return `<div class="role-block" data-eqblock="${r.code}">
+      <div class="role-head" style="display:block">
+        <div style="display:flex;align-items:center;gap:10px;flex-wrap:wrap">
+          <span class="role-title">${escRoleLbl(title)}</span>
+          <span class="role-badge ${badgeCls}">${escRoleLbl(r.code)}</span>
+        </div>
+        <div class="eq-desc">${desc}</div>
+        <div class="eq-meta"><span><b>${members.length}</b> miembro${members.length === 1 ? '' : 's'} \u00b7 <b>${members.length - off}</b> activo${members.length - off === 1 ? '' : 's'}${ostMeta}</span>${permBtn}</div>
       </div>
-      ${stats}
+      <div class="eq-permpanel" id="pp-${r.code}" style="display:none"></div>
       <div class="tablebox scroll-x u-compact tbl-cards"><table><thead><tr>
         <th>Usuario</th><th>Nombre</th><th>Contacto</th>${scopeTh}${ostTh}<th>Estado</th><th style="text-align:right">Acciones</th>
       </tr></thead><tbody>${bodyRows}</tbody></table></div>
+      <div class="eq-empty" style="display:none">Sin coincidencias con los filtros.</div>
     </div>`;
   }
 
@@ -3504,6 +3646,19 @@ async function viewEquipo(user) {
         <button class="btn btn-primary" id="auNew">${I.plus} Nuevo miembro</button>
       </div>` : ''}</div>
 
+    ${isMgr ? `<div class="eq-ctl">
+      <div class="eq-search">${I.search}<input id="eqQ" placeholder="Buscar por nombre, usuario o correo\u2026" autocomplete="off"></div>
+      <select class="eq-sel" id="eqRol">
+        <option value="all">Rol: todos (${rows.length})</option>
+        ${blockDefs.map(r => { const n = rows.filter(a => a.role === r.code).length; return n ? `<option value="${r.code}">${escRoleLbl(TITLE_BY_CODE[r.code] || r.label || r.code)} (${n})</option>` : ''; }).join('')}
+      </select>
+      <select class="eq-sel" id="eqSt">
+        <option value="all">Estado: todos</option>
+        <option value="on" selected>Solo activos</option>
+        <option value="off">Solo inactivos</option>
+      </select>
+    </div>` : ''}
+
     ${isMgr ? suHtml : ''}
 
     ${blocksHtml}`;
@@ -3511,6 +3666,36 @@ async function viewEquipo(user) {
   if (isMgr) {
     $('#auNew').addEventListener('click', () => auCreateModal(user));
     if (isSuper) $('#auSyncClients').addEventListener('click', () => auSyncClientsAll(user));
+    /* v6.43: filtros client-side (buscador / rol / estado). La tarjeta del
+       superadmin queda fuera de los filtros a proposito: siempre visible.
+       Un bloque cuyo rol no coincide se oculta entero; uno sin filas tras
+       filtrar muestra "Sin coincidencias". */
+    const applyEqFilters = () => {
+      const q = ($('#eqQ').value || '').trim().toLowerCase();
+      const rol = $('#eqRol').value;
+      const st = $('#eqSt').value;
+      document.querySelectorAll('[data-eqblock]').forEach(b => {
+        const rolOk = rol === 'all' || b.dataset.eqblock === rol;
+        let vis = 0;
+        b.querySelectorAll('tr[data-eqrow]').forEach(tr => {
+          const on = tr.dataset.on === '1';
+          const ok = (st === 'all' || (st === 'on' && on) || (st === 'off' && !on))
+            && (!q || (tr.dataset.txt || '').includes(q));
+          tr.style.display = ok ? '' : 'none';
+          if (ok) vis++;
+        });
+        b.style.display = rolOk ? '' : 'none';
+        const en = b.querySelector('.eq-empty');
+        if (en) en.style.display = (rolOk && !vis && b.querySelector('tr[data-eqrow]')) ? '' : 'none';
+      });
+    };
+    $('#eqQ').addEventListener('input', applyEqFilters);
+    $('#eqRol').addEventListener('change', applyEqFilters);
+    $('#eqSt').addEventListener('change', applyEqFilters);
+    applyEqFilters();
+    // v6.43: "Ver permisos" de cada bloque (matriz viva, solo lectura).
+    document.querySelectorAll('.eq-permlnk').forEach(btn =>
+      btn.addEventListener('click', () => eqTogglePermPanel(user, btn)));
   }
   $('#pnlMain').querySelectorAll('button[data-act]').forEach(b =>
     b.addEventListener('click', () => auAction(b.dataset, user)));
@@ -3556,6 +3741,12 @@ function auCreateModal(user) {
   });
 }
 function auAction(ds, user) {
+  // v6.43: la fila de Equipo ya no tiene Tiendas/Empresas/⚡ sueltos: un solo
+  // boton Alcance abre la pagina unificada del miembro.
+  if (ds.act === 'alcance') {
+    renderAlcancePage(user, { id: ds.id, username: ds.u, name: ds.name || ds.u, role: ds.role || '', kind: ds.kind || 'agent' });
+    return;
+  }
   if (ds.act === 'scope-store') { openScopeEditor(user, ds.id, ds.u, 'store', 'equipo'); return; }
   if (ds.act === 'scope-ent') { openScopeEditor(user, ds.id, ds.u, 'enterprise', 'equipo'); return; }
   if (ds.act === 'role') { auRoleModal(ds, user); return; }
@@ -4092,8 +4283,11 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store', origi
     departments: d.departments || [],
   };
 
-  // A donde vuelve al Cancelar / Volver / terminar de guardar.
-  const backTo = () => (origin === 'equipo' ? viewEquipo(user) : viewPermisos(user));
+  // A donde vuelve al Cancelar / Volver / terminar de guardar. v6.43: origin
+  // tambien puede ser una FUNCION (la pagina de Alcance de Equipo pasa su
+  // propio volver); el string 'equipo' y el default historico siguen igual.
+  const backTo = () => (typeof origin === 'function' ? origin()
+    : origin === 'equipo' ? viewEquipo(user) : viewPermisos(user));
   SCOPE.backTo = backTo;
 
   // Aviso de que vera el agente en osTicket segun este alcance. El agente ve
