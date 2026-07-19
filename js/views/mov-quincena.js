@@ -30,7 +30,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
-import { renderWorkerPhotos } from './worker-photos.js';
+import { renderWorkerPhotos, openWorkerLightbox } from './worker-photos.js';
 
 const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
 
@@ -148,14 +148,16 @@ function ensureStyles() {
   .mq-row{display:flex;align-items:center;gap:12px;padding:10px 14px;border-bottom:1px solid var(--border-soft,#f1f4f8)}
   .mq-row:last-child{border-bottom:0}
   .mq-av{flex:0 0 40px;width:40px;height:40px;border-radius:50%;overflow:hidden;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13.5px}
+  .mq-av.pic{cursor:zoom-in}
   .mq-av img{width:100%;height:100%;object-fit:cover;display:block}
-  .mq-mid{flex:1;min-width:0}
+  .mq-mid{flex:0 1 auto;min-width:0}
   .mq-nm{font-weight:600;font-size:13.5px;color:var(--ink,#0f172a);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .mq-sub{font-size:11.5px;color:var(--muted,#64748b);margin-top:2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-  .mq-acts{display:flex;gap:4px;flex:0 0 auto}
+  .mq-acts{display:flex;gap:4px;flex:0 0 auto;margin-right:auto}
   .mq-ib{border:1px solid var(--border,#e6eaf0);background:var(--card,#fff);border-radius:8px;width:28px;height:28px;display:flex;align-items:center;justify-content:center;cursor:pointer;color:var(--muted,#64748b)}
   .mq-ib:hover{color:var(--brand,#2563eb);border-color:var(--brand,#2563eb)}
-  .mq-right{flex:0 0 auto;min-width:300px;max-width:46%;text-align:left}
+  .mq-right{flex:0 0 auto;min-width:300px;max-width:46%;margin-left:auto;text-align:left}
+  .mq-right.duo{flex:0 0 52%;max-width:52%}
   .mq-emp1{font-size:12.5px;font-weight:700;color:var(--ink,#0f172a)}
   .mq-emp1 .da{font-weight:500;color:var(--faint,#94a3b8);font-size:11px}
   .mq-emp2{font-size:11.5px;color:var(--muted,#64748b);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -167,7 +169,8 @@ function ensureStyles() {
   .mq-pill.b{background:#dbeafe;color:#1e40af}
   .mq-pill.x{background:#f1f5f9;color:#475569}
   .mq-duo{display:flex;align-items:stretch;gap:8px}
-  .mq-box{flex:1;min-width:0;border:1px solid var(--border,#e6eaf0);border-radius:9px;padding:6px 9px;background:#fbfcfe}
+  .mq-box{flex:1 1 0;width:0;min-width:0;border:1px solid var(--border,#e6eaf0);border-radius:9px;padding:6px 9px;background:#fbfcfe}
+  .mq-box .rz2{font-size:10.5px;color:var(--muted,#64748b);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .mq-box.dim{opacity:.72}
   .mq-box .b1{font-size:11.5px;font-weight:700;color:var(--ink,#0f172a);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .mq-box .b1 .rz{font-weight:500;color:var(--muted,#64748b)}
@@ -180,7 +183,7 @@ function ensureStyles() {
   .mq-empty{padding:26px 16px;text-align:center;color:var(--muted,#64748b);font-size:13px}
   @media(max-width:820px){
     .mq-row{flex-wrap:wrap}
-    .mq-right{flex-basis:100%;max-width:100%;min-width:0;margin-top:6px;padding-left:52px}
+    .mq-right,.mq-right.duo{flex-basis:100%;max-width:100%;min-width:0;margin-top:6px;padding-left:52px}
   }`;
   document.head.appendChild(st);
 }
@@ -413,7 +416,7 @@ function avatarHtml(r) {
   const img = r.thumb_url
     ? `<img src="${esc(r.thumb_url)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">`
     : '';
-  return `<div class="mq-av">${img}${ini}</div>`;
+  return `<div class="mq-av${r.thumb_url ? ' pic' : ''}"${r.thumb_url ? ` data-pic="1" title="Ampliar foto"` : ''}>${img}${ini}</div>`;
 }
 function subLine(r) {
   const parts = [`C.I. ${cedFmt(r.ced)}`];
@@ -457,7 +460,8 @@ function rightSimple(r) {
 /* Bloque derecho de Trasladados / Cambios: dos cajitas ORIGEN → DESTINO. */
 function boxHtml(alias, emp, con, zona, sub, cargo, fecha, dim) {
   return `<div class="mq-box${dim ? ' dim' : ''}">
-    <div class="b1">${esc(alias || '')} <span class="rz">${esc(emp || '')}</span></div>
+    <div class="b1">${esc(alias || '')}</div>
+    <div class="rz2">${esc(emp || '')}</div>
     <div class="b2">${[con, zona, sub].filter(Boolean).map(esc).join(' · ') || '—'}</div>
     <div class="b3">${esc(cargo || '—')}${fecha ? ` <span class="fx">· ${fmtD(fecha)}</span>` : ''}</div>
   </div>`;
@@ -478,7 +482,7 @@ function rightDuo(r) {
     if (r.dir === 1) pills.push('<span class="mq-pill g">ascenso</span>');
     else if (r.dir === -1) pills.push('<span class="mq-pill r">descenso</span>');
   }
-  return `<div class="mq-right">
+  return `<div class="mq-right duo">
     <div class="mq-duo">
       ${boxHtml(r.a_alias, r.a_empresa, r.a_concepto, r.a_zona, r.a_subzona, r.a_cargo, r.a_fecha, isCam)}
       ${arr}
@@ -490,7 +494,7 @@ function rightDuo(r) {
 function rowHtml(r, i) {
   const right = (r.kind === 'tra' || r.kind === 'cam') ? rightDuo(r) : rightSimple(r);
   return `<div class="mq-row" data-i="${i}">
-    ${avatarHtml(r)}
+    ${avatarHtml(r, i)}
     <div class="mq-mid">
       <div class="mq-nm">${esc(r.nombre || '—')}</div>
       <div class="mq-sub">${subLine(r)}</div>
@@ -504,6 +508,14 @@ function rowHtml(r, i) {
 }
 function wireRows(host) {
   const rows = filtered().filter(r => r.kind === MQ.tab);
+  // Clic en la foto -> lightbox (mismo patron que Buscar / Datos incompletos).
+  host.querySelectorAll('.mq-av.pic').forEach(av =>
+    av.addEventListener('click', () => {
+      const row = av.closest('.mq-row');
+      const r = row ? rows[parseInt(row.dataset.i, 10)] : null;
+      if (!r || !r.thumb_url) return;
+      openWorkerLightbox(r.thumb_url, `${r.nombre} · C.I. ${r.ced}`, `${r.ced}.jpg`);
+    }));
   host.querySelectorAll('[data-open]').forEach(b =>
     b.addEventListener('click', () => {
       const r = rows[parseInt(b.dataset.open, 10)];
