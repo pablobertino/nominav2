@@ -839,11 +839,23 @@ function paintRosterBar() {
     ${freshTxt ? `<span class="rb-sep"></span>${freshTxt}` : ''}`;
 }
 
-function updateInfo(d) {
-  const total = d.total != null ? d.total : STATE.workers.length;
-  const withPhoto = d.with_photo != null ? d.with_photo : STATE.workers.filter(w => w.has_photo).length;
+/* v6.32: el resumen del encabezado cuenta LO QUE SE VE (respeta filtros y
+   búsqueda, igual que Exportar): con filtros activos dice "X mostrados
+   (de Y)"; sin filtros, el total simple. Fotos y pendientes también se
+   cuentan sobre lo visible. Se recalcula en cada paintGrid, y la línea
+   "Mostrando X de Y" quedó absorbida. La barra de inventario (wpRosterBar)
+   sigue contando la lista completa: ese es su trabajo. El parámetro d de
+   los llamadores viejos se ignora. */
+function updateInfo() {
   const el = $('#wpInfo');
-  if (el) el.innerHTML = `${total} colaboradores · <b style="color:var(--success)">${withPhoto} con foto</b> · ${total - withPhoto} pendientes`;
+  if (!el) return;
+  const total = STATE.workers.length;
+  const list = currentFiltered();
+  const withPhoto = list.filter(w => w.has_photo).length;
+  const base = list.length === total
+    ? `${total} colaboradores`
+    : `${list.length} mostrados <span style="color:var(--faint,#94a3b8);font-weight:400">(de ${total})</span>`;
+  el.innerHTML = `${base} · <b style="color:var(--success)">${withPhoto} con foto</b> · ${list.length - withPhoto} pendientes`;
 }
 
 function bankName(acc) {
@@ -1087,13 +1099,11 @@ function paintGrid() {
   if (!grid) return;
   ensureFootStyles();
   const list = sortWorkers(currentFiltered());
+  // v6.32: el resumen del encabezado (wpInfo) cuenta lo visible y se
+  // recalcula en cada repintado; "Mostrando X de Y" quedó absorbida ahí.
+  updateInfo();
   const shown = $('#wpShown');
-  if (shown) {
-    const total = STATE.workers.length;
-    const filtered = list.length !== total;
-    shown.style.display = filtered ? '' : 'none';
-    if (filtered) shown.textContent = `Mostrando ${list.length} de ${total}`;
-  }
+  if (shown) shown.style.display = 'none';
   const sel = STATE.selMode;
 
   grid.innerHTML = list.map(w => {
