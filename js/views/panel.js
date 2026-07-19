@@ -155,10 +155,12 @@ const NAV_GROUPS = [
     // alcanza para editor/gestor — cada rol tiene SU array (abajo).
     ['norehire', I.userx, 'No reempleables'],
     ['norehirecheck', I.usercheck, 'Verificar candidato'],
-    // v5.93: Movimientos (ingresos/egresos/traslados/cambios de cargo del
-    // periodo, derivados de los cortes quincenales). Permiso propio
+    // v5.93: Movimientos del periodo (ingresos/egresos/traslados/cambios de
+    // cargo), derivados de los cortes quincenales. Permiso propio
     // view.movimientos, gobernable desde Roles.
-    ['movimientos', I.moves, 'Movimientos'],
+    // v6.36: etiqueta renombrada a "Rotacion" (la clave interna NO cambia).
+    // "Movimientos" pasa a ser la futura vista operativa de quincena.
+    ['movimientos', I.moves, 'Rotación'],
     ['egmotivos', I.check, 'Ratificar egresos'],
     ['rostersync', I.sync, 'Carga de personal'],
   ] },
@@ -575,7 +577,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.35</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.36</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>

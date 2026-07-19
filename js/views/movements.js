@@ -416,8 +416,8 @@ export async function renderMovements(user) {
   }
 
   $('#pnlMain').innerHTML = `
-    <div class="mv-head"><h1>Movimientos de personal</h1>
-      <p>Ingresos, egresos, traslados y cambios de cargo del período, derivados de los cortes quincenales del sistema.</p></div>
+    <div class="mv-head"><h1>Rotación de personal</h1>
+      <p>Análisis de rotación del período — ingresos, egresos, traslados y cambios de cargo derivados de los cortes quincenales del sistema.</p></div>
     <div class="mv-filters">
       <label>PERÍODO</label>
       <select id="mvP1" class="mv-qsel"><option value="">Desde…</option></select>
@@ -1298,7 +1298,7 @@ async function doExportPDF() {
   };
 
   // Membrete
-  txt('Movimientos de personal — Análisis del período', 16, PDF_C.ink, { bold: true, gap: 1 });
+  txt('Rotación de personal — Análisis del período', 16, PDF_C.ink, { bold: true, gap: 1 });
   txt(`Período ${ddmm(C.from)}–${ddmm(C.to)} ${String(C.to).slice(0, 4)} · ${scopeLabel()}`, 10.5, PDF_C.soft, { gap: 0.5 });
   txt(`Portal de Nómina · Grupo Canaima · generado el ${nowCaracas()} (Caracas)`, 8.5, PDF_C.faint, { gap: 2 });
   D3(PDF_C.border); doc.setLineWidth(0.3); doc.line(M, y, M + W, y); y += 5;
@@ -1494,9 +1494,9 @@ async function doExportPDF() {
   for (let i = 1; i <= pages; i++) {
     doc.setPage(i);
     doc.setFont('helvetica', 'normal'); doc.setFontSize(7); C3(PDF_C.faint);
-    doc.text(pdfSan(`Portal de Nómina ${ver} · Movimientos — Análisis · pág. ${i} de ${pages}`), 105, 292, { align: 'center' });
+    doc.text(pdfSan(`Portal de Nómina ${ver} · Rotación — Análisis · pág. ${i} de ${pages}`), 105, 292, { align: 'center' });
   }
-  doc.save(`analisis_movimientos_${tstamp()}.pdf`);
+  doc.save(`analisis_rotacion_${tstamp()}.pdf`);
 }
 
 /* Filas visibles: chips de tipo + busqueda por coma + orden. */
@@ -1723,7 +1723,7 @@ async function doExport(fmt) {
   const data = exportRows();
   if (!data.length) { showMsg('No hay filas para exportar. Genera el reporte primero.'); return; }
   showMsg('');
-  await exportTable(fmt, data, `movimientos_${tstamp()}`, 'Movimientos');
+  await exportTable(fmt, data, `rotacion_detalle_${tstamp()}`, 'Rotación');
 }
 
 /* v6.01: exportacion de la ficha de tiendas comparables (misma mecanica;

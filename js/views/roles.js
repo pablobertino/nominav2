@@ -111,7 +111,8 @@ const MENU_CATALOG = [
     { id: 'norehirecheck', lbl: 'Verificar candidato', view: 'view.norehirecheck', acts: [] },
     // v5.93: Movimientos. Solo consulta (los movimientos se derivan de los
     // cortes quincenales del sistema), por eso sin acciones.
-    { id: 'movimientos', lbl: 'Movimientos', view: 'view.movimientos', acts: [] },
+    // v6.36: etiqueta renombrada a "Rotacion"; id y permiso NO cambian.
+    { id: 'movimientos', lbl: 'Rotación', view: 'view.movimientos', acts: [] },
     { id: 'egmotivos', lbl: 'Ratificar egresos', view: 'view.egmotivos', acts: ['egress.ratify'] },
     { id: 'rostersync', lbl: 'Carga de personal', view: 'view.rostersync', acts: ['roster.upload', 'roster.upload_ax', 'roster.upload_api', 'roster.manual', 'roster.clear'] },
   ] },
