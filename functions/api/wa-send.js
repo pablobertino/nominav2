@@ -147,6 +147,14 @@ function json(data, status = 200) {
 }
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/* v6.50 SOLO GRUPOS: la linea (Naima) publica UNICAMENTE en grupos de
+   WhatsApp; jamas a un chat individual. Un chat_id de grupo termina en
+   '@g.us'. Este guardian es la red de seguridad definitiva: aunque algun
+   flujo viejo cuele un destinatario individual (@c.us), aca NO se envia. */
+function isGroupChat(chatId) {
+  return /@g\.us$/i.test(String(chatId || ''));
+}
+
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
     ...opts,
@@ -276,50 +284,24 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------------- preview: destinatarios ---------------- */
     if (action === 'preview') {
-      if (!superOk && !Number(body.group_id || 0)) {
-        return json({ ok: false, error: 'Tu difusión está limitada a los grupos que te asignaron: elige un grupo.' }, 400);
+      // v6.50 SOLO GRUPOS: el preview solo confirma el grupo destino.
+      if (!Number(body.group_id || 0)) {
+        return json({ ok: false, error: 'Elige el grupo donde se va a publicar.' }, 400);
       }
       const grp = await pickGroup(env, body, restrictId);
       if (grp === undefined) return json({ ok: false, error: 'Ese grupo no está habilitado o no está asignado a tu usuario.' }, 400);
-      if (grp) {
-        return json({
-          ok: true,
-          total: 1, with_phone: 1, without_phone: 0,
-          rows: [{
-            id_number: '—', full_name: `Grupo: ${grp.alias || grp.wa_name || grp.chat_id}`,
-            company_code: '', company_name: '(un solo mensaje al grupo)',
-            phone: grp.chat_id, phone_ok: true,
-          }],
-        });
+      if (!grp || !isGroupChat(grp.chat_id)) {
+        return json({ ok: false, error: 'El destino no es un grupo válido de WhatsApp.' }, 400);
       }
-      const direct = pickDirectPhone(body);
-      if (direct) {
-        // Destinatario sintetico: no consulta el roster.
-        return json({
-          ok: true,
-          total: 1, with_phone: direct.ok ? 1 : 0, without_phone: direct.ok ? 0 : 1,
-          rows: [{
-            id_number: '—', full_name: 'Número directo',
-            company_code: '', company_name: '(fuera de nómina)',
-            phone: direct.raw, phone_ok: direct.ok,
-          }],
-        });
-      }
-      // v4.99: destino segun target. 'companies' (default) = telefonos de
-      // las empresas; 'people' = lista manual de cedulas del buscador.
-      // (id_number suelto se conserva por compatibilidad -> roster 1 persona)
-      if (String(body.id_number || '').trim()) {
-        const r = await rpc(env, 'wa_recipients', { ...pickFilters(body), p_limit: 100 });
-        return json({ ok: true, target: 'people', ...(r || {}) });
-      }
-      if ((body.target || 'companies') === 'people') {
-        const ids = pickPeople(body);
-        if (!ids.length) return json({ ok: false, error: 'Agrega al menos una persona a la lista con el buscador.' }, 400);
-        const r = await rpc(env, 'wa_people_by_ids', { p_ids: ids });
-        return json({ ok: true, target: 'people', ...(r || {}) });
-      }
-      const r = await rpc(env, 'wa_company_recipients', { ...pickCompanyFilters(body), p_limit: PREVIEW_LIMIT });
-      return json({ ok: true, target: 'companies', ...(r || {}) });
+      return json({
+        ok: true,
+        total: 1, with_phone: 1, without_phone: 0,
+        rows: [{
+          id_number: '—', full_name: `Grupo: ${grp.alias || grp.wa_name || grp.chat_id}`,
+          company_code: '', company_name: '(un solo mensaje al grupo)',
+          phone: grp.chat_id, phone_ok: true,
+        }],
+      });
     }
 
     if (action === 'status') {
@@ -368,72 +350,23 @@ export async function onRequestPost({ request, env }) {
       if (message.length > MAX_MESSAGE) {
         return json({ ok: false, error: `El mensaje supera los ${MAX_MESSAGE} caracteres.` }, 400);
       }
-      if (!superOk && !Number(body.group_id || 0)) {
-        return json({ ok: false, error: 'Tu difusión está limitada a los grupos que te asignaron: elige un grupo.' }, 400);
-      }
+      // v6.50 SOLO GRUPOS: la difusion publica UNICAMENTE en un grupo de
+      // WhatsApp. Se elimino el envio a empresas/personas/numero directo.
       const grp = await pickGroup(env, body, restrictId);
+      if (!Number(body.group_id || 0)) {
+        return json({ ok: false, error: 'Elige el grupo donde se va a publicar.' }, 400);
+      }
       if (grp === undefined) return json({ ok: false, error: 'Ese grupo no está habilitado o no está asignado a tu usuario.' }, 400);
-      const direct = pickDirectPhone(body);
-      if (direct && !direct.ok) {
-        return json({ ok: false, error: 'El número directo no parece válido (mínimo 10 dígitos).' }, 400);
+      if (!grp || !isGroupChat(grp.chat_id)) {
+        return json({ ok: false, error: 'El destino no es un grupo válido de WhatsApp.' }, 400);
       }
-      // Destinatarios: grupo (1 mensaje al chat) > numero directo >
-      // v4.99: lista manual de personas > EMPRESAS/TIENDAS (default).
-      // Nota: para empresas NO se exige filtro (el universo ya esta acotado
-      // a las empresas del grupo, ~150 mensajes maximo con solo-activas);
-      // para personas se exige lista no vacia.
-      let r, rows, batchFilters;
-      const target = String(body.target || 'companies');
-      const EXC = pickExclude(body);   // v5.05: quitados a mano en la grilla
-      if (grp) {
-        r = { total: 1 };
-        rows = [{ id_number: 'grupo', full_name: `Grupo: ${grp.alias || grp.wa_name || grp.chat_id}`, company_code: '', phone: grp.chat_id, phone_ok: true, chat_id_direct: grp.chat_id }];
-        batchFilters = { group_id: grp.id, group: grp.alias || grp.wa_name || grp.chat_id };
-      } else if (direct) {
-        r = { total: 1 };
-        rows = [{ id_number: 'directo', full_name: 'Número directo (prueba)', company_code: '', phone: direct.raw, phone_ok: true }];
-        batchFilters = { direct_phone: direct.raw };
-      } else if (String(body.id_number || '').trim()) {
-        // Compatibilidad: cedula suelta -> roster (1 persona).
-        const filters = pickFilters(body);
-        r = await rpc(env, 'wa_recipients', { ...filters, p_limit: 100000 });
-        rows = ((r && r.rows) || []).filter(x => x.phone_ok);
-        batchFilters = Object.fromEntries(Object.entries(filters).filter(([, v]) => v !== null));
-      } else if (target === 'people') {
-        const ids = pickPeople(body).filter(id => !EXC.has(id));   // v5.05
-        if (!ids.length) return json({ ok: false, error: 'Agrega al menos una persona a la lista con el buscador.' }, 400);
-        r = await rpc(env, 'wa_people_by_ids', { p_ids: ids });
-        rows = ((r && r.rows) || []).filter(x => x.phone_ok);
-        batchFilters = { target: 'people', people: ids, ...(EXC.size ? { excluded: [...EXC] } : {}) };
-      } else {
-        const cf = pickCompanyFilters(body);
-        r = await rpc(env, 'wa_company_recipients', { ...cf, p_limit: 100000 });
-        // v5.05: fuera las empresas que el usuario quito en la grilla.
-        const src = ((r && r.rows) || []).filter(c => !EXC.has(String(c.company_code)));
-        // Expandir: 1 fila de cola POR TELEFONO valido de cada empresa.
-        rows = [];
-        for (const c of src) {
-          for (const tel of (c.phones || [])) {
-            rows.push({
-              id_number: c.company_code,
-              full_name: `${c.company_code} · ${c.business_name}`,
-              company_code: c.company_code,
-              phone: tel, phone_ok: true,
-            });
-          }
-        }
-        batchFilters = {
-          target: 'companies', active: cf.p_active,
-          ...Object.fromEntries(Object.entries(cf).filter(([k, v]) => k !== 'p_active' && v !== null)
-            .map(([k, v]) => [k.replace(/^p_/, ''), v])),
-          ...(EXC.size ? { excluded: [...EXC] } : {}),
-        };
-      }
-      if (!rows.length) {
-        return json({ ok: false, error: EXC.size
-          ? 'No queda ningún destinatario: excluiste a todos los que tenían teléfono.'
-          : 'Ningún destinatario del filtro tiene teléfono válido.' }, 400);
-      }
+      const rows = [{
+        id_number: 'grupo',
+        full_name: `Grupo: ${grp.alias || grp.wa_name || grp.chat_id}`,
+        company_code: '', phone: grp.chat_id, phone_ok: true, chat_id_direct: grp.chat_id,
+      }];
+      const batchFilters = { group_id: grp.id, group: grp.alias || grp.wa_name || grp.chat_id };
+      const r = { total: 1 };
 
       const batch = await sb(env, 'wa_batches', {
         method: 'POST',
@@ -442,18 +375,14 @@ export async function onRequestPost({ request, env }) {
           created_by: actorName,
           message,
           filters: batchFilters,
-          // v5.05: 'total' = universo del filtro MENOS lo excluido (lo que
-          // realmente se intento), no el universo bruto.
-          total: (target === 'companies' && !grp && !direct)
-            ? [...new Set(rows.map(x => x.company_code))].length
-            : ((r && r.total) || rows.length),
+          total: (r && r.total) || rows.length,
           with_phone: rows.length,
         }),
       });
       const batchId = batch && batch[0] && batch[0].id;
       if (!batchId) throw new Error('No se pudo crear el lote.');
 
-      // Cola: 1 fila por destinatario (insert masivo)
+      // Cola: 1 fila (el grupo ya trae su chat_id @g.us).
       await sb(env, 'wa_outbox', {
         method: 'POST',
         headers: { Prefer: 'return=minimal' },
@@ -463,7 +392,6 @@ export async function onRequestPost({ request, env }) {
           full_name: x.full_name || '',
           company_code: x.company_code || '',
           phone_raw: x.phone,
-          // Grupos ya traen su chat_id @g.us; telefonos se normalizan.
           chat_id: x.chat_id_direct || toChatId(x.phone),
         }))),
       });
@@ -486,6 +414,16 @@ export async function onRequestPost({ request, env }) {
       let sent = 0, errors = 0;
 
       for (const row of (pend || [])) {
+        // v6.50 SOLO GRUPOS: nunca enviar a un chat individual. Si por algun
+        // flujo viejo quedo un @c.us en la cola, se marca error y se salta.
+        if (!isGroupChat(row.chat_id)) {
+          await sb(env, `wa_outbox?id=eq.${row.id}`, {
+            method: 'PATCH', headers: { Prefer: 'return=minimal' },
+            body: JSON.stringify({ status: 'error', error_text: 'Bloqueado: solo se permite publicar en grupos de WhatsApp.' }),
+          });
+          errors++;
+          continue;
+        }
         try {
           const res = await ga.sendMessage(row.chat_id, message);
           await sb(env, `wa_outbox?id=eq.${row.id}`, {
