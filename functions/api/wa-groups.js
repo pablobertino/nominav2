@@ -16,6 +16,7 @@
      list     {}                        gate: view.whatsapp (scoped)
      discover {}                        gate: SOLO superadmin
      save     { id, alias?, enabled? }  gate: SOLO superadmin
+     remove   { id }                   gate: SOLO superadmin
      grant    { group_id, admin_id }    gate: SOLO superadmin
      revoke   { group_id, admin_id }    gate: SOLO superadmin
    ===================================================================== */
@@ -137,6 +138,25 @@ export async function onRequestPost({ request, env }) {
       });
       if (!r || !r.length) return json({ ok: false, error: 'El grupo no existe.' }, 404);
       return json({ ok: true, group: r[0] });
+    }
+
+    /* remove: quitar un grupo del catalogo (v6.52). Util para limpiar los
+       grupos que quedaron de una linea anterior tras cambiar de telefono:
+       el discover agrega/refresca pero no borra, asi que estos quedan
+       colgados. Borra primero sus asignaciones (wa_group_admins) por si
+       tuviera, y luego el grupo. Solo superadmin (gate de arriba). */
+    if (action === 'remove') {
+      const id = Number(body.id || 0);
+      if (!id) return json({ ok: false, error: 'Falta el grupo.' }, 400);
+      // Fuera primero las asignaciones (evita filas puente huerfanas).
+      await sb(env, `wa_group_admins?group_id=eq.${id}`, {
+        method: 'DELETE', headers: { Prefer: 'return=minimal' },
+      });
+      const r = await sb(env, `wa_groups?id=eq.${id}`, {
+        method: 'DELETE', headers: { Prefer: 'return=representation' },
+      });
+      if (!r || !r.length) return json({ ok: false, error: 'El grupo no existe.' }, 404);
+      return json({ ok: true, removed: id });
     }
 
     /* grant / revoke: alcance por admin (v4.97) */

@@ -47,6 +47,8 @@ function ensureStyles() {
   .wg-btn{border:1px solid var(--border);background:var(--surface,#fff);border-radius:10px;padding:9px 16px;font:inherit;font-size:13px;font-weight:600;color:var(--ink-soft,#475569);cursor:pointer;white-space:nowrap}
   .wg-btn.wa{background:#128c7e;border-color:#128c7e;color:#fff;font-weight:700}
   .wg-btn.mini{padding:6px 12px;font-size:12px;border-radius:8px}
+  .wg-btn.danger{color:#b91c1c;border-color:#fecaca;background:#fff}
+  .wg-btn.danger:hover{background:#fef2f2}
   .wg-btn:disabled{opacity:.5;cursor:default}
   .wg-card{background:var(--card,#fff);border:1px solid var(--border);border-radius:13px;padding:16px 18px;margin-bottom:14px}
   .wg-hint{font-size:12px;color:#92400e;background:var(--warn-bg,#fffbeb);border:1px solid #fde68a;border-radius:9px;padding:8px 12px;margin-bottom:13px}
@@ -132,7 +134,7 @@ function paintTable(user) {
       <td><span class="wg-sw ${g.enabled ? 'on' : ''}" title="Habilitar para difusión"><i></i></span></td>
       <td>${g.enabled ? '<span class="wg-en">Habilitado</span>' : '<span class="wg-off">No habilitado</span>'}</td>
       <td class="wg-assign">${assignCell(g.id)}</td>
-      <td><button class="wg-btn mini wg-save">Guardar</button><span class="wg-fb"></span></td>
+      <td><button class="wg-btn mini wg-save">Guardar</button> <button class="wg-btn mini danger wg-remove">Quitar</button><span class="wg-fb"></span></td>
     </tr>`).join('')}</tbody>
   </table>`;
 
@@ -182,6 +184,38 @@ function paintTable(user) {
     } else {
       fb.className = 'wg-fb wg-err'; fb.textContent = (r && r.error) || 'Error';
     }
+  }));
+
+  // v6.52: Quitar un grupo del catalogo (util para limpiar los que quedaron
+  // de una linea anterior tras cambiar de telefono). Confirmacion inline en
+  // la propia celda (sin confirm() nativo). Si esta habilitado o tiene admins
+  // asignados, el aviso lo advierte.
+  box.querySelectorAll('.wg-remove').forEach(btn => btn.addEventListener('click', () => {
+    const tr = btn.closest('tr');
+    const id = Number(tr.dataset.id);
+    const g = GROUPS.find(x => x.id === id) || {};
+    const nAsg = ASSIGN.filter(a => a.group_id === id).length;
+    const cell = btn.closest('td');
+    const warn = g.enabled
+      ? ' Está <b>habilitado</b> para Difusión.'
+      : (nAsg ? ` Tiene <b>${nAsg}</b> admin${nAsg === 1 ? '' : 's'} autorizado${nAsg === 1 ? '' : 's'}.` : '');
+    cell.innerHTML = `<div style="font-size:11.5px;color:#991b1b;margin-bottom:5px">¿Quitar «${esc(g.wa_name || g.alias || 'este grupo')}»?${warn}</div>
+      <button class="wg-btn mini danger wg-rmyes">Sí, quitar</button> <button class="wg-btn mini wg-rmno">Cancelar</button><span class="wg-fb"></span>`;
+    cell.querySelector('.wg-rmno').addEventListener('click', () => paintTable(user));
+    cell.querySelector('.wg-rmyes').addEventListener('click', async () => {
+      const yes = cell.querySelector('.wg-rmyes');
+      const fb = cell.querySelector('.wg-fb');
+      yes.disabled = true; fb.className = 'wg-fb'; fb.textContent = '';
+      const r = await api(user, { action: 'remove', id });
+      if (r && r.ok) {
+        GROUPS = GROUPS.filter(x => x.id !== id);
+        ASSIGN = ASSIGN.filter(a => a.group_id !== id);
+        paintTable(user);
+      } else {
+        yes.disabled = false;
+        fb.className = 'wg-fb wg-err'; fb.textContent = (r && r.error) || 'Error';
+      }
+    });
   }));
 }
 
