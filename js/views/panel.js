@@ -585,7 +585,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.46</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.47</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3393,7 +3393,12 @@ function ensureEqCss() {
     .zrow.tienda .tcode{font-family:Consolas,monospace;font-size:11.5px;color:var(--ink-soft,#475569)}
     .zrow.tienda .tname{color:var(--muted,#64748b);font-size:11.5px}
     .zrow.tienda.excl{opacity:.7}
-    .zrow.tienda .badge-exc{font-size:10px;color:#b45309;background:#fdf3e7;border-radius:6px;padding:0 6px;margin-left:auto}`;
+    .zrow.tienda .badge-exc{font-size:10px;color:#b45309;background:#fdf3e7;border-radius:6px;padding:0 6px;margin-left:auto}
+    /* v6.47: arbol Empresa ▸ departamentos (pestaña Empresas) */
+    .zrow.empresa .ecode{font-family:Consolas,monospace;font-size:11.5px;color:var(--ink-soft,#475569)}
+    .zrow.empresa .etype{font-size:10px;color:var(--muted,#64748b);background:var(--bg-soft,#f1f5f9);border-radius:6px;padding:0 6px}
+    .zrow.dept{padding-left:52px;background:#fbfcfe}
+    .zrow.dept .dname{color:var(--ink-soft,#475569)}`;
   document.head.appendChild(st);
 }
 // Menu ⋯ de la fila: flotante position:fixed, asi NINGUNA grilla ni overflow
@@ -4489,6 +4494,154 @@ function sctIsStoreScope(x) {
   return false;
 }
 
+/* ============================ v6.47 ============================
+   ARBOL Empresa ▸ departamentos para la pestaña Empresas del Alcance.
+   Misma logica que Tiendas, en 2 niveles. Opera sobre SCOPE.include
+   (aqui exclude no se usa: acotar = incluir solo ciertos deptos):
+     - empresa marcada entera -> include company (toda la empresa).
+     - empresa acotada        -> include department por cada depto marcado.
+     - marcar TODOS los deptos de una empresa colapsa a include company.
+   El backend cuenta por empresa; department restringe el personal a ese
+   depto de la empresa duena. Muestra empresas no-tienda AUNQUE esten
+   inactivas (igual que el editor viejo: filtra por NON_STORE_TYPES, no por
+   is_active). Aprobado en _PRUEBAS/arbol_empresas_borrador.html. */
+const EMP_TREE = { expanded: new Set(), q: '' };
+
+function sceCompanies() {
+  return (SCOPE.companies || []).filter(c => NON_STORE_TYPES.has(c.company_type))
+    .slice().sort((a, b) => (a.company_type + a.company_code).localeCompare(b.company_type + b.company_code));
+}
+function sceDepts(cc) { return (SCOPE.departments || []).filter(d => String(d.company_code) === String(cc)); }
+function sceHas(type, val) { return SCOPE.include.some(x => x.scope_type === type && String(x.scope_value) === String(val)); }
+function sceAdd(type, val) { if (!sceHas(type, val)) SCOPE.include.push({ scope_type: type, scope_value: String(val) }); }
+function sceDel(type, val) { const i = SCOPE.include.findIndex(x => x.scope_type === type && String(x.scope_value) === String(val)); if (i >= 0) SCOPE.include.splice(i, 1); }
+
+// Estado del checkbox de una empresa: 'all' | 'some' | 'none'.
+function sceCompState(cc) {
+  if (sceHas('company', cc)) return 'all';
+  const deps = sceDepts(cc);
+  const marked = deps.filter(d => sceHas('department', d.id)).length;
+  if (marked === 0) return 'none';
+  if (deps.length && marked === deps.length) return 'all';
+  return 'some';
+}
+function sceDeptChecked(cc, id) { return sceHas('company', cc) ? true : sceHas('department', id); }
+
+function sceToggleCompany(cc, checked) {
+  sceDel('company', cc);
+  sceDepts(cc).forEach(d => sceDel('department', d.id));
+  if (checked) sceAdd('company', cc);
+  renderEmpresasTree();
+}
+function sceToggleDept(cc, id, checked) {
+  const deps = sceDepts(cc);
+  if (sceHas('company', cc)) {
+    // estaba completa: pasar a modo deptos (todos menos el que se desmarca)
+    sceDel('company', cc);
+    deps.forEach(d => { if (String(d.id) !== String(id)) sceAdd('department', d.id); });
+    if (checked) sceAdd('department', id); else sceDel('department', id);
+  } else {
+    if (checked) sceAdd('department', id); else sceDel('department', id);
+  }
+  // si quedaron TODOS marcados, colapsar a company completa
+  const marked = deps.filter(d => sceHas('department', d.id)).length;
+  if (deps.length && marked === deps.length) { deps.forEach(d => sceDel('department', d.id)); sceAdd('company', cc); }
+  renderEmpresasTree();
+}
+
+function renderEmpresasTree() {
+  const host = document.getElementById('sceHost');
+  if (!host) return;
+  const comps = sceCompanies();
+  const q = (EMP_TREE.q || '').trim().toLowerCase();
+  const empN = comps.filter(c => sceCompState(c.company_code) !== 'none').length;
+  let deptGrant = 0;
+  comps.forEach(c => {
+    const st = sceCompState(c.company_code), deps = sceDepts(c.company_code);
+    if (st === 'all') deptGrant += (deps.length || 0);
+    else if (st === 'some') deptGrant += deps.filter(d => sceHas('department', d.id)).length;
+  });
+  const sumHtml = `Resumen: <b>${empN} empresa${empN === 1 ? '' : 's'}</b>` + (deptGrant ? ` \u00b7 <b>${deptGrant} departamento${deptGrant === 1 ? '' : 's'} con acceso</b>` : '');
+
+  const ck = (state) => `<input type="checkbox" ${state === 'all' ? 'checked' : ''} data-ind="${state === 'some' ? '1' : ''}">`;
+  const match = (qq, ...t) => !qq || t.join(' ').toLowerCase().includes(qq);
+  let rows = '';
+  comps.forEach(c => {
+    const cc = c.company_code, deps = sceDepts(cc).slice().sort((a, b) => a.name.localeCompare(b.name));
+    const compMatch = match(q, cc, c.business_name, c.company_type);
+    const anyDept = q ? deps.some(d => match(q, d.name)) : true;
+    if (q && !compMatch && !anyDept) return;
+    const st = sceCompState(cc);
+    const open = q ? true : EMP_TREE.expanded.has(cc);
+    const hasDeps = deps.length > 0;
+    const grantTxt = st === 'all' ? (hasDeps ? `todos los ${deps.length} deptos` : 'acceso completo')
+      : st === 'some' ? `${deps.filter(d => sceHas('department', d.id)).length} de ${deps.length} deptos`
+        : (hasDeps ? `${deps.length} deptos` : 'sin departamentos');
+    rows += `<div class="zrow empresa" data-lvl="empresa" data-cc="${cc}">
+      <span class="toggle" data-tgl="${hasDeps ? cc : ''}">${hasDeps ? (open ? '\u25be' : '\u25b8') : ''}</span>
+      ${ck(st)}
+      <span class="ecode">${cc}</span> <span class="zn">${escRoleLbl(c.business_name || '')}</span>
+      <span class="etype">${escRoleLbl(c.company_type || '')}</span>
+      <span class="zc">${grantTxt}</span></div>`;
+    if (hasDeps && open) {
+      deps.forEach(d => {
+        if (q && !compMatch && !match(q, d.name)) return;
+        rows += `<div class="zrow dept" data-lvl="dept">
+          <span class="toggle"></span>
+          <input type="checkbox" ${sceDeptChecked(cc, d.id) ? 'checked' : ''} data-cc="${cc}" data-did="${d.id}">
+          <span class="dname">${escRoleLbl(d.name || '')}</span></div>`;
+      });
+    }
+  });
+
+  host.innerHTML = `
+    <div class="sctree-tools">
+      <div class="search">${I.search}<input id="sceQ" placeholder="Filtrar empresa o departamento\u2026" autocomplete="off" value="${(EMP_TREE.q || '').replace(/"/g, '&quot;')}"></div>
+      <button class="btn btn-mini" id="sceMark">Marcar todo</button>
+      <button class="btn btn-mini" id="sceClear">Desmarcar todo</button>
+      <button class="btn btn-mini" id="sceExp">Expandir</button>
+      <button class="btn btn-mini" id="sceCol">Colapsar</button>
+    </div>
+    <div class="sctree-sum">${sumHtml}</div>
+    <div class="sctree">${rows || '<div style="padding:14px;color:var(--muted,#64748b);font-size:12.5px">Sin coincidencias.</div>'}</div>`;
+
+  host.querySelectorAll('.sctree input[type=checkbox][data-ind="1"]').forEach(c => c.indeterminate = true);
+  const qi = document.getElementById('sceQ');
+  if (qi) qi.addEventListener('input', () => { EMP_TREE.q = qi.value; renderEmpresasTree(); });
+  host.querySelectorAll('[data-tgl]').forEach(t => t.addEventListener('click', () => {
+    const id = t.dataset.tgl; if (!id) return;
+    if (EMP_TREE.expanded.has(id)) EMP_TREE.expanded.delete(id); else EMP_TREE.expanded.add(id);
+    renderEmpresasTree();
+  }));
+  host.querySelectorAll('[data-lvl="empresa"]').forEach(row => {
+    const c = row.querySelector('input[type=checkbox]'); const cc = row.dataset.cc;
+    if (c) c.addEventListener('change', () => sceToggleCompany(cc, c.checked));
+  });
+  host.querySelectorAll('input[data-did]').forEach(c => c.addEventListener('change', () => sceToggleDept(c.dataset.cc, c.dataset.did, c.checked)));
+  document.getElementById('sceMark')?.addEventListener('click', () => {
+    // limpiar todo lo de EMPRESAS (company no-tienda + department) y marcar todas enteras
+    SCOPE.include = SCOPE.include.filter(x => !sceIsEntScope(x));
+    comps.forEach(c => sceAdd('company', c.company_code));
+    renderEmpresasTree();
+  });
+  document.getElementById('sceClear')?.addEventListener('click', () => {
+    SCOPE.include = SCOPE.include.filter(x => !sceIsEntScope(x));
+    SCOPE.exclude = SCOPE.exclude.filter(x => !sceIsEntScope(x));
+    renderEmpresasTree();
+  });
+  document.getElementById('sceExp')?.addEventListener('click', () => { comps.forEach(c => { if (sceDepts(c.company_code).length) EMP_TREE.expanded.add(c.company_code); }); renderEmpresasTree(); });
+  document.getElementById('sceCol')?.addEventListener('click', () => { EMP_TREE.expanded.clear(); renderEmpresasTree(); });
+}
+
+// ¿Este item de alcance pertenece al mundo EMPRESAS? (department siempre;
+// company solo si es empresa no-tienda). Zonas/subzonas/tiendas no se tocan aqui.
+function sceIsEntScope(x) {
+  if (x.scope_type === 'department') return true;
+  if (x.scope_type === 'zone' || x.scope_type === 'subzone') return false;
+  if (x.scope_type === 'company') { const c = SCOPE.companies.find(c => c.company_code === x.scope_value); return !!c && NON_STORE_TYPES.has(c.company_type); }
+  return false;
+}
+
 async function openScopeEditor(user, targetId, targetUser, kind = 'store', origin = 'permisos', opts = {}) {
   /* v6.44: el editor puede montarse DENTRO de un host (la pestaña Tiendas o
      Empresas de la pagina de Alcance) en modo embedded: sin su pnl-head ni
@@ -4535,27 +4688,7 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store', origi
       <p>${SCOPE.isEnt ? 'Define qu\u00e9 empresas (no tiendas) o departamentos puede gestionar. Alcance final = incluidos \u2212 excluidos.' : 'Define qu\u00e9 tiendas puede gestionar. Alcance final = incluidos \u2212 excluidos.'}</p></div>
       <button class="btn" id="scBack">\u2190 Volver</button></div>`}
     ${ostInfo}
-    ${SCOPE.isEnt ? `<div class="card">
-      <div class="sc-add">
-        <select id="scLevel">
-          <option value="company">Empresa (todo)</option><option value="department">Departamento</option>
-        </select>
-        <div class="search" style="flex:1">${I.search}<input id="scSearch" placeholder="Buscar\u2026" autocomplete="off"></div>
-        <button class="btn" id="scNewDept" title="Crear un departamento" style="white-space:nowrap;display:none">${I.plus} Nuevo departamento</button>
-      </div>
-      <div id="scResults" class="sc-results"></div>
-    </div>
-    <div class="cards-row">
-      <div class="card" style="flex:1">
-        <h3 style="color:var(--success)">Incluidos (<span id="scIncN">0</span>)</h3>
-        <div id="scIncList" class="sc-list"></div>
-      </div>
-      <div class="card" style="flex:1">
-        <h3 style="color:var(--danger)">Excluidos (<span id="scExcN">0</span>)</h3>
-        <div id="scExcList" class="sc-list"></div>
-      </div>
-    </div>
-    <div class="card" id="scSummary" style="font-size:13px;color:var(--ink-soft)"></div>` : `<div id="sctHost"></div>`}
+    ${SCOPE.isEnt ? `<div id="sceHost"></div>` : `<div id="sctHost"></div>`}
     <div class="modal-actions">
       <button class="btn" id="scCancel">Cancelar</button>
       <button class="btn btn-primary" id="scSave">Guardar alcance</button>
@@ -4566,26 +4699,19 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store', origi
   $('#scCancel').addEventListener('click', backTo);
   $('#scSave').addEventListener('click', () => saveScope(user));
 
-  // v6.46: modo TIENDAS usa el arbol Zona ▸ Subzona ▸ tienda (sin scLevel/scSearch).
-  if (!SCOPE.isEnt) {
+  // v6.46/v6.47: ambos modos usan arbol con checkboxes (sin scLevel/scSearch/
+  // listas incluidos-excluidos). Empresas -> arbol Empresa ▸ deptos; Tiendas ->
+  // arbol Zona ▸ Subzona ▸ tienda. Ambos operan sobre SCOPE.include/exclude y
+  // guardan con saveScope (osTicket incluido), sin cambios en el guardado.
+  if (SCOPE.isEnt) {
+    EMP_TREE.expanded = new Set();
+    EMP_TREE.q = '';
+    renderEmpresasTree();
+  } else {
     SCOPE_TREE.expanded = new Set();
     SCOPE_TREE.q = '';
     renderTiendasTree();
-    return;
   }
-
-  const lvl = $('#scLevel'), search = $('#scSearch');
-  const newDeptBtn = $('#scNewDept');
-  // El boton "Nuevo departamento" solo aplica al nivel Departamento.
-  function syncNewDeptBtn() {
-    if (newDeptBtn) newDeptBtn.style.display = (lvl.value === 'department') ? '' : 'none';
-  }
-  lvl.addEventListener('change', () => { search.value = ''; SCOPE.sel = new Set(); syncNewDeptBtn(); renderScResults(); });
-  search.addEventListener('input', renderScResults);
-  if (newDeptBtn) newDeptBtn.addEventListener('click', () => openScNewDeptModal(user));
-  syncNewDeptBtn();
-  renderScopeLists();
-  renderScResults();
 }
 
 /* Modal para crear un departamento SIN salir del editor de alcance.
