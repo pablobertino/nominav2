@@ -231,27 +231,12 @@ function syncSubzones() {
     + subs.map(s => `<option value="${esc(s.id)}">${esc(s.name)}</option>`).join('');
 }
 
-/* v4.99: prioridad de destinos: grupo > numero directo > modo Personas
-   (lista manual) > modo Empresas/Tiendas (filtros + solo activas). */
+/* v6.51 SOLO GRUPOS: el único destino es un grupo habilitado. Se quitaron
+   los modos empresas/personas/numero directo (el backend ya los rechaza). */
 function currentFilters() {
   const grpSel = $('#waFGroup');
   const grp = grpSel ? grpSel.value : '';
-  if (grp) return { group_id: Number(grp) };     // el grupo manda sobre todo
-  const tel = $('#waFTel').value.trim();
-  if (tel) return { direct_phone: tel };         // luego el numero directo
-  if (TARGET === 'people') {
-    return { target: 'people', people: PEOPLE.map(p => p.id_number), exclude: [...EXCLUDED] };
-  }
-  return {
-    target: 'companies',
-    zone: $('#waFZone').value || null,
-    subzone: $('#waFSubzone').value || null,
-    type: $('#waFType').value || null,
-    concept: $('#waFConcept').value || null,
-    company: $('#waFCompany').value || null,
-    active: $('#waFActive').checked,
-    exclude: [...EXCLUDED],   // v5.05: quitados a mano en la grilla
-  };
+  return { group_id: Number(grp || 0) };
 }
 
 /* ===================== v5.05: EXCLUIR DESTINATARIOS =====================
@@ -610,19 +595,19 @@ export async function renderWaSend(user) {
       <div>
         <h1><span class="wa-ic"><svg width="17" height="17" viewBox="0 0 24 24" fill="currentColor"><path d="M12 2a10 10 0 0 0-8.6 15.1L2 22l5-1.3A10 10 0 1 0 12 2Zm5 14.2c-.2.6-1.2 1.2-1.7 1.2-.4.1-1 .1-1.6-.1-.4-.1-.9-.3-1.5-.5a11.6 11.6 0 0 1-4.4-3.9c-.3-.5-.8-1.3-.8-2.2 0-.8.4-1.2.6-1.4.2-.2.4-.3.6-.3h.4c.2 0 .3 0 .5.4l.7 1.7c0 .2.1.3 0 .5l-.3.4-.4.4c-.1.1-.2.3-.1.5.1.2.6 1 1.3 1.7.9.8 1.7 1.1 2 1.2.2.1.4.1.5-.1l.6-.8c.2-.2.3-.2.5-.1l1.7.8c.2.1.4.2.4.3.1.1.1.6-.1 1.2Z"/></svg></span>
         Difusión</h1>
-        <p>Envía un mensaje de WhatsApp a las empresas / tiendas del grupo, o a personas puntuales.</p>
+        <p>Publica un mensaje de WhatsApp en un grupo del grupo Canaima.</p>
       </div>
       <span class="wa-inst" id="waInst"><span class="dot"></span> Verificando línea…</span>
     </div>
 
     <div class="wa-card">
-      <h3><span class="n">1</span> ¿A quién va el mensaje?</h3>
-      <div class="wa-seg" id="waSeg">
+      <h3><span class="n">1</span> ¿En qué grupo se publica?</h3>
+      <div class="wa-seg" id="waSeg" style="display:none">
         <button type="button" class="wa-segbtn on" data-t="companies">🏪 Empresas / Tiendas</button>
         <button type="button" class="wa-segbtn" data-t="people">👤 Personas</button>
       </div>
 
-      <div id="waTgtCompanies">
+      <div id="waTgtCompanies" style="display:none">
         <div class="wa-filters" id="waFiltersGrid">
           <div><label>Zona</label><select id="waFZone"><option value="">Todas</option></select></div>
           <div><label>Subzona</label><select id="waFSubzone"><option value="">Todas</option></select></div>
@@ -643,11 +628,11 @@ export async function renderWaSend(user) {
         <div class="wa-plist" id="waPList"></div>
       </div>
 
-      <div class="wa-orsep" id="waOrsep">o un número directo · o un grupo (mandan sobre todo)</div>
+      <div class="wa-orsep" id="waOrsep">Grupo donde se va a publicar</div>
       <div class="wa-frow">
-        <div id="waTelBox"><label>Número directo (pruebas / fuera de nómina)</label><input id="waFTel" placeholder="Ej: 0414-1234567"></div>
-        <div id="waGrpBox"><label>Grupo habilitado (un solo mensaje al grupo)</label><select id="waFGroup"><option value="">— Ninguno —</option></select></div>
-        <button class="wa-btn pri" id="waPreview">Ver destinatarios</button>
+        <div id="waTelBox" style="display:none"><label>Número directo (pruebas / fuera de nómina)</label><input id="waFTel" placeholder="Ej: 0414-1234567"></div>
+        <div id="waGrpBox" style="flex:2"><label>Grupo habilitado (un solo mensaje al grupo)</label><select id="waFGroup"><option value="">— Ninguno —</option></select></div>
+        <button class="wa-btn pri" id="waPreview">Ver destinatario</button>
         <button class="wa-btn" id="waClear">Limpiar</button>
       </div>
       <div class="wa-kpis" id="waKpis"></div>
@@ -670,7 +655,7 @@ export async function renderWaSend(user) {
     <div class="wa-card">
       <h3><span class="n">3</span> Enviar</h3>
       <div class="wa-sendrow" id="waSendRow">
-        <span class="wa-note">⚠️ Se enviará desde la línea corporativa del grupo. El envío es espaciado (sin ráfagas) y queda registrado con fecha, autor y filtros usados.</span>
+        <span class="wa-note">⚠️ Se publicará en el grupo desde la línea corporativa. Queda registrado con fecha y autor.</span>
         <button class="wa-btn wa" id="waSendBtn" disabled>📤 Enviar</button>
       </div>
       <div class="wa-prog" id="waProg" style="display:none">
@@ -872,7 +857,7 @@ export async function renderWaSend(user) {
 
   function renderSendRowIdle() {
     $('#waSendRow').innerHTML = `
-      <span class="wa-note">⚠️ Se enviará desde la línea corporativa del grupo. El envío es espaciado (sin ráfagas) y queda registrado con fecha, autor y filtros usados.</span>
+      <span class="wa-note">⚠️ Se publicará en el grupo desde la línea corporativa. Queda registrado con fecha y autor.</span>
       <button class="wa-btn wa" id="waSendBtn" disabled>📤 Enviar</button>`;
     $('#waSendBtn').addEventListener('click', () => {
       if (!PREVIEW || SENDING) return;
