@@ -585,7 +585,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.45</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.46</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -3371,7 +3371,29 @@ function ensureEqCss() {
     .alc-tabs{display:flex;gap:2px;padding:6px 16px 0;background:#fbfcfe;border-bottom:1px solid var(--border,#e6eaf0);flex-wrap:wrap}
     .alc-tab{padding:10px 15px;font-size:13px;font-weight:700;color:var(--muted,#64748b);cursor:pointer;border:0;background:none;border-bottom:2.5px solid transparent;margin-bottom:-1px;font-family:inherit}
     .alc-tab.on{color:var(--brand,#2563eb);border-bottom-color:var(--brand,#2563eb)}
-    .alc-body{padding:18px 20px}`;
+    .alc-body{padding:18px 20px}
+    /* v6.46: arbol Zona ▸ Subzona ▸ tienda (pestaña Tiendas) */
+    .sctree-tools{display:flex;gap:9px;margin-bottom:12px;flex-wrap:wrap;align-items:center}
+    .sctree-tools .search{display:flex;align-items:center;gap:7px;background:var(--card,#fff);border:1px solid var(--border,#e6eaf0);border-radius:10px;padding:8px 11px;flex:1;min-width:220px}
+    .sctree-tools .search input{border:0;outline:0;font:inherit;font-size:13px;width:100%;background:transparent;color:var(--ink,#0f172a)}
+    .sctree-tools .search svg{color:var(--muted,#64748b);flex:none}
+    .sctree-sum{background:var(--bg-soft,#f1f5f9);border-radius:10px;padding:9px 13px;font-size:12.3px;color:var(--ink-soft,#475569);margin-bottom:12px}
+    .sctree-sum b{color:var(--ink,#0f172a)}
+    .sctree-sum .exc{color:#b45309}
+    .sctree{border:1px solid var(--border,#e6eaf0);border-radius:11px;overflow:auto;max-height:56vh}
+    .zrow{display:flex;align-items:center;gap:9px;padding:8px 13px;border-top:1px solid var(--border-soft,#f1f4f8);font-size:12.8px}
+    .zrow:first-child{border-top:0}
+    .zrow input[type=checkbox]{accent-color:var(--brand,#2563eb);width:15px;height:15px;margin:0;cursor:pointer;flex:none}
+    .zrow .zn{font-weight:600}
+    .zrow .zc{color:var(--faint,#94a3b8);font-size:11.5px;margin-left:auto;white-space:nowrap}
+    .zrow.child{padding-left:44px;background:#fbfcfe}
+    .zrow.child2{padding-left:76px;background:var(--card,#fff)}
+    .zrow .toggle{cursor:pointer;color:var(--faint,#94a3b8);font-size:11px;user-select:none;width:14px;text-align:center;flex:none}
+    .zrow .minus{font-size:10.5px;color:#b45309;background:#fdf3e7;border-radius:6px;padding:0 6px;margin-left:6px}
+    .zrow.tienda .tcode{font-family:Consolas,monospace;font-size:11.5px;color:var(--ink-soft,#475569)}
+    .zrow.tienda .tname{color:var(--muted,#64748b);font-size:11.5px}
+    .zrow.tienda.excl{opacity:.7}
+    .zrow.tienda .badge-exc{font-size:10px;color:#b45309;background:#fdf3e7;border-radius:6px;padding:0 6px;margin-left:auto}`;
   document.head.appendChild(st);
 }
 // Menu ⋯ de la fila: flotante position:fixed, asi NINGUNA grilla ni overflow
@@ -4280,6 +4302,193 @@ async function viewPermisos(user) {
     b.addEventListener('click', () => openScopeEditor(user, b.dataset.id, b.dataset.u, b.dataset.kind || 'store')));
 }
 
+/* ============================ v6.46 ============================
+   ARBOL Zona ▸ Subzona ▸ tienda para la pestaña Tiendas del Alcance.
+   Sustituye la UI "incluidos − excluidos" SOLO en modo Tiendas embebido.
+   NO cambia el modelo ni el guardado: opera sobre SCOPE.include/exclude
+   (los mismos arrays que saveScope envia a /api/admin-scope). La semantica
+   es identica a addScope/removeScope/estimateScope:
+     - marcar una zona/subzona la INCLUYE; desmarcar una tienda dentro de un
+       nivel incluido la EXCLUYE (exclude company).
+     - el checkbox de zona/subzona refleja el estado agregado de sus tiendas
+       (todas dentro = marcado; ninguna = vacio; mezcla = indeterminado).
+   Aprobado en _PRUEBAS/arbol_tiendas_borrador.html. */
+const SCOPE_TREE = { expanded: new Set(), q: '' };
+
+function sctIndexes() {
+  const byZone = {}, bySub = {}, subByZone = {};
+  // Universo = tiendas activas (mismo criterio que estimateScope en modo Tiendas).
+  (SCOPE.companies || []).filter(c => c.is_active && !NON_STORE_TYPES.has(c.company_type)).forEach(c => {
+    (byZone[c.zone_id] = byZone[c.zone_id] || []).push(c);
+    (bySub[c.subzone_id] = bySub[c.subzone_id] || []).push(c);
+  });
+  (SCOPE.subzones || []).forEach(s => { (subByZone[s.zone_id] = subByZone[s.zone_id] || []).push(s); });
+  const zones = (SCOPE.zones || []).filter(z => (byZone[z.id] || []).length);
+  return { byZone, bySub, subByZone, zones };
+}
+
+// Conjunto EFECTIVO de company_codes (include − exclude), igual que estimateScope.
+function sctEffective(ix) {
+  const inSet = new Set();
+  SCOPE.include.forEach(x => {
+    if (x.scope_type === 'zone') (ix.byZone[x.scope_value] || []).forEach(c => inSet.add(c.company_code));
+    else if (x.scope_type === 'subzone') (ix.bySub[x.scope_value] || []).forEach(c => inSet.add(c.company_code));
+    else if (x.scope_type === 'company') inSet.add(x.scope_value);
+  });
+  SCOPE.exclude.forEach(x => {
+    if (x.scope_type === 'zone') (ix.byZone[x.scope_value] || []).forEach(c => inSet.delete(c.company_code));
+    else if (x.scope_type === 'subzone') (ix.bySub[x.scope_value] || []).forEach(c => inSet.delete(c.company_code));
+    else if (x.scope_type === 'company') inSet.delete(x.scope_value);
+  });
+  return inSet;
+}
+function sctLevelState(companies, eff) {
+  let on = 0; companies.forEach(c => { if (eff.has(c.company_code)) on++; });
+  return on === 0 ? 'none' : (on === companies.length ? 'all' : 'some');
+}
+function sctHas(list, type, val) { return list.some(x => x.scope_type === type && String(x.scope_value) === String(val)); }
+function sctDel(list, type, val) { const i = list.findIndex(x => x.scope_type === type && String(x.scope_value) === String(val)); if (i >= 0) list.splice(i, 1); }
+function sctAdd(list, type, val) { if (!sctHas(list, type, val)) list.push({ scope_type: type, scope_value: String(val) }); }
+
+function sctToggleTienda(code, checked) {
+  const ix = sctIndexes();
+  const isIn = sctEffective(ix).has(code);
+  if (checked && !isIn) {
+    sctDel(SCOPE.exclude, 'company', code);
+    if (!sctEffective(ix).has(code)) sctAdd(SCOPE.include, 'company', code);
+  } else if (!checked && isIn) {
+    sctDel(SCOPE.include, 'company', code);
+    sctAdd(SCOPE.exclude, 'company', code);
+  }
+  renderTiendasTree();
+}
+function sctSetLevel(kind, id, companies, checked) {
+  const ix = sctIndexes();
+  companies.forEach(c => { sctDel(SCOPE.include, 'company', c.company_code); sctDel(SCOPE.exclude, 'company', c.company_code); });
+  if (kind === 'subzone') {
+    sctDel(SCOPE.include, 'subzone', id); sctDel(SCOPE.exclude, 'subzone', id);
+    const sz = (SCOPE.subzones || []).find(s => s.id === id);
+    if (checked) {
+      if (!(sz && sctHas(SCOPE.include, 'zone', sz.zone_id))) sctAdd(SCOPE.include, 'subzone', id);
+    } else if (sz && sctHas(SCOPE.include, 'zone', sz.zone_id)) {
+      companies.forEach(c => sctAdd(SCOPE.exclude, 'company', c.company_code));
+    }
+  } else {
+    sctDel(SCOPE.include, 'zone', id); sctDel(SCOPE.exclude, 'zone', id);
+    (ix.subByZone[id] || []).forEach(s => { sctDel(SCOPE.include, 'subzone', s.id); sctDel(SCOPE.exclude, 'subzone', s.id); });
+    if (checked) sctAdd(SCOPE.include, 'zone', id);
+  }
+  renderTiendasTree();
+}
+
+function sctMatch(q, ...txts) { if (!q) return true; return txts.join(' ').toLowerCase().includes(q); }
+
+// Monta el arbol dentro de #sctHost (creado por openScopeEditor en modo Tiendas).
+function renderTiendasTree() {
+  const host = document.getElementById('sctHost');
+  if (!host) return;
+  const ix = sctIndexes();
+  const eff = sctEffective(ix);
+  const q = (SCOPE_TREE.q || '').trim().toLowerCase();
+  const zActivas = ix.zones.filter(z => (ix.byZone[z.id] || []).some(c => eff.has(c.company_code))).length;
+  const excN = SCOPE.exclude.filter(x => x.scope_type === 'company' && !NON_STORE_TYPES.has((SCOPE.companies.find(c => c.company_code === x.scope_value) || {}).company_type)).length;
+  const sumHtml = `Resumen: <b>${zActivas} zona${zActivas === 1 ? '' : 's'} \u00b7 ${eff.size} tienda${eff.size === 1 ? '' : 's'}</b>`
+    + (excN ? ` \u00b7 <b class="exc">\u2212${excN} exclusi\u00f3n${excN === 1 ? '' : 'es'}</b>` : '');
+
+  const ck = (state) => `<input type="checkbox" ${state === 'all' ? 'checked' : ''} data-ind="${state === 'some' ? '1' : ''}">`;
+  let rows = '';
+  ix.zones.forEach(z => {
+    const zComps = ix.byZone[z.id] || [];
+    const subs = (ix.subByZone[z.id] || []).filter(s => (ix.bySub[s.id] || []).length).sort((a, b) => a.name.localeCompare(b.name));
+    const zoneMatch = sctMatch(q, z.name);
+    const anyChild = q ? (subs.some(s => sctMatch(q, s.name)) || zComps.some(c => sctMatch(q, c.company_code, c.business_name))) : true;
+    if (q && !zoneMatch && !anyChild) return;
+    const open = q ? true : SCOPE_TREE.expanded.has(z.id);
+    const excZ = zComps.filter(c => sctHas(SCOPE.exclude, 'company', c.company_code)).length;
+    rows += `<div class="zrow" data-lvl="zone" data-id="${z.id}">
+      <span class="toggle" data-tgl="${z.id}">${open ? '\u25be' : '\u25b8'}</span>
+      ${ck(sctLevelState(zComps, eff))}
+      <span class="zn">${escRoleLbl(z.name)}</span>${excZ ? `<span class="minus">\u2212${excZ}</span>` : ''}
+      <span class="zc">${subs.length} subzona${subs.length === 1 ? '' : 's'} \u00b7 ${zComps.length} tienda${zComps.length === 1 ? '' : 's'}</span></div>`;
+    if (!open) return;
+    subs.forEach(s => {
+      const sComps = ix.bySub[s.id] || [];
+      const subMatch = sctMatch(q, s.name);
+      const anyT = q ? sComps.some(c => sctMatch(q, c.company_code, c.business_name)) : true;
+      if (q && !zoneMatch && !subMatch && !anyT) return;
+      const sOpen = q ? (subMatch || anyT) : SCOPE_TREE.expanded.has(s.id);
+      const excS = sComps.filter(c => sctHas(SCOPE.exclude, 'company', c.company_code)).length;
+      rows += `<div class="zrow child" data-lvl="subzone" data-id="${s.id}">
+        <span class="toggle" data-tgl="${s.id}">${sOpen ? '\u25be' : '\u25b8'}</span>
+        ${ck(sctLevelState(sComps, eff))}
+        <span class="zn">${escRoleLbl(s.name)}</span>${excS ? `<span class="minus">\u2212${excS}</span>` : ''}
+        <span class="zc">${sComps.length} tienda${sComps.length === 1 ? '' : 's'}</span></div>`;
+      if (!sOpen) return;
+      sComps.slice().sort((a, b) => a.company_code.localeCompare(b.company_code)).forEach(c => {
+        if (q && !zoneMatch && !subMatch && !sctMatch(q, c.company_code, c.business_name)) return;
+        const on = eff.has(c.company_code);
+        rows += `<div class="zrow child2 tienda${on ? '' : ' excl'}" data-lvl="tienda">
+          <span class="toggle"></span>
+          <input type="checkbox" ${on ? 'checked' : ''} data-ck-t="${c.company_code}">
+          <span class="tcode">${c.company_code}</span> \u00b7 <span class="tname">${escRoleLbl(c.business_name || '')}</span>
+          ${on ? '' : '<span class="badge-exc">excluida</span>'}</div>`;
+      });
+    });
+  });
+
+  host.innerHTML = `
+    <div class="sctree-tools">
+      <div class="search">${I.search}<input id="sctQ" placeholder="Filtrar zona, subzona o tienda\u2026" autocomplete="off" value="${(SCOPE_TREE.q || '').replace(/"/g, '&quot;')}"></div>
+      <button class="btn btn-mini" id="sctMark">Marcar todo</button>
+      <button class="btn btn-mini" id="sctClear">Desmarcar todo</button>
+      <button class="btn btn-mini" id="sctExp">Expandir</button>
+      <button class="btn btn-mini" id="sctCol">Colapsar</button>
+    </div>
+    <div class="sctree-sum">${sumHtml}</div>
+    <div class="sctree">${rows || '<div style="padding:14px;color:var(--muted,#64748b);font-size:12.5px">Sin coincidencias.</div>'}</div>`;
+
+  host.querySelectorAll('.sctree input[type=checkbox][data-ind="1"]').forEach(c => c.indeterminate = true);
+  const qi = document.getElementById('sctQ');
+  if (qi) qi.addEventListener('input', () => { SCOPE_TREE.q = qi.value; renderTiendasTree(); });
+  host.querySelectorAll('[data-tgl]').forEach(t => t.addEventListener('click', () => {
+    const id = t.dataset.tgl; if (SCOPE_TREE.expanded.has(id)) SCOPE_TREE.expanded.delete(id); else SCOPE_TREE.expanded.add(id);
+    renderTiendasTree();
+  }));
+  host.querySelectorAll('input[data-ck-t]').forEach(c => c.addEventListener('change', () => sctToggleTienda(c.dataset.ckT, c.checked)));
+  host.querySelectorAll('[data-lvl="zone"]').forEach(row => {
+    const c = row.querySelector('input[type=checkbox]'); const id = row.dataset.id;
+    if (c) c.addEventListener('change', () => sctSetLevel('zone', id, ix.byZone[id] || [], c.checked));
+  });
+  host.querySelectorAll('[data-lvl="subzone"]').forEach(row => {
+    const c = row.querySelector('input[type=checkbox]'); const id = row.dataset.id;
+    if (c) c.addEventListener('change', () => sctSetLevel('subzone', id, ix.bySub[id] || [], c.checked));
+  });
+  document.getElementById('sctMark')?.addEventListener('click', () => {
+    // Marcar todo = incluir todas las zonas con tiendas; limpia excludes/company sueltos de tiendas.
+    ix.zones.forEach(z => sctAdd(SCOPE.include, 'zone', z.id));
+    SCOPE.include = SCOPE.include.filter(x => !(x.scope_type === 'company' && !NON_STORE_TYPES.has((SCOPE.companies.find(c => c.company_code === x.scope_value) || {}).company_type)));
+    SCOPE.exclude = SCOPE.exclude.filter(x => !(x.scope_type === 'company' && !NON_STORE_TYPES.has((SCOPE.companies.find(c => c.company_code === x.scope_value) || {}).company_type)) && x.scope_type !== 'zone' && x.scope_type !== 'subzone');
+    renderTiendasTree();
+  });
+  document.getElementById('sctClear')?.addEventListener('click', () => {
+    // Desmarcar todo = quitar todo el alcance de TIENDAS (deja intacto Empresas).
+    SCOPE.include = SCOPE.include.filter(x => !sctIsStoreScope(x));
+    SCOPE.exclude = SCOPE.exclude.filter(x => !sctIsStoreScope(x));
+    renderTiendasTree();
+  });
+  document.getElementById('sctExp')?.addEventListener('click', () => { ix.zones.forEach(z => SCOPE_TREE.expanded.add(z.id)); (SCOPE.subzones || []).forEach(s => SCOPE_TREE.expanded.add(s.id)); renderTiendasTree(); });
+  document.getElementById('sctCol')?.addEventListener('click', () => { SCOPE_TREE.expanded.clear(); renderTiendasTree(); });
+}
+
+// ¿Este item de alcance pertenece al mundo TIENDAS? (zona/subzona siempre;
+// company solo si es tienda). Empresas/departamentos no se tocan aqui.
+function sctIsStoreScope(x) {
+  if (x.scope_type === 'zone' || x.scope_type === 'subzone') return true;
+  if (x.scope_type === 'department') return false;
+  if (x.scope_type === 'company') { const c = SCOPE.companies.find(c => c.company_code === x.scope_value); return !c || !NON_STORE_TYPES.has(c.company_type); }
+  return false;
+}
+
 async function openScopeEditor(user, targetId, targetUser, kind = 'store', origin = 'permisos', opts = {}) {
   /* v6.44: el editor puede montarse DENTRO de un host (la pestaña Tiendas o
      Empresas de la pagina de Alcance) en modo embedded: sin su pnl-head ni
@@ -4326,15 +4535,13 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store', origi
       <p>${SCOPE.isEnt ? 'Define qu\u00e9 empresas (no tiendas) o departamentos puede gestionar. Alcance final = incluidos \u2212 excluidos.' : 'Define qu\u00e9 tiendas puede gestionar. Alcance final = incluidos \u2212 excluidos.'}</p></div>
       <button class="btn" id="scBack">\u2190 Volver</button></div>`}
     ${ostInfo}
-    <div class="card">
+    ${SCOPE.isEnt ? `<div class="card">
       <div class="sc-add">
         <select id="scLevel">
-          ${SCOPE.isEnt
-            ? '<option value="company">Empresa (todo)</option><option value="department">Departamento</option>'
-            : '<option value="zone">Zona</option><option value="subzone">Subzona</option><option value="company">Tienda</option>'}
+          <option value="company">Empresa (todo)</option><option value="department">Departamento</option>
         </select>
         <div class="search" style="flex:1">${I.search}<input id="scSearch" placeholder="Buscar\u2026" autocomplete="off"></div>
-        ${SCOPE.isEnt ? `<button class="btn" id="scNewDept" title="Crear un departamento" style="white-space:nowrap;display:none">${I.plus} Nuevo departamento</button>` : ''}
+        <button class="btn" id="scNewDept" title="Crear un departamento" style="white-space:nowrap;display:none">${I.plus} Nuevo departamento</button>
       </div>
       <div id="scResults" class="sc-results"></div>
     </div>
@@ -4348,7 +4555,7 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store', origi
         <div id="scExcList" class="sc-list"></div>
       </div>
     </div>
-    <div class="card" id="scSummary" style="font-size:13px;color:var(--ink-soft)"></div>
+    <div class="card" id="scSummary" style="font-size:13px;color:var(--ink-soft)"></div>` : `<div id="sctHost"></div>`}
     <div class="modal-actions">
       <button class="btn" id="scCancel">Cancelar</button>
       <button class="btn btn-primary" id="scSave">Guardar alcance</button>
@@ -4358,6 +4565,14 @@ async function openScopeEditor(user, targetId, targetUser, kind = 'store', origi
   if (scBk) scBk.addEventListener('click', backTo);
   $('#scCancel').addEventListener('click', backTo);
   $('#scSave').addEventListener('click', () => saveScope(user));
+
+  // v6.46: modo TIENDAS usa el arbol Zona ▸ Subzona ▸ tienda (sin scLevel/scSearch).
+  if (!SCOPE.isEnt) {
+    SCOPE_TREE.expanded = new Set();
+    SCOPE_TREE.q = '';
+    renderTiendasTree();
+    return;
+  }
 
   const lvl = $('#scLevel'), search = $('#scSearch');
   const newDeptBtn = $('#scNewDept');
