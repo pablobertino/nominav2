@@ -585,7 +585,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.48</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.49</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1438,10 +1438,14 @@ async function viewTiendas(user) {
 
 /* ---------- Exportación de Tiendas (xlsx / csv / txt) ---------- */
 function exportRows(rows) {
-  // Estructura tabular común a los tres formatos
+  // Estructura tabular común a los tres formatos. v6.49: se agregan RIF, Tipo,
+  // Personal activo, desglose de la quincena (estables/nuevos/traslados/egresos)
+  // y Departamentos, para que el export refleje lo que vive en la grilla.
   return rows.map(c => ({
     'Código': c.code,
     'Razón social': c.name || '',
+    'RIF': c.taxId || '',
+    'Tipo': c.type || '',
     'Zona': c.zone || '',
     'Subzona': c.subzone || '',
     'Concepto': c.concept || '',
@@ -1450,6 +1454,12 @@ function exportRows(rows) {
     'Teléfono 1 internacional': c.phone || '',
     'Teléfono 2 nacional': phoneDisplay(c.phone2) || '',
     'Teléfono 2 internacional': c.phone2 || '',
+    'Personal activo': c.staffCount || 0,
+    'Estables (quincena)': c.bkEst || 0,
+    'Nuevos (quincena)': c.bkNew || 0,
+    'Traslados (quincena)': c.bkTras || 0,
+    'Egresos (quincena)': c.bkEgr || 0,
+    'Departamentos': c.deptCount || 0,
     'Estado': c.status || '',
     'Tiene acceso': c.hasAccess ? 'Sí' : 'No',
   }));
@@ -1471,7 +1481,7 @@ async function exportTiendas(fmt, rows) {
   const data = exportRows(rows);
   if (!data.length) { alert('No hay filas para exportar con los filtros actuales.'); return; }
   const headers = Object.keys(data[0]);
-  const fname = `tiendas_${tstamp()}`;
+  const fname = `empresas_${tstamp()}`;
 
   if (fmt === 'csv') {
     const esc = (v) => {
@@ -1507,7 +1517,7 @@ async function exportTiendas(fmt, rows) {
       }
       const ws = window.XLSX.utils.json_to_sheet(data, { header: headers });
       const wb = window.XLSX.utils.book_new();
-      window.XLSX.utils.book_append_sheet(wb, ws, 'Tiendas');
+      window.XLSX.utils.book_append_sheet(wb, ws, 'Empresas');
       window.XLSX.writeFile(wb, `${fname}.xlsx`);
     } catch (e) {
       alert(e.message + ' Revisa tu conexión e inténtalo de nuevo.');
