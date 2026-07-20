@@ -1,6 +1,8 @@
 /* =====================================================================
    functions/api/admin-scope.js  →  /api/admin-scope
-   Editor de alcance de un admin. Solo superadmin. Acciones (POST {action}):
+   Editor de alcance de un admin. Autorizacion tabla-driven (v6.48): exige el
+   permiso team.scope (get/save/resolve) o team.osticket (push/reset) segun la
+   accion; superadmin pasa siempre y coordinador si tiene el permiso. Acciones:
      - get:  devuelve include/exclude actuales del admin + catálogos
              (zones, subzones, companies) para poblar el buscador.
      - save: reemplaza por completo el include/exclude del admin.
@@ -13,7 +15,7 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
-import { shadowCan } from './_auth.js';
+import { shadowCan, resolveActor, can } from './_auth.js';
 
 // Mapa accion -> code. save/get/resolve son gestion de alcance (team.scope);
 // las acciones de agente osTicket usan team.osticket.
@@ -94,11 +96,29 @@ export async function onRequestPost({ request, env }) {
   const { action, adminId, targetId } = body;
 
   try {
+    // v6.48: autorizacion tabla-driven (Fase 3). El actor se resuelve contra BD
+    // y se exige el permiso del mapa (team.scope / team.osticket segun accion).
+    // superadmin pasa siempre (can() le da true); coordinador pasa si tiene el
+    // permiso en role_permissions. Se conserva shadowCan invertido para SEGUIR
+    // auditando: registra si el gate viejo (solo-superadmin) habria diferido.
+    const code = SCOPE_CODE_BY_ACTION[action] || 'team.scope';
+    const actor = await resolveActor(env, { kind: 'admin', id: adminId });
+    const allowed = can(actor, code);
     const legacyOk = await isSuperadmin(env, adminId);
-    // SHADOW: gate legacy = superadmin. Code team.scope / team.osticket segun accion.
-    await shadowCan(env, adminId, 'admin-scope', action || '?', SCOPE_CODE_BY_ACTION[action] || 'team.scope', legacyOk);
-    if (!legacyOk) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+    await shadowCan(env, adminId, 'admin-scope', action || '?', code, legacyOk);
+    if (!allowed) return json({ ok: false, error: 'No tienes permiso para esta accion.' }, 403);
     if (!targetId) return json({ ok: false, error: 'Falta el admin objetivo.' }, 400);
+
+    // v6.48: chequeo de JERARQUIA (defensa en profundidad, ademas del frontend).
+    // Quien NO es superadmin no puede tocar el alcance de un superadmin ni de
+    // otro coordinador. superadmin conserva acceso total.
+    if (actor && actor.role !== 'superadmin') {
+      const tRows = await sb(env, `admin_users?id=eq.${encodeURIComponent(targetId)}&select=role`);
+      const tRole = tRows && tRows[0] && tRows[0].role;
+      if (tRole === 'superadmin' || tRole === 'coordinador') {
+        return json({ ok: false, error: 'No puedes gestionar el alcance de este usuario.' }, 403);
+      }
+    }
 
     if (action === 'get') {
       const [inc, exc, zones, subzones, companies, departments] = await Promise.all([
