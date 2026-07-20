@@ -13,12 +13,13 @@
      mode:'admin' para que la vista se adapte.
 
    Acciones (POST { action, user, ... }):
-     list     {}                        gate: view.whatsapp (scoped)
-     discover {}                        gate: SOLO superadmin
-     save     { id, alias?, enabled? }  gate: SOLO superadmin
-     remove   { id }                   gate: SOLO superadmin
-     grant    { group_id, admin_id }    gate: SOLO superadmin
-     revoke   { group_id, admin_id }    gate: SOLO superadmin
+     list       {}                        gate: view.whatsapp (scoped)
+     discover   {}                        gate: SOLO superadmin (sincroniza: agrega y quita)
+     save       { id, alias?, enabled? }  gate: SOLO superadmin
+     remove     { id }                     gate: SOLO superadmin
+     remove_all {}                          gate: SOLO superadmin
+     grant      { group_id, admin_id }     gate: SOLO superadmin
+     revoke     { group_id, admin_id }     gate: SOLO superadmin
    ===================================================================== */
 
 import { resolveActor, can, isSuperadmin } from './_auth.js';
@@ -91,17 +92,22 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: false, error: 'La administración de grupos es exclusiva del superadministrador.' }, 403);
     }
 
-    /* discover: leer los grupos donde la linea es miembro y upsert */
+    /* discover: SINCRONIZA con WhatsApp. Refleja lo que hay en la linea AHORA:
+       - upsert de los grupos presentes (refresca nombre, conserva alias/enabled)
+       - QUITA los que ya no aparecen (la linea salio o los cambio de telefono),
+         borrando primero sus asignaciones. Asi la lista siempre espeja WhatsApp.
+       (v6.53: antes solo agregaba/refrescaba y dejaba colgados los viejos.) */
     if (action === 'discover') {
       const chats = await gaClient(env).getChats();
       const groups = (Array.isArray(chats) ? chats : [])
         .filter(c => c && (c.type === 'group' || String(c.id || '').endsWith('@g.us')))
         .map(c => ({ chat_id: String(c.id), wa_name: c.name || null }));
 
-      let upserted = 0;
       const now = new Date().toISOString();
+      const seen = new Set(groups.map(g => g.chat_id));
+
+      // 1) Upsert de los presentes (refresca nombre, conserva alias/enabled).
       if (groups.length) {
-        // Upsert por chat_id: refresca el nombre real, conserva alias/enabled.
         await sb(env, 'wa_groups?on_conflict=chat_id', {
           method: 'POST',
           headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
@@ -110,15 +116,31 @@ export async function onRequestPost({ request, env }) {
             refreshed_at: now, updated_by: actorName,
           }))),
         });
-        upserted = groups.length;
       }
+
+      // 2) Quitar los que ya NO estan en la linea. Compara contra lo que
+      //    hay en la tabla; los ausentes se borran (con sus asignaciones).
+      const existing = await sb(env, 'wa_groups?select=id,chat_id') || [];
+      const stale = existing.filter(r => !seen.has(r.chat_id));
+      let removed = 0;
+      if (stale.length) {
+        const ids = stale.map(r => r.id);
+        await sb(env, `wa_group_admins?group_id=in.(${ids.join(',')})`, {
+          method: 'DELETE', headers: { Prefer: 'return=minimal' },
+        });
+        await sb(env, `wa_groups?id=in.(${ids.join(',')})`, {
+          method: 'DELETE', headers: { Prefer: 'return=minimal' },
+        });
+        removed = stale.length;
+      }
+
       const [rows, assign, admins] = await Promise.all([
         sb(env, 'wa_groups?select=*&order=enabled.desc,wa_name.asc'),
         sb(env, 'wa_group_admins?select=group_id,admin_id'),
         sb(env, 'admin_users?is_active=eq.true&role=neq.superadmin&select=id,name,username&order=name.asc'),
       ]);
       return json({
-        ok: true, mode: 'super', found: upserted,
+        ok: true, mode: 'super', found: groups.length, removed,
         groups: rows || [], assign: assign || [], admins: admins || [],
         phone: env.GREENAPI_PHONE || null,
       });
@@ -157,6 +179,20 @@ export async function onRequestPost({ request, env }) {
       });
       if (!r || !r.length) return json({ ok: false, error: 'El grupo no existe.' }, 404);
       return json({ ok: true, removed: id });
+    }
+
+    /* remove_all: vaciar el catalogo entero (v6.53). Borra todas las
+       asignaciones y todos los grupos. Util para empezar de cero tras un
+       cambio de linea. Solo superadmin (gate de arriba). */
+    if (action === 'remove_all') {
+      // neq.0 => borra todas las filas (el id es bigint > 0).
+      await sb(env, 'wa_group_admins?id=neq.0', {
+        method: 'DELETE', headers: { Prefer: 'return=minimal' },
+      });
+      await sb(env, 'wa_groups?id=neq.0', {
+        method: 'DELETE', headers: { Prefer: 'return=minimal' },
+      });
+      return json({ ok: true, groups: [], assign: [] });
     }
 
     /* grant / revoke: alcance por admin (v4.97) */
