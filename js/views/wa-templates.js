@@ -69,6 +69,24 @@ const userPayload = (u) => ({ kind: u.kind, id: u.id || null, companyCode: u.com
 const ICONS = { cred_portal: '🔑', cred_osticket: '🎫' };
 const iconOf = t => ICONS[t.code] || (t.nature === 'ciclo' ? '💬' : '📣');
 
+/* v6.61: picker de emojis curado, IDÉNTICO al de Difusión (wa-send.js) para
+   que la experiencia sea la misma en las dos pantallas. Son los clásicos
+   universalmente soportados; para el catálogo completo está el teclado nativo
+   (Win+. / móviles). WhatsApp y la línea los transportan como UTF-8 sin
+   tratamiento. */
+const EMOJI_GROUPS = [
+  ['Saludos y gestos', ['👋', '🙏', '🙌', '👏', '💪', '👍', '👌', '🤝', '✌️', '☝️']],
+  ['Caritas', ['😊', '😀', '😃', '🙂', '😉', '😁', '😎', '🤗', '🥳', '😅']],
+  ['Avisos y estados', ['📢', '📣', '🔔', '⚠️', '❗', '✅', '✔️', '❌', '📌', 'ℹ️']],
+  ['Trabajo y documentos', ['📋', '📄', '🧾', '📎', '💼', '✍️', '🗂️', '🖊️', '📑', '🔎']],
+  ['Fechas y tiempo', ['📅', '🗓️', '⏰', '⏳', '🕐', '🌅', '🌙', '📆', '⏱️', '🕔']],
+  ['Pagos y dinero', ['💰', '💵', '💳', '🏦', '🧮', '💸', '🪙', '📈', '📉', '💲']],
+  ['Celebración', ['🎉', '🎊', '🎁', '🎈', '🏆', '⭐', '🌟', '✨', '🎂', '🥂']],
+  ['Lugares y envíos', ['🏪', '🏢', '🏠', '🚚', '📦', '👟', '👕', '🧸', '🛍️', '🛒']],
+  ['Comunicación', ['📱', '💬', '📩', '✉️', '📞', '🔗', '📡', '📬', '📲', '🔊']],
+  ['Corazones', ['❤️', '💙', '💚', '💛', '🧡', '💜', '🤍', '💖', '💕', '💝']],
+];
+
 /* Las naturalezas que se listan en la vista y como se agrupan. El orden
    importa. v6.55: se quito 'credencial'. v6.56: se quito 'cumpleanos' (un
    grupo no cumple anios). Lo que queda es lo util para grupos: envios
@@ -152,6 +170,16 @@ function ensureStyles() {
   .wt-varbtn.cond{border-color:#7c3aed;background:#f5f3ff;color:#6d28d9;font-family:inherit;font-weight:600}
   .wt-varbtn.cond:hover{background:#ede9fe}
   .wt-help{font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5}
+
+  /* ---- v6.61: picker de emojis (mismo que Difusion) ---- */
+  .wt-emoji-btn{border:1px solid var(--border);background:var(--surface);border-radius:8px;padding:4px 10px;font:inherit;font-size:12px;font-weight:700;color:var(--ink-soft,#334155);cursor:pointer}
+  .wt-emoji-btn.open{background:#e9fbf0;border-color:#bbf1d2;color:#0f7a4d}
+  .wt-emoji-panel{border:1px solid var(--border);border-radius:11px;background:var(--surface);padding:10px 12px;margin-top:8px;max-height:240px;overflow-y:auto}
+  .wt-emoji-cat{font-size:10px;font-weight:800;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin:8px 0 3px}
+  .wt-emoji-cat:first-child{margin-top:0}
+  .wt-emoji-grid{display:flex;flex-wrap:wrap;gap:2px}
+  .wt-emoji{border:none;background:transparent;font-size:21px;line-height:1;padding:5px;border-radius:8px;cursor:pointer}
+  .wt-emoji:hover{background:#f1f5f9}
 
   /* ---- v6.56: selector de grupos ---- */
   .wt-gtools{display:flex;gap:9px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
@@ -531,7 +559,10 @@ function editorHtml(t) {
         <div class="wt-field">
           <label>Mensaje</label>
           <textarea id="wtBody" placeholder="*Recordatorio de nómina* 📌&#10;&#10;El cierre de la quincena #Periodo es el #Fecha_Cierre."${ro}>${esc(t.body || '')}</textarea>
-          ${ST.canEdit ? `<div class="wt-vars">${vars}</div><div class="wt-help">${help}</div>` : ''}
+          ${ST.canEdit ? `<div class="wt-vars">${vars}</div>
+          <div style="margin-top:6px"><button type="button" class="wt-emoji-btn" id="wtEmojiBtn" title="Insertar emoji">😊 Emojis</button></div>
+          <div class="wt-emoji-panel" id="wtEmojiPanel" style="display:none"></div>
+          <div class="wt-help">${help}</div>` : ''}
         </div>
         <p class="wt-err" id="wtErr" style="display:none"></p>
       </div>
@@ -771,6 +802,25 @@ function openEditor(code) {
     $('#wtBody').addEventListener('input', schedulePreview);
     host.querySelectorAll('[data-v]').forEach(b =>
       b.addEventListener('click', () => insert(b.dataset.v)));
+
+    // v6.61: picker de emojis (mismo mecanismo que Difusion). Reusa insert(),
+    // que mete el texto en la posicion del cursor y refresca el preview.
+    const emPanel = $('#wtEmojiPanel');
+    const emBtn = $('#wtEmojiBtn');
+    if (emPanel && emBtn) {
+      emPanel.innerHTML = EMOJI_GROUPS.map(([title, arr]) =>
+        `<div class="wt-emoji-cat">${esc(title)}</div><div class="wt-emoji-grid">${arr.map(e =>
+          `<button type="button" class="wt-emoji" data-e="${e}" title="${e}">${e}</button>`).join('')}</div>`).join('');
+      emBtn.addEventListener('click', () => {
+        const open = emPanel.style.display === 'none';
+        emPanel.style.display = open ? '' : 'none';
+        emBtn.classList.toggle('open', open);
+      });
+      emPanel.addEventListener('click', ev => {
+        const b = ev.target.closest('.wt-emoji');
+        if (b) insert(b.dataset.e);
+      });
+    }
     const rst = $('#wtRestore');
     if (rst) rst.addEventListener('click', () => { $('#wtBody').value = ST.orig; doPreview(); });
     $('#wtSave').addEventListener('click', save);
