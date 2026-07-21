@@ -413,75 +413,19 @@ export async function onRequestPost({ request, env }) {
         });
       }
 
-      /* ---- envio ---- */
-      if (!u.phone) {
-        return json({ ok: false, error: 'Ese miembro no tiene telefono cargado. Agregalo con el boton Editar de su fila.' }, 400);
-      }
-      if (!t.is_active) {
-        return json({ ok: false, error: 'El mensaje esta desactivado en WhatsApp > Mensajes.' }, 400);
-      }
-      if (!password) {
-        return json({ ok: false, error: 'No hay clave para enviar.' }, 400);
-      }
-      /* REGLA DURA (v5.08 + v5.09): la clave del PORTAL solo se manda si es
-         TEMPORAL. Una clave fija enviada por WhatsApp queda viva en el chat
-         para siempre. Con la temporal, la exposicion dura hasta el primer
-         ingreso: el portal obliga a cambiarla. La de osTicket no tiene esta
-         proteccion (osTicket no fuerza el cambio), y por eso el modal avisa
-         explicitamente antes de mandarla. */
-      if (!isOst && !useTemp) {
-        return json({ ok: false, error:
-          'Esa clave no caduca, asi que no se envia por WhatsApp: quedaria viva en el chat. '
-          + 'Reseteala con la opcion "Generar temporal" y volve a intentar.' }, 400);
-      }
+      /* ---- envio ---- DESCONTINUADO (v6.55, SOLO GRUPOS) ----
+         La linea (Naima) publica UNICAMENTE en grupos de WhatsApp; jamas a un
+         chat individual (@c.us). Las credenciales iban al numero particular del
+         miembro, exactamente lo que el modelo "solo grupos" ya no permite (el
+         guardian de wa-send las rechazaba de todos modos). Se elimino el envio.
 
-      const chatId = toChatId(u.phone);
-      const ga = gaClient(env);
-      let idMessage = null;
-      let err = null;
-      try {
-        const r = await ga.sendMessage(chatId, text);
-        idMessage = (r && (r.idMessage || r.id)) || null;
-      } catch (e) {
-        err = (e && e.message) || String(e);
-      }
-
-      /* Auditoria: queda registrado QUE se le mando y a quien, con el texto
-         ENMASCARADO. Si alguien lee wa_batches manana, no encuentra claves. */
-      const batch = await sb(env, 'wa_batches', {
-        method: 'POST', headers: { Prefer: 'return=representation' },
-        body: JSON.stringify({
-          // v5.11 FIX: 'actorName' no existia (crasheaba el envio con
-          // "actorName is not defined"). El actor ya esta resuelto arriba.
-          created_by: actor.username || actor.name || String(actor.id || ''),
-          message: maskSecrets(text, ctx),
-          filters: { target: 'credenciales', kind: isOst ? 'osticket' : 'portal',
-            template: tplCode, member: u.username },
-          total: 1,
-          with_phone: 1,
-        }),
-      });
-      const batchId = batch && batch[0] && batch[0].id;
-      if (batchId) {
-        await sb(env, 'wa_outbox', {
-          method: 'POST', headers: { Prefer: 'return=minimal' },
-          body: JSON.stringify({
-            batch_id: batchId,
-            id_number: String(u.id),
-            full_name: u.name || u.username,
-            company_code: '',
-            phone_raw: u.phone,
-            chat_id: chatId,
-            status: err ? 'error' : 'sent',
-            id_message: idMessage,
-            error_text: err,
-            sent_at: err ? null : new Date().toISOString(),
-          }),
-        });
-      }
-
-      if (err) return json({ ok: false, error: 'No se pudo enviar: ' + err }, 502);
-      return json({ ok: true, phone: u.phone });
+         La clave se sigue ENTREGANDO: el modal de credenciales de Equipo la
+         muestra en pantalla (via cred_preview) para copiarla y pasarla por el
+         medio que corresponda. Esta accion queda como no-op defensivo por si
+         algun front viejo todavia la invoca. */
+      return json({ ok: false, error:
+        'El envio de credenciales por WhatsApp fue descontinuado: la linea solo publica en grupos. '
+        + 'La clave se muestra en pantalla para copiarla y entregarla por el medio que prefieras.' }, 400);
     }
 
     if (action === 'reset') {

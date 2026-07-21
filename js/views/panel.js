@@ -38,7 +38,6 @@ import { renderBankAccounts } from './bank-accounts.js';
 import { renderScopeOverridesEditor, decorateScovBadges, countScovOverrides } from './scope-overrides.js';
 import { renderWaSend } from './wa-send.js';
 import { renderWaGroups } from './wa-groups.js';
-import { renderWaTemplates } from './wa-templates.js';
 import { renderWaPolls } from './wa-polls.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderSyncLog, renderSyncRun } from './sync-log.js';
@@ -262,7 +261,6 @@ const NAV_GROUPS = [
   // (catalogo/asignacion) sigue superonly: es gobernanza no delegable.
   { title: 'WhatsApp', items: [
     ['wadifusion', I.megaphone, 'Difusión'],
-    ['wamensajes', I.pencil, 'Mensajes'],
     ['waencuestas', I.chart, 'Encuestas'],
     ['wagrupos', I.team, 'Grupos', 'superonly'],
   ] },
@@ -587,7 +585,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.54</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.55</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4048,22 +4046,24 @@ async function credModal(user, opts) {
        - osTicket          -> nunca caduca (osTicket no fuerza el cambio). */
   let note;
   if (isOst) {
-    note = `<div class="cr-note fija"><span>⚠️</span><div>Esta clave de osTicket <b>no vence</b> y el sistema no le va a pedir que la cambie. Si la enviás por WhatsApp, queda viva en el chat.</div></div>`;
+    note = `<div class="cr-note fija"><span>⚠️</span><div>Esta clave de osTicket <b>no vence</b> y el sistema no le va a pedir que la cambie. Cópiala y entrégala por un medio seguro.</div></div>`;
   } else if (d.temp) {
     note = `<div class="cr-note temp"><span>🔒</span><div>Es una <b>clave temporal</b>: al entrar por primera vez, el portal le va a exigir que defina una propia. Después de eso, esta deja de servir.</div></div>`;
   } else {
-    note = `<div class="cr-note fija"><span>⚠️</span><div>Esta clave <b>no caduca</b>: la persona la va a poder usar indefinidamente, y por eso <b>no se puede enviar por WhatsApp</b>. Si querés mandársela, resetea la clave con la opción <b>Generar temporal</b>.</div></div>`;
+    note = `<div class="cr-note fija"><span>⚠️</span><div>Esta clave <b>no caduca</b>: la persona la va a poder usar indefinidamente. Cópiala y entrégala por un medio seguro.</div></div>`;
   }
 
-  const canWa = d.can_send && (isOst || d.temp);
-  const waBox = !m.phone
-    ? `<div class="cr-nophone"><span>📱</span><div><b>${esc(m.name)} no tiene teléfono cargado.</b> Para enviarle sus datos por WhatsApp, agregáselo con el botón <b>Editar</b> de su fila. Mientras tanto, copiá los datos y pasáselos por otro medio.</div></div>`
-    : !canWa
-      ? ''
-      : `<div class="cr-wa">
-           <div class="cr-wa-h"><span class="t">Se le enviará</span><span class="sp"></span><span class="tel">📱 ${esc(m.phone)}</span></div>
-           <div class="cr-wa-prev">${esc(d.message).replace(/\*([^*\n]+)\*/g, '<b>$1</b>')}</div>
-         </div>`;
+  /* v6.55 SOLO GRUPOS: el envio de credenciales por WhatsApp fue
+     descontinuado (la linea solo publica en grupos, no a numeros
+     particulares). El modal sigue MOSTRANDO usuario/clave/enlace para
+     copiarlos y entregarlos por el medio que corresponda; solo se retira el
+     boton "Enviar por WhatsApp" y su vista previa. Forzar canWa=false apaga
+     ambos de un solo lugar. */
+  const canWa = false;
+  /* v6.55: sin envio por WhatsApp, no se muestra ni el aviso de "sin
+     telefono" ni la vista previa del mensaje. El modal queda enfocado en
+     mostrar la clave para copiarla. */
+  const waBox = '';
 
   $('#crBody').innerHTML = `
     <div class="cr-ok">✓ ${esc(opts.okText || 'Listo')}</div>
@@ -7663,7 +7663,6 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'bankhist') renderAxHistory(user, 'account_number');
   else if (view === 'bankaccounts') renderBankAccounts(user);
   else if (view === 'wadifusion') renderWaSend(user);
-  else if (view === 'wamensajes') renderWaTemplates(user);
   else if (view === 'waencuestas') renderWaPolls(user);
   else if (view === 'wagrupos') renderWaGroups(user);
   else if (view === 'erpquery') renderErpQuery(user);
@@ -8052,7 +8051,6 @@ export function renderPanel() {
       bankstats: 'view.bankstats', banksync: 'view.banksync', bankhist: 'view.bankhist',
       bankaccounts: 'view.bankaccounts',
       wadifusion: 'view.whatsapp',
-      wamensajes: 'view.wa.templates',
       waencuestas: 'view.whatsapp',
       wagrupos: 'view.whatsapp',
       equipo: 'view.equipo',
