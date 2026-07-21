@@ -39,6 +39,7 @@ import { renderScopeOverridesEditor, decorateScovBadges, countScovOverrides } fr
 import { renderWaSend } from './wa-send.js';
 import { renderWaGroups } from './wa-groups.js';
 import { renderWaTemplates } from './wa-templates.js';
+import { renderWaPolls } from './wa-polls.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderSyncLog, renderSyncRun } from './sync-log.js';
 import { renderSyncPending } from './sync-pending.js';   // v5.40
@@ -262,6 +263,7 @@ const NAV_GROUPS = [
   { title: 'WhatsApp', items: [
     ['wadifusion', I.megaphone, 'Difusión'],
     ['wamensajes', I.pencil, 'Mensajes'],
+    ['waencuestas', I.chart, 'Encuestas'],
     ['wagrupos', I.team, 'Grupos', 'superonly'],
   ] },
   { title: 'Administración', items: [
@@ -585,7 +587,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.53</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.54</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -7662,6 +7664,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'bankaccounts') renderBankAccounts(user);
   else if (view === 'wadifusion') renderWaSend(user);
   else if (view === 'wamensajes') renderWaTemplates(user);
+  else if (view === 'waencuestas') renderWaPolls(user);
   else if (view === 'wagrupos') renderWaGroups(user);
   else if (view === 'erpquery') renderErpQuery(user);
   else if (view === 'synclog') renderSyncLog(user);
@@ -8050,6 +8053,7 @@ export function renderPanel() {
       bankaccounts: 'view.bankaccounts',
       wadifusion: 'view.whatsapp',
       wamensajes: 'view.wa.templates',
+      waencuestas: 'view.whatsapp',
       wagrupos: 'view.whatsapp',
       equipo: 'view.equipo',
     };
