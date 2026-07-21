@@ -121,6 +121,18 @@ function ensureStyles() {
   .wt-acts{display:flex;gap:8px;align-items:center}
   .wt-saved{font-size:12.5px;color:#15803d;font-weight:600;display:none}
 
+  /* ---- v6.59: barra-resumen sticky ("cuando + grupos + portal") ---- */
+  .wt-sum{position:sticky;top:0;z-index:20;display:flex;align-items:center;gap:10px;flex-wrap:wrap;
+    background:var(--surface);border:1px solid var(--border);border-radius:11px;padding:10px 14px;margin-bottom:16px;
+    box-shadow:0 1px 3px rgba(0,0,0,.05)}
+  .wt-sum .lead{font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.04em}
+  .wt-sc{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;font-weight:650;color:var(--ink);
+    background:var(--border-soft,#f1f4f8);border-radius:999px;padding:4px 11px}
+  .wt-sc.when{background:#eef4ff;color:#1e40af}
+  .wt-sc.grp{background:#e9fbf0;color:#0f7a4d}
+  .wt-sc.grp.none{background:#fff7ed;color:#9a3412}
+  .wt-sc.pt{background:#f5f3ff;color:#6d28d9}
+
   .wt-cols{display:grid;grid-template-columns:1fr 400px;gap:18px;align-items:start}
   @media(max-width:1000px){.wt-cols{grid-template-columns:1fr}}
   .wt-pane{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:18px 20px;margin-bottom:16px}
@@ -501,6 +513,13 @@ function editorHtml(t) {
     </div>
   </div>
 
+  <div class="wt-sum" id="wtSum">
+    <span class="lead">Resumen</span>
+    <span class="wt-sc when" id="wtSumWhen">…</span>
+    <span class="wt-sc grp" id="wtSumGrp">…</span>
+    <span class="wt-sc pt" id="wtSumPt" style="display:none">📋 también al portal</span>
+  </div>
+
   <div class="wt-cols">
     <div>
       <div class="wt-pane">
@@ -592,6 +611,60 @@ function toggleGroup(id, on) {
   const row = document.querySelector(`.wt-grow[data-grp="${id}"]`);
   if (row) row.classList.toggle('on', on);
   paintGroupSum();
+  paintSummary();
+}
+
+/* v6.59: barra-resumen sticky. Arma "cuando + grupos + portal" leyendo el
+   estado en vivo del formulario (el segmented, la hora, los grupos elegidos
+   y el checkbox de portal). Se llama tras cada cambio relevante. Asi, aunque
+   la pantalla sea larga, siempre se ve arriba que va a pasar. */
+function summaryWhen() {
+  const seg = $('#wtTrg');
+  const on = seg ? seg.querySelector('[data-trg].on') : null;
+  const kind = on ? on.dataset.trg : 'manual';
+  if (kind === 'manual') return '📤 A mano';
+
+  // Hora:minuto (del input time).
+  const hEl = $('#wtTrgHourV');
+  const hm = (hEl && hEl.value) ? hEl.value : '08:00';
+
+  if (kind === 'date') {
+    const d = $('#wtTrgDateV');
+    const dv = d && d.value ? d.value.split('-').reverse().join('/') : '(sin fecha)';
+    return `🗓️ ${dv} · ${hm}`;
+  }
+  if (kind === 'every') {
+    const n = $('#wtTrgEveryV');
+    const nv = n ? Number(n.value) || 0 : 0;
+    return `🔁 Cada ${nv} día${nv === 1 ? '' : 's'} · ${hm}`;
+  }
+  if (kind === 'cycle') {
+    const f = $('#wtCycField'), o = $('#wtCycOff');
+    const field = f ? (CYCLE_FIELDS.find(x => x.v === f.value) || {}).lbl : '';
+    const off = o ? (OFFSETS.find(x => x.v === Number(o.value)) || {}).lbl : '';
+    return `⚡ ${off || ''}${field ? ' · ' + field.toLowerCase() : ''} · ${hm}`;
+  }
+  return '📤 A mano';
+}
+
+function paintSummary() {
+  const box = $('#wtSum');
+  if (!box) return;
+  const w = $('#wtSumWhen');
+  if (w) w.textContent = summaryWhen();
+
+  const g = $('#wtSumGrp');
+  if (g) {
+    const n = ST.selGroups.size;
+    g.classList.toggle('none', n === 0);
+    g.textContent = n
+      ? `💬 ${n} grupo${n === 1 ? '' : 's'}`
+      : '⚠️ sin grupos';
+  }
+
+  const pt = $('#wtChPt');
+  const chip = $('#wtSumPt');
+  if (chip) chip.style.display = (pt && pt.checked) ? '' : 'none';
 }
 
 function curTpl() {
@@ -736,6 +809,7 @@ function openEditor(code) {
       const syncPortalNote = () => {
         const w = pt.closest('.wt-chsec'); if (w) w.classList.toggle('on', pt.checked);
         const rep = $('#wtPortalRepl'); if (rep) rep.style.display = pt.checked ? '' : 'none';
+        paintSummary();
       };
       pt.addEventListener('change', syncPortalNote);
       syncPortalNote();
@@ -747,13 +821,23 @@ function openEditor(code) {
       seg.querySelectorAll('[data-trg]').forEach(b =>
         b.addEventListener('click', () => setTrigger(b.dataset.trg)));
       const cf = $('#wtCycField'), co = $('#wtCycOff');
-      if (cf) cf.addEventListener('change', scheduleSched);
-      if (co) co.addEventListener('change', scheduleSched);
+      if (cf) cf.addEventListener('change', () => { scheduleSched(); paintSummary(); });
+      if (co) co.addEventListener('change', () => { scheduleSched(); paintSummary(); });
+      // v6.59: hora, fecha y cada-tanto tambien refrescan la barra-resumen.
+      const hv = $('#wtTrgHourV');   if (hv) hv.addEventListener('input', paintSummary);
+      const dv = $('#wtTrgDateV');   if (dv) dv.addEventListener('input', paintSummary);
+      const ev = $('#wtTrgEveryV');  if (ev) ev.addEventListener('input', paintSummary);
       const run = $('#wtRun');
       if (run) run.addEventListener('click', runNow);
       if ((tpl.trigger_kind || 'manual') === 'cycle') doSched();
     }
+
+    // v6.59: pinta la barra-resumen una vez, con el estado inicial del editor.
+    paintSummary();
   }
+  // v6.59: en modo solo-lectura tambien se muestra el resumen (no cambia,
+  // pero informa igual).
+  if (!ST.canEdit) paintSummary();
   doPreview();
 }
 
@@ -773,6 +857,7 @@ function setTrigger(kind) {
   show('#wtTrgHour',   kind !== 'manual');
 
   if (kind === 'cycle') doSched();
+  paintSummary();
 }
 
 /* Lee el disparo del formulario. Devuelve solo lo que aplica al tipo elegido. */
