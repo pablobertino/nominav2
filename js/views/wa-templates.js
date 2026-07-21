@@ -1,42 +1,35 @@
 /* =====================================================================
    js/views/wa-templates.js  →  vista "Mensajes" (WhatsApp > Mensajes)
-   Mockups aprobados:
-     _PRUEBAS/wa_mensajes_mockup.html        (v0-mock3, credenciales)
-     _PRUEBAS/mensajes_alcance_mockup.html   (FASE 1, alcance)
+   Mockup aprobado: _PRUEBAS/wa_mensajes_grupos_A_programable.html (v6.56)
 
-   Catalogo de mensajes de WhatsApp. Cada mensaje tiene comodines que se
-   reemplazan con los datos reales al enviar.
+   Catalogo de mensajes de WhatsApp A GRUPOS. Cada mensaje tiene comodines de
+   FECHAS DEL CICLO que se reemplazan con los datos reales al enviar.
 
-   DOS DECISIONES DE DISENO, ambas de Pablo:
+   v6.56 REDISENO "SOLO GRUPOS" (pedido de Pablo). El destino de un mensaje ya
+   NO es el roster de personas (@c.us) sino uno o varios GRUPOS de WhatsApp
+   (@g.us) donde la linea corporativa (Naima) ya es miembro. Cambios de fondo
+   respecto de la version por-personas:
+     - Se quita "cumpleanos" (un grupo no cumple anios).
+     - Se quita el alcance por persona/cedula/zona (6 filtros) y el contador
+       de telefonos. En su lugar, un SELECTOR DE GRUPOS con casillas.
+     - Se quitan los comodines #Nombre/#Empresa: en un grupo el mensaje es UNO
+       SOLO para todos. Quedan solo las fechas del ciclo.
+     - El canal Portal pasa a ser una opcion secundaria ("tambien publicarlo
+       en el portal"), no un canal en igualdad con WhatsApp.
+     - ALCANCE POR USUARIO: cada quien elige solo los grupos que tiene
+       asignados (wa_group_admins); el superadmin, todos. Igual que Difusion.
 
-   1) SINTAXIS #Nombre, no {{nombre}}. Las plantillas de Avisos YA usan
-      #Periodo, #Fecha_Pago... Inventar otra sintaxis aca dejaria el portal
-      con dos formas distintas de escribir lo mismo. Se calca el patron de
-      Avisos: chips clicables, preview, mismas ideas.
+   Se CONSERVA lo valioso: las fechas del ciclo (se recalculan solas cada
+   quincena), la programacion (a mano / fecha del ciclo / fecha fija / cada
+   tanto) con la tabla de prevision, y el cron que ya dispara solo.
 
-   2) EDICION EN PAGINA, no en modal. El editor tiene textarea largo, chips
-      y preview en vivo: apretado en un modal de 580px se usa mal. Se usa el
-      patron de Empresas -> fichas: se oculta la lista y se pinta el detalle,
-      con un "Volver".
+   DOS DECISIONES DE DISENO previas, que siguen vigentes:
+   1) SINTAXIS #Nombre (aca ya solo #Fecha_*), la MISMA de Avisos.
+   2) EDICION EN PAGINA, no en modal (textarea largo + chips + preview).
 
-   FASE 1 — MENSAJES POR NATURALEZA (nature):
-     credencial -> los 2 de siempre. Los dispara Equipo, llevan clave, NO
-                   tienen alcance (el destinatario es el miembro).
-     puntual    -> envio manual CON ALCANCE sobre el roster. Lo nuevo.
-     ciclo / cumpleanos -> [FASE 2] automaticos.
-
-   EL ALCANCE reusa los 6 filtros de Difusion (zone, subzone, type, concept,
-   company, id_number), que el RPC wa_recipients ya resuelve. No se inventa
-   vocabulario nuevo.
-
-   EL CONTADOR EN VIVO es la pieza central de la pantalla, no un adorno: hoy
-   solo 233 de 2.676 personas activas tienen telefono cargado. Un envio al
-   concepto SHOE BOX (612 personas) le llegaria a 3. Sin ver ese numero antes
-   de mandar, uno cree que le llego a todos.
-
-   El motor de plantillas vive en el SERVIDOR (functions/api/wa-templates.js),
-   y el preview tambien: si el preview lo armara el front con su propia copia
-   del motor, podria mostrar algo distinto de lo que se termina enviando.
+   El motor de plantillas y el preview viven en el SERVIDOR
+   (functions/api/wa-templates.js): si el front tuviera su propia copia,
+   el preview podria mostrar algo distinto de lo que se termina enviando.
 
    Gates: view.wa.templates (ver) / wa.templates (editar).
    Export: renderWaTemplates(user)
@@ -53,13 +46,15 @@ const ST = {
   user: null,
   rows: [],
   vars: {},
-  cat: {},       // catalogos de alcance (zonas, subzonas, conceptos, tipos, empresas)
-  cycle: {},     // fechas del ciclo vigente
+  cat: {},        // catalogos (se conservan, ya no se usan para el alcance)
+  cycle: {},      // fechas del ciclo vigente
+  groups: [],     // v6.56: grupos elegibles del actor [{id, chat_id, wa_name, alias}]
+  groupsMode: 'admin',
   canEdit: false,
-  cur: null,     // code en edicion (null = alta)
-  orig: '',      // body original (para "Restaurar")
+  cur: null,      // code en edicion (null = alta)
+  orig: '',       // body original (para "Restaurar")
   isNew: false,
-  scope: {},     // alcance en edicion
+  selGroups: new Set(),   // v6.56: ids de grupos elegidos en el editor
 };
 
 async function api(payload) {
@@ -72,19 +67,15 @@ async function api(payload) {
 const userPayload = (u) => ({ kind: u.kind, id: u.id || null, companyCode: u.companyCode || null });
 
 const ICONS = { cred_portal: '🔑', cred_osticket: '🎫' };
-const iconOf = t => ICONS[t.code] || (t.nature === 'puntual' ? '📣' : '💬');
+const iconOf = t => ICONS[t.code] || (t.nature === 'ciclo' ? '💬' : '📣');
 
 /* Las naturalezas que se listan en la vista y como se agrupan. El orden
-   importa. v6.55: se quito 'credencial' (los 2 mensajes de clave): con el
-   modelo SOLO GRUPOS ya no se envian credenciales por WhatsApp (iban al
-   numero particular del miembro). Los mensajes cred_portal/cred_osticket
-   siguen en la BD porque Equipo los usa para MOSTRAR la clave en pantalla
-   (cred_preview), pero no se ven ni se editan desde aca. Lo que queda es lo
-   util para grupos: envios puntuales y programados. */
+   importa. v6.55: se quito 'credencial'. v6.56: se quito 'cumpleanos' (un
+   grupo no cumple anios). Lo que queda es lo util para grupos: envios
+   puntuales y programados por el ciclo de nomina. */
 const NATURES = [
-  { key: 'ciclo',      title: 'Ciclo de nómina · automáticos' },
-  { key: 'cumpleanos', title: 'Celebraciones · automáticos' },
-  { key: 'puntual',    title: 'Envíos puntuales' },
+  { key: 'ciclo',   title: 'Ciclo de nómina · automáticos' },
+  { key: 'puntual', title: 'Envíos puntuales' },
 ];
 
 function ensureStyles() {
@@ -116,7 +107,7 @@ function ensureStyles() {
   .tag-eq{color:#1e40af;background:#dbeafe}
   .tag-sec{color:#9a3412;background:#ffedd5}
   .tag-off{color:#64748b;background:#e5e7eb}
-  .tag-sc{color:#3730a3;background:#e0e7ff}
+  .tag-sc{color:#0f7a4d;background:#e9fbf0}
   .tag-reach{color:#9a3412;background:#fff7ed}
   .wt-sub{margin:22px 2px 2px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--faint,#94a3b8);display:flex;align-items:center;gap:9px}
   .wt-empty{padding:22px 18px;text-align:center;color:var(--muted);font-size:13px}
@@ -150,30 +141,29 @@ function ensureStyles() {
   .wt-varbtn.cond:hover{background:#ede9fe}
   .wt-help{font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5}
 
-  /* ---- alcance ---- */
-  .wt-g3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:11px}
-  @media(max-width:760px){.wt-g3{grid-template-columns:1fr}}
-  .wt-chan{display:grid;grid-template-columns:1fr 1fr;gap:11px;margin-bottom:14px}
-  @media(max-width:760px){.wt-chan{grid-template-columns:1fr}}
-  .wt-ch{display:flex;gap:10px;align-items:flex-start;border:1px solid var(--border);border-radius:10px;padding:11px 12px;cursor:pointer;background:var(--surface)}
-  .wt-ch.on{border-color:var(--brand);border-width:2px;padding:10px 11px}
-  .wt-ch input{width:16px;height:16px;margin-top:2px;accent-color:var(--brand);flex:none}
-  .wt-ch b{font-size:13px;display:block}
-  .wt-ch span{font-size:11.5px;color:var(--muted);display:block;margin-top:2px;line-height:1.45}
+  /* ---- v6.56: selector de grupos ---- */
+  .wt-gtools{display:flex;gap:9px;align-items:center;margin-bottom:10px;flex-wrap:wrap}
+  .wt-search{display:flex;align-items:center;gap:7px;background:var(--surface);border:1px solid var(--border);border-radius:10px;padding:7px 11px;flex:1;min-width:170px}
+  .wt-search input{border:0;outline:0;font:inherit;font-size:13px;width:100%;background:transparent;color:var(--ink)}
+  .wt-search svg{color:var(--muted);flex:none}
+  .wt-glist{border:1px solid var(--border);border-radius:11px;overflow:hidden}
+  .wt-grow{display:flex;align-items:center;gap:11px;padding:11px 13px;border-top:1px solid var(--border-soft,#f1f4f8);cursor:pointer}
+  .wt-grow:first-child{border-top:0}
+  .wt-grow:hover{background:var(--border-soft,#f8fafc)}
+  .wt-grow.on{background:#e9fbf0}
+  .wt-grow input{width:17px;height:17px;accent-color:#128c7e;flex:none;cursor:pointer}
+  .wt-gav{width:34px;height:34px;border-radius:9px;background:#e9fbf0;color:#128c7e;display:grid;place-items:center;flex:none}
+  .wt-gname{font-weight:650;font-size:13.5px;color:var(--ink)}
+  .wt-gmeta{font-size:11.5px;color:var(--muted);margin-top:1px}
+  .wt-gsum{background:#e9fbf0;border:1px solid #bbf1d2;border-radius:10px;padding:9px 13px;font-size:12.5px;color:#0f7a4d;margin-top:11px}
+  .wt-gsum b{color:#0b5e3a}
+  .wt-gempty{padding:16px;text-align:center;color:var(--muted);font-size:12.5px}
 
-  /* ---- contador de destinatarios (la pieza clave) ---- */
-  .wt-reach{border:1px solid #cfe0ff;background:#eff4ff;border-radius:12px;padding:14px 16px}
-  .wt-rtop{display:flex;align-items:baseline;gap:10px;flex-wrap:wrap}
-  .wt-rbig{font-size:26px;font-weight:800;color:#1e3a8a;font-variant-numeric:tabular-nums;line-height:1}
-  .wt-rlbl{font-size:12.5px;color:#1e40af}
-  .wt-bar{height:8px;background:#dbeafe;border-radius:99px;margin-top:11px;overflow:hidden;display:flex}
-  .wt-bar i{display:block;height:100%}
-  .wt-bar .has{background:#16a34a}
-  .wt-bar .no{background:#fca5a5}
-  .wt-leg{display:flex;gap:16px;margin-top:9px;font-size:11.5px;color:#1e40af;flex-wrap:wrap}
-  .wt-leg span{display:flex;align-items:center;gap:6px}
-  .wt-dot{width:8px;height:8px;border-radius:99px;flex:none}
-  .wt-names{margin-top:11px;padding-top:10px;border-top:1px solid #cfe0ff;font-size:11.5px;color:#1e40af;line-height:1.6}
+  /* ---- canal portal (secundario) ---- */
+  .wt-chsec{display:flex;gap:10px;align-items:flex-start;border:1px dashed var(--border);border-radius:10px;padding:11px 13px;background:var(--border-soft,#fbfcfe);cursor:pointer}
+  .wt-chsec input{width:16px;height:16px;margin-top:2px;accent-color:var(--brand);flex:none}
+  .wt-chsec b{font-size:13px;display:block}
+  .wt-chsec span{font-size:11.5px;color:var(--muted);display:block;margin-top:2px;line-height:1.45}
 
   /* ---- FASE 2: programacion ---- */
   .wt-seg{display:inline-flex;border:1px solid var(--border);border-radius:10px;overflow:hidden;background:var(--surface);flex-wrap:wrap}
@@ -195,8 +185,10 @@ function ensureStyles() {
   .wt-runst b.err{color:var(--danger,#dc2626)}
 
   .wt-pv{position:sticky;top:16px}
-  .wt-sel{width:100%;font:inherit;font-size:12px;padding:7px 10px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--ink-soft,#334155);margin-bottom:12px}
   .wt-phone{background:#e5ddd5;border-radius:14px;padding:14px 12px;background-image:radial-gradient(rgba(0,0,0,.03) 1px,transparent 1px);background-size:14px 14px}
+  .wt-pvgh{display:flex;align-items:center;gap:8px;margin-bottom:9px}
+  .wt-pvgav{width:26px;height:26px;border-radius:50%;background:#128c7e;color:#fff;display:grid;place-items:center;font-size:12px;flex:none}
+  .wt-pvgn{font-size:12px;font-weight:700;color:#0b5e3a;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .wt-bubble{background:#dcf8c6;border-radius:12px 12px 12px 3px;padding:10px 12px;font-size:12.5px;line-height:1.6;white-space:pre-wrap;word-break:break-word;box-shadow:0 1px 1px rgba(0,0,0,.08);color:#0f172a;min-height:40px}
   .wt-pvmeta{margin-top:10px;font-size:11px;color:var(--faint,#94a3b8);line-height:1.5}
 
@@ -211,42 +203,34 @@ function ensureStyles() {
   document.head.appendChild(st);
 }
 
-/* ---------- resumen legible del alcance (para la lista) ---------- */
-function scopeLabel(sf) {
-  const s = sf || {};
-  const bits = [];
-  const nameOf = (arr, id) => {
-    const r = (arr || []).find(x => String(x.id) === String(id));
-    return r ? r.name : id;
-  };
-  if (s.type) bits.push(s.type);
-  if (s.zone) bits.push(nameOf(ST.cat.zones, s.zone));
-  if (s.subzone) bits.push(nameOf(ST.cat.subzones, s.subzone));
-  if (s.concept) bits.push(nameOf(ST.cat.concepts, s.concept));
-  if (s.company) bits.push(s.company);
-  if (s.id_number) bits.push(`cédula ${s.id_number}`);
-  return bits.length ? bits.join(' · ') : 'Todos';
+/* ---------- resumen legible de los grupos destino (para la lista) ---------- */
+function groupsLabel(t) {
+  const ids = Array.isArray(t.group_ids) ? t.group_ids : [];
+  if (!ids.length) return 'Sin grupos';
+  const names = ids.map(id => {
+    const g = ST.groups.find(x => Number(x.id) === Number(id));
+    return g ? (g.alias || g.wa_name || g.chat_id) : null;
+  }).filter(Boolean);
+  if (!names.length) return `${ids.length} grupo${ids.length === 1 ? '' : 's'}`;
+  if (names.length <= 2) return names.join(' · ');
+  return `${names.slice(0, 2).join(' · ')} +${names.length - 2}`;
 }
 
-const CHAN_LBL = { wa: '💬 WhatsApp', portal: '📋 Portal', 'wa+portal': '💬 WhatsApp + 📋 Portal' };
+const CHAN_LBL = { wa: '💬 Grupos', portal: '📋 Portal', 'wa+portal': '💬 Grupos + 📋 Portal' };
 
 /* ---------------- lista ---------------- */
 function rowHtml(t) {
-  const isCred = t.nature === 'credencial';
   return `
     <div class="wt-row">
-      <div class="wt-ic${t.code === 'cred_osticket' ? ' tk' : (t.nature === 'puntual' ? ' pt' : '')}">${iconOf(t)}</div>
+      <div class="wt-ic${t.nature === 'puntual' ? ' pt' : ''}">${iconOf(t)}</div>
       <div class="wt-body">
         <div class="wt-title">${esc(t.label)}</div>
         <div class="wt-text">${esc(t.description || '')}</div>
         <div class="wt-meta">
-          ${isCred
-            ? `<span class="wt-tag tag-eq">Equipo</span>`
-            : `<span class="wt-tag tag-eq">${esc(CHAN_LBL[t.channel] || t.channel)}</span>
-               <span class="wt-tag tag-sc">${esc(scopeLabel(t.scope_filters))}</span>
-               ${(t.trigger_kind && t.trigger_kind !== 'manual')
-                 ? `<span class="wt-tag tag-reach">${esc(triggerLabel(t))}</span>` : ''}`}
-          ${t.allows_secret ? '<span class="wt-tag tag-sec">🔒 Lleva clave</span>' : ''}
+          <span class="wt-tag tag-eq">${esc(CHAN_LBL[t.channel] || t.channel)}</span>
+          <span class="wt-tag tag-sc">${esc(groupsLabel(t))}</span>
+          ${(t.trigger_kind && t.trigger_kind !== 'manual')
+            ? `<span class="wt-tag tag-reach">${esc(triggerLabel(t))}</span>` : ''}
           ${t.is_active ? '' : '<span class="wt-tag tag-off">Inactivo</span>'}
           <span>· ${(t.body || '').length} caracteres</span>
           ${(t.last_status === 'error')
@@ -263,14 +247,16 @@ function rowHtml(t) {
 function listHtml() {
   const byNature = {};
   ST.rows.forEach(t => {
+    // v6.56: los mensajes de sistema (credenciales) no se listan aca.
+    if (t.is_system || t.nature === 'credencial') return;
     const n = t.nature || 'puntual';
     (byNature[n] = byNature[n] || []).push(t);
   });
 
   const secs = NATURES.map(sec => {
     const rows = byNature[sec.key] || [];
-    // Las secciones de FASE 2 (ciclo, cumpleanos) todavia no tienen mensajes:
-    // no se pintan vacias para no prometer algo que aun no existe.
+    // La seccion 'ciclo' no se pinta vacia (para no prometer algo que aun no
+    // existe); 'puntual' siempre se pinta porque lleva el boton "+ Nuevo".
     if (!rows.length && sec.key !== 'puntual') return '';
     if (sec.key === 'puntual') {
       return `
@@ -292,94 +278,75 @@ function listHtml() {
   <div class="wt-head">
     <div>
       <h1>Mensajes</h1>
-      <p>Textos predeterminados de WhatsApp. Los comodines se reemplazan con los datos reales al enviar.</p>
+      <p>Mensajes de WhatsApp que se envían a los grupos. Las fechas del ciclo se reemplazan con los datos reales al enviar.</p>
     </div>
   </div>
   ${secs}
   <div class="wt-note">
-    <b>Cómo funcionan estos mensajes.</b> Cada mensaje tiene comodines (por ejemplo
-    <code>#Nombre</code> o <code>#Fecha_Cierre</code>) que se reemplazan con los datos reales al enviar. Las fechas del
-    ciclo salen del calendario de nómina y se recalculan solas cada quincena: no hay que cargarlas a mano.
-    <br><br>Un envío puede salir <b>a mano</b> o <b>programado</b> (en una fecha del ciclo, una fecha fija, cada
-    cierto tiempo, o el día del cumpleaños). Antes de mandar, el contador muestra a cuántas personas del alcance les
-    va a llegar según tengan teléfono cargado.
+    <b>Cómo funcionan estos mensajes.</b> Cada mensaje va a uno o varios <b>grupos de WhatsApp</b> donde la línea ya
+    está adentro. Podés usar comodines de fecha (por ejemplo <code>#Fecha_Cierre</code> o <code>#Fecha_Pago</code>)
+    que se reemplazan con las fechas reales del período vigente: salen del calendario de nómina y se recalculan solas
+    cada quincena, no hay que cargarlas a mano.
+    <br><br>Un envío puede salir <b>a mano</b> (al toque) o <b>programado</b> (en una fecha del ciclo, una fecha fija o
+    cada cierto tiempo), y en ese caso se dispara solo. En un grupo el mensaje es <b>uno solo para todos</b>, por eso no
+    hay comodines personales como #Nombre.
   </div>`;
 }
 
-/* ---------------- editor ---------------- */
-function scopePaneHtml(t) {
-  const s = ST.scope || {};
-  const opt = (arr, sel, lblKey) => (arr || []).map(x =>
-    `<option value="${esc(x.id != null ? x.id : x)}"${String(sel || '') === String(x.id != null ? x.id : x) ? ' selected' : ''}>${esc(lblKey ? x[lblKey] : (x.name || x))}</option>`).join('');
+/* ---------------- editor: selector de grupos (v6.56) ---------------- */
+function groupsPaneHtml() {
+  const gs = ST.groups || [];
+  const rows = gs.map(g => {
+    const on = ST.selGroups.has(Number(g.id));
+    const name = g.alias || g.wa_name || g.chat_id;
+    return `
+      <label class="wt-grow${on ? ' on' : ''}" data-grp="${esc(g.id)}">
+        <input type="checkbox" data-gchk="${esc(g.id)}"${on ? ' checked' : ''}${ST.canEdit ? '' : ' disabled'}>
+        <span class="wt-gav"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
+        <div style="min-width:0"><div class="wt-gname">${esc(name)}</div><div class="wt-gmeta">Grupo de WhatsApp</div></div>
+      </label>`;
+  }).join('');
 
-  const ch = t.channel || 'wa';
-  const hasWa = ch === 'wa' || ch === 'wa+portal';
-  const hasPt = ch === 'portal' || ch === 'wa+portal';
+  const tools = (gs.length > 4 && ST.canEdit)
+    ? `<div class="wt-gtools">
+         <div class="wt-search">
+           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+           <input id="wtGSearch" placeholder="Buscar grupo…">
+         </div>
+         <button type="button" class="wt-btn" id="wtGAll" style="padding:7px 12px">Marcar todos</button>
+       </div>`
+    : '';
+
+  const sub = ST.groupsMode === 'admin'
+    ? 'Solo se muestran los grupos que tenés asignados.'
+    : 'Podés elegir uno o varios. La línea ya está dentro de estos grupos.';
 
   return `
   <div class="wt-pane">
-    <div class="wt-pane-h">¿Por dónde sale?</div>
-    <p class="wt-pane-s">El portal lo ven quienes entran al sistema. WhatsApp le llega al trabajador.</p>
-    <div class="wt-chan">
-      <label class="wt-ch${hasPt ? ' on' : ''}" id="wtChPtWrap">
-        <input type="checkbox" id="wtChPt"${hasPt ? ' checked' : ''}>
-        <span style="flex:1"><b>📋 Portal</b>
-          <span>Aparece en la cartelera al entrar. Llega al <b>100%</b> de quienes usan el portal.</span></span>
-      </label>
-      <label class="wt-ch${hasWa ? ' on' : ''}" id="wtChWaWrap">
-        <input type="checkbox" id="wtChWa"${hasWa ? ' checked' : ''}>
-        <span style="flex:1"><b>💬 WhatsApp</b>
-          <span>Llega al teléfono. Solo a quienes lo tengan cargado.</span></span>
-      </label>
-    </div>
+    <div class="wt-pane-h">¿A qué grupos va?</div>
+    <p class="wt-pane-s">${sub}</p>
+    ${gs.length ? tools + `<div class="wt-glist" id="wtGList">${rows}</div>` +
+      `<div class="wt-gsum" id="wtGSum"></div>`
+      : `<div class="wt-gempty">No tenés grupos asignados. Pedile al superadministrador que te autorice en la pantalla <b>Grupos</b>.</div>`}
   </div>
 
   <div class="wt-pane">
-    <div class="wt-pane-h">¿A quién le llega?</div>
-    <p class="wt-pane-s">Los mismos filtros de Difusión. Dejá en blanco lo que no quieras acotar.</p>
-    <div class="wt-g3">
-      <div class="wt-field">
-        <label>Tipo</label>
-        <select id="wtScType"><option value="">Todos</option>${opt(ST.cat.types, s.type)}</select>
-      </div>
-      <div class="wt-field">
-        <label>Zona</label>
-        <select id="wtScZone"><option value="">Todas</option>${opt(ST.cat.zones, s.zone, 'name')}</select>
-      </div>
-      <div class="wt-field">
-        <label>Subzona</label>
-        <select id="wtScSub"><option value="">Todas</option></select>
-      </div>
-    </div>
-    <div class="wt-g3">
-      <div class="wt-field">
-        <label>Concepto</label>
-        <select id="wtScCon"><option value="">Todos</option>${opt(ST.cat.concepts, s.concept, 'name')}</select>
-      </div>
-      <div class="wt-field">
-        <label>Tienda</label>
-        <select id="wtScComp"><option value="">Todas</option>${(ST.cat.companies || []).map(c =>
-          `<option value="${esc(c.company_code)}"${String(s.company || '') === c.company_code ? ' selected' : ''}>${esc(c.company_code)} · ${esc(c.business_name || '')}</option>`).join('')}</select>
-      </div>
-      <div class="wt-field">
-        <label>Persona (cédula)</label>
-        <input type="text" id="wtScCed" value="${esc(s.id_number || '')}" placeholder="Ej. 31668004">
-      </div>
-    </div>
-
-    <div class="wt-reach" id="wtReach">
-      <div class="wt-rtop"><span class="wt-rbig">…</span><span class="wt-rlbl">calculando…</span></div>
-    </div>
+    <div class="wt-pane-h">¿También publicarlo en el portal?</div>
+    <p class="wt-pane-s">Opcional. Además de mandarlo a los grupos, puede aparecer en la cartelera de Avisos.</p>
+    <label class="wt-chsec" id="wtChPtWrap">
+      <input type="checkbox" id="wtChPt">
+      <span style="flex:1"><b>📋 Publicar también en el portal</b>
+        <span>Aparece en la cartelera al entrar al sistema. Por defecto el mensaje va solo a los grupos de WhatsApp.</span></span>
+    </label>
   </div>`;
 }
 
 /* ---------- FASE 2: panel "¿Cuándo sale?" ---------- */
 const TRIGGERS = [
-  { k: 'manual',   lbl: 'A mano' },
-  { k: 'cycle',    lbl: 'Fecha del ciclo' },
-  { k: 'date',     lbl: 'Fecha fija' },
-  { k: 'every',    lbl: 'Cada tanto' },
-  { k: 'birthday', lbl: 'Cumpleaños' },
+  { k: 'manual', lbl: 'A mano' },
+  { k: 'cycle',  lbl: 'Fecha del ciclo' },
+  { k: 'date',   lbl: 'Fecha fija' },
+  { k: 'every',  lbl: 'Cada tanto' },
 ];
 const CYCLE_FIELDS = [
   { v: 'cutoff_date',     lbl: 'Cierre de la quincena' },
@@ -400,7 +367,6 @@ function triggerLabel(t) {
     const o = OFFSETS.find(x => x.v === t.cycle_offset);
     return `⚡ ${(o ? o.lbl : t.cycle_offset + ' días')} · ${f ? f.lbl.toLowerCase() : t.cycle_field}`;
   }
-  if (t.trigger_kind === 'birthday') return '⚡ El día del cumpleaños';
   if (t.trigger_kind === 'date') return `⚡ El ${esc(String(t.trigger_date || '').slice(0, 10))}`;
   if (t.trigger_kind === 'every') return `⚡ Cada ${t.trigger_every_days} día${t.trigger_every_days === 1 ? '' : 's'}`;
   return 'A mano';
@@ -412,10 +378,19 @@ function schedPaneHtml(t) {
   return `
   <div class="wt-pane">
     <div class="wt-pane-h">¿Cuándo sale?</div>
-    <p class="wt-pane-s">Puede ser un envío a mano, o repetirse solo.</p>
+    <p class="wt-pane-s">Puede ser un envío a mano (al toque), o programado para que salga solo.</p>
 
     <div class="wt-seg" id="wtTrg">
       ${TRIGGERS.map(x => `<button type="button" data-trg="${x.k}" class="${k === x.k ? 'on' : ''}">${x.lbl}</button>`).join('')}
+    </div>
+
+    <!-- a mano -->
+    <div id="wtTrgManual" style="margin-top:14px;${k === 'manual' ? '' : 'display:none'}">
+      <div class="wt-banner" style="background:#e9fbf0;border-color:#bbf1d2;color:#0f7a4d;margin:0">
+        <span class="ic">📤</span>
+        <div><b>Envío a mano.</b> Este mensaje no sale solo: se manda cuando vos toques
+        <b>Enviar ahora</b>${ST.isNew ? ' (disponible una vez creado)' : ''}. Útil para un aviso puntual.</div>
+      </div>
     </div>
 
     <!-- ciclo -->
@@ -437,10 +412,12 @@ function schedPaneHtml(t) {
         Las fechas salen del calendario de nómina y se recalculan solas cada quincena.
         <b>No hay que cargarlas a mano nunca.</b>
       </div>
-      <div class="wt-banner" style="background:#eff4ff;border-color:#cfe0ff;color:#1e3a8a;margin:12px 0 0">
-        <span class="ic">ℹ️</span>
-        <div><b>Al repetirse, reemplaza el anterior.</b> El aviso de la quincena pasada se archiva y queda solo el
-        vigente, para no llenar la cartelera. <b>Los avisos que creaste a mano no se tocan.</b></div>
+      <div class="wt-banner" style="background:#e9fbf0;border-color:#bbf1d2;color:#0f7a4d;margin:12px 0 0">
+        <span class="ic">🔁</span>
+        <div><b>Sale solo, quincena tras quincena.</b> Una vez programado, se dispara automáticamente en la fecha
+        calculada de cada período, con las fechas ya actualizadas.
+        <span id="wtPortalRepl" style="display:none"> Si además va al portal, el aviso de la quincena pasada se archiva
+        y queda solo el vigente; los avisos que creaste a mano no se tocan.</span></div>
       </div>
     </div>
 
@@ -457,15 +434,6 @@ function schedPaneHtml(t) {
       <div class="wt-help">15 = cada quincena aproximada. Para las fechas exactas de nómina, usá <b>Fecha del ciclo</b>.</div>
     </div>
 
-    <!-- cumpleaños -->
-    <div id="wtTrgBday" style="margin-top:14px;${k === 'birthday' ? '' : 'display:none'}">
-      <div class="wt-banner" style="margin:0">
-        <span class="ic">🎂</span>
-        <div>Se envía a cada persona el día que cumple años. <b>El 93,4% del personal tiene fecha de nacimiento</b>
-        cargada, así que el dato está: el límite es el <b>teléfono</b>.</div>
-      </div>
-    </div>
-
     <!-- hora (para todos los automáticos) -->
     <div id="wtTrgHour" class="wt-field" style="margin:14px 0 0;max-width:220px;${k === 'manual' ? 'display:none' : ''}">
       <label>A partir de qué hora</label>
@@ -474,54 +442,44 @@ function schedPaneHtml(t) {
       <div class="wt-help">Hora de Venezuela. El sistema revisa cada 15 minutos, así que puede salir hasta 15 min después.</div>
     </div>
 
-    ${(!ST.isNew && t.trigger_kind !== 'manual') ? `
+    ${(!ST.isNew) ? `
       <div class="wt-runbox">
-        <button class="wt-btn" id="wtRun">▶ Enviar ahora (probar)</button>
+        <button class="wt-btn" id="wtRun">▶ Enviar ahora${t.trigger_kind === 'manual' ? '' : ' (probar)'}</button>
         <span class="wt-runst" id="wtRunSt">${t.last_status
           ? (t.last_status === 'running'
               ? '⏳ Corriendo… (si queda colgada, se reintenta sola)'
               : `Última corrida: <b class="${t.last_status === 'ok' ? 'ok' : 'err'}">${t.last_status === 'ok' ? 'OK' : 'con errores'}</b>`
-                + (t.last_sent != null ? ` · ${t.last_sent} enviado${t.last_sent === 1 ? '' : 's'}` : '')
+                + (t.last_sent != null ? ` · ${t.last_sent} grupo${t.last_sent === 1 ? '' : 's'}` : '')
                 + (t.last_fire_on ? ` · ${esc(String(t.last_fire_on).slice(0, 10))}` : '')
                 + (t.last_error ? ` · ${esc(t.last_error)}` : ''))
           : 'Todavía no corrió.'}</span>
       </div>
-      <div class="wt-help" style="margin-top:8px">
+      ${t.trigger_kind !== 'manual' ? `<div class="wt-help" style="margin-top:8px">
         Si un envío automático falla o queda colgado, el sistema <b>lo reintenta solo</b> a los
         ${Number(t.retry_minutes) || 20} minutos. Sin esto, un mensaje atado a una fecha del ciclo se
         saltaría la quincena entera si justo ese día algo fallaba.
-      </div>` : ''}
+      </div>` : ''}` : ''}
   </div>`;
 }
 
 function editorHtml(t) {
-  const isCred = t.nature === 'credencial';
-  const varsKey = isCred ? t.code : 'puntual';
-  const vars = (ST.vars[varsKey] || []).map(v =>
-    `<button class="wt-varbtn${v.secret ? ' sec' : ''}" data-v="${esc(v.v)}" title="${esc(v.d)}">${esc(v.v)}${v.secret ? ' 🔒' : ''}</button>`).join('');
-  const condBtn = t.code === 'cred_portal'
-    ? '<button class="wt-varbtn cond" data-cond="1">＋ Bloque “solo si tiene osTicket”</button>' : '';
-  const help = t.code === 'cred_portal'
-    ? 'Tocá un comodín para insertarlo. Lo que pongas dentro del bloque <b>#SiOsticket</b> solo se envía a los roles que tienen osTicket; para los demás desaparece solo.'
-    : isCred
-    ? 'Tocá un comodín para insertarlo donde tengas el cursor.'
-    : 'Tocá un comodín para insertarlo. Las fechas del ciclo (<b>#Fecha_Cierre</b>, <b>#Fecha_Pago</b>…) salen del calendario de nómina y se recalculan solas cada quincena: no hay que cargarlas nunca.';
-
-  /* Los dos avisos de clave son DISTINTOS a proposito: los riesgos son
-     distintos. La clave del portal caduca al primer ingreso (v5.08); la de
-     osTicket no vence nunca. */
-  const secTxt = t.code === 'cred_osticket'
-    ? 'Este mensaje incluye <b>#ClaveOsticket</b>, y esa clave <b>no vence</b>: una vez enviada, queda viva en el chat. Enviala solo si estás de acuerdo con eso.'
-    : 'Este mensaje incluye <b>#Clave</b>. Solo se envía cuando la clave es <b>temporal</b>: el portal obliga a cambiarla al primer ingreso. Si la clave es fija, el envío se bloquea.';
+  const vars = (ST.vars.puntual || []).map(v =>
+    `<button class="wt-varbtn" data-v="${esc(v.v)}" title="${esc(v.d)}">${esc(v.v)}</button>`).join('');
+  const help = 'Tocá un comodín para insertarlo. Las fechas del ciclo (<b>#Fecha_Cierre</b>, <b>#Fecha_Pago</b>…) '
+    + 'salen del calendario de nómina y se recalculan solas cada quincena: no hay que cargarlas nunca. '
+    + '<b>En un grupo el mensaje es uno solo para todos</b>, por eso no hay #Nombre ni #Empresa.';
 
   const ro = ST.canEdit ? '' : ' disabled';
+  const firstGroup = ST.groups[0];
+  const pvGroupName = firstGroup ? (firstGroup.alias || firstGroup.wa_name || firstGroup.chat_id) : 'Grupo de WhatsApp';
+  const pvInitial = (pvGroupName || 'G').trim().charAt(0).toUpperCase();
 
   return `
   <div class="wt-top">
     <button class="wt-back" id="wtBack">← Volver</button>
     <div class="wt-ttl">
       <h1>${ST.isNew ? 'Nuevo mensaje' : esc(t.label)}</h1>
-      <p>${ST.isNew ? 'Definí qué dice, a quién le llega y por dónde sale.' : esc(t.description || '')}</p>
+      <p>${ST.isNew ? 'Elegí a qué grupos va, qué dice y cuándo sale.' : esc(t.description || '')}</p>
     </div>
     <div class="wt-acts">
       <span class="wt-saved" id="wtSaved">✓ Guardado</span>
@@ -532,41 +490,40 @@ function editorHtml(t) {
     </div>
   </div>
 
-  ${t.allows_secret ? `<div class="wt-banner"><span class="ic">🔒</span><div>${secTxt}</div></div>` : ''}
-
   <div class="wt-cols">
     <div>
       <div class="wt-pane">
         <div class="wt-pane-h">Contenido</div>
         <div class="wt-field" style="margin-top:11px">
-          <label>Nombre ${isCred ? '' : '(interno, para reconocerlo)'}</label>
-          <input type="text" id="wtLabel" value="${esc(t.label || '')}" placeholder="Ej. Recordatorio de cierre a tiendas"${ro}>
+          <label>Nombre (interno, para reconocerlo)</label>
+          <input type="text" id="wtLabel" value="${esc(t.label || '')}" placeholder="Ej. Recordatorio de cierre a los grupos de nómina"${ro}>
         </div>
         <div class="wt-field">
           <label>Mensaje</label>
-          <textarea id="wtBody" placeholder="Hola #Nombre 👋&#10;&#10;Te recordamos que el cierre de la quincena #Periodo es el #Fecha_Cierre."${ro}>${esc(t.body || '')}</textarea>
-          ${ST.canEdit ? `<div class="wt-vars">${vars}${condBtn}</div><div class="wt-help">${help}</div>` : ''}
+          <textarea id="wtBody" placeholder="*Recordatorio de nómina* 📌&#10;&#10;El cierre de la quincena #Periodo es el #Fecha_Cierre."${ro}>${esc(t.body || '')}</textarea>
+          ${ST.canEdit ? `<div class="wt-vars">${vars}</div><div class="wt-help">${help}</div>` : ''}
         </div>
         <p class="wt-err" id="wtErr" style="display:none"></p>
       </div>
-      ${isCred ? '' : scopePaneHtml(t)}
-      ${isCred ? '' : schedPaneHtml(t)}
+      ${groupsPaneHtml()}
+      ${schedPaneHtml(t)}
     </div>
 
     <div class="wt-pv">
       <div class="wt-pane">
         <div class="wt-pane-h">Vista previa</div>
-        ${isCred ? `
-          <select class="wt-sel" id="wtSample" style="margin-top:11px">
-            <option value="agent">Ejemplo: Administrador (con osTicket)</option>
-            <option value="client">Ejemplo: Gestor de empresa (con osTicket)</option>
-            <option value="none">Ejemplo: Supervisor Tiendas (sin osTicket)</option>
-          </select>` : '<div style="height:11px"></div>'}
-        <div class="wt-phone"><div class="wt-bubble" id="wtPv">…</div></div>
+        <div style="height:11px"></div>
+        <div class="wt-phone">
+          <div class="wt-pvgh">
+            <span class="wt-pvgav">${esc(pvInitial)}</span>
+            <span class="wt-pvgn" id="wtPvGn">${esc(pvGroupName)}</span>
+          </div>
+          <div class="wt-bubble" id="wtPv">…</div>
+        </div>
         <div class="wt-pvmeta" id="wtPvMeta"></div>
-        ${isCred ? '' : `<div class="wt-pvmeta" style="margin-top:9px">
-          Las fechas son las <b>reales</b> del período vigente${ST.cycle.periodo ? ` (${esc(ST.cycle.periodo)})` : ''}.
-        </div>`}
+        <div class="wt-pvmeta" style="margin-top:9px">
+          Las fechas son las <b>reales</b> del período vigente${ST.cycle.periodo ? ` (${esc(ST.cycle.periodo)})` : ''}. Así se ve tal como llega al grupo.
+        </div>
       </div>
     </div>
   </div>`;
@@ -574,7 +531,7 @@ function editorHtml(t) {
 
 /* El preview lo resuelve el SERVIDOR, con el mismo motor que usa el envio. Si
    el front tuviera su propia copia del motor, el preview podria mostrar algo
-   distinto de lo que termina llegando. Se debouncea: se dispara con cada tecla. */
+   distinto de lo que termina llegando. Se debouncea con cada tecla. */
 let pvTimer = null;
 function schedulePreview() {
   clearTimeout(pvTimer);
@@ -584,11 +541,10 @@ async function doPreview() {
   const ta = $('#wtBody');
   const box = $('#wtPv');
   if (!ta || !box) return;
-  const sel = $('#wtSample');
   const t = curTpl();
   const d = await api({
     action: 'preview', user: userPayload(ST.user),
-    code: ST.cur, body: ta.value, sample: sel ? sel.value : 'agent',
+    code: ST.cur, body: ta.value,
     nature: t ? t.nature : 'puntual',
   });
   if (!d || !d.ok) {
@@ -601,88 +557,43 @@ async function doPreview() {
   if (m) m.textContent = `${d.text.length} caracteres`;
 }
 
-/* ---------- contador de destinatarios (en vivo) ----------
-   El numero que importa NO es "cuantos caen en el alcance" sino "cuantos van
-   a RECIBIR". Hoy solo 233 de 2.676 tienen telefono: un envio al concepto
-   SHOE BOX (612 personas) le llega a 3. Sin esto a la vista, uno manda y cree
-   que llego. */
-let rcTimer = null;
-function scheduleReach() {
-  clearTimeout(rcTimer);
-  rcTimer = setTimeout(doReach, 320);
-}
-function readScope() {
-  const v = id => { const e = $(id); return e ? e.value.trim() : ''; };
-  return {
-    type: v('#wtScType'), zone: v('#wtScZone'), subzone: v('#wtScSub'),
-    concept: v('#wtScCon'), company: v('#wtScComp'),
-    id_number: v('#wtScCed').replace(/\D/g, ''),
-  };
-}
-async function doReach() {
-  const box = $('#wtReach');
+/* ---------- v6.56: selector de grupos (reemplaza el contador de alcance) ---- */
+function paintGroupSum() {
+  const box = $('#wtGSum');
   if (!box) return;
-  ST.scope = readScope();
-  const d = await api({ action: 'preview_scope', user: userPayload(ST.user), scope: ST.scope });
-  if (!d || !d.ok) {
-    box.innerHTML = `<div class="wt-rlbl">${esc((d && d.error) || 'No se pudo calcular el alcance.')}</div>`;
+  const n = ST.selGroups.size;
+  if (!n) {
+    box.style.background = '#fff7ed';
+    box.style.borderColor = '#fed7aa';
+    box.style.color = '#9a3412';
+    box.innerHTML = '⚠️ No elegiste ningún grupo todavía.';
     return;
   }
-  const total = d.total || 0, wp = d.with_phone || 0, np = d.without_phone || 0;
-  const pct = total ? Math.round((wp / total) * 1000) / 10 : 0;
-  // Coma decimal: en el resto del portal los numeros van en es-VE ("0,5%"),
-  // y un "0.5%" suelto canta como pegado de otro idioma.
-  const pctTxt = String(pct).replace('.', ',');
-  const wa = $('#wtChWa');
-  const waOn = wa ? wa.checked : true;
-
-  const names = (d.sample || []).filter(r => r.phone_ok).slice(0, 4).map(r => r.full_name);
-  box.innerHTML = `
-    <div class="wt-rtop">
-      <span class="wt-rbig">${total.toLocaleString('es-VE')}</span>
-      <span class="wt-rlbl">persona${total === 1 ? '' : 's'} en el alcance</span>
-    </div>
-    <div class="wt-bar">
-      <i class="has" style="width:${pct}%"></i><i class="no" style="width:${100 - pct}%"></i>
-    </div>
-    <div class="wt-leg">
-      <span><i class="wt-dot" style="background:#16a34a"></i> <b>${wp.toLocaleString('es-VE')}</b> con teléfono → reciben el WhatsApp</span>
-      <span><i class="wt-dot" style="background:#fca5a5"></i> <b>${np.toLocaleString('es-VE')}</b> sin teléfono → no reciben nada</span>
-    </div>
-    ${names.length ? `<div class="wt-names">Por ejemplo: ${esc(names.join(', '))}${wp > names.length ? `, y ${wp - names.length} más.` : '.'}</div>` : ''}
-    ${(waOn && total > 0 && wp === 0)
-      ? `<div class="wt-banner" style="margin:11px 0 0"><span class="ic">⚠️</span><div>
-           <b>Nadie de este alcance tiene teléfono cargado.</b> Si el mensaje sale solo por WhatsApp,
-           no lo va a recibir nadie. Los teléfonos se cargan en <b>Personal → Editar</b>.</div></div>`
-      : (waOn && pct > 0 && pct < 25)
-      ? `<div class="wt-banner" style="margin:11px 0 0"><span class="ic">⚠️</span><div>
-           Solo el <b>${pctTxt}%</b> de este alcance tiene teléfono. El resto no se entera por WhatsApp.</div></div>`
-      : ''}`;
+  box.style.background = '#e9fbf0';
+  box.style.borderColor = '#bbf1d2';
+  box.style.color = '#0f7a4d';
+  box.innerHTML = `✓ Seleccionado${n === 1 ? '' : 's'} <b>${n} grupo${n === 1 ? '' : 's'}</b>.`;
 }
 
-/* Subzonas dependientes de la zona (si no, se ofrecen subzonas de otra zona
-   y el alcance queda vacio sin que se entienda por que). */
-function fillSubs(selected) {
-  const zEl = $('#wtScZone'), sEl = $('#wtScSub');
-  if (!zEl || !sEl) return;
-  const z = zEl.value;
-  const subs = (ST.cat.subzones || []).filter(s => !z || String(s.zone_id) === String(z));
-  sEl.innerHTML = '<option value="">Todas</option>' + subs.map(s =>
-    `<option value="${esc(s.id)}"${String(selected || '') === String(s.id) ? ' selected' : ''}>${esc(s.name)}</option>`).join('');
+function toggleGroup(id, on) {
+  const n = Number(id);
+  if (on) ST.selGroups.add(n); else ST.selGroups.delete(n);
+  const row = document.querySelector(`.wt-grow[data-grp="${id}"]`);
+  if (row) row.classList.toggle('on', on);
+  paintGroupSum();
 }
 
 function curTpl() {
   if (ST.isNew) {
     return { code: null, label: '', body: '', nature: 'puntual', channel: 'wa',
-             scope_filters: {}, allows_secret: false, is_system: false,
+             group_ids: [], is_system: false,
              trigger_kind: 'manual', cycle_offset: 0, trigger_hour: 8 };
   }
   return ST.rows.find(r => r.code === ST.cur) || null;
 }
 
 /* FASE 2: la previsión de disparos. Cuando se elige "2 días antes del límite
-   de reportes", muestra CUÁNDO saldría de verdad, quincena por quincena. Sin
-   esto se elige un hito y un offset a ciegas. */
+   de reportes", muestra CUÁNDO saldría de verdad, quincena por quincena. */
 let schTimer = null;
 function scheduleSched() {
   clearTimeout(schTimer);
@@ -700,7 +611,6 @@ async function doSched() {
     box.innerHTML = `<div class="wt-help" style="margin-top:10px">${esc((d && d.error) || 'No hay períodos cargados hacia adelante.')}</div>`;
     return;
   }
-  // El primero que NO paso es el proximo disparo real.
   const nextIx = d.rows.findIndex(r => !r.past);
   box.innerHTML = `
     <table class="wt-tl">
@@ -717,16 +627,21 @@ async function doSched() {
 }
 
 /* Correr la regla AHORA. Delega en el mismo endpoint que golpea el cron: no
-   hay un "modo prueba" que se comporte distinto del real. */
+   hay un "modo prueba" que se comporte distinto del real. Para un mensaje
+   'a mano', esto ES el envio (no una prueba). */
 async function runNow() {
   const btn = $('#wtRun');
   const st = $('#wtRunSt');
   if (!btn) return;
+  const t = curTpl();
+  const isManual = t && t.trigger_kind === 'manual';
+  const armedTxt = isManual ? '¿Seguro? Envía a los grupos' : '¿Seguro? Envía de verdad';
+  const idleTxt = isManual ? '▶ Enviar ahora' : '▶ Enviar ahora (probar)';
   if (btn.dataset.armed !== '1') {
     btn.dataset.armed = '1';
-    btn.textContent = '¿Seguro? Envía de verdad';
+    btn.textContent = armedTxt;
     setTimeout(() => {
-      if (btn && btn.dataset.armed === '1') { btn.dataset.armed = '0'; btn.textContent = '▶ Enviar ahora (probar)'; }
+      if (btn && btn.dataset.armed === '1') { btn.dataset.armed = '0'; btn.textContent = idleTxt; }
     }, 4000);
     return;
   }
@@ -735,16 +650,16 @@ async function runNow() {
   const d = await api({ action: 'run_now', user: userPayload(ST.user), code: ST.cur });
   btn.disabled = false;
   btn.dataset.armed = '0';
-  btn.textContent = '▶ Enviar ahora (probar)';
+  btn.textContent = idleTxt;
   if (!d || !d.ok) {
     st.innerHTML = `<b class="err">${esc((d && d.error) || 'Falló.')}</b>`;
     return;
   }
   const bits = [];
-  if (d.sent) bits.push(`${d.sent} enviado${d.sent === 1 ? '' : 's'}`);
+  if (d.sent) bits.push(`${d.sent} grupo${d.sent === 1 ? '' : 's'}`);
   if (d.errors) bits.push(`${d.errors} con error`);
   if (d.announcement_id) bits.push('aviso publicado en el portal');
-  if (!bits.length) bits.push(d.note || 'no había a quién enviarle');
+  if (!bits.length) bits.push(d.note || 'no había grupos a los que enviar');
   st.innerHTML = `<b class="${d.errors ? 'err' : 'ok'}">${esc(bits.join(' · '))}</b>`;
   await reload();
 }
@@ -755,7 +670,10 @@ function openEditor(code) {
   ST.cur = code || null;
   const tpl = t || curTpl();
   ST.orig = tpl.body || '';
-  ST.scope = { ...(tpl.scope_filters || {}) };
+  // Grupos seleccionados: los de la plantilla, acotados a los elegibles del
+  // actor (por si le revocaron alguno desde que se creo la regla).
+  const eligible = new Set(ST.groups.map(g => Number(g.id)));
+  ST.selGroups = new Set((tpl.group_ids || []).map(Number).filter(id => eligible.has(id)));
 
   $('#wtList').style.display = 'none';
   const host = $('#wtEdit');
@@ -764,43 +682,55 @@ function openEditor(code) {
   window.scrollTo(0, 0);
 
   $('#wtBack').addEventListener('click', backToList);
-  const sel = $('#wtSample');
-  if (sel) sel.addEventListener('change', doPreview);
 
   if (ST.canEdit) {
     $('#wtBody').addEventListener('input', schedulePreview);
     host.querySelectorAll('[data-v]').forEach(b =>
       b.addEventListener('click', () => insert(b.dataset.v)));
-    const c = host.querySelector('[data-cond]');
-    if (c) c.addEventListener('click', () => insert('\n#SiOsticket\n\n#FinSiOsticket\n'));
     const rst = $('#wtRestore');
     if (rst) rst.addEventListener('click', () => { $('#wtBody').value = ST.orig; doPreview(); });
     $('#wtSave').addEventListener('click', save);
     const del = $('#wtDel');
     if (del) del.addEventListener('click', doDelete);
 
-    // Alcance (solo en los no-credencial).
-    if ($('#wtScZone')) {
-      fillSubs(ST.scope.subzone);
-      $('#wtScZone').addEventListener('change', () => { fillSubs(null); scheduleReach(); });
-      ['#wtScType', '#wtScSub', '#wtScCon', '#wtScComp'].forEach(id =>
-        $(id).addEventListener('change', scheduleReach));
-      $('#wtScCed').addEventListener('input', scheduleReach);
-      // Los canales repintan el aviso ("nadie tiene telefono" solo aplica a WA).
-      ['#wtChWa', '#wtChPt'].forEach(id => {
-        const e = $(id);
-        if (e) e.addEventListener('change', () => {
-          const w = e.closest('.wt-ch');
-          if (w) w.classList.toggle('on', e.checked);
-          doReach();
+    // Selector de grupos.
+    const gl = $('#wtGList');
+    if (gl) {
+      gl.querySelectorAll('[data-gchk]').forEach(c =>
+        c.addEventListener('change', () => toggleGroup(c.dataset.gchk, c.checked)));
+      const all = $('#wtGAll');
+      if (all) all.addEventListener('click', () => {
+        const anyOff = ST.groups.some(g => !ST.selGroups.has(Number(g.id)));
+        ST.groups.forEach(g => toggleGroup(g.id, anyOff));
+        gl.querySelectorAll('[data-gchk]').forEach(c => {
+          c.checked = ST.selGroups.has(Number(c.dataset.gchk));
         });
       });
-      doReach();
+      const sr = $('#wtGSearch');
+      if (sr) sr.addEventListener('input', () => {
+        const q = sr.value.trim().toLowerCase();
+        gl.querySelectorAll('.wt-grow').forEach(row => {
+          const nm = (row.querySelector('.wt-gname').textContent || '').toLowerCase();
+          row.style.display = (!q || nm.includes(q)) ? '' : 'none';
+        });
+      });
+    }
+    paintGroupSum();
+
+    // Canal Portal (checkbox secundario): al activarlo, el banner de "sale
+    // solo" menciona el reemplazo del aviso.
+    const pt = $('#wtChPt');
+    if (pt) {
+      pt.checked = (tpl.channel === 'portal' || tpl.channel === 'wa+portal');
+      const syncPortalNote = () => {
+        const w = pt.closest('.wt-chsec'); if (w) w.classList.toggle('on', pt.checked);
+        const rep = $('#wtPortalRepl'); if (rep) rep.style.display = pt.checked ? '' : 'none';
+      };
+      pt.addEventListener('change', syncPortalNote);
+      syncPortalNote();
     }
 
-    /* FASE 2: el panel "Cuando sale". El segmented muestra/oculta el bloque
-       que corresponde: sin esto se pintan los 5 a la vez y no se entiende
-       cual manda. */
+    // Programacion.
     const seg = $('#wtTrg');
     if (seg) {
       seg.querySelectorAll('[data-trg]').forEach(b =>
@@ -810,7 +740,6 @@ function openEditor(code) {
       if (co) co.addEventListener('change', scheduleSched);
       const run = $('#wtRun');
       if (run) run.addEventListener('click', runNow);
-      // Si abre en modo ciclo, la tabla de prevision ya tiene que estar.
       if ((tpl.trigger_kind || 'manual') === 'cycle') doSched();
     }
   }
@@ -826,17 +755,16 @@ function setTrigger(kind) {
     b.classList.toggle('on', b.dataset.trg === kind));
 
   const show = (id, on) => { const e = $(id); if (e) e.style.display = on ? '' : 'none'; };
-  show('#wtTrgCycle', kind === 'cycle');
-  show('#wtTrgDate',  kind === 'date');
-  show('#wtTrgEvery', kind === 'every');
-  show('#wtTrgBday',  kind === 'birthday');
-  show('#wtTrgHour',  kind !== 'manual');
+  show('#wtTrgManual', kind === 'manual');
+  show('#wtTrgCycle',  kind === 'cycle');
+  show('#wtTrgDate',   kind === 'date');
+  show('#wtTrgEvery',  kind === 'every');
+  show('#wtTrgHour',   kind !== 'manual');
 
   if (kind === 'cycle') doSched();
 }
 
-/* Lee el disparo del formulario. Devuelve solo lo que aplica al tipo elegido:
-   mandar una fecha fija cuando el disparo es 'cumpleanos' solo confunde. */
+/* Lee el disparo del formulario. Devuelve solo lo que aplica al tipo elegido. */
 function readTrigger() {
   const seg = $('#wtTrg');
   if (!seg) return { trigger_kind: 'manual' };
@@ -881,37 +809,44 @@ function insert(txt) {
   schedulePreview();
 }
 
+/* v6.56: el canal se arma del checkbox secundario "Portal". WhatsApp (grupos)
+   va siempre; el Portal es un extra. */
 function readChannel() {
-  const wa = $('#wtChWa'), pt = $('#wtChPt');
-  if (!wa && !pt) return 'wa';
-  const w = wa && wa.checked, p = pt && pt.checked;
-  if (w && p) return 'wa+portal';
-  if (p) return 'portal';
-  return 'wa';
+  const pt = $('#wtChPt');
+  return (pt && pt.checked) ? 'wa+portal' : 'wa';
+}
+
+function readGroupIds() {
+  return Array.from(ST.selGroups);
 }
 
 async function save() {
   const btn = $('#wtSave');
   const err = $('#wtErr');
   err.style.display = 'none';
+
+  // Guardia de UI: al menos un grupo (salvo que sea SOLO portal, que aca no
+  // se ofrece: WhatsApp a grupos es el canal base).
+  if (!ST.selGroups.size) {
+    err.textContent = 'Elegí al menos un grupo de destino.';
+    err.style.display = '';
+    return;
+  }
+
   btn.disabled = true;
   const orig = btn.textContent;
   btn.textContent = ST.isNew ? 'Creando…' : 'Guardando…';
 
-  const t = curTpl();
-  const isCred = t && t.nature === 'credencial';
   const payload = {
     action: ST.isNew ? 'create' : 'save',
     user: userPayload(ST.user),
     code: ST.cur,
     label: $('#wtLabel').value,
     body: $('#wtBody').value,
+    channel: readChannel(),
+    group_ids: readGroupIds(),
   };
-  if (!isCred) {
-    payload.channel = readChannel();
-    payload.scope_filters = readScope();
-    Object.assign(payload, readTrigger());   // FASE 2: el disparo
-  }
+  Object.assign(payload, readTrigger());   // FASE 2: el disparo
 
   const d = await api(payload);
   btn.disabled = false;
@@ -927,21 +862,17 @@ async function save() {
     backToList();
     return;
   }
-  // Refrescar el catalogo en memoria (la lista muestra el largo y el autor).
+  // Refrescar el catalogo en memoria y recargar (la seccion pudo cambiar).
   const row = ST.rows.find(r => r.code === ST.cur);
   if (row) {
     row.label = $('#wtLabel').value;
     row.body = $('#wtBody').value;
-    if (!isCred) {
-      row.channel = payload.channel;
-      row.scope_filters = payload.scope_filters;
-      // El disparo cambia la naturaleza (y con eso la seccion de la lista),
-      // asi que se recarga del servidor: es la fuente de verdad.
-      Object.assign(row, readTrigger());
-    }
+    row.channel = payload.channel;
+    row.group_ids = payload.group_ids;
+    Object.assign(row, readTrigger());
   }
   ST.orig = $('#wtBody').value;
-  if (!isCred) await reload();   // la seccion pudo cambiar
+  await reload();
   const s = $('#wtSaved');
   s.style.display = 'inline';
   setTimeout(() => { s.style.display = 'none'; }, 1800);
@@ -950,8 +881,7 @@ async function save() {
 async function doDelete() {
   const err = $('#wtErr');
   const btn = $('#wtDel');
-  // Sin confirm() del navegador (regla del portal): se pide confirmacion en el
-  // propio boton, que cambia de texto. Dos clics deliberados para borrar.
+  // Sin confirm() del navegador (regla del portal): dos clics deliberados.
   if (btn.dataset.armed !== '1') {
     btn.dataset.armed = '1';
     btn.textContent = '¿Seguro? Tocá otra vez';
@@ -990,6 +920,8 @@ async function reload() {
     ST.vars = d.vars || {};
     ST.cat = d.catalogs || {};
     ST.cycle = d.cycle || {};
+    ST.groups = d.groups || [];
+    ST.groupsMode = d.groups_mode || 'admin';
     ST.canEdit = !!d.can_edit;
   }
 }
@@ -999,6 +931,7 @@ export async function renderWaTemplates(user) {
   ST.user = user;
   ST.cur = null;
   ST.isNew = false;
+  ST.selGroups = new Set();
   const main = document.getElementById('pnlMain');
   main.innerHTML = '<div id="wtList"></div><div id="wtEdit" style="display:none"></div>';
 
@@ -1012,11 +945,13 @@ export async function renderWaTemplates(user) {
   ST.vars = d.vars || {};
   ST.cat = d.catalogs || {};
   ST.cycle = d.cycle || {};
+  ST.groups = d.groups || [];
+  ST.groupsMode = d.groups_mode || 'admin';
   ST.canEdit = !!d.can_edit;
   paintList();
 
-  // Si falta el secret portal_base_url, #LinkPortal saldria vacio en el mensaje.
-  // Mejor avisarlo aca que mandarle a la gente un texto con un link en blanco.
+  // Si falta el secret portal_base_url, #LinkPortal saldria vacio (aunque en
+  // grupos ya no se usa; el aviso conserva el mensaje). Se avisa igual.
   if (d.warn) {
     $('#wtList').insertAdjacentHTML('afterbegin',
       `<div class="wt-banner red"><span class="ic">⚠️</span><div>${esc(d.warn)}</div></div>`);

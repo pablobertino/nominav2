@@ -1,6 +1,6 @@
 /* =====================================================================
    functions/api/messages-run.js  →  POST /api/messages-run
-   FASE 2 — EJECUTOR de los mensajes programados.
+   FASE 2 — EJECUTOR de los mensajes programados. v6.56 SOLO GRUPOS.
 
    Lo llama el CRON, no una persona:
      pg_cron (cada 15 min)
@@ -10,37 +10,40 @@
    Este endpoint NO decide cuando: eso ya lo resolvio el tick. Aca se
    ARMA y se ENVIA:
      1. lee la regla (message_templates)
-     2. resuelve el alcance -> destinatarios (wa_recipients, o
-        wa_birthday_recipients si es cumpleanos)
-     3. arma el texto por persona (renderTemplate, el MISMO motor del preview)
+     2. v6.56: el destino son los GRUPOS de la regla (group_ids -> wa_groups
+        -> chat_id @g.us). Ya NO son personas del roster.
+     3. arma el texto UNA sola vez (un grupo recibe un mensaje unico para
+        todos; sin #Nombre/#Empresa), con las fechas del ciclo vigente.
      4. canal 'portal'   -> crea/reemplaza el aviso en announcements
-        canal 'wa'       -> encola en wa_batches/wa_outbox y despacha
+        canal 'wa'       -> envia el texto a cada grupo @g.us (gaClient)
         canal 'wa+portal'-> las dos
 
-   POR QUE REUSAR wa_batches/wa_outbox Y NO UNA COLA NUEVA:
-   ahi vive TODA la maquinaria anti-bloqueo que ya funciona (tandas cortas,
-   jitter, delay de linea, reintentos, auditoria de quien recibio que). Una
-   cola paralela tendria que reimplementar eso y se desincronizaria.
+   POR QUE NO HACE FALTA LA MAQUINARIA ANTI-BANEO DE DIFUSION:
+   los baneos se disparan por mandar a muchos NUMEROS que no te agendan
+   (difusion fria a @c.us). Enviar a un GRUPO es 1 mensaje a 1 destino @g.us
+   donde la linea YA es miembro: WhatsApp lo cuenta como 1 accion, no como N
+   miembros. Para 5 grupos son 5 operaciones. La unica precaucion es un
+   respiro corto entre grupo y grupo (cortesia a la API, no anti-baneo).
 
    EL REEMPLAZO DEL AVISO es seguro por construccion: la regla solo pisa
    avisos con rule_id = SU code. Un aviso creado a mano tiene rule_id NULL
    y es INTOCABLE. La regla de "cierre" tampoco ve el aviso de "pago".
 
    Tambien se puede llamar a mano desde la vista (source:'manual') para
-   probar una regla sin esperar al cron.
+   probar/enviar una regla sin esperar al cron ("A mano / Inmediato").
 
    Secrets: supabase_url, supabase_service_role, portal_base_url
    ===================================================================== */
 
 import { resolveActor, can } from './_auth.js';
-import { gaClient, toChatId } from './_greenapi.js';
+import { gaClient } from './_greenapi.js';
 import { renderTemplate } from './wa-templates.js';
 
-/* Mismo ritmo que Difusion (wa-send.js): sin rafagas. Un envio programado
-   no tiene apuro, asi que va directo al ritmo lento y seguro. */
-const BATCH_SIZE = 4;
+/* v6.56: entre grupo y grupo, un respiro corto. NO es anti-baneo (mandar a
+   un grupo es 1 accion de bajo riesgo); es cortesia para no golpear la API
+   de la linea con varias llamadas en el mismo instante. */
 const bigDelay = () => 2500 + Math.floor(Math.random() * 1500);
-const MAX_PER_RUN = 40;   // tope por invocacion (limite de la Function)
+const MAX_GROUPS_PER_RUN = 50;   // tope de seguridad por invocacion (limite de la Function)
 
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -62,8 +65,6 @@ async function sb(env, path, opts = {}) {
   const t = await res.text();
   return t ? JSON.parse(t) : null;
 }
-const rpc = (env, fn, args) =>
-  sb(env, `rpc/${fn}`, { method: 'POST', body: JSON.stringify(args || {}) });
 
 /* ---------- fechas del ciclo (identico a wa-templates.js) ---------- */
 const MONTHS = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
@@ -101,15 +102,6 @@ async function cycleCtx(env) {
     fecha_calculo: fmtDate(r.milestone_date),
     fecha_pago: fmtDate(r.pay_date),
     fecha_reclamos: fmtDate(r.claim_deadline),
-  };
-}
-
-function scopeArgs(sf) {
-  const s = sf || {};
-  const nn = v => (v === undefined || v === null || String(v).trim() === '' ? null : String(v));
-  return {
-    p_zone: nn(s.zone), p_subzone: nn(s.subzone), p_type: nn(s.type),
-    p_concept: nn(s.concept), p_company: nn(s.company), p_id_number: nn(s.id_number),
   };
 }
 
@@ -174,73 +166,69 @@ export async function onRequestPost({ request, env }) {
     if (!tpl.is_active) return json({ ok: false, error: 'Ese mensaje esta inactivo.' }, 400);
 
     const cyc = await cycleCtx(env);
-    const isBirthday = tpl.trigger_kind === 'birthday';
     const chan = tpl.channel || 'wa';
     const wantWa = chan === 'wa' || chan === 'wa+portal';
     const wantPortal = chan === 'portal' || chan === 'wa+portal';
 
-    /* ---------- destinatarios ---------- */
-    const args = scopeArgs(tpl.scope_filters);
-    const r = isBirthday
-      ? await rpc(env, 'wa_birthday_recipients', { ...args, p_on: null, p_limit: 100000 })
-      : await rpc(env, 'wa_recipients', { ...args, p_limit: 100000 });
-
-    const all = (r && r.rows) || [];
-    const withPhone = all.filter(x => x.phone_ok);
+    /* v6.56: el texto es UNO SOLO para todo el grupo (sin #Nombre/#Empresa).
+       Se renderiza una sola vez con las fechas del ciclo vigente. */
+    const text = renderTemplate(tpl.body, { ...cyc }, false);
 
     /* ---------- canal PORTAL ----------
-       El aviso NO se personaliza por persona (es un cartel unico): se
-       renderiza con el nombre en blanco y las fechas del ciclo. */
+       El aviso es un cartel unico: mismo texto renderizado. */
     let annId = null;
     if (wantPortal) {
-      const text = renderTemplate(tpl.body, { nombre: '', empresa: '', ...cyc }, false);
       // El id del admin: el cron manda adminId; una corrida manual usa el
       // actor de la sesion. En los dos casos, el aviso queda con autor.
       const who = isCron ? Number(body.adminId) : Number(user && user.id);
       annId = await publishAnnouncement(env, tpl, text, cyc.period_no, who);
     }
 
-    /* ---------- canal WHATSAPP ---------- */
-    let batchId = null, queued = 0, sent = 0, errors = 0;
+    /* ---------- canal WHATSAPP (a los GRUPOS) ----------
+       Se resuelven los chat_id @g.us de los grupos de la regla y se envia el
+       MISMO texto a cada uno, con un respiro corto entre grupo y grupo. No
+       hay maquinaria anti-baneo: mandar a un grupo es 1 accion de bajo
+       riesgo (ver cabecera). Se guarda la corrida en wa_batches y cada grupo
+       en wa_outbox para auditoria (quien recibio que), igual que Difusion. */
+    let batchId = null, queued = 0, sent = 0, errors = 0, groupsTotal = 0;
 
-    if (wantWa && withPhone.length) {
-      /* El texto se arma POR PERSONA: #Nombre y #Empresa cambian en cada
-         mensaje, por eso no se puede mandar un texto unico al lote. El
-         mensaje viaja en wa_outbox... pero wa_outbox NO tiene columna de
-         mensaje por fila (el lote guarda uno solo). Se resuelve mandando
-         aca mismo, sin diferir: son envios chicos (cumpleanos ~1/dia) y el
-         cron ya nos dio la ventana. */
-      const batch = await sb(env, 'wa_batches', {
-        method: 'POST', headers: { Prefer: 'return=representation' },
-        body: JSON.stringify({
-          created_by: isCron ? 'cron' : String(actor.actor || ''),
-          message: renderTemplate(tpl.body, { nombre: '(cada persona)', empresa: '(su empresa)', ...cyc }, false),
-          filters: {
-            rule: tpl.code, nature: tpl.nature, trigger: tpl.trigger_kind,
-            ...Object.fromEntries(Object.entries(tpl.scope_filters || {}).filter(([, v]) => v)),
-            ...(isBirthday ? { birthday_on: (r && r.date) || null } : {}),
-          },
-          total: (r && r.total) || all.length,
-          with_phone: withPhone.length,
-        }),
-      });
-      batchId = batch && batch[0] && batch[0].id;
+    if (wantWa) {
+      const gids = Array.isArray(tpl.group_ids) ? tpl.group_ids : [];
+      let groups = [];
+      if (gids.length) {
+        // Solo grupos habilitados: si el super deshabilito un grupo, la regla
+        // deja de mandarle sin tener que reeditarla.
+        groups = await sb(env,
+          `wa_groups?id=in.(${gids.join(',')})&enabled=eq.true&select=id,chat_id,wa_name,alias`) || [];
+      }
+      groupsTotal = groups.length;
 
-      const targets = withPhone.slice(0, MAX_PER_RUN);
-      queued = targets.length;
+      if (groups.length) {
+        const batch = await sb(env, 'wa_batches', {
+          method: 'POST', headers: { Prefer: 'return=representation' },
+          body: JSON.stringify({
+            created_by: isCron ? 'cron' : String(actor.actor || ''),
+            message: text,
+            filters: {
+              rule: tpl.code, nature: tpl.nature, trigger: tpl.trigger_kind,
+              target: 'groups',
+              group_ids: groups.map(g => g.id),
+            },
+            total: groups.length,
+            with_phone: groups.length,   // en grupos: "destinos validos"
+          }),
+        });
+        batchId = batch && batch[0] && batch[0].id;
 
-      const ga = gaClient(env);
-      for (let i = 0; i < targets.length; i += BATCH_SIZE) {
-        const tanda = targets.slice(i, i + BATCH_SIZE);
-        for (const p of tanda) {
-          const text = renderTemplate(tpl.body, {
-            nombre: p.full_name || '',
-            empresa: p.company_name || '',
-            ...cyc,
-          }, false);
+        const targets = groups.slice(0, MAX_GROUPS_PER_RUN);
+        queued = targets.length;
+
+        const ga = gaClient(env);
+        for (let i = 0; i < targets.length; i++) {
+          const g = targets[i];
           let st = 'sent', idMsg = null, errTxt = null;
           try {
-            const res = await ga.sendMessage(toChatId(p.phone), text);
+            const res = await ga.sendMessage(g.chat_id, text);
             idMsg = (res && res.idMessage) || null;
             sent++;
           } catch (e) {
@@ -248,23 +236,25 @@ export async function onRequestPost({ request, env }) {
             errTxt = String(e && e.message ? e.message : e).slice(0, 500);
             errors++;
           }
-          // Auditoria: quien recibio que, igual que Difusion.
+          // Auditoria por grupo. Se reusa wa_outbox: full_name = nombre del
+          // grupo, chat_id = @g.us. id_number/company_code no aplican.
           await sb(env, 'wa_outbox', {
             method: 'POST', headers: { Prefer: 'return=minimal' },
             body: JSON.stringify([{
               batch_id: batchId,
-              id_number: p.id_number,
-              full_name: p.full_name || '',
-              company_code: p.company_code || '',
-              phone_raw: p.phone,
-              chat_id: toChatId(p.phone),
+              id_number: null,
+              full_name: g.alias || g.wa_name || g.chat_id,
+              company_code: '',
+              phone_raw: g.chat_id,
+              chat_id: g.chat_id,
               status: st,
               id_message: idMsg,
               error_text: errTxt,
               sent_at: st === 'sent' ? new Date().toISOString() : null,
             }]),
           });
-          await sleep(bigDelay());
+          // Respiro corto entre grupo y grupo (salvo tras el ultimo).
+          if (i < targets.length - 1) await sleep(bigDelay());
         }
       }
     }
@@ -275,7 +265,7 @@ export async function onRequestPost({ request, env }) {
       method: 'PATCH', headers: { Prefer: 'return=minimal' },
       body: JSON.stringify({
         last_status: okRun ? 'ok' : 'error',
-        last_error: okRun ? null : `${errors} envio(s) fallaron`,
+        last_error: okRun ? null : `${errors} grupo(s) fallaron`,
         last_sent: sent,
         portal_announcement_id: annId || null,
       }),
@@ -284,16 +274,14 @@ export async function onRequestPost({ request, env }) {
     return json({
       ok: true,
       code, channel: chan,
-      total: (r && r.total) || all.length,
-      with_phone: withPhone.length,
-      without_phone: (r && r.without_phone) || 0,
+      groups_total: groupsTotal,
       queued, sent, errors,
       announcement_id: annId,
       batch_id: batchId,
-      // Util cuando no hay a quien mandarle: el cumpleanos corre todos los
-      // dias y la mayoria no cumple nadie (o nadie tiene telefono).
-      note: (wantWa && !withPhone.length)
-        ? 'Nadie del alcance tiene telefono cargado: no se envio ningun WhatsApp.'
+      // Util cuando la regla no tiene grupos habilitados (todos deshabilitados
+      // o ninguno elegido) pero el canal incluye WhatsApp.
+      note: (wantWa && !groupsTotal)
+        ? 'La regla no tiene grupos habilitados: no se envio ningun WhatsApp.'
         : null,
     });
   } catch (e) {

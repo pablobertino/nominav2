@@ -55,7 +55,7 @@
    Secrets: supabase_url, supabase_service_role, portal_base_url
    ===================================================================== */
 
-import { resolveActor, can } from './_auth.js';
+import { resolveActor, can, isSuperadmin } from './_auth.js';
 
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -94,13 +94,12 @@ export const VARS = {
     { v: '#UsuarioOsticket',  d: 'Usuario de osTicket' },
     { v: '#ClaveOsticket',    d: 'Clave de osTicket', secret: true },
   ],
-  /* FASE 1: comodines de los mensajes PUNTUALES (con alcance). El
-     destinatario ya no es un miembro del equipo sino una PERSONA del roster,
-     asi que no hay usuario/clave: hay nombre, empresa y las fechas del ciclo
-     de nomina vigente (que el sistema ya calcula, nadie las carga). */
+  /* v6.56 SOLO GRUPOS: los mensajes a grupos son UN SOLO texto para todo el
+     grupo (no se personaliza por persona), asi que NO hay #Nombre ni #Empresa.
+     Solo quedan las fechas del ciclo de nomina vigente, que son globales y
+     el sistema ya calcula (nadie las carga, y siguen siendo ciertas la
+     quincena siguiente). */
   puntual: [
-    { v: '#Nombre',          d: 'Nombre de la persona' },
-    { v: '#Empresa',         d: 'Razon social de su empresa' },
     { v: '#Periodo',         d: 'Periodo vigente (ej. 2026-07-Q1)' },
     { v: '#Fecha_Cierre',    d: 'Cierre de la quincena' },
     { v: '#Limite_Reportes', d: 'Limite para cargar reportes' },
@@ -273,6 +272,38 @@ async function cycleCtx(env) {
   };
 }
 
+/* v6.56 SOLO GRUPOS: grupos ELEGIBLES para el actor. Misma regla de alcance
+   que Difusion (wa-groups list): el superadmin ve todos los grupos
+   habilitados; un admin no-super ve SOLO los que tiene asignados en
+   wa_group_admins (y habilitados). Devuelve [{id, chat_id, wa_name, alias}].
+   No se inventa vocabulario: es el mismo modelo de la pantalla Grupos. */
+async function groupsForActor(env, actor, user) {
+  if (isSuperadmin(actor)) {
+    return await sb(env,
+      'wa_groups?enabled=eq.true&select=id,chat_id,wa_name,alias&order=wa_name.asc') || [];
+  }
+  const adminId = Number(user && user.id) || 0;
+  if (!adminId) return [];
+  const links = await sb(env, `wa_group_admins?admin_id=eq.${adminId}&select=group_id`);
+  const ids = (links || []).map(l => l.group_id);
+  if (!ids.length) return [];
+  return await sb(env,
+    `wa_groups?id=in.(${ids.join(',')})&enabled=eq.true&select=id,chat_id,wa_name,alias&order=wa_name.asc`) || [];
+}
+
+/* v6.56: sanea y ACOTA los group_ids que llegan del cliente a los que el
+   actor tiene permitido (evita que alguien mande a un grupo que no es suyo
+   inyectando ids). Devuelve un arreglo de enteros unicos, ya filtrado. */
+function pickGroupIds(raw, allowedIds) {
+  const set = new Set((allowedIds || []).map(Number));
+  const out = [];
+  for (const g of (Array.isArray(raw) ? raw : [])) {
+    const n = Number(g);
+    if (Number.isInteger(n) && set.has(n) && !out.includes(n)) out.push(n);
+  }
+  return out;
+}
+
 /* Los 6 filtros de alcance. MISMO vocabulario que wa_recipients y que
    Difusion: no se inventa uno nuevo. '' / undefined = sin acotar. */
 function pickScope(o) {
@@ -287,7 +318,10 @@ function pickScope(o) {
    regla 'cycle' sin hito, o 'date' sin fecha, no se puede guardar).
    Devuelve null si el vocabulario es invalido -> el handler responde 400. */
 const CYCLE_FIELDS = ['cutoff_date', 'report_deadline', 'milestone_date', 'pay_date', 'claim_deadline'];
-const TRIGGERS = ['manual', 'cycle', 'date', 'every', 'birthday'];
+// v6.56 SOLO GRUPOS: se quito 'birthday'. Un grupo no cumple anios; los
+// mensajes van a grupos, no a personas. Los tipos vivos son: manual (a mano/
+// inmediato), cycle (por hito de nomina), date (fecha fija), every (cada tanto).
+const TRIGGERS = ['manual', 'cycle', 'date', 'every'];
 
 function pickTrigger(o) {
   const kind = String(o.trigger_kind || 'manual');
@@ -356,19 +390,23 @@ export async function onRequestPost({ request, env }) {
     /* ---------- listar ---------- */
     if (action === 'list') {
       const rows = await sb(env,
-        'message_templates?select=code,label,description,body,scope,allows_secret,is_system,is_active,sort_order,updated_at,updated_by,nature,channel,scope_filters,trigger_kind,cycle_field,cycle_offset,trigger_date,trigger_every_days,trigger_hour,retry_minutes,last_fire_on,last_status,last_error,last_sent&order=sort_order.asc,code.asc');
+        'message_templates?select=code,label,description,body,scope,allows_secret,is_system,is_active,sort_order,updated_at,updated_by,nature,channel,scope_filters,group_ids,trigger_kind,cycle_field,cycle_offset,trigger_date,trigger_every_days,trigger_hour,retry_minutes,last_fire_on,last_status,last_error,last_sent&order=sort_order.asc,code.asc');
       const links = {
         portal: portalUrl(env),
         osticket: String(await getSetting(env, 'osticket_url', '') || '').replace(/\/+$/, ''),
       };
       // FASE 1: catalogos para el selector de alcance (los mismos de Difusion)
       // y las fechas del ciclo vigente (para el preview del editor).
-      const [zones, subzones, concepts, companies, cycle] = await Promise.all([
+      // v6.56: ademas, los GRUPOS elegibles del actor (destino real de los
+      // mensajes). Los catalogos de personas se conservan por si alguna
+      // plantilla vieja los usara, pero el editor nuevo ya no los muestra.
+      const [zones, subzones, concepts, companies, cycle, groups] = await Promise.all([
         sb(env, 'zones?select=id,name&order=name.asc'),
         sb(env, 'subzones?select=id,name,zone_id&order=name.asc'),
         sb(env, 'concepts?select=id,name&order=name.asc'),
         sb(env, 'companies?is_active=eq.true&select=company_code,business_name,company_type&order=company_code.asc'),
         cycleCtx(env),
+        groupsForActor(env, actor, body.user),
       ]);
       return json({
         ok: true,
@@ -376,6 +414,8 @@ export async function onRequestPost({ request, env }) {
         vars: VARS,
         links,
         cycle,
+        groups: groups || [],
+        groups_mode: isSuperadmin(actor) ? 'super' : 'admin',
         catalogs: {
           zones: zones || [], subzones: subzones || [], concepts: concepts || [],
           companies: companies || [],
@@ -460,18 +500,12 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------- preview del editor ---------- */
     if (action === 'preview') {
-      // FASE 1: los mensajes PUNTUALES no le hablan a un miembro del equipo
-      // sino a una persona del roster. El ejemplo es una persona, y las fechas
-      // del ciclo son las REALES del periodo vigente (no inventadas): asi el
-      // preview muestra exactamente lo que va a recibir el destinatario.
-      if (body.nature === 'puntual' || body.nature === 'ciclo' || body.nature === 'cumpleanos') {
+      // v6.56 SOLO GRUPOS: los mensajes a grupos son un texto UNICO para todo
+      // el grupo. El preview muestra ese texto con las fechas REALES del
+      // periodo vigente (no inventadas). Sin #Nombre/#Empresa: no existen.
+      if (body.nature === 'puntual' || body.nature === 'ciclo') {
         const cyc = await cycleCtx(env);
-        const ctx = {
-          nombre: 'Maria Chiquinquira',
-          empresa: 'CALZADOS BG 3, C.A.',
-          ...cyc,
-        };
-        return json({ ok: true, text: renderTemplate(body.body || '', ctx, false) });
+        return json({ ok: true, text: renderTemplate(body.body || '', { ...cyc }, false) });
       }
       const sample = SAMPLES[body.sample] || SAMPLES.agent;
       const ost = String(await getSetting(env, 'osticket_url', '') || '').replace(/\/+$/, '');
@@ -522,6 +556,16 @@ export async function onRequestPost({ request, env }) {
          seria ofrecer una perilla que no hace nada. */
       if (!cur[0].is_system) {
         if (body.scope_filters !== undefined) patch.scope_filters = pickScope(body.scope_filters || {});
+        // v6.56 SOLO GRUPOS: el destino real son los grupos. Se acotan a los
+        // que el actor tiene permitidos (no se confia en el cliente).
+        if (body.group_ids !== undefined) {
+          const allowed = await groupsForActor(env, actor, body.user);
+          const gids = pickGroupIds(body.group_ids, allowed.map(g => g.id));
+          if (!gids.length) {
+            return json({ ok: false, error: 'Elige al menos un grupo de destino.' }, 400);
+          }
+          patch.group_ids = gids;
+        }
         if (body.channel !== undefined) {
           const ch = String(body.channel || 'wa');
           if (!['wa', 'portal', 'wa+portal'].includes(ch)) {
@@ -537,11 +581,9 @@ export async function onRequestPost({ request, env }) {
           const trg = pickTrigger(body);
           if (!trg) return json({ ok: false, error: 'La programacion esta incompleta o es invalida.' }, 400);
           Object.assign(patch, trg, { last_fire_on: null, last_period: null });
-          // La naturaleza se deduce del disparo: asi la lista los agrupa sola
-          // y no hay dos fuentes de verdad que puedan contradecirse.
-          patch.nature = trg.trigger_kind === 'birthday' ? 'cumpleanos'
-            : trg.trigger_kind === 'cycle' ? 'ciclo'
-            : 'puntual';
+          // v6.56: la naturaleza se deduce del disparo. Ya no hay cumpleanos:
+          // ciclo si es por hito de nomina, puntual en cualquier otro caso.
+          patch.nature = trg.trigger_kind === 'cycle' ? 'ciclo' : 'puntual';
         }
       }
 
@@ -563,14 +605,22 @@ export async function onRequestPost({ request, env }) {
       if (!['wa', 'portal', 'wa+portal'].includes(ch)) {
         return json({ ok: false, error: 'Canal invalido.' }, 400);
       }
-      // Un mensaje puntual JAMAS lleva claves: su destinatario es una persona
-      // del roster, que no tiene usuario del portal. allows_secret queda en
-      // false y aca se rechaza el comodin, para que no se guarde un texto que
-      // al enviarse saldria con un hueco.
+      // v6.56 SOLO GRUPOS: hay que elegir al menos un grupo de destino, y se
+      // acota a los que el actor tiene permitidos. Si el mensaje SOLO va al
+      // portal (channel 'portal'), no exige grupos.
+      const allowedG = await groupsForActor(env, actor, body.user);
+      const gids = pickGroupIds(body.group_ids, allowedG.map(g => g.id));
+      if (ch !== 'portal' && !gids.length) {
+        return json({ ok: false, error: 'Elige al menos un grupo de destino.' }, 400);
+      }
+      // Un mensaje a grupos JAMAS lleva claves (el destino es un grupo, no un
+      // miembro con usuario del portal). allows_secret queda en false y aca se
+      // rechaza el comodin, para que no se guarde un texto que al enviarse
+      // saldria con un hueco.
       const used = SECRET_VARS.filter(v => text.includes(v));
       if (used.length) {
         return json({ ok: false, error:
-          `Un mensaje puntual no puede llevar claves (${used.join(', ')}): se enviaria con ese dato en blanco.` }, 400);
+          `Un mensaje a grupos no puede llevar claves (${used.join(', ')}): se enviaria con ese dato en blanco.` }, 400);
       }
 
       // code autogenerado desde el nombre (unico, estable, legible en la BD).
@@ -584,12 +634,10 @@ export async function onRequestPost({ request, env }) {
       const nextSort = ((maxRows && maxRows[0] && maxRows[0].sort_order) || 0) + 10;
 
       // FASE 2: el disparo decide la naturaleza (y con eso, en que seccion de
-      // la lista aparece). Una sola fuente de verdad.
+      // la lista aparece). Una sola fuente de verdad. v6.56: sin cumpleanos.
       const trg = pickTrigger(body);
       if (!trg) return json({ ok: false, error: 'La programacion esta incompleta o es invalida.' }, 400);
-      const nature = trg.trigger_kind === 'birthday' ? 'cumpleanos'
-        : trg.trigger_kind === 'cycle' ? 'ciclo'
-        : 'puntual';
+      const nature = trg.trigger_kind === 'cycle' ? 'ciclo' : 'puntual';
 
       await sb(env, 'message_templates', {
         method: 'POST', headers: { Prefer: 'return=minimal' },
@@ -597,8 +645,9 @@ export async function onRequestPost({ request, env }) {
           code, label, body: text,
           nature, channel: ch,
           ...trg,
-          scope_filters: pickScope(body.scope_filters || {}),
-          scope: 'roster', allows_secret: false,
+          group_ids: gids,
+          scope_filters: {},
+          scope: 'grupos', allows_secret: false,
           is_system: false, is_active: true, sort_order: nextSort,
           created_by: actor.username || actor.name || String(actor.id || ''),
           updated_at: new Date().toISOString(),
