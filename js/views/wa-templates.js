@@ -74,10 +74,14 @@ const userPayload = (u) => ({ kind: u.kind, id: u.id || null, companyCode: u.com
 const ICONS = { cred_portal: '🔑', cred_osticket: '🎫' };
 const iconOf = t => ICONS[t.code] || (t.nature === 'puntual' ? '📣' : '💬');
 
-/* Las 4 naturalezas y como se agrupan en la lista. El orden importa: primero
-   lo que ya existia (credenciales), despues lo nuevo. */
+/* Las naturalezas que se listan en la vista y como se agrupan. El orden
+   importa. v6.55: se quito 'credencial' (los 2 mensajes de clave): con el
+   modelo SOLO GRUPOS ya no se envian credenciales por WhatsApp (iban al
+   numero particular del miembro). Los mensajes cred_portal/cred_osticket
+   siguen en la BD porque Equipo los usa para MOSTRAR la clave en pantalla
+   (cred_preview), pero no se ven ni se editan desde aca. Lo que queda es lo
+   util para grupos: envios puntuales y programados. */
 const NATURES = [
-  { key: 'credencial', title: 'Credenciales · se envían desde Equipo' },
   { key: 'ciclo',      title: 'Ciclo de nómina · automáticos' },
   { key: 'cumpleanos', title: 'Celebraciones · automáticos' },
   { key: 'puntual',    title: 'Envíos puntuales' },
@@ -293,13 +297,12 @@ function listHtml() {
   </div>
   ${secs}
   <div class="wt-note">
-    <b>Cómo se usa esto en Equipo.</b> Cada mensaje de credenciales se envía en el momento en que su clave existe y
-    está en pantalla, que son dos momentos distintos:
-    <br>· <b>Credenciales del portal</b> → al crear el miembro, o al tocar <b>Resetear</b>.
-    <br>· <b>Credenciales de osTicket</b> → al tocar <b>osTicket</b> (crear o resetear su acceso).
-    <br><br>Las claves <b>no se guardan</b>: el mensaje se arma al enviar y en el historial de WhatsApp la clave queda
-    enmascarada (<code>••••••••</code>). Un miembro sin teléfono no puede recibir nada: hay que cargarle el número en
-    <b>Equipo → Editar</b>.
+    <b>Cómo funcionan estos mensajes.</b> Cada mensaje tiene comodines (por ejemplo
+    <code>#Nombre</code> o <code>#Fecha_Cierre</code>) que se reemplazan con los datos reales al enviar. Las fechas del
+    ciclo salen del calendario de nómina y se recalculan solas cada quincena: no hay que cargarlas a mano.
+    <br><br>Un envío puede salir <b>a mano</b> o <b>programado</b> (en una fecha del ciclo, una fecha fija, cada
+    cierto tiempo, o el día del cumpleaños). Antes de mandar, el contador muestra a cuántas personas del alcance les
+    va a llegar según tengan teléfono cargado.
   </div>`;
 }
 

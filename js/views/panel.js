@@ -38,6 +38,7 @@ import { renderBankAccounts } from './bank-accounts.js';
 import { renderScopeOverridesEditor, decorateScovBadges, countScovOverrides } from './scope-overrides.js';
 import { renderWaSend } from './wa-send.js';
 import { renderWaGroups } from './wa-groups.js';
+import { renderWaTemplates } from './wa-templates.js';
 import { renderWaPolls } from './wa-polls.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderSyncLog, renderSyncRun } from './sync-log.js';
@@ -261,6 +262,7 @@ const NAV_GROUPS = [
   // (catalogo/asignacion) sigue superonly: es gobernanza no delegable.
   { title: 'WhatsApp', items: [
     ['wadifusion', I.megaphone, 'Difusión'],
+    ['wamensajes', I.pencil, 'Mensajes'],
     ['waencuestas', I.chart, 'Encuestas'],
     ['wagrupos', I.team, 'Grupos', 'superonly'],
   ] },
@@ -7663,6 +7665,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'bankhist') renderAxHistory(user, 'account_number');
   else if (view === 'bankaccounts') renderBankAccounts(user);
   else if (view === 'wadifusion') renderWaSend(user);
+  else if (view === 'wamensajes') renderWaTemplates(user);
   else if (view === 'waencuestas') renderWaPolls(user);
   else if (view === 'wagrupos') renderWaGroups(user);
   else if (view === 'erpquery') renderErpQuery(user);
@@ -8051,6 +8054,7 @@ export function renderPanel() {
       bankstats: 'view.bankstats', banksync: 'view.banksync', bankhist: 'view.bankhist',
       bankaccounts: 'view.bankaccounts',
       wadifusion: 'view.whatsapp',
+      wamensajes: 'view.wa.templates',
       waencuestas: 'view.whatsapp',
       wagrupos: 'view.whatsapp',
       equipo: 'view.equipo',
