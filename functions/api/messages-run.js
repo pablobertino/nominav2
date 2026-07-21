@@ -237,12 +237,16 @@ export async function onRequestPost({ request, env }) {
             errors++;
           }
           // Auditoria por grupo. Se reusa wa_outbox: full_name = nombre del
-          // grupo, chat_id = @g.us. id_number/company_code no aplican.
+          // grupo, chat_id = @g.us. v6.60: id_number es NOT NULL (resabio del
+          // diseno por-personas, donde era la cedula del destinatario). Un
+          // grupo no tiene cedula, asi que se usa su chat_id como identificador
+          // del destino: cumple la constraint, es unico por grupo y es un dato
+          // real (no un placeholder inventado). company_code queda vacio.
           await sb(env, 'wa_outbox', {
             method: 'POST', headers: { Prefer: 'return=minimal' },
             body: JSON.stringify([{
               batch_id: batchId,
-              id_number: null,
+              id_number: g.chat_id,
               full_name: g.alias || g.wa_name || g.chat_id,
               company_code: '',
               phone_raw: g.chat_id,
