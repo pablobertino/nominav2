@@ -33,7 +33,7 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
-import { shadowCan, resolveActor, can } from './_auth.js';
+import { resolveActor, can } from './_auth.js';
 import { hcmRosterRaw, fullHcmPayload } from './_hcm.js';
 
 const BUCKET = 'worker-photos';          // privado: full (y thumb viejas)
@@ -1080,20 +1080,18 @@ async function setDepartment(env, cc, body, table, deptScope) {
   if (await isGestorUser(env, body.user)) {
     return json({ ok: false, error: 'Los gestores de empresa no pueden cambiar el departamento.' }, 403);
   }
-  // v4.50: en EMPRESAS (no tienda) la asignacion masiva es SOLO para
-  // superadmin y admin (decision de Pablo). Shadow con codigo propio
-  // dept.assign (matriz: superadmin+admin). El flujo Retail de tiendas
-  // (store_workers) conserva su regla v4.18 de mas abajo.
+  // v6.63: la asignacion masiva de departamento en EMPRESAS (no tienda) se
+  // gobierna por la MATRIZ de permisos (dept.assign), no por rol hardcodeado.
+  // Antes exigia literalmente role==='superadmin'||'admin', asi que un rol
+  // nuevo con el permiso concedido (ej. coordinador) igual era rechazado
+  // aunque la matriz de Roles lo mostrara habilitado. Ahora manda can():
+  // superadmin pasa por su bypass, y cualquier rol con dept.assign concedido
+  // puede asignar. El flujo Retail de tiendas (store_workers) conserva su
+  // regla v4.18 de mas abajo (no depende de esto).
   if (table === 'enterprise_workers') {
-    await shadowCan(env, body.user, 'worker-photo', 'set_department:enterprise', 'dept.assign', true);
-    const uk = body.user || {};
-    let okRole = false;
-    if (uk.kind === 'admin' && uk.id) {
-      const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(uk.id)}&is_active=eq.true&select=id,role`);
-      okRole = !!(a && a.length && (a[0].role === 'superadmin' || a[0].role === 'admin'));
-    }
-    if (!okRole) {
-      return json({ ok: false, error: 'Solo un administrador puede asignar departamentos en esta empresa.' }, 403);
+    const actor = await resolveActor(env, body.user);
+    if (!actor || !can(actor, 'dept.assign')) {
+      return json({ ok: false, error: 'No tienes permiso para asignar departamentos en esta empresa.' }, 403);
     }
   }
   let depRow = null;

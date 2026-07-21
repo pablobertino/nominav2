@@ -969,18 +969,20 @@ const OSTICKET_STATE_ID = { open: 1, attended: 6, resolved: 2, closed: 3 };
 const VALID_ATTENTION = ['open', 'attended', 'resolved', 'closed'];
 
 async function setAttention(env, body, scope) {
-  // 1) Autorizacion: SOLO admin/superadmin reales. El editor_personal tiene
-  //    user.kind='admin' pero role='editor_personal' -> se rechaza. La tienda
-  //    (kind='company') tampoco puede.
+  // 1) Autorizacion: SOLO usuarios administradores (no tiendas). La tienda
+  //    (kind='company') no puede. Entre los admin, el permiso lo decide la
+  //    MATRIZ (report.attention), no el rol: v6.63 dejo de exigir
+  //    role==='admin'||'superadmin' hardcodeado, que rechazaba a un rol nuevo
+  //    (ej. coordinador) aunque tuviera el permiso concedido en Roles.
   const user = body.user || {};
   if (user.kind !== 'admin' || !user.id) {
     return json({ ok: false, error: 'Solo un administrador puede cambiar el estado de atencion.' }, 403);
   }
   const a = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role,name`);
   if (!a || !a.length) return json({ ok: false, error: 'Administrador no valido.' }, 403);
-  const role = a[0].role;
-  if (role !== 'admin' && role !== 'superadmin') {
-    return json({ ok: false, error: 'Tu rol no permite cambiar el estado de atencion.' }, 403);
+  const actor = await resolveActor(env, user);
+  if (!actor || !can(actor, 'report.attention')) {
+    return json({ ok: false, error: 'No tienes permiso para cambiar el estado de atencion de los reportes.' }, 403);
   }
 
   // 2) Validar entrada.
@@ -1129,9 +1131,10 @@ async function syncOsticket(env, body, scope) {
   if (user.kind !== 'admin' || !user.id) {
     return json({ ok: false, error: 'Solo un administrador puede sincronizar.' }, 403);
   }
-  const a = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
-  if (!a || !a.length || (a[0].role !== 'admin' && a[0].role !== 'superadmin')) {
-    return json({ ok: false, error: 'Tu rol no permite sincronizar.' }, 403);
+  // v6.63: el permiso lo decide la matriz (report.attention), no el rol.
+  const actor = await resolveActor(env, user);
+  if (!actor || !can(actor, 'report.attention')) {
+    return json({ ok: false, error: 'No tienes permiso para sincronizar el estado de los reportes.' }, 403);
   }
 
   const mode = String(body.mode || '').trim();
@@ -1343,9 +1346,10 @@ async function resendOsticket(env, body, scope) {
   if (user.kind !== 'admin' || !user.id) {
     return json({ ok: false, error: 'Solo un administrador puede reenviar a osTicket.' }, 403);
   }
-  const a = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role`);
-  if (!a || !a.length || (a[0].role !== 'admin' && a[0].role !== 'superadmin')) {
-    return json({ ok: false, error: 'Tu rol no permite reenviar a osTicket.' }, 403);
+  // v6.63: el permiso lo decide la matriz (report.attention), no el rol.
+  const actor = await resolveActor(env, user);
+  if (!actor || !can(actor, 'report.attention')) {
+    return json({ ok: false, error: 'No tienes permiso para reenviar reportes a osTicket.' }, 403);
   }
 
   const id = parseInt(body.report_id, 10);
