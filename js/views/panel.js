@@ -589,7 +589,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.63</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.64</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1141,6 +1141,10 @@ async function viewTiendas(user) {
       <select id="fConcept"><option value="ALL">Todos los conceptos</option>${concepts.map(c => `<option>${c}</option>`).join('')}</select>
       <select id="fSort">
         <option value="code">Orden: Código</option>
+        <option value="staff_desc">Personal: más primero</option>
+        <option value="staff_asc">Personal: menos primero</option>
+        <option value="photo_desc">Fotos: mayor % primero</option>
+        <option value="photo_asc">Fotos: menor % primero</option>
         <option value="sync_recent">Sinc.: reciente primero</option>
         <option value="sync_old">Sinc.: antigua / nunca primero</option>
       </select>
@@ -1274,6 +1278,33 @@ async function viewTiendas(user) {
         if (ta == null) return -1;
         if (tb == null) return 1;
         return ta - tb;
+      });
+    }
+    // v6.64: orden por CANTIDAD DE PERSONAL (activos vigentes hoy). Empresas
+    // sin lista (staffCount 0/nulo) van al final en "mas primero" y al
+    // principio en "menos primero". Empate -> por codigo (orden estable).
+    else if (sortMode === 'staff_desc' || sortMode === 'staff_asc') {
+      const n = c => Number(c.staffCount) || 0;
+      rows.sort((a, b) => {
+        const na = n(a), nb = n(b);
+        if (na !== nb) return sortMode === 'staff_desc' ? nb - na : na - nb;
+        return a.code < b.code ? -1 : 1;
+      });
+    }
+    // v6.64: orden por % DE FOTOS (con foto / total del roster). Solo tiene
+    // sentido donde hay base (photoTotal > 0); las empresas sin personal
+    // cargado NO tienen un % real, asi que van SIEMPRE al final en ambos
+    // sentidos (no es que tengan 0% de fotos, es que no hay a quien
+    // fotografiar). Empate de % -> por codigo.
+    else if (sortMode === 'photo_desc' || sortMode === 'photo_asc') {
+      const pct = c => (c.photoTotal > 0) ? (c.photoCount / c.photoTotal) : null;
+      rows.sort((a, b) => {
+        const pa = pct(a), pb = pct(b);
+        if (pa == null && pb == null) return a.code < b.code ? -1 : 1;
+        if (pa == null) return 1;   // sin base: al final
+        if (pb == null) return -1;
+        if (pa !== pb) return sortMode === 'photo_desc' ? pb - pa : pa - pb;
+        return a.code < b.code ? -1 : 1;
       });
     }
     $('#tCount').textContent = `${rows.length} de ${CATALOG.companies.length} entidades`;
