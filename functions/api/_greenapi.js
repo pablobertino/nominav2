@@ -90,7 +90,27 @@ export function gaClient(env) {
         chatId, message, multipleAnswers,
         options: options.map(o => ({ optionName: o })),
       }),
+
+    // Datos de un grupo (POST { groupId }). Devuelve subject (nombre),
+    // participants (array), owner, description, etc. y -segun version del
+    // proveedor- un conteo directo (count/size). Se usa para saber CUANTOS
+    // miembros tiene cada grupo (columna wa_groups.participants).
+    // Si la instancia no es admin del grupo, igual devuelve el conteo; solo
+    // el groupInviteLink puede venir vacio (no lo usamos aca).
+    getGroupData: (groupId) => call('getGroupData', { groupId }),
   };
+}
+
+/* Cuenta los miembros de la respuesta de getGroupData de forma tolerante:
+   distintas versiones del proveedor devuelven el numero como count/size, o
+   solo el array participants. Devuelve un entero >= 0, o null si no se puede
+   determinar (para no pisar con 0 un dato que quiza si existe). */
+export function groupMemberCount(data) {
+  if (!data || typeof data !== 'object') return null;
+  if (Number.isFinite(data.count)) return Number(data.count);
+  if (Number.isFinite(data.size)) return Number(data.size);
+  if (Array.isArray(data.participants)) return data.participants.length;
+  return null;
 }
 
 // Normaliza numeros venezolanos: '0412-123.45.67' / '+58412...' -> '58412...@c.us'

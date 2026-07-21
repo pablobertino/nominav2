@@ -280,7 +280,7 @@ async function cycleCtx(env) {
 async function groupsForActor(env, actor, user) {
   if (isSuperadmin(actor)) {
     return await sb(env,
-      'wa_groups?enabled=eq.true&select=id,chat_id,wa_name,alias&order=wa_name.asc') || [];
+      'wa_groups?enabled=eq.true&select=id,chat_id,wa_name,alias,participants&order=wa_name.asc') || [];
   }
   const adminId = Number(user && user.id) || 0;
   if (!adminId) return [];
@@ -288,7 +288,7 @@ async function groupsForActor(env, actor, user) {
   const ids = (links || []).map(l => l.group_id);
   if (!ids.length) return [];
   return await sb(env,
-    `wa_groups?id=in.(${ids.join(',')})&enabled=eq.true&select=id,chat_id,wa_name,alias&order=wa_name.asc`) || [];
+    `wa_groups?id=in.(${ids.join(',')})&enabled=eq.true&select=id,chat_id,wa_name,alias,participants&order=wa_name.asc`) || [];
 }
 
 /* v6.56: sanea y ACOTA los group_ids que llegan del cliente a los que el

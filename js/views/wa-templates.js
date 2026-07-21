@@ -294,6 +294,15 @@ function listHtml() {
 }
 
 /* ---------------- editor: selector de grupos (v6.56) ---------------- */
+function groupMeta(g) {
+  // v6.56.1: conteo de miembros si el discover ya lo trajo (participants).
+  // Si aun no se sincronizo, se cae al texto generico (mejor que "0").
+  const n = g.participants;
+  return (n != null && Number.isFinite(Number(n)))
+    ? `${Number(n).toLocaleString('es-VE')} miembro${Number(n) === 1 ? '' : 's'}`
+    : 'Grupo de WhatsApp';
+}
+
 function groupsPaneHtml() {
   const gs = ST.groups || [];
   const rows = gs.map(g => {
@@ -303,7 +312,7 @@ function groupsPaneHtml() {
       <label class="wt-grow${on ? ' on' : ''}" data-grp="${esc(g.id)}">
         <input type="checkbox" data-gchk="${esc(g.id)}"${on ? ' checked' : ''}${ST.canEdit ? '' : ' disabled'}>
         <span class="wt-gav"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M17 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87M16 3.13a4 4 0 0 1 0 7.75"/></svg></span>
-        <div style="min-width:0"><div class="wt-gname">${esc(name)}</div><div class="wt-gmeta">Grupo de WhatsApp</div></div>
+        <div style="min-width:0"><div class="wt-gname">${esc(name)}</div><div class="wt-gmeta">${esc(groupMeta(g))}</div></div>
       </label>`;
   }).join('');
 

@@ -23,7 +23,7 @@
    ===================================================================== */
 
 import { resolveActor, can, isSuperadmin } from './_auth.js';
-import { gaClient } from './_greenapi.js';
+import { gaClient, groupMemberCount } from './_greenapi.js';
 
 function json(data, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -46,6 +46,8 @@ async function sb(env, path, opts = {}) {
   const t = await res.text();
   return t ? JSON.parse(t) : null;
 }
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
 
 export async function onRequestPost({ request, env }) {
   let body;
@@ -98,7 +100,8 @@ export async function onRequestPost({ request, env }) {
          borrando primero sus asignaciones. Asi la lista siempre espeja WhatsApp.
        (v6.53: antes solo agregaba/refrescaba y dejaba colgados los viejos.) */
     if (action === 'discover') {
-      const chats = await gaClient(env).getChats();
+      const ga = gaClient(env);
+      const chats = await ga.getChats();
       const groups = (Array.isArray(chats) ? chats : [])
         .filter(c => c && (c.type === 'group' || String(c.id || '').endsWith('@g.us')))
         .map(c => ({ chat_id: String(c.id), wa_name: c.name || null }));
@@ -106,15 +109,37 @@ export async function onRequestPost({ request, env }) {
       const now = new Date().toISOString();
       const seen = new Set(groups.map(g => g.chat_id));
 
-      // 1) Upsert de los presentes (refresca nombre, conserva alias/enabled).
+      // Conteo de miembros por grupo (getGroupData). Es una llamada por
+      // grupo, con un respiro corto entre una y otra por cortesia a la API
+      // (la doc avisa que llamar muy seguido limita el invite link, no el
+      // conteo). Si un grupo falla, se deja su conteo en null (no se pisa un
+      // dato viejo con 0): mejor "sin dato" que un numero inventado.
+      const counts = {};
+      for (let i = 0; i < groups.length; i++) {
+        try {
+          const data = await ga.getGroupData(groups[i].chat_id);
+          counts[groups[i].chat_id] = groupMemberCount(data);
+        } catch (_) {
+          counts[groups[i].chat_id] = null;
+        }
+        if (i < groups.length - 1) await sleep(600);
+      }
+
+      // 1) Upsert de los presentes (refresca nombre y conteo, conserva
+      //    alias/enabled). El conteo solo se manda cuando se pudo obtener,
+      //    para no borrar con null un valor previo si esta vez fallo.
       if (groups.length) {
         await sb(env, 'wa_groups?on_conflict=chat_id', {
           method: 'POST',
           headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-          body: JSON.stringify(groups.map(g => ({
-            chat_id: g.chat_id, wa_name: g.wa_name,
-            refreshed_at: now, updated_by: actorName,
-          }))),
+          body: JSON.stringify(groups.map(g => {
+            const row = {
+              chat_id: g.chat_id, wa_name: g.wa_name,
+              refreshed_at: now, updated_by: actorName,
+            };
+            if (counts[g.chat_id] != null) row.participants = counts[g.chat_id];
+            return row;
+          })),
         });
       }
 

@@ -160,18 +160,23 @@ function paintTable() {
   }
   box.innerHTML = `<table class="wg-table">
     <thead><tr>
-      <th style="width:30%">Grupo en WhatsApp</th>
-      <th style="width:24%">Alias interno (opcional)</th>
-      <th style="width:11%">Difusión</th>
-      <th style="width:11%">Estado</th>
-      <th style="width:13%">Autorizados</th>
+      <th style="width:28%">Grupo en WhatsApp</th>
+      <th style="width:22%">Alias interno (opcional)</th>
+      <th style="width:9%">Miembros</th>
+      <th style="width:10%">Difusión</th>
+      <th style="width:10%">Estado</th>
+      <th style="width:12%">Autorizados</th>
       <th></th>
     </tr></thead>
     <tbody>${GROUPS.map(g => {
       const n = countAuth(g.id);
+      const memb = (g.participants != null && Number.isFinite(Number(g.participants)))
+        ? `${Number(g.participants).toLocaleString('es-VE')}`
+        : '<span style="color:var(--muted)" title="Se completa al sincronizar">—</span>';
       return `<tr data-id="${g.id}">
       <td><div class="wg-gname">${esc(g.wa_name || '(sin nombre)')}</div><div class="wg-gid">${esc(g.chat_id)}</div></td>
       <td><input class="wg-alias" value="${esc(g.alias || '')}" placeholder="Sin alias" maxlength="80"></td>
+      <td>${memb}</td>
       <td><span class="wg-sw ${g.enabled ? 'on' : ''}" title="Habilitar para difusión"><i></i></span></td>
       <td>${g.enabled ? '<span class="wg-en">Habilitado</span>' : '<span class="wg-off">No habilitado</span>'}</td>
       <td><button class="wg-authbtn ${n ? '' : 'zero'} wg-openauth"><span class="cnt">${n}</span> ${n === 1 ? 'autorizado' : 'autorizados'} <span class="arw">›</span></button></td>
@@ -205,7 +210,9 @@ function paintTable() {
     if (r && r.ok) {
       const i = GROUPS.findIndex(x => x.id === id);
       if (i >= 0) GROUPS[i] = r.group;
-      tr.querySelector('td:nth-child(4)').innerHTML = r.group.enabled
+      // El estado "Habilitado/No habilitado" esta en la 5a celda (tras sumar
+      // la columna Miembros en la 3a). Se repinta sin recargar toda la tabla.
+      tr.querySelector('td:nth-child(5)').innerHTML = r.group.enabled
         ? '<span class="wg-en">Habilitado</span>' : '<span class="wg-off">No habilitado</span>';
       fb.className = 'wg-fb wg-saved'; fb.textContent = '✓ guardado';
       setTimeout(() => { fb.textContent = ''; fb.className = 'wg-fb'; }, 2500);
