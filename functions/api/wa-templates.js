@@ -332,6 +332,9 @@ function pickTrigger(o) {
     cycle_field: null, cycle_offset: 0,
     trigger_date: null, trigger_every_days: null,
     trigger_hour: Math.max(0, Math.min(23, Number(o.trigger_hour) || 8)),
+    // v6.58: minuto libre (0-59). El cron corre cada 15 min, asi que la
+    // hora:minuto es un piso, no un reloj exacto.
+    trigger_minute: Math.max(0, Math.min(59, Number(o.trigger_minute) || 0)),
   };
 
   if (kind === 'cycle') {
@@ -390,7 +393,7 @@ export async function onRequestPost({ request, env }) {
     /* ---------- listar ---------- */
     if (action === 'list') {
       const rows = await sb(env,
-        'message_templates?select=code,label,description,body,scope,allows_secret,is_system,is_active,sort_order,updated_at,updated_by,nature,channel,scope_filters,group_ids,trigger_kind,cycle_field,cycle_offset,trigger_date,trigger_every_days,trigger_hour,retry_minutes,last_fire_on,last_status,last_error,last_sent&order=sort_order.asc,code.asc');
+        'message_templates?select=code,label,description,body,scope,allows_secret,is_system,is_active,sort_order,updated_at,updated_by,nature,channel,scope_filters,group_ids,trigger_kind,cycle_field,cycle_offset,trigger_date,trigger_every_days,trigger_hour,trigger_minute,retry_minutes,last_fire_on,last_status,last_error,last_sent&order=sort_order.asc,code.asc');
       const links = {
         portal: portalUrl(env),
         osticket: String(await getSetting(env, 'osticket_url', '') || '').replace(/\/+$/, ''),

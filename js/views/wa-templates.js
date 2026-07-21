@@ -383,7 +383,10 @@ function triggerLabel(t) {
 
 function schedPaneHtml(t) {
   const k = t.trigger_kind || 'manual';
-  const hours = Array.from({ length: 24 }, (_, i) => i);
+  // v6.58: hora:minuto libre. Se arma el valor "HH:MM" para el <input time>.
+  const hh = String(Number(t.trigger_hour != null ? t.trigger_hour : 8)).padStart(2, '0');
+  const mm = String(Number(t.trigger_minute != null ? t.trigger_minute : 0)).padStart(2, '0');
+  const timeVal = `${hh}:${mm}`;
   return `
   <div class="wt-pane">
     <div class="wt-pane-h">¿Cuándo sale?</div>
@@ -446,9 +449,8 @@ function schedPaneHtml(t) {
     <!-- hora (para todos los automáticos) -->
     <div id="wtTrgHour" class="wt-field" style="margin:14px 0 0;max-width:220px;${k === 'manual' ? 'display:none' : ''}">
       <label>A partir de qué hora</label>
-      <select id="wtTrgHourV">${hours.map(h =>
-        `<option value="${h}"${Number(t.trigger_hour != null ? t.trigger_hour : 8) === h ? ' selected' : ''}>${String(h).padStart(2, '0')}:00</option>`).join('')}</select>
-      <div class="wt-help">Hora de Venezuela. El sistema revisa cada 15 minutos, así que puede salir hasta 15 min después.</div>
+      <input type="time" id="wtTrgHourV" value="${timeVal}">
+      <div class="wt-help">Hora de Venezuela. El sistema revisa cada 15 minutos, así que la hora es <b>un piso</b> (no antes de esa hora): puede salir hasta 15 min después.</div>
     </div>
 
     ${(!ST.isNew) ? `
@@ -596,7 +598,7 @@ function curTpl() {
   if (ST.isNew) {
     return { code: null, label: '', body: '', nature: 'puntual', channel: 'wa',
              group_ids: [], is_system: false,
-             trigger_kind: 'manual', cycle_offset: 0, trigger_hour: 8 };
+             trigger_kind: 'manual', cycle_offset: 0, trigger_hour: 8, trigger_minute: 0 };
   }
   return ST.rows.find(r => r.code === ST.cur) || null;
 }
@@ -782,8 +784,13 @@ function readTrigger() {
   const t = { trigger_kind: kind };
   if (kind === 'manual') return t;
 
+  // v6.58: el input time da "HH:MM". Se separan hora y minuto; si viene
+  // vacio, se cae a 08:00.
   const h = $('#wtTrgHourV');
-  t.trigger_hour = h ? Number(h.value) : 8;
+  const val = (h && h.value) ? h.value : '08:00';
+  const parts = val.split(':');
+  t.trigger_hour = Math.max(0, Math.min(23, Number(parts[0]) || 0));
+  t.trigger_minute = Math.max(0, Math.min(59, Number(parts[1]) || 0));
 
   if (kind === 'cycle') {
     t.cycle_field = $('#wtCycField').value;
