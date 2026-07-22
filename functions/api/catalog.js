@@ -188,7 +188,10 @@ export async function onRequestPost({ request, env }) {
     // SESION VALIDA + el alcance de allowedSet (superadmin=todas; admin=su
     // alcance; tienda=solo su empresa). Sesion invalida -> 403.
     if (allowed !== null && allowed.size === 0) {
-      return json({ ok: false, error: 'Sesion no valida.' }, 403);
+      // Alcance vacio: el usuario es valido pero no tiene ninguna empresa en su
+      // alcance (o la sesion expiro). Mensaje claro en vez del viejo y enganoso
+      // "Sesion no valida", que hacia parecer un problema de login.
+      return json({ ok: false, error: 'No tienes empresas en tu alcance. Si crees que es un error, cierra sesion y vuelve a entrar.' }, 403);
     }
 
     const [companies, zones, subzones, concepts, users,
