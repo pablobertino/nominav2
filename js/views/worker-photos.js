@@ -27,6 +27,7 @@
 import { $ } from '../core/dom.js';
 import { parseReport10, validateParsed, rosterReplace, rosterClear, rosterAddManual, rosterAgeDays, splitFullName } from '../reports/shared/roster.js';
 import { parseReporteAX, validateReporteAX, enterpriseRosterReplace, enterpriseRosterClear, storeRosterReplaceAX, axRosterPull, rosterCooldownMessage } from '../reports/shared/roster-ax.js';
+import { initBankRefCard } from './bank-ref-ficha.js';   // v6.66: referencia bancaria en la ficha
 
 const THUMB = 300;           // miniatura cuadrada (grid)
 const FULL = 800;            // version grande cuadrada (visor / AX)
@@ -562,20 +563,20 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   // (ej. rol Supervisor Tiendas con solo view.*). La tienda (rol 'tienda')
   // tiene photo.manage + ficha.edit en la matriz: su flujo no cambia. Si la
   // consulta falla, se queda el comportamiento historico y decide el server.
-  let CANP = { photo: true, ficha: true, publish: isAdmin, dept: isAdmin };
+  let CANP = { photo: true, ficha: true, publish: isAdmin, dept: isAdmin, bankref: true };
   try {
     const pr = await fetch('/api/my-perms', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null },
-        codes: ['photo.manage', 'ficha.edit', 'hcm.publish', 'dept.assign'],
+        codes: ['photo.manage', 'ficha.edit', 'hcm.publish', 'dept.assign', 'bankref.upload'],
       }),
     }).then(r => r.json());
     if (pr && pr.ok) {
       const p = pr.perms || {};
       CANP = pr.super
-        ? { photo: true, ficha: true, publish: true, dept: true }
-        : { photo: !!p['photo.manage'], ficha: !!p['ficha.edit'], publish: !!p['hcm.publish'], dept: !!p['dept.assign'] };
+        ? { photo: true, ficha: true, publish: true, dept: true, bankref: true }
+        : { photo: !!p['photo.manage'], ficha: !!p['ficha.edit'], publish: !!p['hcm.publish'], dept: !!p['dept.assign'], bankref: !!p['bankref.upload'] };
     }
   } catch (_) { /* sin red: UI historica, el server protege */ }
 
@@ -1701,6 +1702,7 @@ function openFicha(ced) {
 
   paintFichaValues(host, w);
   wireFicha(host, w);
+  initBankRefCard(host, w, STATE);   // v6.66: tarjeta de referencia bancaria (solo Datos Bancarios)
   window.scrollTo(0, 0);
 }
 
@@ -1782,6 +1784,7 @@ function fichaHtml(w, c) {
         <div class="ff-grid">
           <div class="ff-row full"><span class="ff-lbl">Cuenta bancaria <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="account_number"></span></div>
           <div class="ff-field full"><label>Número de cuenta <span class="opt">(20 dígitos)</span></label><input id="e_account" type="text" inputmode="numeric" placeholder="01340000000000000000"><div class="ff-hint" id="h_account"></div></div>
+          <div class="ff-row full" id="bankRefSlot"></div>
         </div>
 
         <div class="ff-sec">Contacto</div>

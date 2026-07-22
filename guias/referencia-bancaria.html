@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>¿Cómo obtener la referencia bancaria? · Portal de Nómina</title>
+<style>
+  :root{ --ink:#111827; --soft:#374151; --muted:#6b7280; --faint:#9ca3af; --border:#eceff3; --pri:#7c3aed; --pri-soft:#f5f3ff; --warn:#d97706; --warn-bg:#fffbeb; --warn-bd:#fde68a; }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f3f4f6;color:var(--ink);font-size:15px;line-height:1.5;padding:28px 18px 60px}
+  .wrap{max-width:640px;margin:0 auto}
+  .head{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  .head .ic{width:40px;height:40px;border-radius:11px;background:var(--pri-soft);color:var(--pri);display:flex;align-items:center;justify-content:center;flex:none}
+  h1{font-size:21px;font-weight:800;letter-spacing:-.01em}
+  .lead{color:var(--muted);font-size:13.5px;margin:8px 0 20px}
+  .lead b{color:var(--soft)}
+  .acc{border:1px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden;background:#fff;cursor:pointer}
+  .acc-h{display:flex;align-items:center;gap:10px;padding:14px 16px;font-size:15px;font-weight:700}
+  .acc-h .bp{width:38px;height:22px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;font-size:10px;font-weight:800;color:#fff;flex:none}
+  .acc-h .cx{margin-left:auto;color:var(--faint);font-weight:800;font-size:18px}
+  .acc-b{display:none;padding:2px 18px 16px 46px;margin:0}
+  .acc.open .acc-b{display:block}
+  .acc-b li{font-size:13.5px;color:var(--soft);line-height:1.6;margin-bottom:6px}
+  .acc-b li b{color:var(--ink)}
+  .note{font-size:12.5px;color:#92400e;background:var(--warn-bg);border:1px solid var(--warn-bd);border-radius:10px;padding:12px 14px;margin-top:14px;line-height:1.5}
+  .foot{font-size:12px;color:var(--faint);margin-top:20px;text-align:center}
+</style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg></div>
+      <h1>¿Cómo obtener la referencia bancaria?</h1>
+    </div>
+    <p class="lead">Pide la <b>referencia (constancia) de tu cuenta</b> desde tu banca en línea y guárdala en <b>PDF</b> (no una foto ni una captura de pantalla). Debe ser una cuenta a nombre del <b>propio trabajador</b>. Toca tu banco para ver los pasos:</p>
+
+    <div class="acc" onclick="tog(this)">
+      <div class="acc-h"><span class="bp" style="background:#dc2626">BDV</span> Banco de Venezuela <span class="cx">＋</span></div>
+      <ol class="acc-b">
+        <li>En bancodevenezuela.com entra a <b>Banca en línea → Personas</b>.</li>
+        <li>Coloca tu <b>usuario</b> y <b>contraseña</b>.</li>
+        <li>Menú <b>Solicitudes → Referencias</b>.</li>
+        <li>Elige y <b>tilda la cuenta</b> de la que quieres la referencia.</li>
+        <li>En "¿A quién va dirigida?" marca <b>A quien pueda interesar</b>.</li>
+        <li>Pulsa <b>Solicitar</b> y <b>Guardar</b> el PDF.</li>
+      </ol>
+    </div>
+
+    <div class="acc" onclick="tog(this)">
+      <div class="acc-h"><span class="bp" style="background:#16a34a">0134</span> Banesco <span class="cx">＋</span></div>
+      <ol class="acc-b">
+        <li>Entra a <b>BanescOnline</b> con tu usuario y clave.</li>
+        <li>Menú <b>Servicios Especiales → Referencia Bancaria de Cuenta</b>.</li>
+        <li>Selecciona la <b>cuenta</b> y pulsa <b>Aceptar</b>.</li>
+        <li>Introduce la <b>Clave de Operaciones Especiales</b> que te llega por correo/SMS y pulsa <b>Aceptar</b>.</li>
+        <li><b>Imprimir → Guardar como PDF → Guardar</b>.</li>
+      </ol>
+    </div>
+
+    <div class="acc" onclick="tog(this)">
+      <div class="acc-h"><span class="bp" style="background:#0ea5e9">0172</span> Bancamiga <span class="cx">＋</span></div>
+      <ol class="acc-b">
+        <li>Entra a online.bancamiga.com con <b>nacionalidad, cédula, usuario y clave</b>.</li>
+        <li>Pide la <b>clave dinámica</b> (SMS o correo) e ingrésala.</li>
+        <li>Menú <b>Otros servicios → Referencias Bancarias</b>.</li>
+        <li>Selecciona la cuenta → <b>Siguiente</b> → confirma → <b>Crear</b>.</li>
+        <li>Pulsa <b>Ver</b> y luego <b>Descargar</b> el PDF.</li>
+      </ol>
+    </div>
+
+    <div class="acc" onclick="tog(this)">
+      <div class="acc-h"><span class="bp" style="background:#1d4ed8">0105</span> Mercantil <span class="cx">＋</span></div>
+      <ol class="acc-b">
+        <li>En Mercantil en línea entra a <b>Cuentas → Referencia bancaria de cuentas</b> y guarda el PDF.</li>
+        <li><b>Ojo:</b> Mercantil solo muestra los últimos 4 dígitos de la cuenta; al cargarla en el portal, se te pedirá completar el número.</li>
+      </ol>
+    </div>
+
+    <div class="note">Sube siempre el <b>PDF original</b> que emite el banco (con texto seleccionable). Una foto o captura de pantalla no se puede leer automáticamente.</div>
+    <p class="foot">Portal de Nómina · Grupo Canaima</p>
+  </div>
+
+  <script>
+    function tog(el){ el.classList.toggle('open'); el.querySelector('.cx').textContent = el.classList.contains('open') ? '－' : '＋'; }
+  </script>
+</body>
+</html>
