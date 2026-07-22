@@ -11,9 +11,11 @@
    Exporta: initBankRefCard(host, w, STATE)
    ===================================================================== */
 
-const PDFJS_VER = '4.0.379';
-const PDFJS_ESM = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VER}/pdf.min.mjs`;
-const PDFJS_WORKER = `https://cdnjs.cloudflare.com/ajax/libs/pdf.js/${PDFJS_VER}/pdf.worker.min.mjs`;
+// pdfjs AUTO-ALOJADO en el propio dominio: la CSP del portal es
+// script-src 'self' cdnjs, pero el Web Worker cae bajo default-src 'self',
+// asi que cdnjs lo bloquearia. Servido desde /vendor/pdfjs/ todo es 'self'.
+const PDFJS_ESM = '/vendor/pdfjs/pdf.min.mjs';
+const PDFJS_WORKER = '/vendor/pdfjs/pdf.worker.min.mjs';
 
 // prefijo de 4 digitos por plantilla + deteccion por texto
 const BANK_PREFIX = { bdv: '0102', banesco: '0134', mercantil: '0105', bancamiga: '0172' };
