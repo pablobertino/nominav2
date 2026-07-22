@@ -82,20 +82,24 @@ function wordYear(txt) {
 function pad2(n) { return String(n).padStart(2, '0'); }
 
 /* ---------- deteccion de banco ---------- */
-function detectBank(text) {
+// El nombre del banco suele venir SOLO en el logo (imagen), no en el texto
+// (ej. Banesco). Por eso se detecta tambien por RIF/direccion del banco y,
+// como ultimo recurso, por el PREFIJO de la cuenta (lo mas confiable).
+const BANK_BY_PREFIX = { '0102': 'bdv', '0134': 'banesco', '0105': 'mercantil', '0172': 'bancamiga' };
+function detectBank(text, acctPrefix) {
   const t = text || '';
-  if (/Mercantil/i.test(t) && /REFERENCIA BANCARIA DE CUENTAS|Nro\.? de Confirmaci/i.test(t)) return 'mercantil';
-  if (/Mercantil/i.test(t)) return 'mercantil';
-  if (/Banesco/i.test(t)) return 'banesco';
-  if (/Bancamiga/i.test(t)) return 'bancamiga';
-  if (/Banco de Venezuela|REFERENCIA BANCARIA CONSOLIDADA|\bBDV\b/i.test(t)) return 'bdv';
+  if (/Mercantil/i.test(t) || /REFERENCIA BANCARIA DE CUENTAS/i.test(t)) return 'mercantil';
+  if (/Banesco/i.test(t) || /J-?\s*0?7013380/i.test(t) || /Bello Monte/i.test(t)) return 'banesco';
+  if (/Bancamiga/i.test(t) || /J-?\s*0?31628759/i.test(t)) return 'bancamiga';
+  if (/Banco de Venezuela|REFERENCIA BANCARIA CONSOLIDADA|\bBDV\b|G-?\s*20000110/i.test(t)) return 'bdv';
+  if (acctPrefix && BANK_BY_PREFIX[acctPrefix]) return BANK_BY_PREFIX[acctPrefix];
   return 'otro';
 }
 
 /* ---------- parser de campos ---------- */
-function parseFields(rawText, plantilla, bankMap) {
+function parseFields(rawText, bankMap) {
   const text = collapse(rawText);
-  const out = { plantilla, banco_code: null, banco_nombre: null, cuenta: null, cuenta_last4: null,
+  const out = { plantilla: 'otro', banco_code: null, banco_nombre: null, cuenta: null, cuenta_last4: null,
     tipo_cuenta: null, cedula_pdf: null, nombre_pdf: null, nro_operacion: null, fecha_emision: null };
 
   // cedula
@@ -111,18 +115,24 @@ function parseFields(rawText, plantilla, bankMap) {
     || text.match(/Se[nñ]or\(a\):?\s*([A-ZÁÉÍÓÚÑ\s]{6,})/i);
   if (mNom) out.nombre_pdf = collapse(mNom[1]);
 
-  // cuenta
-  if (plantilla === 'mercantil') {
+  // cuenta completa (funciona para todos los bancos no-enmascarados)
+  const mAcc = text.match(/(\d[\d\-\s]{18,30}\d)/);
+  let cuentaFull = null;
+  if (mAcc) { const d = digits(mAcc[1]); if (d.length >= 20) cuentaFull = d.slice(0, 20); }
+
+  // plantilla: por texto (RIF/nombre/direccion) y, si falla, por el prefijo
+  out.plantilla = detectBank(text, cuentaFull ? cuentaFull.slice(0, 4) : null);
+
+  if (out.plantilla === 'mercantil') {
     const mk = text.match(/\*{3,}\s*(\d{4})\b/);
     if (mk) out.cuenta_last4 = mk[1];
     out.banco_code = '0105';
-  } else {
-    const mAcc = text.match(/(\d[\d\-\s]{18,30}\d)/);
-    if (mAcc) { const d = digits(mAcc[1]); if (d.length >= 20) out.cuenta = d.slice(0, 20); }
-    if (out.cuenta) { out.banco_code = out.cuenta.slice(0, 4); out.cuenta_last4 = out.cuenta.slice(-4); }
-    else if (plantilla !== 'otro') out.banco_code = BANK_PREFIX[plantilla] || null;
+  } else if (cuentaFull) {
+    out.cuenta = cuentaFull; out.banco_code = cuentaFull.slice(0, 4); out.cuenta_last4 = cuentaFull.slice(-4);
+  } else if (BANK_PREFIX[out.plantilla]) {
+    out.banco_code = BANK_PREFIX[out.plantilla];
   }
-  out.banco_nombre = out.banco_code ? (bankMap && bankMap[out.banco_code]) || null : null;
+  out.banco_nombre = out.banco_code ? ((bankMap && bankMap[out.banco_code]) || null) : null;
 
   // nro operacion / referencia / confirmacion
   const mOp = text.match(/(?:Operaci[oó]n|Referencia|Confirmaci[oó]n)\s*:?\s*(\d{6,15})/i);
@@ -148,21 +158,26 @@ function parseFields(rawText, plantilla, bankMap) {
 }
 
 /* ---------- semaforos vs la ficha ---------- */
-function evaluate(fields, w, mercAcct) {
+function evaluate(fields, w, mercAcct, bankMap) {
   const fichaCed = digits(w.id_number);
   const cedOk = !!fields.cedula_pdf && digits(fields.cedula_pdf) === fichaCed;
   const nameOk = !!fields.nombre_pdf && nameSim(fields.nombre_pdf, w.full_name);
+  const known = p => !!p && (!!(bankMap && bankMap[p]) || Object.values(BANK_PREFIX).indexOf(p) >= 0);
 
-  let cuenta = fields.cuenta, acctOk, bankOk;
+  let cuenta = fields.cuenta, acctOk, prefKnown, incoherent = false;
   if (fields.plantilla === 'mercantil') {
     const raw = digits(mercAcct);
-    acctOk = raw.length === 20 && fields.cuenta_last4 && raw.slice(-4) === fields.cuenta_last4;
-    bankOk = raw.slice(0, 4) === '0105';
-    if (acctOk && bankOk) cuenta = raw;
+    acctOk = raw.length === 20 && !!fields.cuenta_last4 && raw.slice(-4) === fields.cuenta_last4 && raw.slice(0, 4) === '0105';
+    prefKnown = true;
+    if (acctOk) cuenta = raw;
   } else {
     acctOk = !!cuenta && digits(cuenta).length === 20;
-    bankOk = !!fields.banco_code && BANK_PREFIX[fields.plantilla] === fields.banco_code;
+    const pref = cuenta ? digits(cuenta).slice(0, 4) : (fields.banco_code || null);
+    prefKnown = known(pref);
+    const detPref = BANK_PREFIX[fields.plantilla];
+    incoherent = !!(detPref && pref && detPref !== pref);
   }
+  const bankOk = !!prefKnown && !incoherent;
 
   const warnings = [];
   if (!cedOk) {
@@ -170,10 +185,11 @@ function evaluate(fields, w, mercAcct) {
     else warnings.push({ level: 'err', code: 'other_person', text: `El PDF parece de otra persona (${fields.nombre_pdf || '—'}, ${fields.cedula_pdf ? fmtCed(fields.cedula_pdf) : '—'}), no del trabajador. Solo se aceptan cuentas del titular.` });
   }
   if (cedOk && !nameOk && fields.nombre_pdf) warnings.push({ level: 'warn', code: 'name_review', text: 'El nombre del PDF no calza del todo con la ficha (puede venir mutilado por el banco). Se valida por cédula.' });
+  if (incoherent) warnings.push({ level: 'warn', code: 'bank_incoherent', text: 'La carta parece de un banco distinto al del número de cuenta. Revísalo.' });
 
-  const validaciones = { cedula_ok: cedOk, banco_ok: !!bankOk, formato_ok: !!acctOk, nombre_ok: nameOk,
+  const validaciones = { cedula_ok: cedOk, banco_ok: bankOk, formato_ok: !!acctOk, nombre_ok: nameOk,
     ficha_cedula: fichaCed, ficha_nombre: w.full_name || '', warnings };
-  return { cedOk, nameOk, acctOk: !!acctOk, bankOk: !!bankOk, cuenta, warnings, validaciones };
+  return { cedOk, nameOk, acctOk: !!acctOk, prefKnown: !!prefKnown, bankOk, incoherent, cuenta, warnings, validaciones };
 }
 
 /* ---------- estilos (una sola vez) ---------- */
@@ -374,15 +390,14 @@ function openUploadModal(w, STATE, onSaved) {
       return;
     }
 
-    const plantilla = detectBank(text);
-    const fields = parseFields(text, plantilla, STATE.bankMap || {});
+    const fields = parseFields(text, STATE.bankMap || {});
     renderConfirm(fields, pdfB64);
   }
 
   function renderConfirm(fields, pdfB64) {
     const isMerc = fields.plantilla === 'mercantil';
     const rowsHtml = () => {
-      const ev = evaluate(fields, w, isMerc ? (ov.querySelector('#brfMerc') ? ov.querySelector('#brfMerc').value : '') : null);
+      const ev = evaluate(fields, w, isMerc ? (ov.querySelector('#brfMerc') ? ov.querySelector('#brfMerc').value : '') : null, STATE.bankMap || {});
       const rows = [];
       const cedSem = ev.cedOk ? sem('ok', 'es la del trabajador') : (ev.nameOk ? sem('warn', 'revisar cédula') : sem('err', 'otra persona'));
       rows.push(row('Persona', esc(fields.nombre_pdf || '—'), ev.cedOk ? (ev.nameOk ? sem('ok', 'coincide') : sem('warn', 'revisar nombre')) : (ev.nameOk ? sem('warn', 'revisar') : sem('err', 'otra persona'))));
@@ -413,9 +428,9 @@ function openUploadModal(w, STATE, onSaved) {
 
     function refreshVerdict() {
       ov.querySelector('#brfRows').innerHTML = rowsHtml();
-      const ev = evaluate(fields, w, mercInput ? mercInput.value : null);
-      // completo?
-      if (!(ev.acctOk && ev.bankOk)) {
+      const ev = evaluate(fields, w, mercInput ? mercInput.value : null, STATE.bankMap || {});
+      // completo? (cuenta legible con prefijo de banco conocido)
+      if (!(ev.acctOk && ev.prefKnown)) {
         verdict.className = 'brf-verdict info';
         verdict.innerHTML = isMerc ? `Completa la cuenta (20 dígitos, prefijo 0105, termina en ${esc(fields.cuenta_last4 || '')}) para guardar.` : 'No se pudo leer bien la cuenta del PDF; revísalo.';
         saveBtn.disabled = true; note.textContent = ''; return { ev };
