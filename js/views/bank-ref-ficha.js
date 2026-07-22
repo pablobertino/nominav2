@@ -184,7 +184,8 @@ function evaluate(fields, w, mercAcct, bankMap) {
     if (nameOk) warnings.push({ level: 'warn', code: 'cedula_mismatch', text: `La cédula del PDF (${fields.cedula_pdf ? fmtCed(fields.cedula_pdf) : '—'}) no coincide con la de la ficha (${fmtCed(fichaCed)}), aunque el nombre sí. Posible dígito mal escrito.` });
     else warnings.push({ level: 'err', code: 'other_person', text: `El PDF parece de otra persona (${fields.nombre_pdf || '—'}, ${fields.cedula_pdf ? fmtCed(fields.cedula_pdf) : '—'}), no del trabajador. Solo se aceptan cuentas del titular.` });
   }
-  if (cedOk && !nameOk && fields.nombre_pdf) warnings.push({ level: 'warn', code: 'name_review', text: 'El nombre del PDF no calza del todo con la ficha (puede venir mutilado por el banco). Se valida por cédula.' });
+  // Nombre: cuando la cédula coincide NO se advierte por el nombre (los bancos
+  // lo deforman — ej. Banesco). El nombre es solo informativo; manda la cédula.
   if (incoherent) warnings.push({ level: 'warn', code: 'bank_incoherent', text: 'La carta parece de un banco distinto al del número de cuenta. Revísalo.' });
 
   const validaciones = { cedula_ok: cedOk, banco_ok: bankOk, formato_ok: !!acctOk, nombre_ok: nameOk,
@@ -400,7 +401,7 @@ function openUploadModal(w, STATE, onSaved) {
       const ev = evaluate(fields, w, isMerc ? (ov.querySelector('#brfMerc') ? ov.querySelector('#brfMerc').value : '') : null, STATE.bankMap || {});
       const rows = [];
       const cedSem = ev.cedOk ? sem('ok', 'es la del trabajador') : (ev.nameOk ? sem('warn', 'revisar cédula') : sem('err', 'otra persona'));
-      rows.push(row('Persona', esc(fields.nombre_pdf || '—'), ev.cedOk ? (ev.nameOk ? sem('ok', 'coincide') : sem('warn', 'revisar nombre')) : (ev.nameOk ? sem('warn', 'revisar') : sem('err', 'otra persona'))));
+      rows.push(row('Persona', esc(fields.nombre_pdf || '—'), ev.cedOk ? sem('ok', ev.nameOk ? 'coincide' : 'validado por cédula') : (ev.nameOk ? sem('warn', 'revisar') : sem('err', 'otra persona'))));
       rows.push(row('Cédula', `<span class="mono">${fields.cedula_pdf ? fmtCed(fields.cedula_pdf) : '—'}</span>`, cedSem));
       if (isMerc) {
         rows.push(row('Banco', '<span class="mono">0105</span> · Mercantil', sem('ok', 'coherente')));
