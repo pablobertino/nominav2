@@ -1803,16 +1803,6 @@ function fichaHtml(w, c) {
           <div class="ff-row full" style="display:block;border-bottom:none;padding-bottom:2px"><p style="margin:0;color:#6b7280;font-size:12.5px;line-height:1.5">Solo cuentas del titular — <b style="color:#374151">no se aceptan cuentas de terceros</b>.</p></div>
         </div>
 
-        <!-- v6.74: seccion general DOCUMENTOS (escalable): agrupa la Referencia
-             Bancaria y el RIF (SENIAT); a futuro, mas tipos. Cada tarjeta se
-             auto-oculta si no aplica; si ambas quedan vacias se oculta la
-             seccion entera (coordinador en wireFicha/render). -->
-        <div class="ff-sec" id="ffDocsSec">Documentos</div>
-        <div class="ff-grid" id="ffDocsGrid">
-          <div class="ff-row full" id="bankRefSlot"></div>
-          <div class="ff-row full" id="rifSlot"></div>
-        </div>
-
         <div class="ff-sec">Contacto</div>
         <div class="ff-grid">
           <div class="ff-row"><span class="ff-lbl">Teléfono <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="phone"></span></div>
@@ -1829,6 +1819,16 @@ function fichaHtml(w, c) {
           <div class="ff-row"><span class="ff-lbl">Ficha actualizada por</span><span class="ff-val" data-v="profile_updated_by"></span></div>
           <div class="ff-row"><span class="ff-lbl">Foto cargada por</span><span class="ff-val" data-v="photo_uploaded_by"></span></div>
           <div class="ff-row"><span class="ff-lbl">Última actualización</span><span class="ff-val" data-v="updated_at"></span></div>
+        </div>
+
+        <!-- v6.74: seccion general DOCUMENTOS (escalable): agrupa la Referencia
+             Bancaria y el RIF (SENIAT); a futuro, mas tipos. Va al FINAL de la
+             ficha (pedido de Pablo). Cada tarjeta se auto-oculta si no aplica;
+             si ambas quedan vacias se oculta la seccion entera (syncDocsSection). -->
+        <div class="ff-sec" id="ffDocsSec">Documentos</div>
+        <div class="ff-grid" id="ffDocsGrid">
+          <div class="ff-row full" id="bankRefSlot"></div>
+          <div class="ff-row full" id="rifSlot"></div>
         </div>
       </div>
     </div>

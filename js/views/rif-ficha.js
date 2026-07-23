@@ -144,7 +144,7 @@ function ensureStyles() {
   st.id = 'rifd-styles';
   st.textContent = `
   #rifSlot{display:block;width:100%}
-  .rifd-card{border:1px solid #e5e7eb;border-radius:12px;background:#fbfcfe;padding:13px 15px;margin-top:8px;max-width:620px}
+  .rifd-card{border:1px solid #e5e7eb;border-radius:12px;background:#fbfcfe;padding:13px 15px;margin-top:8px;width:100%}
   .rifd-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
   .rifd-top .sp{flex:1}
   .rifd-chip{display:inline-flex;align-items:center;gap:7px;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;font-size:11.5px;font-weight:600;border-radius:999px;padding:4px 11px}
