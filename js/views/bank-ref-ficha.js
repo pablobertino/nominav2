@@ -217,6 +217,8 @@ function ensureStyles() {
   .brf-help b{color:#374151}
   .brf-lnk{color:#7c3aed;cursor:pointer;font-weight:650;text-decoration:none}
   .brf-lnk:hover{text-decoration:underline}
+  .brf-del{color:#dc2626;font-weight:650;cursor:pointer;font-size:12.5px;margin-right:8px}
+  .brf-del:hover{text-decoration:underline}
   .brf-btn{border:1px solid #7c3aed;background:#fff;color:#7c3aed;border-radius:9px;padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer;display:inline-flex;gap:7px;align-items:center}
   .brf-btn:hover{background:#f5f3ff}
   .brf-btn svg{width:14px;height:14px}
@@ -295,6 +297,7 @@ export async function initBankRefCard(host, w, STATE, onRender) {
     const btn = canUpload
       ? `<button class="brf-btn" data-brf="upload">${UP_SVG} ${latest ? 'Cargar / reemplazar' : 'Cargar referencia (PDF)'}</button>`
       : '';
+    const delLink = (latest && canUpload) ? `<a class="brf-del" data-brf="del" data-id="${latest.id}">Quitar</a>` : '';
 
     slot.innerHTML = `
       <div class="brf-card">
@@ -304,7 +307,7 @@ export async function initBankRefCard(host, w, STATE, onRender) {
             <div class="brf-title">Referencia bancaria ${badge}</div>
             <div class="brf-sub">${sub}</div>
           </div>
-          <span class="sp"></span>${btn}
+          <span class="sp"></span>${delLink}${btn}
         </div>
         <div class="brf-help"><a class="brf-lnk" href="/guias/referencia-bancaria.html" target="_blank" rel="noopener">¿Cómo obtener la referencia en tu banco? ↗</a></div>
       </div>`;
@@ -313,6 +316,8 @@ export async function initBankRefCard(host, w, STATE, onRender) {
     if (up) up.addEventListener('click', () => openUploadModal(w, STATE, () => refresh()));
     const vp = slot.querySelector('[data-brf="view"]');
     if (vp) vp.addEventListener('click', () => viewPdf(STATE, vp.dataset.path));
+    const del = slot.querySelector('[data-brf="del"]');
+    if (del) del.addEventListener('click', () => removeRef(STATE, del.dataset.id, () => refresh()));
     fire();
   };
 
@@ -334,6 +339,16 @@ async function viewPdf(STATE, path) {
     if (r && r.ok && r.signed_url) window.open(r.signed_url, '_blank', 'noopener');
     else alert('No se pudo abrir el PDF. Intenta de nuevo.');
   } catch (_) { alert('No se pudo abrir el PDF. Intenta de nuevo.'); }
+}
+async function removeRef(STATE, id, done) {
+  const n = parseInt(id, 10);
+  if (!n) return;
+  if (!confirm('¿Quitar esta referencia de la ficha? Podés volver a cargar otra cuando quieras.')) return;
+  try {
+    const r = await refApi({ action: 'annul', id: n, user: sessUser(STATE.user) });
+    if (r && r.ok) { if (done) done(); }
+    else alert('No se pudo quitar: ' + ((r && r.error) || 'error'));
+  } catch (e) { alert('No se pudo quitar. Intenta de nuevo.'); }
 }
 
 /* ===================== MODAL DE CARGA ===================== */

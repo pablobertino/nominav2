@@ -51,6 +51,8 @@ function ensureStyles() {
   .ced-none{font-size:12.5px;color:#64748b}
   .ced-lnk{color:#7c3aed;cursor:pointer;font-weight:650;text-decoration:none;font-size:12.5px}
   .ced-lnk:hover{text-decoration:underline}
+  .ced-del{color:#dc2626;font-weight:650;cursor:pointer;font-size:12.5px;margin-right:8px}
+  .ced-del:hover{text-decoration:underline}
   .ced-btn{border:1px solid #7c3aed;background:#fff;color:#7c3aed;border-radius:9px;padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer;display:inline-flex;gap:7px;align-items:center}
   .ced-btn:hover{background:#f5f3ff}
   .ced-btn svg{width:14px;height:14px}
@@ -71,7 +73,7 @@ function ensureStyles() {
   .ced-src:hover{border-color:#7c3aed;background:#f5f3ff}
   .ced-src .big{font-size:26px}.ced-src b{display:block;margin-top:6px;font-size:13.5px}.ced-src span{color:#6b7280;font-size:11.5px}
   .ced-tips{display:flex;gap:9px;align-items:flex-start;background:#fffbeb;border:1px solid #fde68a;border-radius:11px;padding:11px 13px;margin-top:14px;font-size:12px;color:#92400e;line-height:1.5}
-  .ced-stage{position:relative;background:#0f172a;border-radius:12px;padding:16px;display:flex;align-items:center;justify-content:center;min-height:240px;user-select:none;touch-action:none}
+  .ced-stage{position:relative;overflow:hidden;background:#0f172a;border-radius:12px;padding:16px;display:flex;align-items:center;justify-content:center;min-height:240px;user-select:none;touch-action:none}
   .ced-cwrap{position:relative;line-height:0}
   .ced-cbox{position:absolute;border:2px solid #fff;box-shadow:0 0 0 9999px rgba(15,23,42,.55);cursor:move}
   .ced-h{position:absolute;width:14px;height:14px;background:#fff;border:1px solid #7c3aed;border-radius:3px}
@@ -132,15 +134,18 @@ export async function initCedulaCard(host, w, STATE, onRender) {
     const btn = canUpload
       ? `<button class="ced-btn" data-ced="upload">${UP} ${latest ? 'Cargar / reemplazar' : 'Cargar cédula'}</button>`
       : '';
+    const delLink = (latest && canUpload) ? `<a class="ced-del" data-ced="del" data-id="${latest.id}">Quitar</a>` : '';
 
     slot.innerHTML = `
       <div class="ced-card">
-        <div class="ced-top">${left}<span class="sp"></span>${btn}</div>
+        <div class="ced-top">${left}<span class="sp"></span>${delLink}${btn}</div>
         <div class="ced-help"><a class="ced-lnk" href="/guias/foto-cedula.html" target="_blank" rel="noopener">¿Cómo fotografiar la cédula? ↗</a></div>
       </div>`;
 
     const up = slot.querySelector('[data-ced="upload"]');
     if (up) up.addEventListener('click', () => openUploadModal(w, STATE, () => refresh()));
+    const del = slot.querySelector('[data-ced="del"]');
+    if (del) del.addEventListener('click', () => removeDoc(STATE, del.dataset.id, () => refresh()));
     slot.querySelectorAll('[data-ced="view"]').forEach(el => el.addEventListener('click', () => viewImg(STATE, el.dataset.path)));
     const thumb = slot.querySelector('#cedThumb');
     if (thumb) {
@@ -169,6 +174,16 @@ async function signUrl(STATE, path) {
 async function viewImg(STATE, path) {
   const u = await signUrl(STATE, path);
   if (u) window.open(u, '_blank', 'noopener'); else alert('No se pudo abrir la imagen. Intenta de nuevo.');
+}
+async function removeDoc(STATE, id, done) {
+  const n = parseInt(id, 10);
+  if (!n) return;
+  if (!confirm('¿Quitar esta cédula de la ficha? Podés volver a cargar otra cuando quieras.')) return;
+  try {
+    const r = await docApi({ action: 'annul', id: n, user: sessUser(STATE.user) });
+    if (r && r.ok) { if (done) done(); }
+    else alert('No se pudo quitar: ' + ((r && r.error) || 'error'));
+  } catch (e) { alert('No se pudo quitar. Intenta de nuevo.'); }
 }
 
 /* ===================== MODAL: captura -> recorte -> confirmar ===================== */

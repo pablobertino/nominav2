@@ -162,6 +162,8 @@ function ensureStyles() {
   .rifd-help{margin-top:10px;padding-top:10px;border-top:1px dashed #e5e7eb;font-size:12px}
   .rifd-lnk{color:#7c3aed;cursor:pointer;font-weight:650;text-decoration:none}
   .rifd-lnk:hover{text-decoration:underline}
+  .rifd-del{color:#dc2626;font-weight:650;cursor:pointer;font-size:12.5px;margin-right:8px}
+  .rifd-del:hover{text-decoration:underline}
   .rifd-btn{border:1px solid #7c3aed;background:#fff;color:#7c3aed;border-radius:9px;padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer;display:inline-flex;gap:7px;align-items:center}
   .rifd-btn:hover{background:#f5f3ff}
   .rifd-btn svg{width:14px;height:14px}
@@ -242,6 +244,7 @@ export async function initRifCard(host, w, STATE, onRender) {
     const btn = canUpload
       ? `<button class="rifd-btn" data-rif="upload">${UP_SVG} ${latest ? 'Cargar / reemplazar' : 'Cargar RIF (PDF)'}</button>`
       : '';
+    const delLink = (latest && canUpload) ? `<a class="rifd-del" data-rif="del" data-id="${latest.id}">Quitar</a>` : '';
 
     slot.innerHTML = `
       <div class="rifd-card">
@@ -251,7 +254,7 @@ export async function initRifCard(host, w, STATE, onRender) {
             <div class="rifd-title">RIF · SENIAT ${badge}</div>
             <div class="rifd-sub">${sub}</div>
           </div>
-          <span class="sp"></span>${btn}
+          <span class="sp"></span>${delLink}${btn}
         </div>
         <div class="rifd-help"><a class="rifd-lnk" href="/guias/rif-seniat.html" target="_blank" rel="noopener">¿Cómo descargar el RIF en el portal del SENIAT? ↗</a></div>
       </div>`;
@@ -260,6 +263,8 @@ export async function initRifCard(host, w, STATE, onRender) {
     if (up) up.addEventListener('click', () => openUploadModal(w, STATE, () => refresh()));
     const vp = slot.querySelector('[data-rif="view"]');
     if (vp) vp.addEventListener('click', () => viewPdf(STATE, vp.dataset.path));
+    const del = slot.querySelector('[data-rif="del"]');
+    if (del) del.addEventListener('click', () => removeRif(STATE, del.dataset.id, () => refresh()));
     fire();
   };
 
@@ -281,6 +286,16 @@ async function viewPdf(STATE, path) {
     if (r && r.ok && r.signed_url) window.open(r.signed_url, '_blank', 'noopener');
     else alert('No se pudo abrir el PDF. Intenta de nuevo.');
   } catch (_) { alert('No se pudo abrir el PDF. Intenta de nuevo.'); }
+}
+async function removeRif(STATE, id, done) {
+  const n = parseInt(id, 10);
+  if (!n) return;
+  if (!confirm('¿Quitar este RIF de la ficha? Podés volver a cargar otro cuando quieras.')) return;
+  try {
+    const r = await docApi({ action: 'annul', id: n, user: sessUser(STATE.user) });
+    if (r && r.ok) { if (done) done(); }
+    else alert('No se pudo quitar: ' + ((r && r.error) || 'error'));
+  } catch (e) { alert('No se pudo quitar. Intenta de nuevo.'); }
 }
 
 /* ===================== MODAL DE CARGA ===================== */
