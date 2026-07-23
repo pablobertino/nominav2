@@ -248,8 +248,8 @@ function openUploadModal(w, STATE, onSaved) {
   }
 
   function loadFile(file) {
-    if (!file.type || !/^image\//.test(file.type)) { body.innerHTML = `<div class="ced-warn">Ese archivo no es una imagen. Subí una foto de la cédula (JPG o PNG).</div>`; return; }
-    if (file.size > 15 * 1024 * 1024) { body.innerHTML = `<div class="ced-warn">La imagen supera 15 MB. Reducila un poco y volvé a intentar.</div>`; return; }
+    if (!file.type || !/^image\//.test(file.type)) { body.innerHTML = `<div class="ced-warn">Ese archivo no es una imagen. Sube una foto de la cédula (JPG o PNG).</div>`; return; }
+    if (file.size > 15 * 1024 * 1024) { body.innerHTML = `<div class="ced-warn">La imagen supera 15 MB. Redúcela un poco y vuelve a intentar.</div>`; return; }
     body.innerHTML = `<div style="text-align:center;padding:30px;color:#64748b"><span class="ced-spin"></span> Cargando la imagen…</div>`;
     // La CSP del portal es default-src 'self': un blob: (createObjectURL) se
     // bloquea al asignarlo a <img>. Usamos FileReader -> data: (mismo patron
@@ -258,7 +258,7 @@ function openUploadModal(w, STATE, onSaved) {
     fr.onload = () => {
       const im = new Image();
       im.onload = () => { img = im; rot = 0; stepCrop(); };
-      im.onerror = () => { body.innerHTML = `<div class="ced-warn">No se pudo abrir la imagen. Si es una foto de iPhone (formato HEIC), guardala o compartila como <b>JPG</b> y volvé a intentar.</div>`; };
+      im.onerror = () => { body.innerHTML = `<div class="ced-warn">No se pudo abrir la imagen. Si es una foto de iPhone (formato HEIC), guárdala o compártela como <b>JPG</b> y vuelve a intentar.</div>`; };
       im.src = fr.result;
     };
     fr.onerror = () => { body.innerHTML = `<div class="ced-warn">No se pudo leer el archivo.</div>`; };
@@ -292,7 +292,7 @@ function openUploadModal(w, STATE, onSaved) {
       <div class="ced-ctrls">
         <button class="ced-gbtn" data-rot="-90" title="Girar a la izquierda"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg> Izquierda</button>
         <button class="ced-gbtn" data-rot="90" title="Girar a la derecha">Derecha <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
-        <span class="ced-chip">Arrastrá las esquinas para recortar al borde de la cédula</span>
+        <span class="ced-chip">Arrastra las esquinas para recortar al borde de la cédula</span>
       </div>`;
 
     // dibujar la imagen rotada en el canvas del stage
