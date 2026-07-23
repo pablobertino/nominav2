@@ -25,6 +25,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { pushBackInterceptor } from '../core/back-nav.js';   // v6.88: "Atrás" cierra el visor de foto en vez de salir de la ficha
 import { parseReport10, validateParsed, rosterReplace, rosterClear, rosterAddManual, rosterAgeDays, splitFullName } from '../reports/shared/roster.js';
 import { parseReporteAX, validateReporteAX, enterpriseRosterReplace, enterpriseRosterClear, storeRosterReplaceAX, axRosterPull, rosterCooldownMessage } from '../reports/shared/roster-ax.js';
 import { initBankRefCard } from './bank-ref-ficha.js';   // v6.66: referencia bancaria en la ficha
@@ -2414,6 +2415,7 @@ function fichaBack() {
 
 /* ===================== LIGHTBOX (foto grande + descargar) ===================== */
 let lbCurrent = null;
+let lbRemoveBack = null;   // quita el interceptor de "Atrás" al cerrar
 function ensureLightbox() {
   if (document.getElementById('wpLb')) return;
   const el = document.createElement('div');
@@ -2426,6 +2428,9 @@ function ensureLightbox() {
     <img id="wpLbImg" src="" alt=""><div class="wp-lb-cap" id="wpLbCap"></div>`;
   document.body.appendChild(el);
   el.addEventListener('click', e => { if (e.target === el) closeLightbox(); });
+  // Bloquear el scroll del fondo mientras el visor está abierto (rueda y touch).
+  el.addEventListener('wheel', e => { if (el.classList.contains('show')) e.preventDefault(); }, { passive: false });
+  el.addEventListener('touchmove', e => { if (el.classList.contains('show')) e.preventDefault(); }, { passive: false });
   document.getElementById('wpLbX').addEventListener('click', closeLightbox);
   document.getElementById('wpLbDl').addEventListener('click', async e => {
     e.stopPropagation();
@@ -2451,11 +2456,22 @@ function openLightbox(src, cap, filename) {
   document.getElementById('wpLbImg').src = src;
   document.getElementById('wpLbCap').textContent = cap || '';
   document.getElementById('wpLb').classList.add('show');
+  document.body.style.overflow = 'hidden';   // el fondo no se mueve mientras está abierto
+  // "Atrás" (botón/gesto del navegador) cierra el visor y NO sale de la ficha.
+  if (!lbRemoveBack) {
+    lbRemoveBack = pushBackInterceptor(() => {
+      const box = document.getElementById('wpLb');
+      if (box && box.classList.contains('show')) { closeLightbox(); return true; }
+      return false;
+    });
+  }
 }
 function closeLightbox() {
   const el = document.getElementById('wpLb');
   if (el) { el.classList.remove('show'); document.getElementById('wpLbImg').src = ''; }
   lbCurrent = null;
+  document.body.style.overflow = '';
+  if (lbRemoveBack) { lbRemoveBack(); lbRemoveBack = null; }
 }
 
 /* Lightbox PUBLICO reutilizable desde otras vistas (Buscar personal, Datos
