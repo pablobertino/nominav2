@@ -80,8 +80,9 @@ function ensureStyles() {
   .ced-ctrls{display:flex;gap:8px;align-items:center;justify-content:center;margin-top:12px;flex-wrap:wrap}
   .ced-chip{font-size:11.5px;color:#6b7280;background:#f1f5f9;border-radius:999px;padding:4px 10px;font-weight:600}
   .ced-chip b{color:#111827}
-  .ced-gbtn{border:1px solid #e5e7eb;background:#fff;border-radius:9px;padding:6px 11px;font-size:12.5px;font-weight:700;color:#374151;cursor:pointer}
+  .ced-gbtn{border:1px solid #e5e7eb;background:#fff;border-radius:9px;padding:6px 11px;font-size:12.5px;font-weight:700;color:#374151;cursor:pointer;display:inline-flex;align-items:center;gap:6px}
   .ced-gbtn:hover{background:#f8fafc}
+  .ced-gbtn svg{width:15px;height:15px}
   .ced-toggle{display:flex;align-items:center;gap:8px;font-size:12.5px;color:#374151;margin-top:14px;cursor:pointer;user-select:none;font-weight:600}
   .ced-toggle input{width:16px;height:16px}
   .ced-prevrow{display:flex;gap:14px;align-items:flex-start;flex-wrap:wrap}
@@ -286,8 +287,8 @@ function openUploadModal(w, STATE, onSaved) {
         </div>
       </div>
       <div class="ced-ctrls">
-        <button class="ced-gbtn" data-rot="-90">⟲ Rotar</button>
-        <button class="ced-gbtn" data-rot="90">⟳ Rotar</button>
+        <button class="ced-gbtn" data-rot="-90" title="Girar a la izquierda"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/></svg> Izquierda</button>
+        <button class="ced-gbtn" data-rot="90" title="Girar a la derecha">Derecha <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg></button>
         <span class="ced-chip">Arrastrá las esquinas para recortar al borde de la cédula</span>
       </div>`;
 
