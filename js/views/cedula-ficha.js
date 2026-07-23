@@ -202,6 +202,7 @@ function openUploadModal(w, STATE, onSaved) {
       <div class="ced-mb" id="cedBody"></div>
       <div class="ced-mf" id="cedFoot" style="display:none">
         <span class="note" id="cedNote"></span>
+        <button class="cancel" id="cedBack" style="display:none">← Atrás</button>
         <button class="cancel" data-ced-close>Cancelar</button>
         <button class="go" id="cedGo">Continuar</button>
       </div>
@@ -217,6 +218,7 @@ function openUploadModal(w, STATE, onSaved) {
   const body = ov.querySelector('#cedBody');
   const foot = ov.querySelector('#cedFoot');
   const goBtn = ov.querySelector('#cedGo');
+  const backBtn = ov.querySelector('#cedBack');
   const note = ov.querySelector('#cedNote');
   const fileInput = ov.querySelector('#cedFile');
   const camInput = ov.querySelector('#cedCam');
@@ -306,6 +308,7 @@ function openUploadModal(w, STATE, onSaved) {
 
     foot.style.display = 'flex';
     note.innerHTML = 'Se comprime en el navegador; no sube el archivo pesado.';
+    backBtn.style.display = ''; backBtn.textContent = '← Cambiar foto'; backBtn.onclick = stepSource;
     goBtn.textContent = 'Continuar';
     goBtn.disabled = false;
     goBtn.onclick = stepConfirm;
@@ -405,6 +408,7 @@ function openUploadModal(w, STATE, onSaved) {
 
     foot.style.display = 'flex';
     note.textContent = '';
+    backBtn.style.display = ''; backBtn.textContent = '← Volver a recortar'; backBtn.onclick = stepCrop;
     goBtn.textContent = 'Guardar cédula';
     goBtn.disabled = false;
     goBtn.onclick = () => doSave(current);
