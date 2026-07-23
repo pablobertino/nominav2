@@ -85,6 +85,7 @@ export async function onRequestPost({ request, env }) {
       p_zone: isCompany ? null : nn(body.zone),
       p_subzone: isCompany ? null : nn(body.subzone),
       p_department: Number.isFinite(parseInt(body.department, 10)) ? parseInt(body.department, 10) : null,
+      p_ref: (body.ref === 'si' || body.ref === 'no') ? body.ref : null,
       p_limit: lim,
       p_offset: off,
     });

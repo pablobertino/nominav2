@@ -19,11 +19,13 @@ const BUCKET = 'bank-refs';
 const SIGNED_TTL = 60 * 60;   // 1h
 const MAX_BYTES = 10 * 1024 * 1024;
 
+// Lectura (list/sign) permitida desde la ficha (view.fotos) Y desde la
+// pantalla Datos Bancarios · Cuentas (view.bankaccounts).
 const ACTION_CODE = {
-  save: 'bankref.upload',
-  annul: 'bankref.upload',
-  list: 'view.fotos',
-  sign: 'view.fotos',
+  save: ['bankref.upload'],
+  annul: ['bankref.upload'],
+  list: ['view.fotos', 'view.bankaccounts'],
+  sign: ['view.fotos', 'view.bankaccounts'],
 };
 
 function json(b, s = 200) {
@@ -103,12 +105,12 @@ export async function onRequestPost({ request, env }) {
   try { body = await request.json(); } catch { return json({ ok: false, error: 'JSON invalido.' }, 400); }
 
   const action = norm(body.action);
-  const code = ACTION_CODE[action];
-  if (!code) return json({ ok: false, error: 'Accion no valida.' }, 400);
+  const codes = ACTION_CODE[action];
+  if (!codes) return json({ ok: false, error: 'Accion no valida.' }, 400);
 
   const actor = await resolveActor(env, body.user);
   if (!actor) return json({ ok: false, error: 'Sesion no valida.' }, 403);
-  if (!can(actor, code)) return json({ ok: false, error: 'No tienes permiso para esta accion.' }, 403);
+  if (!codes.some(c => can(actor, c))) return json({ ok: false, error: 'No tienes permiso para esta accion.' }, 403);
 
   try {
     if (action === 'save')  return await saveRef(env, actor, body);

@@ -23,7 +23,7 @@ import { $ } from '../core/dom.js';
 import { attachRefresh } from '../core/refresh.js';
 
 let USER = null;
-let F = { q: '', bank: '', has: '', type: '', company: '', zone: '', department: '' };
+let F = { q: '', bank: '', has: '', type: '', company: '', zone: '', department: '', ref: '' };
 let PAGE = { limit: 50, offset: 0 };
 let RAW = { cards: {}, total: 0, banks: [], companies: [], zones: [], rows: [] };
 let COMBOS_READY = false;
@@ -47,11 +47,24 @@ async function api(extra) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       user: { kind: USER.kind, id: USER.id || null, companyCode: USER.companyCode || null },
-      q: F.q, bank: F.bank, has: F.has, type: F.type, company: F.company, zone: F.zone, department: F.department,
+      q: F.q, bank: F.bank, has: F.has, type: F.type, company: F.company, zone: F.zone, department: F.department, ref: F.ref,
       limit: PAGE.limit, offset: PAGE.offset,
       ...(extra || {}),
     }),
   }).then(x => x.json()).catch(() => null);
+}
+
+/* Firma y abre el PDF de la referencia (mismo endpoint que la ficha). */
+async function signRefPdf(path) {
+  if (!path) return;
+  try {
+    const r = await fetch('/api/bank-ref', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'sign', storage_path: path, user: { kind: USER.kind, id: USER.id || null, companyCode: USER.companyCode || null } }),
+    }).then(x => x.json());
+    if (r && r.ok && r.signed_url) window.open(r.signed_url, '_blank', 'noopener');
+    else alert('No se pudo abrir el PDF. Intenta de nuevo.');
+  } catch (_) { alert('No se pudo abrir el PDF. Intenta de nuevo.'); }
 }
 
 function ensureStyles() {
@@ -102,7 +115,10 @@ function ensureStyles() {
   .bkac-pg{border:1px solid var(--border);background:var(--surface,#fff);border-radius:8px;padding:5px 11px;font:inherit;font-size:12.5px;cursor:pointer;color:var(--ink-soft,#475569)}
   .bkac-pg:disabled{opacity:.4;cursor:default}
   .bkac-empty{padding:26px 12px;text-align:center;color:var(--muted);font-size:13px}
-  .bkac-legend{font-size:11.5px;color:var(--muted);margin-top:11px;line-height:1.6}`;
+  .bkac-legend{font-size:11.5px;color:var(--muted);margin-top:11px;line-height:1.6}
+  .bkac-refchip{display:inline-flex;align-items:center;gap:6px;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;font-size:11px;font-weight:700;border-radius:999px;padding:3px 9px;white-space:nowrap}
+  .bkac-refchip .v{cursor:pointer;text-decoration:underline}
+  .bkac-refno{color:var(--muted);font-size:12px}`;
   document.head.appendChild(st);
 }
 
@@ -126,6 +142,7 @@ function exportCols() {
     ['Prefijo', r => r.pref || ''],
     ['NumeroCuenta', r => r.acct || ''],
     ['Motivo', r => r.reason || ''],
+    ['Referencia', r => r.has_ref ? 'Si' : 'No'],
   );
   return cols;
 }
@@ -187,6 +204,7 @@ function paintCards() {
   $('#bkacKTot').textContent = nf(c.tot);
   $('#bkacKCon').innerHTML = `${nf(c.con)} <small>${pf(c.con, c.tot)}</small>`;
   $('#bkacKSin').innerHTML = `${nf(c.sin)} <small>${pf(c.sin, c.tot)}</small>`;
+  const kr = $('#bkacKRef'); if (kr) kr.innerHTML = `${nf(c.con_ref)} <small>${pf(c.con_ref, c.tot)}</small>`;
   const kb = $('#bkacKBk'); if (kb) kb.textContent = nf(c.banks);
   $('#bkacSub').innerHTML = `Cuenta bancaria del personal <b>vigente</b>${isCompany() ? '' : ' de tu alcance'} · <b>${nf(c.tot)}</b> colaboradores`;
 }
@@ -212,6 +230,7 @@ function paintRows() {
         <td style="color:var(--ink-soft,#475569)">${esc(r.department || '—')}</td>
         <td>${bankCell}</td>
         <td>${acctCell}</td>
+        <td>${r.has_ref ? `<span class="bkac-refchip">📎 <span class="v bkac-refview" data-path="${esc(r.ref_path || '')}">Ver PDF</span></span>` : '<span class="bkac-refno">—</span>'}</td>
         ${admin ? `<td style="color:var(--muted)">${esc(r.zone || '')}</td>` : ''}
       </tr>`;
     }).join('');
@@ -257,7 +276,7 @@ function resetAndLoad() { PAGE.offset = 0; load(); }
 export async function renderBankAccounts(user) {
   USER = user;
   ensureStyles();
-  F = { q: '', bank: '', has: '', type: '', company: '', zone: '' };
+  F = { q: '', bank: '', has: '', type: '', company: '', zone: '', department: '', ref: '' };
   PAGE = { limit: 50, offset: 0 };
   COMBOS_READY = false;
   const admin = !isCompany();
@@ -272,6 +291,7 @@ export async function renderBankAccounts(user) {
       <div class="bkac-k"><div class="kl">👥 Colaboradores</div><div class="kv" id="bkacKTot">—</div></div>
       <div class="bkac-k"><div class="kl">💳 Con cuenta</div><div class="kv" id="bkacKCon">—</div></div>
       <div class="bkac-k warn"><div class="kl">⚠ Sin cuenta o inválida</div><div class="kv" id="bkacKSin">—</div></div>
+      <div class="bkac-k"><div class="kl">📎 Con referencia</div><div class="kv" id="bkacKRef">—</div></div>
       ${admin ? '<div class="bkac-k"><div class="kl">🏦 Bancos distintos</div><div class="kv" id="bkacKBk">—</div></div>' : ''}
     </div>
 
@@ -282,6 +302,11 @@ export async function renderBankAccounts(user) {
         <option value="">Cuenta: Todas</option>
         <option value="si">Con cuenta</option>
         <option value="no">Sin cuenta / inválida</option>
+      </select>
+      <select id="bkacFRef">
+        <option value="">Referencia: Todas</option>
+        <option value="si">Con referencia</option>
+        <option value="no">Sin referencia</option>
       </select>
       <select id="bkacFDept"><option value="">Departamento: Todos</option></select>
       ${admin ? `
@@ -303,7 +328,7 @@ export async function renderBankAccounts(user) {
       <div class="bkac-tblwrap"><table class="bkac-tbl">
         <thead><tr>
           <th>Cédula</th><th>Colaborador</th>${admin ? '<th>Empresa</th>' : ''}
-          <th>Departamento</th><th>Banco</th><th>N° de cuenta</th>${admin ? '<th>Zona</th>' : ''}
+          <th>Departamento</th><th>Banco</th><th>N° de cuenta</th><th>Referencia</th>${admin ? '<th>Zona</th>' : ''}
         </tr></thead>
         <tbody id="bkacTb"></tbody>
       </table></div>
@@ -326,6 +351,7 @@ export async function renderBankAccounts(user) {
   });
   $('#bkacFBank').addEventListener('change', e => { F.bank = e.target.value; resetAndLoad(); });
   $('#bkacFHas').addEventListener('change', e => { F.has = e.target.value; resetAndLoad(); });
+  $('#bkacFRef').addEventListener('change', e => { F.ref = e.target.value; resetAndLoad(); });
   $('#bkacFDept').addEventListener('change', e => { F.department = e.target.value; resetAndLoad(); });
   if (admin) {
     $('#bkacFType').addEventListener('change', e => { F.type = e.target.value; resetAndLoad(); });
@@ -333,8 +359,8 @@ export async function renderBankAccounts(user) {
     $('#bkacFZone').addEventListener('change', e => { F.zone = e.target.value; resetAndLoad(); });
   }
   $('#bkacClear').addEventListener('click', () => {
-    F = { q: '', bank: '', has: '', type: '', company: '', zone: '', department: '' };
-    $('#bkacFQ').value = ''; $('#bkacFBank').value = ''; $('#bkacFHas').value = ''; $('#bkacFDept').value = '';
+    F = { q: '', bank: '', has: '', type: '', company: '', zone: '', department: '', ref: '' };
+    $('#bkacFQ').value = ''; $('#bkacFBank').value = ''; $('#bkacFHas').value = ''; $('#bkacFDept').value = ''; $('#bkacFRef').value = '';
     if (admin) { $('#bkacFType').value = ''; $('#bkacFComp').value = ''; $('#bkacFZone').value = ''; }
     resetAndLoad();
   });
@@ -351,6 +377,8 @@ export async function renderBankAccounts(user) {
     if (!e.target.closest('.bkac-expwrap')) { const m = $('#bkacExpM'); if (m) m.classList.remove('open'); }
   });
   $('#pnlMain').addEventListener('click', e => {
+    const v = e.target.closest('.bkac-refview');
+    if (v && v.dataset.path) { signRefPdf(v.dataset.path); return; }
     const c = e.target.closest('.bkac-copy');
     if (c && c.dataset.acct) {
       navigator.clipboard.writeText(c.dataset.acct).then(() => {
