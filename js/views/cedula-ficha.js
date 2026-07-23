@@ -135,7 +135,8 @@ export async function initCedulaCard(host, w, STATE, onRender) {
     const btn = canUpload
       ? `<button class="ced-btn" data-ced="upload">${UP} ${latest ? 'Cargar / reemplazar' : 'Cargar cédula'}</button>`
       : '';
-    const delLink = (latest && canUpload) ? `<a class="ced-del" data-ced="del" data-id="${latest.id}">Quitar</a>` : '';
+    const canRemove = !!(STATE.can && STATE.can.docsRemove);
+    const delLink = (latest && canRemove) ? `<a class="ced-del" data-ced="del" data-id="${latest.id}">Quitar</a>` : '';
 
     slot.innerHTML = `
       <div class="ced-card">

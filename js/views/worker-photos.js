@@ -565,20 +565,20 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   // (ej. rol Supervisor Tiendas con solo view.*). La tienda (rol 'tienda')
   // tiene photo.manage + ficha.edit en la matriz: su flujo no cambia. Si la
   // consulta falla, se queda el comportamiento historico y decide el server.
-  let CANP = { photo: true, ficha: true, publish: isAdmin, dept: isAdmin, bankref: true, rif: true, cedula: true };
+  let CANP = { photo: true, ficha: true, publish: isAdmin, dept: isAdmin, bankref: true, rif: true, cedula: true, docsRemove: false };
   try {
     const pr = await fetch('/api/my-perms', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null },
-        codes: ['photo.manage', 'ficha.edit', 'hcm.publish', 'dept.assign', 'bankref.upload', 'rif.upload', 'cedula.upload'],
+        codes: ['photo.manage', 'ficha.edit', 'hcm.publish', 'dept.assign', 'bankref.upload', 'rif.upload', 'cedula.upload', 'docs.remove'],
       }),
     }).then(r => r.json());
     if (pr && pr.ok) {
       const p = pr.perms || {};
       CANP = pr.super
-        ? { photo: true, ficha: true, publish: true, dept: true, bankref: true, rif: true, cedula: true }
-        : { photo: !!p['photo.manage'], ficha: !!p['ficha.edit'], publish: !!p['hcm.publish'], dept: !!p['dept.assign'], bankref: !!p['bankref.upload'], rif: !!p['rif.upload'], cedula: !!p['cedula.upload'] };
+        ? { photo: true, ficha: true, publish: true, dept: true, bankref: true, rif: true, cedula: true, docsRemove: true }
+        : { photo: !!p['photo.manage'], ficha: !!p['ficha.edit'], publish: !!p['hcm.publish'], dept: !!p['dept.assign'], bankref: !!p['bankref.upload'], rif: !!p['rif.upload'], cedula: !!p['cedula.upload'], docsRemove: !!p['docs.remove'] };
     }
   } catch (_) { /* sin red: UI historica, el server protege */ }
 

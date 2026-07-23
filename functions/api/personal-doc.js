@@ -30,6 +30,7 @@ const WRITE_CODE = {
   cedula: ['cedula.upload'],
 };
 const READ_CODE = ['view.fotos'];
+const REMOVE_CODE = ['docs.remove'];   // quitar/anular un documento (correccion)
 
 const DOC_TYPES = new Set(Object.keys(WRITE_CODE));
 
@@ -124,19 +125,21 @@ export async function onRequestPost({ request, env }) {
   try { body = await request.json(); } catch { return json({ ok: false, error: 'JSON invalido.' }, 400); }
 
   const action = norm(body.action);
-  const isWrite = (action === 'save' || action === 'annul');
-  const isRead = (action === 'list' || action === 'sign');
-  if (!isWrite && !isRead) return json({ ok: false, error: 'Accion no valida.' }, 400);
+  const known = (action === 'save' || action === 'annul' || action === 'list' || action === 'sign');
+  if (!known) return json({ ok: false, error: 'Accion no valida.' }, 400);
 
   const actor = await resolveActor(env, body.user);
   if (!actor) return json({ ok: false, error: 'Sesion no valida.' }, 403);
 
-  // El gate de ESCRITURA depende del tipo de documento; el de LECTURA es fijo.
+  // save: permiso de carga segun el tipo. annul: permiso de QUITAR (docs.remove).
+  // list/sign: lectura desde la ficha.
   let codes;
-  if (isWrite) {
+  if (action === 'save') {
     const dt = safeDocType(body.doc_type);
     if (!dt) return json({ ok: false, error: 'Tipo de documento no valido.' }, 400);
     codes = WRITE_CODE[dt];
+  } else if (action === 'annul') {
+    codes = REMOVE_CODE;
   } else {
     codes = READ_CODE;
   }

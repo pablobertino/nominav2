@@ -23,7 +23,7 @@ const MAX_BYTES = 10 * 1024 * 1024;
 // pantalla Datos Bancarios · Cuentas (view.bankaccounts).
 const ACTION_CODE = {
   save: ['bankref.upload'],
-  annul: ['bankref.upload'],
+  annul: ['docs.remove'],   // quitar es correccion (coordinador/admin/superadmin)
   list: ['view.fotos', 'view.bankaccounts'],
   sign: ['view.fotos', 'view.bankaccounts'],
 };

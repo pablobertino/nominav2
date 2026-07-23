@@ -244,7 +244,8 @@ export async function initRifCard(host, w, STATE, onRender) {
     const btn = canUpload
       ? `<button class="rifd-btn" data-rif="upload">${UP_SVG} ${latest ? 'Cargar / reemplazar' : 'Cargar RIF (PDF)'}</button>`
       : '';
-    const delLink = (latest && canUpload) ? `<a class="rifd-del" data-rif="del" data-id="${latest.id}">Quitar</a>` : '';
+    const canRemove = !!(STATE.can && STATE.can.docsRemove);
+    const delLink = (latest && canRemove) ? `<a class="rifd-del" data-rif="del" data-id="${latest.id}">Quitar</a>` : '';
 
     slot.innerHTML = `
       <div class="rifd-card">
