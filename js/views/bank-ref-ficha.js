@@ -203,9 +203,10 @@ function ensureStyles() {
   .brf-card{border:1px solid #e5e7eb;border-radius:12px;background:#fbfcfe;padding:13px 15px;margin-top:8px;width:100%}
   .brf-top{display:flex;align-items:center;gap:13px;flex-wrap:wrap}
   .brf-top .sp{flex:1}
-  .brf-ic{width:40px;height:40px;border-radius:10px;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:19px;flex:none}
+  .brf-ic{width:40px;height:40px;border-radius:10px;background:#eff6ff;color:#2563eb;display:flex;align-items:center;justify-content:center;flex:none}
+  .brf-ic svg{width:20px;height:20px}
   .brf-body{flex:1;min-width:0}
-  .brf-title{font-size:14px;font-weight:750;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .brf-title{font-size:14px;font-weight:700;color:#111827;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
   .brf-sub{color:#6b7280;font-size:12.5px;margin-top:2px;line-height:1.45}
   .brf-chip{display:inline-flex;align-items:center;gap:7px;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;font-size:11.5px;font-weight:600;border-radius:999px;padding:4px 11px}
   .brf-badge{font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;border-radius:999px;padding:2px 8px}
@@ -298,7 +299,7 @@ export async function initBankRefCard(host, w, STATE, onRender) {
     slot.innerHTML = `
       <div class="brf-card">
         <div class="brf-top">
-          <div class="brf-ic">🏦</div>
+          <div class="brf-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V10M9 21V10M15 21V10M19 21V10"/><path d="M4 10l8-5 8 5"/></svg></div>
           <div class="brf-body">
             <div class="brf-title">Referencia bancaria ${badge}</div>
             <div class="brf-sub">${sub}</div>

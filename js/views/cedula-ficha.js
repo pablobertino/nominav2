@@ -39,10 +39,11 @@ function ensureStyles() {
   .ced-card{border:1px solid #e5e7eb;border-radius:12px;background:#fbfcfe;padding:13px 15px;margin-top:8px;width:100%}
   .ced-top{display:flex;align-items:center;gap:13px;flex-wrap:wrap}
   .ced-top .sp{flex:1}
-  .ced-ic{width:40px;height:40px;border-radius:10px;background:#ecfeff;display:flex;align-items:center;justify-content:center;font-size:19px;flex:none}
+  .ced-ic{width:40px;height:40px;border-radius:10px;background:#ecfeff;color:#0891b2;display:flex;align-items:center;justify-content:center;flex:none}
+  .ced-ic svg{width:20px;height:20px}
   .ced-thumb{width:66px;height:42px;border-radius:7px;object-fit:cover;border:1px solid #e5e7eb;flex:none;cursor:pointer;background:#eef2f7}
   .ced-body{flex:1;min-width:0}
-  .ced-title{font-size:14px;font-weight:750;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .ced-title{font-size:14px;font-weight:700;color:#111827;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
   .ced-sub{color:#6b7280;font-size:12.5px;margin-top:2px;line-height:1.45}
   .ced-badge{font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;border-radius:999px;padding:2px 8px}
   .ced-badge.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
@@ -50,14 +51,16 @@ function ensureStyles() {
   .ced-none{font-size:12.5px;color:#64748b}
   .ced-lnk{color:#7c3aed;cursor:pointer;font-weight:650;text-decoration:none;font-size:12.5px}
   .ced-lnk:hover{text-decoration:underline}
-  .ced-btn{border:1px solid #7c3aed;background:#fff;color:#7c3aed;border-radius:9px;padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer}
+  .ced-btn{border:1px solid #7c3aed;background:#fff;color:#7c3aed;border-radius:9px;padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer;display:inline-flex;gap:7px;align-items:center}
   .ced-btn:hover{background:#f5f3ff}
+  .ced-btn svg{width:14px;height:14px}
   .ced-help{margin-top:10px;padding-top:10px;border-top:1px dashed #e5e7eb;font-size:12.5px}
 
   .ced-ov{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9000}
   .ced-modal{background:#fff;border-radius:16px;width:620px;max-width:100%;max-height:94vh;overflow:auto;box-shadow:0 24px 70px rgba(15,23,42,.32);color:#111827}
   .ced-mh{display:flex;align-items:center;gap:11px;padding:16px 20px;border-bottom:1px solid #eceff3}
-  .ced-mh .ic{width:34px;height:34px;border-radius:9px;background:#ecfeff;display:flex;align-items:center;justify-content:center;font-size:18px;flex:none}
+  .ced-mh .ic{width:34px;height:34px;border-radius:9px;background:#ecfeff;color:#0891b2;display:flex;align-items:center;justify-content:center;flex:none}
+  .ced-mh .ic svg{width:18px;height:18px}
   .ced-mh b{font-size:15px}.ced-mh small{display:block;color:#6b7280;font-size:12px}
   .ced-mh .x{margin-left:auto;border:0;background:transparent;color:#6b7280;cursor:pointer;font-size:20px}
   .ced-mb{padding:18px 20px}
@@ -119,14 +122,15 @@ export async function initCedulaCard(host, w, STATE, onRender) {
         </div>`;
     } else {
       left = `
-        <div class="ced-ic">🪪</div>
+        <div class="ced-ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8.5" cy="11" r="2"/><path d="M5.5 16c.6-1.2 1.7-1.8 3-1.8s2.4.6 3 1.8"/><path d="M14 10h5M14 13.5h4"/></svg></div>
         <div class="ced-body">
           <div class="ced-title">Cédula de identidad <span class="ced-badge none">sin cargar</span></div>
           <div class="ced-sub">Adjunta una foto de la cédula. La recortamos y comprimimos para que quede legible y liviana.</div>
         </div>`;
     }
+    const UP = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
     const btn = canUpload
-      ? `<button class="ced-btn" data-ced="upload">${latest ? '↺ Reemplazar' : '⬆ Cargar cédula'}</button>`
+      ? `<button class="ced-btn" data-ced="upload">${UP} ${latest ? 'Cargar / reemplazar' : 'Cargar cédula'}</button>`
       : '';
 
     slot.innerHTML = `
@@ -175,7 +179,7 @@ function openUploadModal(w, STATE, onSaved) {
   ov.innerHTML = `
     <div class="ced-modal">
       <div class="ced-mh">
-        <div class="ic">🪪</div>
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><circle cx="8.5" cy="11" r="2"/><path d="M5.5 16c.6-1.2 1.7-1.8 3-1.8s2.4.6 3 1.8"/><path d="M14 10h5M14 13.5h4"/></svg></div>
         <div><b>Cargar cédula de identidad</b><small>${esc(w.full_name || '')} · ${esc((w.ced_kind || 'V') + '-' + w.id_number)}</small></div>
         <button class="x" data-ced-close>×</button>
       </div>
