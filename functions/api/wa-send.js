@@ -49,8 +49,8 @@ const DELAY_MS = 450;          // pausa entre mensajes (lotes chicos)
    (un ritmo metronomico tambien parece bot). Tanda de 4 con 2.5-4s entre
    mensajes = ~9-13s por invocacion (seguro para el limite de la Function)
    y ~1 mensaje cada 3.2s promedio. El "Message sending delay" de la
-   consola del proveedor es la SEGUNDA linea de defensa (configurarlo en
-   3000-5000ms). */
+   consola del proveedor es la SEGUNDA linea de defensa (v6.73: objetivo
+   15000ms, lo fija el guardian de abajo). */
 const BIG_THRESHOLD = 20;
 const BIG_BATCH_SIZE = 4;
 const bigDelay = () => 2500 + Math.floor(Math.random() * 1500);
@@ -65,11 +65,14 @@ const PREVIEW_LIMIT = 1000;
    defensa del estandar (pausa REAL entre salidas hacia WhatsApp). El
    action 'state' lo verifica en cada carga de Difusion y si esta por
    debajo del minimo lo corrige solo (auto-reparable: si alguien lo baja
-   en la consola, el portal lo restaura). Idempotente: una vez en 3500ms
+   en la consola, el portal lo restaura). Idempotente: una vez en 15000ms
    nunca vuelve a setear (setSettings reinicia la instancia, doc: aplica
-   en ~5 min). */
-const LINE_DELAY_MIN_MS = 3000;
-const LINE_DELAY_SET_MS = 3500;
+   en ~5 min).
+   v6.73: objetivo subido de 3500 a 15000ms por el blindaje anti-baneo
+   (BLINDAJE_ANTIBANEO.md): intervalos cortos entre chats distintos son
+   senal de automatizacion; 15s es la recomendacion de Green-API. */
+const LINE_DELAY_MIN_MS = 15000;
+const LINE_DELAY_SET_MS = 15000;
 
 /* ===================== v5.15: ESTADO DE LA LINEA EN CRISTIANO =====================
    El proveedor devuelve el estado de la linea como un codigo en ingles
