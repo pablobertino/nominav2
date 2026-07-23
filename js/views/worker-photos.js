@@ -28,6 +28,7 @@ import { $ } from '../core/dom.js';
 import { parseReport10, validateParsed, rosterReplace, rosterClear, rosterAddManual, rosterAgeDays, splitFullName } from '../reports/shared/roster.js';
 import { parseReporteAX, validateReporteAX, enterpriseRosterReplace, enterpriseRosterClear, storeRosterReplaceAX, axRosterPull, rosterCooldownMessage } from '../reports/shared/roster-ax.js';
 import { initBankRefCard } from './bank-ref-ficha.js';   // v6.66: referencia bancaria en la ficha
+import { initRifCard } from './rif-ficha.js';            // v6.74: RIF (SENIAT) en la ficha
 
 const THUMB = 300;           // miniatura cuadrada (grid)
 const FULL = 800;            // version grande cuadrada (visor / AX)
@@ -563,20 +564,20 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   // (ej. rol Supervisor Tiendas con solo view.*). La tienda (rol 'tienda')
   // tiene photo.manage + ficha.edit en la matriz: su flujo no cambia. Si la
   // consulta falla, se queda el comportamiento historico y decide el server.
-  let CANP = { photo: true, ficha: true, publish: isAdmin, dept: isAdmin, bankref: true };
+  let CANP = { photo: true, ficha: true, publish: isAdmin, dept: isAdmin, bankref: true, rif: true };
   try {
     const pr = await fetch('/api/my-perms', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null },
-        codes: ['photo.manage', 'ficha.edit', 'hcm.publish', 'dept.assign', 'bankref.upload'],
+        codes: ['photo.manage', 'ficha.edit', 'hcm.publish', 'dept.assign', 'bankref.upload', 'rif.upload'],
       }),
     }).then(r => r.json());
     if (pr && pr.ok) {
       const p = pr.perms || {};
       CANP = pr.super
-        ? { photo: true, ficha: true, publish: true, dept: true, bankref: true }
-        : { photo: !!p['photo.manage'], ficha: !!p['ficha.edit'], publish: !!p['hcm.publish'], dept: !!p['dept.assign'], bankref: !!p['bankref.upload'] };
+        ? { photo: true, ficha: true, publish: true, dept: true, bankref: true, rif: true }
+        : { photo: !!p['photo.manage'], ficha: !!p['ficha.edit'], publish: !!p['hcm.publish'], dept: !!p['dept.assign'], bankref: !!p['bankref.upload'], rif: !!p['rif.upload'] };
     }
   } catch (_) { /* sin red: UI historica, el server protege */ }
 
@@ -1608,9 +1609,9 @@ let CUR = null;
 function fichaEstadoChip(w) {
   if (isVigente(w)) {
     if (w.end_date) {
-      return `<span class="pill" style="background:#fdf3e7;color:#b45309;border:1px solid #f3ddc0;font-weight:800" title="Contrato con fin ${fmtDate(w.end_date)} — sigue vigente a la fecha">● Activo · fin ${fmtDate(w.end_date)}</span>`;
+      return `<span class="pill" style="background:#fdf3e7;color:#b45309;border:1px solid #f3ddc0;font-weight:800" title="Contrato con fin ${fmtDate(w.end_date)} — sigue vigente a la fecha">Activo · fin ${fmtDate(w.end_date)}</span>`;
     }
-    return `<span class="pill" style="background:#e9f7f1;color:#0e9f6e;border:1px solid #c4e8d9;font-weight:800" title="Vigente a la fecha${w.start_date ? ' · ingresó el ' + fmtDate(w.start_date) : ''}">● Activo</span>`;
+    return `<span class="pill" style="background:#e9f7f1;color:#0e9f6e;border:1px solid #c4e8d9;font-weight:800" title="Vigente a la fecha${w.start_date ? ' · ingresó el ' + fmtDate(w.start_date) : ''}">Activo</span>`;
   }
   if (w.now_at) {
     return `<span class="pill" style="background:#e8effc;color:#1d4ed8;border:1px solid #c7d8f7;font-weight:800" title="Egresó de ${esc(STATE.cc)} el ${fmtDate(w.end_date)} · activo en ${esc(w.now_at)}${w.now_since ? ' desde el ' + fmtDate(w.now_since) : ''}">Traslado · ahora en ${esc(w.now_at)}</span>`;
@@ -1702,7 +1703,20 @@ function openFicha(ced) {
 
   paintFichaValues(host, w);
   wireFicha(host, w);
-  initBankRefCard(host, w, STATE);   // v6.66: tarjeta de referencia bancaria (solo Datos Bancarios)
+  // v6.74: seccion DOCUMENTOS. Ambas tarjetas rinden en su slot y avisan por
+  // onRender; si las dos quedan vacias (sin permiso y sin documento), se
+  // oculta la seccion entera para no dejar un encabezado suelto.
+  const syncDocsSection = () => {
+    const bs = host.querySelector('#bankRefSlot');
+    const rs = host.querySelector('#rifSlot');
+    const empty = (!bs || !bs.innerHTML.trim()) && (!rs || !rs.innerHTML.trim());
+    const sec = host.querySelector('#ffDocsSec');
+    const grid = host.querySelector('#ffDocsGrid');
+    if (sec) sec.style.display = empty ? 'none' : '';
+    if (grid) grid.style.display = empty ? 'none' : '';
+  };
+  initBankRefCard(host, w, STATE, syncDocsSection);   // v6.66: referencia bancaria (ahora en Documentos)
+  initRifCard(host, w, STATE, syncDocsSection);        // v6.74: RIF (SENIAT)
   window.scrollTo(0, 0);
 }
 
@@ -1784,7 +1798,19 @@ function fichaHtml(w, c) {
         <div class="ff-grid">
           <div class="ff-row full"><span class="ff-lbl">Cuenta bancaria <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="account_number"></span></div>
           <div class="ff-field full"><label>Número de cuenta <span class="opt">(20 dígitos)</span></label><input id="e_account" type="text" inputmode="numeric" placeholder="01340000000000000000"><div class="ff-hint" id="h_account"></div></div>
+          <!-- v6.74: la leyenda de "no terceros" se queda aqui; la carga de la
+               referencia se mudo a la seccion Documentos (abajo). -->
+          <div class="ff-row full" style="display:block;border-bottom:none;padding-bottom:2px"><p style="margin:0;color:#6b7280;font-size:12.5px;line-height:1.5">Solo cuentas del titular — <b style="color:#374151">no se aceptan cuentas de terceros</b>.</p></div>
+        </div>
+
+        <!-- v6.74: seccion general DOCUMENTOS (escalable): agrupa la Referencia
+             Bancaria y el RIF (SENIAT); a futuro, mas tipos. Cada tarjeta se
+             auto-oculta si no aplica; si ambas quedan vacias se oculta la
+             seccion entera (coordinador en wireFicha/render). -->
+        <div class="ff-sec" id="ffDocsSec">Documentos</div>
+        <div class="ff-grid" id="ffDocsGrid">
           <div class="ff-row full" id="bankRefSlot"></div>
+          <div class="ff-row full" id="rifSlot"></div>
         </div>
 
         <div class="ff-sec">Contacto</div>

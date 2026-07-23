@@ -261,15 +261,16 @@ function ensureStyles() {
 const UP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
 
 /* ===================== TARJETA EN LA FICHA ===================== */
-export async function initBankRefCard(host, w, STATE) {
+export async function initBankRefCard(host, w, STATE, onRender) {
   const slot = host.querySelector('#bankRefSlot');
   if (!slot) return;
   ensureStyles();
   const canUpload = !!(STATE.can && STATE.can.bankref);
+  const fire = () => { try { if (typeof onRender === 'function') onRender(); } catch (_) { /* noop */ } };
 
   const render = (refs) => {
     const latest = (refs || []).find(r => r.estado !== 'anulada') || null;
-    if (!canUpload && !latest) { slot.innerHTML = ''; return; }
+    if (!canUpload && !latest) { slot.innerHTML = ''; fire(); return; }
 
     let chip = '';
     if (latest) {
@@ -291,15 +292,14 @@ export async function initBankRefCard(host, w, STATE) {
     slot.innerHTML = `
       <div class="brf-card">
         <div class="brf-top">${chip}<span class="sp"></span>${btn}</div>
-        <div class="brf-help">Solo cuentas del titular — <b>no se aceptan cuentas de terceros</b>.
-          <a class="brf-lnk" href="/guias/referencia-bancaria.html" target="_blank" rel="noopener">¿Cómo obtener la referencia en tu banco? ↗</a>
-        </div>
+        <div class="brf-help"><a class="brf-lnk" href="/guias/referencia-bancaria.html" target="_blank" rel="noopener">¿Cómo obtener la referencia en tu banco? ↗</a></div>
       </div>`;
 
     const up = slot.querySelector('[data-brf="upload"]');
     if (up) up.addEventListener('click', () => openUploadModal(w, STATE, () => refresh()));
     const vp = slot.querySelector('[data-brf="view"]');
     if (vp) vp.addEventListener('click', () => viewPdf(STATE, vp.dataset.path));
+    fire();
   };
 
   const refresh = async () => {
