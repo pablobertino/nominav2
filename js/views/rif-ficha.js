@@ -163,6 +163,8 @@ function ensureStyles() {
   .rifd-modal{background:#fff;border-radius:16px;width:560px;max-width:100%;max-height:92vh;overflow:auto;box-shadow:0 24px 70px rgba(15,23,42,.32);font-size:14px;color:#111827}
   .rifd-mh{display:flex;align-items:center;gap:11px;padding:17px 20px;border-bottom:1px solid #eceff3}
   .rifd-mh .ic{width:34px;height:34px;border-radius:9px;background:#f5f3ff;color:#7c3aed;display:flex;align-items:center;justify-content:center;flex:none}
+  .rifd-mh .ic svg{width:18px;height:18px}
+  .rifd-chip svg{width:14px;height:14px;flex:none;vertical-align:-2px}
   .rifd-mh b{font-size:15px}
   .rifd-mh small{display:block;color:#64748b;font-size:12px}
   .rifd-mh .x{margin-left:auto;border:0;background:transparent;color:#64748b;cursor:pointer;padding:4px;border-radius:7px;font-size:20px;line-height:1}
@@ -224,7 +226,7 @@ export async function initRifCard(host, w, STATE, onRender) {
       const nWarn = (latest.validaciones && latest.validaciones.warnings || []).length;
       const warnTxt = nWarn ? ` · <span style="color:#d97706;font-weight:700">⚠ ${nWarn} advertencia${nWarn === 1 ? '' : 's'}</span>` : '';
       const vencTxt = venc ? ` · vence ${esc(venc)}` : '';
-      chip = `<span class="rifd-chip">${RIF_SVG} RIF ${esc(dat.rif || '')}${vencTxt} · <span class="rifd-lnk" data-rif="view" data-path="${esc(latest.storage_path || '')}">Ver PDF</span></span> ${badge}${warnTxt}`;
+      chip = `<span class="rifd-chip">📄 RIF ${esc(dat.rif || '')}${vencTxt} · <span class="rifd-lnk" data-rif="view" data-path="${esc(latest.storage_path || '')}">Ver PDF</span></span> ${badge}${warnTxt}`;
     } else {
       chip = '<span class="rifd-none">Aún no hay un RIF cargado. Validamos cédula, dígito verificador y vencimiento.</span>';
     }
@@ -365,14 +367,19 @@ function openUploadModal(w, STATE, onSaved) {
       verdict.className = 'rifd-verdict info';
       verdict.innerHTML = 'No se pudo leer el RIF y la cédula del PDF. Asegúrate de subir el <b>comprobante original</b> del SENIAT (con texto seleccionable).';
       saveBtn.disabled = true; note.textContent = '';
+    } else if (!ev.cedOk) {
+      // Cedula = llave del titular. Si NO coincide, NO se puede cargar (a
+      // diferencia de la referencia bancaria, aqui es rechazo duro).
+      const ced = fields.cedula_rif ? fmtCed(fields.cedula_rif) : '—';
+      verdict.className = 'rifd-verdict err';
+      verdict.innerHTML = `<b>No se puede cargar:</b> la cédula del RIF (${esc(ced)}) no coincide con la del trabajador (${fmtCed(digits(w.id_number))}). Solo se acepta el RIF del titular.`;
+      saveBtn.disabled = true; note.textContent = '';
     } else {
-      const err = ev.warnings.find(x => x.level === 'err');
-      const warn = ev.warnings.find(x => x.level === 'warn');
-      if (err) { verdict.className = 'rifd-verdict err'; verdict.innerHTML = `<b>Advertencia fuerte:</b> ${esc(err.text)}`; }
-      else if (warn) { verdict.className = 'rifd-verdict warn'; verdict.innerHTML = `<b>Advertencia:</b> ${esc(warn.text)} <b>Persiste hasta corregir o cambiar el PDF.</b>`; }
+      const warn = ev.warnings.find(x => x.level === 'warn');   // digito o vencimiento
+      if (warn) { verdict.className = 'rifd-verdict warn'; verdict.innerHTML = `<b>Advertencia:</b> ${esc(warn.text)} <b>Persiste hasta corregir o cambiar el PDF.</b>`; }
       else { verdict.className = 'rifd-verdict ok'; verdict.innerHTML = '<b>Todo validado.</b> Cédula del titular, dígito verificador correcto y RIF vigente.'; }
       saveBtn.disabled = false;
-      saveBtn.textContent = (err || warn) ? 'Guardar con advertencia' : 'Guardar RIF';
+      saveBtn.textContent = warn ? 'Guardar con advertencia' : 'Guardar RIF';
       note.innerHTML = 'El RIF queda como respaldo en la ficha. La cédula <b>no se toca</b>.';
     }
 
