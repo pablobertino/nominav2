@@ -49,14 +49,14 @@ function ensureStyles() {
   .ced-badge.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
   .ced-badge.none{background:#f3f4f6;border:1px solid #e5e7eb;color:#6b7280}
   .ced-none{font-size:12.5px;color:#64748b}
-  .ced-lnk{color:#7c3aed;cursor:pointer;font-weight:650;text-decoration:none;font-size:12.5px}
+  .ced-lnk{color:#7c3aed;cursor:pointer;font-weight:650;text-decoration:none}
   .ced-lnk:hover{text-decoration:underline}
   .ced-del{color:#dc2626;font-weight:650;cursor:pointer;font-size:12.5px;margin-right:8px}
   .ced-del:hover{text-decoration:underline}
   .ced-btn{border:1px solid #7c3aed;background:#fff;color:#7c3aed;border-radius:9px;padding:7px 13px;font-size:12.5px;font-weight:700;cursor:pointer;display:inline-flex;gap:7px;align-items:center}
   .ced-btn:hover{background:#f5f3ff}
   .ced-btn svg{width:14px;height:14px}
-  .ced-help{margin-top:10px;padding-top:10px;border-top:1px dashed #e5e7eb;font-size:12.5px}
+  .ced-help{margin-top:10px;padding-top:10px;border-top:1px dashed #e5e7eb;font-size:12px}
 
   .ced-ov{position:fixed;inset:0;background:rgba(15,23,42,.45);display:flex;align-items:center;justify-content:center;padding:20px;z-index:9000}
   .ced-modal{background:#fff;border-radius:16px;width:620px;max-width:100%;max-height:94vh;overflow:auto;box-shadow:0 24px 70px rgba(15,23,42,.32);color:#111827}
