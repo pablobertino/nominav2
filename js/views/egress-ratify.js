@@ -72,10 +72,10 @@ function ensureStyles() {
   .egr-acts{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
   .egr-b{font:inherit;font-size:12px;padding:6px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);cursor:pointer;white-space:nowrap}
   .egr-b:hover{background:var(--bg-soft,#f1f5f9)}
-  .egr-b-rat{background:#16a34a;color:#fff;border-color:#16a34a}
-  .egr-b-rat:hover{background:#15803d}
-  .egr-b-rec{background:#7c3aed;color:#fff;border-color:#7c3aed}
-  .egr-b-rec:hover{background:#6d28d9}
+  .egr-b-rat{background:#f0fdf4;color:#166534;border-color:#bbf7d0;font-weight:650}
+  .egr-b-rat:hover{background:#dcfce7;border-color:#86efac}
+  .egr-b-rec{background:#f5f3ff;color:#6d28d9;border-color:#ddd6fe;font-weight:650}
+  .egr-b-rec:hover{background:#ede9fe;border-color:#c4b5fd}
   .egr-empty{padding:36px 14px;text-align:center;color:var(--muted)}
   .egr-ov{position:fixed;inset:0;background:rgba(15,23,42,.42);display:flex;align-items:center;justify-content:center;z-index:80;padding:16px}
   .egr-modal{background:var(--card,#fff);border-radius:14px;max-width:440px;width:100%;padding:22px;box-shadow:0 18px 48px rgba(15,23,42,.24)}
