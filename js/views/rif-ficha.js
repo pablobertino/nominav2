@@ -145,13 +145,19 @@ function ensureStyles() {
   st.textContent = `
   #rifSlot{display:block;width:100%}
   .rifd-card{border:1px solid #e5e7eb;border-radius:12px;background:#fbfcfe;padding:13px 15px;margin-top:8px;width:100%}
-  .rifd-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .rifd-top{display:flex;align-items:center;gap:13px;flex-wrap:wrap}
   .rifd-top .sp{flex:1}
+  .rifd-ic{width:40px;height:40px;border-radius:10px;background:#f5f3ff;display:flex;align-items:center;justify-content:center;font-size:19px;flex:none}
+  .rifd-body{flex:1;min-width:0}
+  .rifd-title{font-size:14px;font-weight:750;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .rifd-sub{color:#6b7280;font-size:12.5px;margin-top:2px;line-height:1.45}
+  .rifd-sub .mono{font-family:ui-monospace,Consolas,monospace}
   .rifd-chip{display:inline-flex;align-items:center;gap:7px;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;font-size:11.5px;font-weight:600;border-radius:999px;padding:4px 11px}
   .rifd-badge{font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;border-radius:999px;padding:2px 8px}
   .rifd-badge.pend{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
   .rifd-badge.pub{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
   .rifd-badge.venc{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
+  .rifd-badge.none{background:#f3f4f6;border:1px solid #e5e7eb;color:#6b7280}
   .rifd-help{margin-top:10px;padding-top:10px;border-top:1px dashed #e5e7eb;font-size:12px}
   .rifd-lnk{color:#7c3aed;cursor:pointer;font-weight:650;text-decoration:none}
   .rifd-lnk:hover{text-decoration:underline}
@@ -215,20 +221,21 @@ export async function initRifCard(host, w, STATE, onRender) {
     const latest = (docs || []).find(d => d.estado !== 'anulada') || null;
     if (!canUpload && !latest) { slot.innerHTML = ''; fire(); return; }
 
-    let chip = '';
+    let badge, sub;
     if (latest) {
       const dat = latest.datos || {};
       const venc = dat.fecha_vencimiento || '';
       const vencido = isVencido(venc);
-      const badge = vencido
+      badge = vencido
         ? '<span class="rifd-badge venc">vencido</span>'
         : (latest.estado === 'publicada' ? '<span class="rifd-badge pub">validado</span>' : '<span class="rifd-badge pend">pendiente</span>');
       const nWarn = (latest.validaciones && latest.validaciones.warnings || []).length;
       const warnTxt = nWarn ? ` · <span style="color:#d97706;font-weight:700">⚠ ${nWarn} advertencia${nWarn === 1 ? '' : 's'}</span>` : '';
       const vencTxt = venc ? ` · vence ${esc(venc)}` : '';
-      chip = `<span class="rifd-chip">📄 RIF ${esc(dat.rif || '')}${vencTxt} · <span class="rifd-lnk" data-rif="view" data-path="${esc(latest.storage_path || '')}">Ver PDF</span></span> ${badge}${warnTxt}`;
+      sub = `RIF <span class="mono">${esc(dat.rif || '')}</span>${vencTxt} · <span class="rifd-lnk" data-rif="view" data-path="${esc(latest.storage_path || '')}">Ver PDF</span>${warnTxt}`;
     } else {
-      chip = '<span class="rifd-none">Aún no hay un RIF cargado. Validamos cédula, dígito verificador y vencimiento.</span>';
+      badge = '<span class="rifd-badge none">sin cargar</span>';
+      sub = 'Aún no hay un RIF cargado. Validamos cédula, dígito verificador y vencimiento.';
     }
 
     const btn = canUpload
@@ -237,7 +244,14 @@ export async function initRifCard(host, w, STATE, onRender) {
 
     slot.innerHTML = `
       <div class="rifd-card">
-        <div class="rifd-top">${chip}<span class="sp"></span>${btn}</div>
+        <div class="rifd-top">
+          <div class="rifd-ic">📄</div>
+          <div class="rifd-body">
+            <div class="rifd-title">RIF · SENIAT ${badge}</div>
+            <div class="rifd-sub">${sub}</div>
+          </div>
+          <span class="sp"></span>${btn}
+        </div>
         <div class="rifd-help"><a class="rifd-lnk" href="/guias/rif-seniat.html" target="_blank" rel="noopener">¿Cómo descargar el RIF en el portal del SENIAT? ↗</a></div>
       </div>`;
 

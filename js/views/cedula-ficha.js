@@ -228,11 +228,18 @@ function openUploadModal(w, STATE, onSaved) {
     if (!file.type || !/^image\//.test(file.type)) { body.innerHTML = `<div class="ced-warn">Ese archivo no es una imagen. Subí una foto de la cédula (JPG o PNG).</div>`; return; }
     if (file.size > 15 * 1024 * 1024) { body.innerHTML = `<div class="ced-warn">La imagen supera 15 MB. Reducila un poco y volvé a intentar.</div>`; return; }
     body.innerHTML = `<div style="text-align:center;padding:30px;color:#64748b"><span class="ced-spin"></span> Cargando la imagen…</div>`;
-    const url = URL.createObjectURL(file);
-    const im = new Image();
-    im.onload = () => { URL.revokeObjectURL(url); img = im; rot = 0; stepCrop(); };
-    im.onerror = () => { URL.revokeObjectURL(url); body.innerHTML = `<div class="ced-warn">No se pudo abrir la imagen.</div>`; };
-    im.src = url;
+    // La CSP del portal es default-src 'self': un blob: (createObjectURL) se
+    // bloquea al asignarlo a <img>. Usamos FileReader -> data: (mismo patron
+    // probado en la foto carnet), que sí está permitido.
+    const fr = new FileReader();
+    fr.onload = () => {
+      const im = new Image();
+      im.onload = () => { img = im; rot = 0; stepCrop(); };
+      im.onerror = () => { body.innerHTML = `<div class="ced-warn">No se pudo abrir la imagen. Si es una foto de iPhone (formato HEIC), guardala o compartila como <b>JPG</b> y volvé a intentar.</div>`; };
+      im.src = fr.result;
+    };
+    fr.onerror = () => { body.innerHTML = `<div class="ced-warn">No se pudo leer el archivo.</div>`; };
+    fr.readAsDataURL(file);
   }
 
   function rotatedSize() {

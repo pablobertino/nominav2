@@ -201,12 +201,17 @@ function ensureStyles() {
   st.textContent = `
   #bankRefSlot{display:block;width:100%}
   .brf-card{border:1px solid #e5e7eb;border-radius:12px;background:#fbfcfe;padding:13px 15px;margin-top:8px;width:100%}
-  .brf-top{display:flex;align-items:center;gap:12px;flex-wrap:wrap}
+  .brf-top{display:flex;align-items:center;gap:13px;flex-wrap:wrap}
   .brf-top .sp{flex:1}
+  .brf-ic{width:40px;height:40px;border-radius:10px;background:#eff6ff;display:flex;align-items:center;justify-content:center;font-size:19px;flex:none}
+  .brf-body{flex:1;min-width:0}
+  .brf-title{font-size:14px;font-weight:750;display:flex;align-items:center;gap:9px;flex-wrap:wrap}
+  .brf-sub{color:#6b7280;font-size:12.5px;margin-top:2px;line-height:1.45}
   .brf-chip{display:inline-flex;align-items:center;gap:7px;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;font-size:11.5px;font-weight:600;border-radius:999px;padding:4px 11px}
   .brf-badge{font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;border-radius:999px;padding:2px 8px}
   .brf-badge.pend{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
   .brf-badge.pub{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
+  .brf-badge.none{background:#f3f4f6;border:1px solid #e5e7eb;color:#6b7280}
   .brf-help{margin-top:10px;padding-top:10px;border-top:1px dashed #e5e7eb;font-size:12px;color:#64748b;line-height:1.5}
   .brf-help b{color:#374151}
   .brf-lnk{color:#7c3aed;cursor:pointer;font-weight:650;text-decoration:none}
@@ -272,17 +277,18 @@ export async function initBankRefCard(host, w, STATE, onRender) {
     const latest = (refs || []).find(r => r.estado !== 'anulada') || null;
     if (!canUpload && !latest) { slot.innerHTML = ''; fire(); return; }
 
-    let chip = '';
+    let badge, sub;
     if (latest) {
       const fecha = latest.fecha_emision || (latest.created_at ? String(latest.created_at).slice(0, 10) : '');
-      const badge = latest.estado === 'publicada'
+      badge = latest.estado === 'publicada'
         ? '<span class="brf-badge pub">publicada</span>'
         : '<span class="brf-badge pend">pendiente de publicar</span>';
       const nWarn = (latest.validaciones && latest.validaciones.warnings || []).length;
       const warnTxt = nWarn ? ` · <span style="color:#d97706;font-weight:700">⚠ ${nWarn} advertencia${nWarn === 1 ? '' : 's'}</span>` : '';
-      chip = `<span class="brf-chip">📎 referencia · ${esc(fecha)} · <span class="brf-lnk" data-brf="view" data-path="${esc(latest.storage_path || '')}">Ver PDF</span></span> ${badge}${warnTxt}`;
+      sub = `Cargada el ${esc(fecha)} · <span class="brf-lnk" data-brf="view" data-path="${esc(latest.storage_path || '')}">Ver PDF</span>${warnTxt}`;
     } else {
-      chip = '<span class="brf-none">Aún no hay una referencia bancaria cargada.</span>';
+      badge = '<span class="brf-badge none">sin cargar</span>';
+      sub = 'Aún no hay una referencia bancaria cargada.';
     }
 
     const btn = canUpload
@@ -291,7 +297,14 @@ export async function initBankRefCard(host, w, STATE, onRender) {
 
     slot.innerHTML = `
       <div class="brf-card">
-        <div class="brf-top">${chip}<span class="sp"></span>${btn}</div>
+        <div class="brf-top">
+          <div class="brf-ic">🏦</div>
+          <div class="brf-body">
+            <div class="brf-title">Referencia bancaria ${badge}</div>
+            <div class="brf-sub">${sub}</div>
+          </div>
+          <span class="sp"></span>${btn}
+        </div>
         <div class="brf-help"><a class="brf-lnk" href="/guias/referencia-bancaria.html" target="_blank" rel="noopener">¿Cómo obtener la referencia en tu banco? ↗</a></div>
       </div>`;
 
