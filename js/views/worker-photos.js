@@ -29,6 +29,7 @@ import { parseReport10, validateParsed, rosterReplace, rosterClear, rosterAddMan
 import { parseReporteAX, validateReporteAX, enterpriseRosterReplace, enterpriseRosterClear, storeRosterReplaceAX, axRosterPull, rosterCooldownMessage } from '../reports/shared/roster-ax.js';
 import { initBankRefCard } from './bank-ref-ficha.js';   // v6.66: referencia bancaria en la ficha
 import { initRifCard } from './rif-ficha.js';            // v6.74: RIF (SENIAT) en la ficha
+import { initCedulaCard } from './cedula-ficha.js';      // v6.77: cédula (imagen) en la ficha
 
 const THUMB = 300;           // miniatura cuadrada (grid)
 const FULL = 800;            // version grande cuadrada (visor / AX)
@@ -564,20 +565,20 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   // (ej. rol Supervisor Tiendas con solo view.*). La tienda (rol 'tienda')
   // tiene photo.manage + ficha.edit en la matriz: su flujo no cambia. Si la
   // consulta falla, se queda el comportamiento historico y decide el server.
-  let CANP = { photo: true, ficha: true, publish: isAdmin, dept: isAdmin, bankref: true, rif: true };
+  let CANP = { photo: true, ficha: true, publish: isAdmin, dept: isAdmin, bankref: true, rif: true, cedula: true };
   try {
     const pr = await fetch('/api/my-perms', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null },
-        codes: ['photo.manage', 'ficha.edit', 'hcm.publish', 'dept.assign', 'bankref.upload', 'rif.upload'],
+        codes: ['photo.manage', 'ficha.edit', 'hcm.publish', 'dept.assign', 'bankref.upload', 'rif.upload', 'cedula.upload'],
       }),
     }).then(r => r.json());
     if (pr && pr.ok) {
       const p = pr.perms || {};
       CANP = pr.super
-        ? { photo: true, ficha: true, publish: true, dept: true, bankref: true, rif: true }
-        : { photo: !!p['photo.manage'], ficha: !!p['ficha.edit'], publish: !!p['hcm.publish'], dept: !!p['dept.assign'], bankref: !!p['bankref.upload'], rif: !!p['rif.upload'] };
+        ? { photo: true, ficha: true, publish: true, dept: true, bankref: true, rif: true, cedula: true }
+        : { photo: !!p['photo.manage'], ficha: !!p['ficha.edit'], publish: !!p['hcm.publish'], dept: !!p['dept.assign'], bankref: !!p['bankref.upload'], rif: !!p['rif.upload'], cedula: !!p['cedula.upload'] };
     }
   } catch (_) { /* sin red: UI historica, el server protege */ }
 
@@ -1707,9 +1708,8 @@ function openFicha(ced) {
   // onRender; si las dos quedan vacias (sin permiso y sin documento), se
   // oculta la seccion entera para no dejar un encabezado suelto.
   const syncDocsSection = () => {
-    const bs = host.querySelector('#bankRefSlot');
-    const rs = host.querySelector('#rifSlot');
-    const empty = (!bs || !bs.innerHTML.trim()) && (!rs || !rs.innerHTML.trim());
+    const slots = ['#bankRefSlot', '#rifSlot', '#cedulaSlot'].map(s => host.querySelector(s));
+    const empty = slots.every(el => !el || !el.innerHTML.trim());
     const sec = host.querySelector('#ffDocsSec');
     const grid = host.querySelector('#ffDocsGrid');
     if (sec) sec.style.display = empty ? 'none' : '';
@@ -1717,6 +1717,7 @@ function openFicha(ced) {
   };
   initBankRefCard(host, w, STATE, syncDocsSection);   // v6.66: referencia bancaria (ahora en Documentos)
   initRifCard(host, w, STATE, syncDocsSection);        // v6.74: RIF (SENIAT)
+  initCedulaCard(host, w, STATE, syncDocsSection);     // v6.77: cédula (imagen)
   window.scrollTo(0, 0);
 }
 
@@ -1829,6 +1830,7 @@ function fichaHtml(w, c) {
         <div class="ff-grid" id="ffDocsGrid">
           <div class="ff-row full" id="bankRefSlot"></div>
           <div class="ff-row full" id="rifSlot"></div>
+          <div class="ff-row full" id="cedulaSlot"></div>
         </div>
       </div>
     </div>

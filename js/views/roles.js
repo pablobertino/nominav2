@@ -98,7 +98,7 @@ const MENU_CATALOG = [
     // v5.03: los botones de emitir reportes tambien viven en la vista Personal
     // (ficha del trabajador). Es el MISMO code que en Empresas y Mi empresa: la
     // piel sincroniza por code (un solo estado en ST.work -> una sola fila en BD).
-    { id: 'fotos', lbl: 'Personal', view: 'view.fotos', acts: ['photo.manage', 'ficha.edit', 'dept.assign', 'bankref.upload', 'rif.upload', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion'] },
+    { id: 'fotos', lbl: 'Personal', view: 'view.fotos', acts: ['photo.manage', 'ficha.edit', 'dept.assign', 'bankref.upload', 'rif.upload', 'cedula.upload', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion'] },
     { id: 'buscar', lbl: 'Buscar', view: 'view.buscar', acts: [] },
     { id: 'datosincompletos', lbl: 'Datos incompletos', view: 'view.datosincompletos', acts: [] },
     // v5.19: Doble empleo. Solo consulta (los casos se corrigen en el sistema),

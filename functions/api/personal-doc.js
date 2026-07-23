@@ -27,10 +27,24 @@ const MAX_BYTES = 10 * 1024 * 1024;
 // (list/sign) se permite desde la ficha con view.fotos.
 const WRITE_CODE = {
   rif: ['rif.upload'],
+  cedula: ['cedula.upload'],
 };
 const READ_CODE = ['view.fotos'];
 
 const DOC_TYPES = new Set(Object.keys(WRITE_CODE));
+
+// Formatos permitidos y extension por tipo de documento. El RIF es PDF; la
+// cedula es imagen (se recorta/comprime en el navegador y llega como JPG).
+const TYPE_MIME = {
+  rif:    { ext: { 'application/pdf': 'pdf' }, def: 'application/pdf' },
+  cedula: { ext: { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }, def: 'image/jpeg' },
+};
+function resolveMime(docType, wanted) {
+  const t = TYPE_MIME[docType] || TYPE_MIME.rif;
+  const m = String(wanted || '').toLowerCase();
+  if (t.ext[m]) return { mime: m, ext: t.ext[m] };
+  return { mime: t.def, ext: t.ext[t.def] };
+}
 
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
@@ -151,8 +165,9 @@ async function saveDoc(env, actor, body) {
   if (!bytes.length) return json({ ok: false, error: 'El PDF llego vacio.' }, 400);
   if (bytes.length > MAX_BYTES) return json({ ok: false, error: 'El PDF supera 10 MB.' }, 400);
 
-  const storagePath = `${docType}/${idNumber}/${Date.now()}.pdf`;
-  await storageUpload(env, storagePath, bytes, 'application/pdf');
+  const { mime, ext } = resolveMime(docType, body.mime);
+  const storagePath = `${docType}/${idNumber}/${Date.now()}.${ext}`;
+  await storageUpload(env, storagePath, bytes, mime);
 
   const row = {
     id_number: idNumber,
