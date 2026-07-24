@@ -600,7 +600,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.97</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.98</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1110,8 +1110,33 @@ async function viewTiendas(user) {
   // Conjunto seleccionado. Si ya hay filtros guardados (volviendo de una
   // empresa), se restauran; si no, arranca en los activos (o todos).
   const selStatus = TIENDAS_FILTERS
-    ? new Set(TIENDAS_FILTERS.statuses.filter(s => statuses.includes(s)))
+    ? new Set((TIENDAS_FILTERS.statuses || []).filter(s => statuses.includes(s)))
     : new Set(ACTIVE_STATES.length ? ACTIVE_STATES : statuses);
+
+  // v6.98: Tipo / Zona / Subzona / Concepto pasan de selección única a
+  // multi-selección (combo con checks), igual que Estados. Convención: set
+  // vacío = SIN filtro (todas). AND entre dimensiones, OR dentro de cada una.
+  const selType = new Set(((TIENDAS_FILTERS && TIENDAS_FILTERS.types) || []).filter(t => types.includes(t)));
+  const selZone = new Set(((TIENDAS_FILTERS && TIENDAS_FILTERS.zones) || []).map(String).filter(z => CATALOG.zones.some(x => String(x.id) === z)));
+  const selSub = new Set(((TIENDAS_FILTERS && TIENDAS_FILTERS.subs) || []).map(String));
+  const selConcept = new Set(((TIENDAS_FILTERS && TIENDAS_FILTERS.concepts) || []).filter(c => concepts.includes(c)));
+  const typeOpts = types.map(t => ({ value: t, label: t, count: CATALOG.companies.filter(c => c.type === t).length }));
+  const zoneOpts = CATALOG.zones.map(z => ({ value: String(z.id), label: z.name, count: CATALOG.companies.filter(c => String(c.zoneId) === String(z.id)).length }));
+  const conceptOpts = concepts.map(nm => ({ value: nm, label: nm, count: CATALOG.companies.filter(c => c.concept === nm).length }));
+  // Subzonas dependen de las Zonas elegidas: si no hay zona, se muestran todas.
+  const subOpts = () => (selZone.size ? CATALOG.subzones.filter(s => selZone.has(String(s.zone_id))) : CATALOG.subzones)
+    .map(s => ({ value: String(s.id), label: s.name, count: CATALOG.companies.filter(c => String(c.subzoneId) === String(s.id)).length }));
+  function msOptsHtml(options, sel) {
+    return options.map(o => `<label class="ms-opt"><input type="checkbox" value="${o.value}" ${sel.has(String(o.value)) ? 'checked' : ''}><span>${o.label}</span><span class="ms-count">${o.count}</span></label>`).join('');
+  }
+  const msHtml = (id, allLabel, options, sel) => `<div class="ms-wrap" id="${id}Wrap">
+        <button type="button" class="ms-toggle" id="${id}Btn"><span class="ms-label" id="${id}Label">${allLabel}</span>${I.chevron.replace('<svg', '<svg class="ms-caret"')}</button>
+        <div class="ms-menu" id="${id}Menu" hidden>
+          <div class="ms-quick"><button type="button" data-q="all">Todos</button><button type="button" data-q="none">Ninguno</button></div>
+          <div class="ms-sep"></div>
+          <div class="ms-opts" id="${id}Opts">${msOptsHtml(options, sel)}</div>
+        </div>
+      </div>`;
 
   $('#pnlMain').innerHTML = `
     <div class="pnl-head">
@@ -1131,7 +1156,7 @@ async function viewTiendas(user) {
     ${empStatsHtml(CATALOG.companies)}
     <div class="pnl-filters">
       <div class="search">${I.search}<input id="fName" type="text" placeholder="Buscar nombre, c\u00f3digo o DataArea\u2026"></div>
-      <select id="fType"><option value="ALL" selected>Todos los tipos</option>${types.map(t => `<option>${t}</option>`).join('')}</select>
+      ${msHtml('fType', 'Todos los tipos', typeOpts, selType)}
       <div class="ms-wrap" id="fStatusWrap">
         <button type="button" class="ms-toggle" id="fStatusBtn">
           <span class="ms-label" id="fStatusLabel">Estados</span>
@@ -1147,9 +1172,9 @@ async function viewTiendas(user) {
           ${statuses.map(s => `<label class="ms-opt"><input type="checkbox" value="${s}" ${selStatus.has(s) ? 'checked' : ''}><span>${/nulo|vac/i.test(s) ? 'Sin estado' : s}</span><span class="ms-count">${CATALOG.companies.filter(c => c.status === s).length}</span></label>`).join('')}
         </div>
       </div>
-      <select id="fZone"><option value="ALL">Todas las zonas</option>${CATALOG.zones.map(z => `<option value="${z.id}">${z.name}</option>`).join('')}</select>
-      <select id="fSub"><option value="ALL">Todas las subzonas</option></select>
-      <select id="fConcept"><option value="ALL">Todos los conceptos</option>${concepts.map(c => `<option>${c}</option>`).join('')}</select>
+      ${msHtml('fZone', 'Todas las zonas', zoneOpts, selZone)}
+      ${msHtml('fSub', 'Todas las subzonas', subOpts(), selSub)}
+      ${msHtml('fConcept', 'Todos los conceptos', conceptOpts, selConcept)}
       <select id="fSort">
         <option value="code">Orden: Código</option>
         <option value="staff_desc">Personal: más primero</option>
@@ -1171,27 +1196,13 @@ async function viewTiendas(user) {
       <span class="ico-no">${I.circle} sin usuario</span>
     </div>`;
 
-  const fName = $('#fName'), fType = $('#fType'),
-        fZone = $('#fZone'), fSub = $('#fSub'), fConcept = $('#fConcept'), fSort = $('#fSort');
+  const fName = $('#fName'), fSort = $('#fSort');
 
-  // Restaurar los valores de los selects/buscador desde los filtros guardados
-  // (volviendo de una empresa). Las subzonas se rellenan segun la zona elegida.
+  // Restaurar buscador y orden desde los filtros guardados (volviendo de una
+  // empresa). Los multi-selects (Tipo/Estado/Zona/Subzona/Concepto) ya se
+  // restauraron en sus Sets al declararlos.
   if (TIENDAS_FILTERS) {
     fName.value = TIENDAS_FILTERS.name || '';
-    if ([...fType.options].some(o => o.value === TIENDAS_FILTERS.type)) fType.value = TIENDAS_FILTERS.type;
-    if ([...fZone.options].some(o => o.value === TIENDAS_FILTERS.zone)) fZone.value = TIENDAS_FILTERS.zone;
-    // v5.22: el combo de Subzona nace con UNA sola opcion ("Todas"); sus opciones
-    // las llena fillSubs() en funcion de la zona elegida. Al volver de Personal se
-    // restauraba la zona pero NUNCA se repoblaba el combo, asi que el valor guardado
-    // (ej. El Recreo) no encontraba su <option> y el combo quedaba vacio.
-    // Hay que poblar PRIMERO y asignar DESPUES.
-    fillSubs();
-    if (TIENDAS_FILTERS.sub && [...fSub.options].some(o => o.value === TIENDAS_FILTERS.sub)) {
-      fSub.value = TIENDAS_FILTERS.sub;
-    }
-    if (TIENDAS_FILTERS.concept && [...fConcept.options].some(o => o.value === TIENDAS_FILTERS.concept)) {
-      fConcept.value = TIENDAS_FILTERS.concept;
-    }
     if (TIENDAS_FILTERS.sort && [...fSort.options].some(o => o.value === TIENDAS_FILTERS.sort)) fSort.value = TIENDAS_FILTERS.sort;
   }
 
@@ -1199,11 +1210,11 @@ async function viewTiendas(user) {
   function persistFilters() {
     TIENDAS_FILTERS = {
       name: fName.value,
-      type: fType.value,
+      types: [...selType],
       statuses: [...selStatus],
-      zone: fZone.value,
-      sub: fSub.value,
-      concept: fConcept.value,
+      zones: [...selZone],
+      subs: [...selSub],
+      concepts: [...selConcept],
       sort: fSort.value,
     };
   }
@@ -1223,9 +1234,9 @@ async function viewTiendas(user) {
   }
   msBtn.addEventListener('click', (e) => {
     e.stopPropagation();
-    const open = msMenu.hidden;
-    msMenu.hidden = !open;
-    msWrap.classList.toggle('open', open);
+    const willOpen = msMenu.hidden;
+    closeAllMs();
+    if (willOpen) { msMenu.hidden = false; msWrap.classList.add('open'); }
   });
   msMenu.addEventListener('click', (e) => e.stopPropagation());
   msMenu.querySelectorAll('input[type=checkbox]').forEach(cb =>
@@ -1243,13 +1254,57 @@ async function viewTiendas(user) {
       updateStatusLabel(); render();
     }));
 
-  function fillSubs() {
-    fSub.innerHTML = '<option value="ALL">Todas las subzonas</option>';
-    if (fZone.value !== 'ALL') {
-      CATALOG.subzones.filter(s => s.zone_id === fZone.value)
-        .forEach(s => fSub.innerHTML += `<option value="${s.id}">${s.name}</option>`);
-    }
+  // ----- Componente genérico multi-select (Tipo/Zona/Subzona/Concepto) -----
+  function closeAllMs() {
+    document.querySelectorAll('.pnl-filters .ms-menu').forEach(m => {
+      m.hidden = true; const w = m.closest('.ms-wrap'); if (w) w.classList.remove('open');
+    });
   }
+  function makeMs(id, allLabel, noun, sel, getOptions, onChange) {
+    const wrap = $('#' + id + 'Wrap'), btn = $('#' + id + 'Btn'), menu = $('#' + id + 'Menu'),
+          label = $('#' + id + 'Label'), optsBox = $('#' + id + 'Opts');
+    function updLabel() {
+      const options = getOptions(), n = sel.size;
+      if (n === 0) label.textContent = allLabel;
+      else if (options.length && n >= options.length) label.textContent = allLabel;
+      else if (n === 1) { const o = options.find(x => x.value === [...sel][0]); label.textContent = o ? o.label : ('1 ' + noun); }
+      else label.textContent = n + ' ' + noun;
+    }
+    function paintOpts() {
+      optsBox.innerHTML = msOptsHtml(getOptions(), sel);
+      optsBox.querySelectorAll('input[type=checkbox]').forEach(cb =>
+        cb.addEventListener('change', () => {
+          if (cb.checked) sel.add(cb.value); else sel.delete(cb.value);
+          updLabel(); if (onChange) onChange(); render();
+        }));
+    }
+    btn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const willOpen = menu.hidden;
+      closeAllMs();
+      if (willOpen) { menu.hidden = false; wrap.classList.add('open'); }
+    });
+    menu.addEventListener('click', (e) => e.stopPropagation());
+    menu.querySelectorAll('.ms-quick button').forEach(b =>
+      b.addEventListener('click', () => {
+        sel.clear();
+        if (b.dataset.q === 'all') getOptions().forEach(o => sel.add(o.value));
+        paintOpts(); updLabel(); if (onChange) onChange(); render();
+      }));
+    paintOpts(); updLabel();
+    return { updLabel, paintOpts };
+  }
+  let subMs = null;
+  function rebuildSub() {
+    const valid = new Set(subOpts().map(o => o.value));
+    [...selSub].forEach(v => { if (!valid.has(v)) selSub.delete(v); });
+    if (subMs) subMs.paintOpts();
+    if (subMs) subMs.updLabel();
+  }
+  makeMs('fType', 'Todos los tipos', 'tipos', selType, () => typeOpts);
+  makeMs('fZone', 'Todas las zonas', 'zonas', selZone, () => zoneOpts, rebuildSub);
+  subMs = makeMs('fSub', 'Todas las subzonas', 'subzonas', selSub, subOpts);
+  makeMs('fConcept', 'Todos los conceptos', 'conceptos', selConcept, () => conceptOpts);
 
   function render() {
     persistFilters();
@@ -1266,11 +1321,11 @@ async function viewTiendas(user) {
         : !hasStatus ? true
         : selStatus.has(c.status);
       return (`${c.code} ${c.name || ''} ${c.dataArea || ''}`.toLowerCase().includes(n))
-        && (fType.value === 'ALL' || c.type === fType.value)
+        && (selType.size === 0 || selType.has(c.type))
         && passStatus
-        && (fZone.value === 'ALL' || c.zoneId === fZone.value)
-        && (fSub.value === 'ALL' || c.subzoneId === fSub.value)
-        && (fConcept.value === 'ALL' || c.concept === fConcept.value);
+        && (selZone.size === 0 || selZone.has(String(c.zoneId)))
+        && (selSub.size === 0 || selSub.has(String(c.subzoneId)))
+        && (selConcept.size === 0 || selConcept.has(c.concept));
     });
     // Orden por sincronizacion (por dias) o por codigo (default). Empresas
     // sin carga (rosterAt nulo) van al final en "reciente" y al principio en
@@ -1456,14 +1511,10 @@ async function viewTiendas(user) {
       }));
   }
 
-  fZone.addEventListener('change', () => { fillSubs(); render(); });
-  [fName, fSub, fConcept].forEach(e => e.addEventListener('input', render));
-  fType.addEventListener('change', render);
+  fName.addEventListener('input', render);
   fSort.addEventListener('change', render);
-  // Cerrar el menú de estados al hacer clic fuera
-  document.addEventListener('click', () => {
-    if (!msMenu.hidden) { msMenu.hidden = true; msWrap.classList.remove('open'); }
-  });
+  // Cerrar cualquier menú multi-select al hacer clic fuera.
+  document.addEventListener('click', () => { closeAllMs(); });
   updateStatusLabel();
   render();
 
