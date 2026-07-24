@@ -600,7 +600,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.100</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.101</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1084,6 +1084,7 @@ function empStatsHtml(companies) {
 /* ---------- VISTA: TIENDAS ---------- */
 async function viewTiendas(user) {
   await ensureReportPerms(user);   // v5.04: el boton Reportar sale de la matriz
+  await ensureCompanyPerms(user);  // v6.101: editar contacto/direccion = company.contact
   const isAdmin = user.kind === 'admin';
   const isEditor = user.kind === 'admin' && user.role === 'editor_personal';
   const isGestor = user.kind === 'admin' && user.role === 'gestor_empresa';
@@ -1098,9 +1099,12 @@ async function viewTiendas(user) {
   // la matriz: se pinta solo si tiene AL MENOS UN report.* concedido (el
   // picker que abre muestra unicamente los tipos permitidos).
   const canReport = !isEditor && canReportAny();
-  // Direccion + contacto de la empresa: SOLO superadmin edita; el resto abre
-  // el modal en modo consulta (campos disabled, sin boton Guardar).
-  const canEditCompany = isSuper;
+  // v6.101: Editar contacto + direccion de la empresa lo habilita el permiso
+  // company.contact (matriz de roles), no solo superadmin. Los editores de
+  // personal/gestores siguen sin poder (no aplica a su flujo). El servidor
+  // valida igual (company.contact + alcance), asi que la UI solo decide si el
+  // modal abre editable o en modo consulta.
+  const canEditCompany = isSuper || (!isEditor && !isGestor && hasCompanyPerm('company.contact'));
   const types = [...new Set(CATALOG.companies.map(c => c.type).filter(Boolean))].sort();
   const statuses = [...new Set(CATALOG.companies.map(c => c.status).filter(Boolean))].sort();
   const concepts = CATALOG.concepts.map(c => c.name);
@@ -7840,6 +7844,30 @@ async function ensureReportPerms(user) {
 }
 function canReportKind(kind) { return !REPORT_PERMS || !!REPORT_PERMS[`report.${kind}`]; }
 function canReportAny() { return !REPORT_PERMS || REPORT_CODES.some(c => REPORT_PERMS[c]); }
+
+/* v6.101: permisos de empresa (editar contacto/direccion) resueltos por la
+   matriz, cacheados una vez por sesion — mismo patron que ensureReportPerms.
+   Fallo de red => permisivo en la UI (el servidor valida company.contact +
+   alcance igual, asi que nadie edita de verdad sin permiso). */
+const COMPANY_CODES = ['company.contact'];
+let COMPANY_PERMS = null;
+async function ensureCompanyPerms(user) {
+  if (COMPANY_PERMS) return COMPANY_PERMS;
+  const allow = () => { COMPANY_PERMS = {}; COMPANY_CODES.forEach(c => { COMPANY_PERMS[c] = true; }); return COMPANY_PERMS; };
+  if (user.kind === 'admin' && user.role === 'superadmin') return allow();
+  try {
+    const r = await fetch('/api/my-perms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null }, codes: COMPANY_CODES }),
+    }).then(x => x.json());
+    if (!r || !r.ok) return allow();
+    if (r.super) return allow();
+    COMPANY_PERMS = {};
+    COMPANY_CODES.forEach(c => { COMPANY_PERMS[c] = !!(r.perms && r.perms[c]); });
+    return COMPANY_PERMS;
+  } catch (_) { return allow(); }
+}
+function hasCompanyPerm(code) { return !COMPANY_PERMS || !!COMPANY_PERMS[code]; }
 
 /* Definicion de los 5 tiles: un solo sitio para el picker (Empresas) y para
    Mi empresa, asi no se duplica el HTML ni el gate. */

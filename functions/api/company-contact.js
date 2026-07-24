@@ -105,14 +105,12 @@ export async function onRequestPost({ request, env }) {
     }
 
     // --- Direccion: address / city / state / municipality (texto simple) ---
-    // Regla de negocio: SOLO superadmin puede tocar la direccion. El contacto
-    // (correo/telefonos) lo puede editar quien tenga alcance (canTouch arriba).
+    // v6.101: la direccion sigue la MISMA regla que el contacto: exige
+    // company.contact en la matriz (ya verificado arriba) + alcance (canTouch).
+    // Antes era superadmin-only; ahora quien pueda editar el contacto de la
+    // empresa (p.ej. Coordinador) tambien edita la direccion.
     const addrKeys = ['address', 'city', 'state', 'municipality'];
     const addrIncoming = { address, city, state, municipality };
-    const wantsAddr = addrKeys.some(k => addrIncoming[k] !== undefined);
-    if (wantsAddr && admin.role !== 'superadmin') {
-      return json({ ok: false, error: 'Solo un superadmin puede editar la direccion.' }, 403);
-    }
     // Normaliza cada campo de texto: trim; vacio => null (limpiar).
     const cleanText = v => {
       if (v === undefined) return undefined;
