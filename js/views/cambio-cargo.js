@@ -753,19 +753,30 @@ async function renderDetail() {
     </div>
 
     ${mv.estado === 'reportado'
-      ? aproDoneBox(mv.osticket_id, mv.report_id)
+      ? aproDoneBox(mv.osticket_id, mv.report_id) + aproNotifyBox(mv)
       : mv.estado === 'rechazado'
         ? ''
-        : (my.aprobar ? `<div class="cc-aact cc-aact-box">
-            <div class="cc-awill">Al aprobar se genera el reporte de <b>${aproTopicLabel(mv.tipo)}</b> con su ticket, y va a <b>Reportes → Historial</b>.</div>
-            <button class="cc-btn back" id="ccARej">Rechazar</button>
-            <button class="cc-btn apr" id="ccAApr">✓ Aprobar y generar ticket</button>
+        : (my.aprobar ? `<div class="cc-aact-box" style="margin-top:14px">
+            <div class="cc-aact" style="border:0;border-radius:0">
+              <div class="cc-awill">Al aprobar se genera el reporte de <b>${aproTopicLabel(mv.tipo)}</b> con su ticket, y va a <b>Reportes → Historial</b>.</div>
+            </div>
+            <div class="cc-notify">
+              <label class="cc-sw"><input type="checkbox" id="ccNotify" checked><span class="tr"></span><span class="kn"></span></label>
+              <div class="txt"><div class="t1">🔔 Avisar a la tienda de este cambio</div>
+                <div class="t2"><b>${esc(aproStoresTxt(mv))}</b> lo verá en sus <b>Novedades</b> apenas apruebes. Desactívalo para <b>retrasar el aviso</b> (podrás avisar después desde aquí).</div></div>
+            </div>
+            <div class="cc-aact" style="border-top:1px solid var(--border)">
+              <button class="cc-btn back" id="ccARej">Rechazar</button>
+              <span class="cc-sp"></span>
+              <button class="cc-btn apr" id="ccAApr">✓ Aprobar y generar ticket</button>
+            </div>
           </div>` : `<div class="cc-aact cc-aact-box"><div class="cc-awill">⏳ Esperando aprobación del Gerente de Zona.</div></div>`)}
   `;
   document.getElementById('ccBackList')?.addEventListener('click', backToList);
   document.getElementById('ccAFicha')?.addEventListener('click', () => openFichaFor({ id_number: mv.id_number, company_code: mv.empresa_origen }, () => renderCambioCargoHist(USER)));
   document.getElementById('ccAApr')?.addEventListener('click', () => approveMove(mv.id));
   document.getElementById('ccARej')?.addEventListener('click', () => rejectMove(mv.id));
+  document.getElementById('ccPubNotice')?.addEventListener('click', () => publishNotice(mv.id));
   document.getElementById('ccDetPav')?.addEventListener('click', () => { if (mv.thumb_url) ccLightbox(mv); });
   document.querySelector('.cc-gorep')?.addEventListener('click', () => { const b = document.querySelector('.pnl-side [data-view="historial"]'); if (b) b.click(); });
   const h = await historyApi(mv.id_number, mv.empresa_origen);
@@ -821,10 +832,24 @@ function ccLightbox(mv) {
   lb.innerHTML = mv.thumb_url ? `<img src="${esc(mv.thumb_url)}" alt=""><div class="cap">${esc(mv.full_name || '')} · clic para cerrar</div>` : `<div class="big">${iniOf(mv.full_name)}</div><div class="cap">Sin foto · clic para cerrar</div>`;
   host.appendChild(lb);
 }
+/* Tienda(s) que se avisarán: origen y, en traslado, también destino. */
+function aproStoresTxt(mv) {
+  const s = [...new Set([mv.empresa_origen, mv.empresa_destino].filter(Boolean))];
+  return s.length > 1 ? s.join(' y ') : (s[0] || 'la tienda');
+}
+/* Banda de estado del aviso a la tienda (en un movimiento ya reportado). */
+function aproNotifyBox(mv) {
+  if (mv.store_notify) {
+    return `<div class="cc-avband sent"><span class="ic">🔔</span><div class="g"><b>Tienda avisada</b>${mv.store_notified_at ? ` · desde el ${fmt(mv.store_notified_at)}` : ''}. ${esc(aproStoresTxt(mv))} lo ve en sus Novedades.</div></div>`;
+  }
+  return `<div class="cc-avband held"><span class="ic">🔕</span><div class="g"><b>La tienda aún no fue avisada</b> de este cambio. El movimiento sigue su trámite; la novedad se publica cuando la liberes.</div><button class="cc-btn warn" id="ccPubNotice">🔔 Avisar a la tienda ahora</button></div>`;
+}
 async function approveMove(id) {
   const btn = document.getElementById('ccAApr');
+  const notify = document.getElementById('ccNotify');
+  const notifyStore = notify ? notify.checked : true;
   if (btn) { btn.disabled = true; btn.textContent = 'Generando…'; }
-  const r = await api({ action: 'approve', id });
+  const r = await api({ action: 'approve', id, notify_store: notifyStore });
   if (!r || !r.ok) {
     if (btn) { btn.disabled = false; btn.textContent = '✓ Aprobar y generar ticket'; }
     return toast((r && r.error) || 'No se pudo aprobar.', true);
@@ -832,7 +857,20 @@ async function approveMove(id) {
   await loadCola();
   APRO_SUB = 'detail'; APRO_SEL = id;
   renderDetail();
-  toast(r.osticket_id ? `Aprobado. Ticket #${r.osticket_id} generado.` : 'Aprobado y reportado.');
+  toast(r.store_notified ? 'Aprobado. La tienda fue avisada.' : 'Aprobado. El aviso a la tienda quedó retenido.');
+}
+async function publishNotice(id) {
+  const btn = document.getElementById('ccPubNotice');
+  if (btn) { btn.disabled = true; btn.textContent = 'Avisando…'; }
+  const r = await api({ action: 'publish_notice', id });
+  if (!r || !r.ok) {
+    if (btn) { btn.disabled = false; btn.textContent = '🔔 Avisar a la tienda ahora'; }
+    return toast((r && r.error) || 'No se pudo avisar a la tienda.', true);
+  }
+  await loadCola();
+  APRO_SUB = 'detail'; APRO_SEL = id;
+  renderDetail();
+  toast('Tienda avisada. Ya lo ve en sus Novedades.');
 }
 function aproDoneBox(ost, repId) {
   const rep = repId ? String(repId).padStart(4, '0') : null;
@@ -896,6 +934,92 @@ function toast(msg, isErr) {
   t.style.opacity = '1';
   clearTimeout(window.__ccToastT);
   window.__ccToastT = setTimeout(() => { t.style.opacity = '0'; }, 3200);
+}
+
+/* =====================================================================
+   NOVEDADES DE LA TIENDA — cambios de cargo/traslado/egreso que afectan a
+   una tienda aunque no los haya hecho ella. Vista de solo lectura para el
+   usuario company; el aviso llega al aprobarse (si el que aprueba lo libera)
+   y el chip de estado evoluciona Aprobado → En proceso → Aplicado.
+   ===================================================================== */
+let NOV = [];
+let NOV_FILTER = 'all';
+const NOV_DIR = { in: 'Entra', out: 'Sale', stay: 'En tu tienda', baja: 'Baja' };
+const NOV_ST = { aprobado: 'Aprobado', proceso: 'En proceso', aplicado: 'Aplicado' };
+
+export async function renderNovedades(user) {
+  USER = user;
+  const host = $('#pnlMain');
+  if (!host) return;
+  host.innerHTML = styleBlock() + `<div class="cc-wrap"><div id="ccBody"><div class="cc-loading">Cargando…</div></div></div>`;
+  const r = await api({ action: 'novedades', mark_seen: true });
+  NOV = (r && r.ok && r.rows) ? r.rows : [];
+  paintNovedades();
+}
+function novFiltered() {
+  if (NOV_FILTER === 'all') return NOV;
+  return NOV.filter(n => n.direction === NOV_FILTER);
+}
+function novCount(dir) { return NOV.filter(n => n.direction === dir).length; }
+function paintNovedades() {
+  const body = document.getElementById('ccBody');
+  if (!body) return;
+  const store = (USER && (USER.companyCode || USER.company_code)) || '';
+  const chips = [['all', 'Todas', NOV.length], ['in', 'Entran', novCount('in')], ['out', 'Salen', novCount('out')], ['stay', 'En tu tienda', novCount('stay')], ['baja', 'Bajas', novCount('baja')]]
+    .map(([f, l, n]) => `<button data-f="${f}" class="${NOV_FILTER === f ? 'on' : ''}">${l}<span class="n">${n}</span></button>`).join('');
+  const list = novFiltered();
+  body.innerHTML = `
+    <div class="nv-head"><h1>Novedades de tu tienda</h1>
+      <p class="nv-lead">Cambios de cargo, traslados y egresos que afectan a <b>${esc(store)}</b>, aunque no los hayas hecho tú. El estado del trámite se actualiza aquí hasta que Capital Humano lo aplica.</p></div>
+    <div class="nv-filters">${chips}</div>
+    <div class="nv-list">${list.length ? list.map(novCard).join('') : `<div class="nv-empty">No hay novedades para tu tienda por ahora.</div>`}</div>
+    <div class="nv-legend">
+      <span><span class="nv-st aprobado">Aprobado</span> el cambio se decidió, ticket abierto</span>
+      <span><span class="nv-st proceso">En proceso</span> Capital Humano lo está tramitando</span>
+      <span><span class="nv-st aplicado">Aplicado</span> ya cerrado en el sistema</span>
+    </div>`;
+  body.querySelectorAll('.nv-filters button').forEach(b => b.addEventListener('click', () => { NOV_FILTER = b.dataset.f; paintNovedades(); }));
+  body.querySelectorAll('.nv-card [data-fic]').forEach(b => b.addEventListener('click', () => {
+    const n = NOV.find(x => x.id === parseInt(b.dataset.fic, 10));
+    if (n) openFichaFor({ id_number: n.id_number, company_code: (n.direction === 'in' ? n.empresa_destino : n.empresa_origen) }, () => renderNovedades(USER));
+  }));
+}
+function novAvatar(n) {
+  const grad = { in: 'linear-gradient(135deg,#34d399,#059669)', out: 'linear-gradient(135deg,#fbbf24,#d97706)', stay: 'linear-gradient(135deg,#818cf8,#4f46e5)', baja: 'linear-gradient(135deg,#f87171,#dc2626)' }[n.direction] || '#cbd5e1';
+  if (n.thumb_url) return `<div class="nv-ava"><img src="${esc(n.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
+  return `<div class="nv-ava" style="background:${grad};color:#fff">${iniOf(n.full_name)}</div>`;
+}
+function novChangeLine(n) {
+  const cg = (l, cls) => `<span class="nv-cg${cls ? ' ' + cls : ''}">${esc(l)}</span>`;
+  const cpt = (a, b) => (a && b && a !== b) ? `${cg(a, 'old')}<span class="cc-ar">→</span>${cg(b)}` : cg(b || a || '—');
+  if (n.direction === 'baja') return `${n.cargo_from_label ? cg(n.cargo_from_label, 'old') : ''}<span class="cc-ar">→</span>${cg('Egreso', 'egr')}${n.motivo ? ` · Motivo: ${esc(n.motivo)}` : ''}`;
+  if (n.direction === 'in') return `Se incorpora como ${cg(n.cargo_to_label || n.cargo_from_label)} · ${cpt(n.origen_concepto, n.destino_concepto)}`;
+  if (n.direction === 'out') return `Se traslada a <b>${esc(n.empresa_destino || '')}${n.destino_rz ? ' · ' + esc(n.destino_rz) : ''}</b> como ${cg(n.cargo_to_label || n.cargo_from_label)} · ${cpt(n.origen_concepto, n.destino_concepto)}`;
+  // stay (ascenso/descenso en la misma tienda)
+  return `${cpt(n.cargo_from_label, n.cargo_to_label)}${n.origen_concepto ? ` · ${cg(n.origen_concepto)}` : ''}`;
+}
+function novEff(n) {
+  const d = n.direction === 'in' ? (n.fecha_alta || n.fecha_efectiva) : n.direction === 'baja' ? (n.fecha_baja || n.fecha_efectiva) : n.direction === 'out' ? (n.fecha_baja || n.fecha_efectiva) : (n.fecha_efectiva || n.fecha_alta);
+  return fmt(d);
+}
+function novCard(n) {
+  const tp = (TIPO_LB[n.tipo] || n.tipo);
+  const meta = n.direction === 'in'
+    ? `Viene de <b>${esc(n.empresa_origen || '')}${n.origen_rz ? ' · ' + esc(n.origen_rz) : ''}</b> · C.I. V-${esc(n.id_number)}`
+    : `C.I. V-${esc(n.id_number)}`;
+  return `<div class="nv-card">
+    ${novAvatar(n)}
+    <div class="nv-main">
+      <div class="nv-nm">${esc(n.full_name || ('V-' + n.id_number))} <span class="nv-dir ${n.direction}">${esc(NOV_DIR[n.direction] || '')}</span> <span class="cc-pillA ${n.tipo}">${esc(tp)}</span></div>
+      <div class="nv-change">${novChangeLine(n)}</div>
+      <div class="nv-meta">${meta}</div>
+    </div>
+    <div class="nv-right">
+      <span class="nv-st ${n.status}">${esc(NOV_ST[n.status] || n.status)}</span>
+      <span class="nv-eff">Efectivo <b>${novEff(n)}</b></span>
+    </div>
+    <button class="cc-openf" data-fic="${n.id}" title="Ver ficha">${IC_FICHA}</button>
+  </div>`;
 }
 
 /* ---------- estilos (scope cc-) ---------- */
@@ -1093,5 +1217,53 @@ function styleBlock() {
   .cc-prompt textarea{width:100%;box-sizing:border-box;border:1px solid var(--border-2);border-radius:10px;padding:9px 11px;font-size:13px;font-family:inherit;resize:vertical}
   .cc-prompt-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
   .cc-prompt-btns .cc-btn.apr{background:#dc2626;border-color:#dc2626}.cc-prompt-btns .cc-btn.apr:hover{background:#b91c1c}
+  /* ===== Novedades de la tienda ===== */
+  .nv-head h1{font-size:22px;font-weight:800;margin:0 0 3px}
+  .nv-lead{color:var(--muted);font-size:13px;margin:0 0 16px;line-height:1.5;max-width:820px}
+  .nv-filters{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px}
+  .nv-filters button{border:1px solid var(--border-2);background:#fff;color:var(--soft);font-size:12px;font-weight:600;padding:7px 13px;border-radius:999px;cursor:pointer;display:flex;align-items:center;gap:6px}
+  .nv-filters button.on{background:var(--pri-soft);border-color:#ddd6fe;color:var(--pri)}
+  .nv-filters button .n{font-size:10px;font-weight:800;background:#eef2f7;color:#64748b;border-radius:999px;padding:0 6px}
+  .nv-filters button.on .n{background:#ddd6fe;color:var(--pri)}
+  .nv-list{display:flex;flex-direction:column;gap:9px}
+  .nv-empty{padding:34px 14px;text-align:center;color:var(--muted);border:1px solid var(--border);border-radius:13px;background:#fff}
+  .nv-card{display:flex;align-items:center;gap:13px;padding:12px 14px;border:1px solid var(--border);border-radius:13px;background:#fff;box-shadow:0 1px 2px rgba(15,23,42,.03)}
+  .nv-card:hover{border-color:#dbe4f0}
+  .nv-ava{width:44px;height:44px;border-radius:11px;flex:none;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;overflow:hidden}
+  .nv-ava img{width:100%;height:100%;object-fit:cover}
+  .nv-main{flex:1;min-width:0}
+  .nv-nm{font-weight:600;font-size:14px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .nv-change{font-size:12.5px;color:var(--soft);margin-top:4px;display:flex;align-items:center;gap:7px;flex-wrap:wrap;line-height:1.5}
+  .nv-meta{font-size:11.5px;color:var(--muted);margin-top:4px}
+  .nv-right{display:flex;flex-direction:column;align-items:flex-end;gap:6px;flex:none;text-align:right}
+  .nv-eff{font-size:11.5px;color:var(--muted)}.nv-eff b{color:var(--soft)}
+  .nv-cg{display:inline-block;font-size:11.5px;font-weight:700;border-radius:999px;padding:2px 10px;background:#eef2f7;color:#475569}
+  .nv-cg.old{background:#f1f5f9;color:#94a3b8}.nv-cg.egr{background:#fee2e2;color:#991b1b}
+  .nv-dir{font-size:10.5px;font-weight:800;letter-spacing:.02em;border-radius:8px;padding:3px 9px;text-transform:uppercase}
+  .nv-dir.in{background:#dcfce7;color:#166534}.nv-dir.out{background:#fef3c7;color:#92400e}
+  .nv-dir.stay{background:#e0e7ff;color:#3730a3}.nv-dir.baja{background:#fee2e2;color:#991b1b}
+  .nv-st{font-size:11px;font-weight:700;border-radius:999px;padding:3px 11px;white-space:nowrap}
+  .nv-st.aprobado{background:#eff6ff;color:#1d4ed8}
+  .nv-st.proceso{background:#fffbeb;color:#92400e}
+  .nv-st.aplicado{background:#ecfdf5;color:#166534}
+  .nv-legend{margin-top:16px;font-size:11.5px;color:var(--muted);display:flex;gap:16px;flex-wrap:wrap}
+  .nv-legend span{display:inline-flex;align-items:center;gap:6px}
+  /* ===== Toggle "avisar a la tienda" + banda de estado del aviso ===== */
+  .cc-notify{display:flex;align-items:flex-start;gap:12px;padding:12px 18px;background:#fbfcfe;border-top:1px solid var(--border)}
+  .cc-notify .txt{flex:1}
+  .cc-notify .t1{font-size:13px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:7px}
+  .cc-notify .t2{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.45}
+  .cc-sw{position:relative;width:42px;height:24px;flex:none;cursor:pointer}
+  .cc-sw input{display:none}
+  .cc-sw .tr{position:absolute;inset:0;border-radius:999px;background:#cbd5e1;transition:.15s}
+  .cc-sw .kn{position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.25);transition:.15s}
+  .cc-sw input:checked + .tr{background:#16a34a}
+  .cc-sw input:checked + .tr + .kn{left:20px}
+  .cc-avband{display:flex;align-items:center;gap:11px;margin:12px 20px 18px;padding:12px 14px;border-radius:12px;font-size:12.5px}
+  .cc-avband.held{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
+  .cc-avband.sent{background:#ecfdf5;border:1px solid #bbf7d0;color:#166534}
+  .cc-avband .ic{font-size:16px;flex:none}
+  .cc-avband .g{flex:1;line-height:1.4}
+  .cc-btn.warn{background:#f59e0b;border-color:#f59e0b;color:#fff}.cc-btn.warn:hover{background:#d97706}
   </style>`;
 }

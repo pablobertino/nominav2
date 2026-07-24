@@ -110,6 +110,85 @@ export async function onRequestPost({ request, env }) {
     const myAprobar = can(actor, 'mov.aprobar');
     const myView = can(actor, 'view.cambiocargo') || mySugerir || myAprobar;
 
+    // v6.104: NOVEDADES de una tienda — cambios (aprobados y con aviso
+    // liberado) que la afectan aunque no los haya hecho ella. Accesible por el
+    // usuario company (su propia tienda) o por un admin pasando company_code.
+    if (action === 'novedades' || action === 'novedades_count') {
+      const storeCode = actor.kind === 'company' ? actor.actor : norm(body.company_code);
+      if (!storeCode) return json({ ok: false, error: 'Falta la tienda.' }, 400);
+      const seenRows = await sb(env, `movement_store_seen?company_code=eq.${encodeURIComponent(storeCode)}&select=seen_at`);
+      const seenAt = (seenRows && seenRows[0] && seenRows[0].seen_at) || null;
+      const seenMs = seenAt ? Date.parse(seenAt) : 0;
+      const cc = encodeURIComponent(storeCode);
+      const rows = await sb(env, `personnel_movement_requests?estado=eq.reportado&store_notify=eq.true&or=(empresa_origen.eq.${cc},empresa_destino.eq.${cc})&order=store_notified_at.desc&limit=300`) || [];
+
+      if (action === 'novedades_count') {
+        const count = rows.filter(r => Date.parse(r.store_notified_at || 0) > seenMs).length;
+        return json({ ok: true, count });
+      }
+
+      // Enriquecer: empresas (origen/destino), foto y estado del tramite.
+      const comps = [...new Set(rows.flatMap(r => [r.empresa_origen, r.empresa_destino]).filter(Boolean))];
+      const ceds = [...new Set(rows.map(r => r.id_number).filter(Boolean))];
+      const repIds = [...new Set(rows.map(r => r.report_id).filter(Boolean))];
+      const compMap = {}, photoMap = {}, attMap = {};
+      if (comps.length) {
+        const inC = comps.map(c => `"${c}"`).join(',');
+        const [crows, zs, ss, csx] = await Promise.all([
+          sb(env, `companies?company_code=in.(${inC})&select=company_code,business_name,zone_id,subzone_id,concept_id`),
+          sb(env, 'zones?select=id,name'), sb(env, 'subzones?select=id,name'), sb(env, 'concepts?select=id,name'),
+        ]);
+        const zm = {}, sm = {}, cm = {};
+        (zs || []).forEach(z => { zm[z.id] = z.name; });
+        (ss || []).forEach(s => { sm[s.id] = s.name; });
+        (csx || []).forEach(c => { cm[c.id] = c.name; });
+        (crows || []).forEach(c => { compMap[c.company_code] = { rz: c.business_name || null, zona: zm[c.zone_id] || null, subzona: sm[c.subzone_id] || null, concepto: cm[c.concept_id] || null }; });
+      }
+      if (ceds.length) {
+        const inCed = ceds.map(c => `"${c}"`).join(',');
+        const wrows = await sb(env, `workers_master?id_number=in.(${inCed})&select=id_number,photo_key`);
+        (wrows || []).forEach(w => { photoMap[w.id_number] = w; });
+      }
+      if (repIds.length) {
+        const rl = await sb(env, `reports_log?id=in.(${repIds.join(',')})&select=id,attention`);
+        (rl || []).forEach(r => { attMap[r.id] = r.attention; });
+      }
+      // Etiquetas de cargo (la tienda no carga el catalogo admin).
+      const cargoLbl = {};
+      (await loadCargos(env)).forEach(c => { cargoLbl[c.code] = c.label; });
+      const lblOf = code => code ? (cargoLbl[code] || code) : '';
+      const thumb = k => k ? `${env.supabase_url}/storage/v1/object/public/worker-thumbs/${k}.jpg` : null;
+      const statusOf = att => att === 'closed' ? 'aplicado' : (att === 'attended' || att === 'resolved') ? 'proceso' : 'aprobado';
+      const out = rows.map(r => {
+        const oc = compMap[r.empresa_origen] || {};
+        const dc = compMap[r.empresa_destino] || {};
+        const w = photoMap[r.id_number] || {};
+        let direction;
+        if (r.tipo === 'egreso') direction = 'baja';
+        else if (r.tipo === 'traslado') direction = (r.empresa_destino === storeCode) ? 'in' : 'out';
+        else direction = 'stay';
+        return {
+          id: r.id, tipo: r.tipo, id_number: r.id_number, full_name: r.full_name,
+          cargo_from: r.cargo_from, cargo_to: r.cargo_to,
+          cargo_from_label: lblOf(r.cargo_from), cargo_to_label: lblOf(r.cargo_to),
+          empresa_origen: r.empresa_origen, empresa_destino: r.empresa_destino,
+          motivo: r.motivo, fecha_efectiva: r.fecha_efectiva, fecha_baja: r.fecha_baja, fecha_alta: r.fecha_alta,
+          origen_rz: oc.rz, origen_concepto: oc.concepto, destino_rz: dc.rz, destino_concepto: dc.concepto,
+          thumb_url: thumb(w.photo_key), status: statusOf(attMap[r.report_id]),
+          store_notified_at: r.store_notified_at, direction,
+          unseen: Date.parse(r.store_notified_at || 0) > seenMs,
+        };
+      });
+      if (body.mark_seen) {
+        const nowS = new Date().toISOString();
+        await sb(env, 'movement_store_seen?on_conflict=company_code', {
+          method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify({ company_code: storeCode, seen_at: nowS }),
+        });
+      }
+      return json({ ok: true, rows: out });
+    }
+
     if (action === 'catalog') {
       if (!myView) return json({ ok: false, error: 'No tienes permiso para Cambio de Cargo.' }, 403);
       const [cargos, reasons, minLevel, ostRow] = await Promise.all([
@@ -278,13 +357,15 @@ export async function onRequestPost({ request, env }) {
       });
       // Aprobacion directa (Gerente de Zona): generar el reporte de cada uno.
       const reported = [];
+      const notifyStore = body.notify_store !== false;   // v6.104: default SI
       if (wantApprove && Array.isArray(ins)) {
         for (const mv of ins) {
           const gen = await generateReport(env, request, actor, body.user, mv);
           if (gen.ok) {
+            const nowR = new Date().toISOString();
             await sb(env, `personnel_movement_requests?id=eq.${mv.id}`, {
               method: 'PATCH', headers: { Prefer: 'return=minimal' },
-              body: JSON.stringify({ estado: 'reportado', osticket_id: gen.osticket_id, report_id: gen.report_id, report_topic: gen.topic, updated_at: new Date().toISOString() }),
+              body: JSON.stringify({ estado: 'reportado', osticket_id: gen.osticket_id, report_id: gen.report_id, report_topic: gen.topic, store_notify: notifyStore, store_notified_at: notifyStore ? nowR : null, updated_at: nowR }),
             });
             reported.push({ id: mv.id, ok: true, osticket_id: gen.osticket_id, topic: gen.topic });
           } else {
@@ -306,14 +387,20 @@ export async function onRequestPost({ request, env }) {
       // Aprobar = generar el reporte/ticket como los demas reportes del sistema.
       const gen = await generateReport(env, request, actor, body.user, mv);
       if (!gen.ok) return json({ ok: false, error: gen.error, details: gen.details }, 422);
+      // v6.104: el que aprueba decide si la tienda se entera ya (toggle, por
+      // defecto SI) o si el aviso se retiene para liberarlo despues.
+      const notifyStore = body.notify_store !== false;
+      const nowA = new Date().toISOString();
       await sb(env, `personnel_movement_requests?id=eq.${id}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
         body: JSON.stringify({
-          estado: 'reportado', approved_by: String(actor.actor || ''), approved_at: new Date().toISOString(),
-          osticket_id: gen.osticket_id, report_id: gen.report_id, report_topic: gen.topic, updated_at: new Date().toISOString(),
+          estado: 'reportado', approved_by: String(actor.actor || ''), approved_at: nowA,
+          osticket_id: gen.osticket_id, report_id: gen.report_id, report_topic: gen.topic,
+          store_notify: notifyStore, store_notified_at: notifyStore ? nowA : null,
+          updated_at: nowA,
         }),
       });
-      return json({ ok: true, osticket_id: gen.osticket_id, report_topic: gen.topic });
+      return json({ ok: true, osticket_id: gen.osticket_id, report_topic: gen.topic, store_notified: notifyStore });
     }
 
     if (action === 'reject') {
@@ -325,6 +412,20 @@ export async function onRequestPost({ request, env }) {
         body: JSON.stringify({ estado: 'rechazado', rejected_by: String(actor.actor || ''), rejected_at: new Date().toISOString(), reject_reason: norm(body.reason) || null, updated_at: new Date().toISOString() }),
       });
       return json({ ok: true });
+    }
+
+    // v6.104: liberar el aviso a la tienda de un movimiento ya reportado que
+    // quedo retenido (toggle apagado al aprobar). Mismo permiso que aprobar.
+    if (action === 'publish_notice') {
+      if (!myAprobar) return json({ ok: false, error: 'No tienes permiso para avisar a la tienda (mov.aprobar).' }, 403);
+      const id = parseInt(body.id, 10);
+      if (!id) return json({ ok: false, error: 'Falta el id.' }, 400);
+      const nowP = new Date().toISOString();
+      await sb(env, `personnel_movement_requests?id=eq.${id}&estado=eq.reportado`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ store_notify: true, store_notified_at: nowP, updated_at: nowP }),
+      });
+      return json({ ok: true, store_notified_at: nowP });
     }
 
     return json({ ok: false, error: 'Accion desconocida.' }, 400);

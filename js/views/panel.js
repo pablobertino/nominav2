@@ -28,7 +28,7 @@ import { renderNoRehire, mountNoRehireConfigCard } from './no-rehire.js';
 import { renderNoRehireVerify } from './no-rehire-verify.js';
 import { renderMovements } from './movements.js';
 import { renderMovQuincena } from './mov-quincena.js';
-import { renderCambioCargo, renderCambioCargoHist } from './cambio-cargo.js';
+import { renderCambioCargo, renderCambioCargoHist, renderNovedades } from './cambio-cargo.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { renderCertSigners } from './cert-signers.js';
@@ -300,6 +300,8 @@ const NAV_ALL = [...NAV_LOOSE, ...NAV_GROUPS.flatMap(g => g.items.map(it => [...
 const NAV_COMPANY_LOOSE = [
   ['dashboard', I.grid, 'Inicio'],
   ['miempresa', I.store, 'Mi empresa'],
+  // v6.104: cambios de cargo/traslado/egreso que afectan a la tienda.
+  ['novedades', I.updown, 'Novedades'],
   ['documentos', I.docs, 'Documentos'],
   ['calendario', I.calendar, 'Calendario'],
 ];
@@ -600,7 +602,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.103</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.104</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -671,7 +673,7 @@ const BELL_SVG = {
 };
 
 /* Estado de la campanita: feed de avisos (todos) + novedades de empresa (admin). */
-let BELL_AUTO = [], BELL_MANUAL = [], BELL_EMPRESA = [], BELL_SOLIC = [];
+let BELL_AUTO = [], BELL_MANUAL = [], BELL_EMPRESA = [], BELL_SOLIC = [], BELL_NOVEDADES = [];
 
 function bellAutoHtml(a) {
   return `<div class="pnl-bell-item">`
@@ -722,6 +724,9 @@ function bellRender() {
   if (BELL_EMPRESA.length) {
     html += `<div class="bell-group">Novedades de empresas</div>` + BELL_EMPRESA.map(bellEmpresaHtml).join('');
   }
+  if (BELL_NOVEDADES.length) {
+    html += `<div class="bell-group">Novedades de tu tienda</div>` + BELL_NOVEDADES.map(bellNovedadHtml).join('');
+  }
   if (html.indexOf('pnl-bell-item') < 0) html += '<div class="pnl-bell-empty">Sin avisos.</div>';
   pop.innerHTML = html;
   // "Ver todos" -> ir a la seccion Avisos
@@ -747,6 +752,27 @@ function bellRender() {
       pop.hidden = true;
       navigate('avisos', BELL_USER);
     }));
+  // clic en una novedad de la tienda -> ir a la seccion Novedades.
+  pop.querySelectorAll('[data-goto-nov]').forEach(el =>
+    el.addEventListener('click', () => {
+      pop.hidden = true;
+      navigate('novedades', BELL_USER);
+    }));
+}
+/* Item de la campanita para una novedad de la tienda (cambio que la afecta). */
+function bellNovedadHtml(n) {
+  const ic = { in: '↘️', out: '↗️', stay: '⬆️', baja: '🔴' }[n.direction] || '🔁';
+  const who = escHtml(n.full_name || ('V-' + n.id_number));
+  const tp = { ascenso: 'Ascenso', descenso: 'Descenso', lateral: 'Cambio', traslado: 'Traslado', egreso: 'Egreso' }[n.tipo] || 'Cambio';
+  let txt;
+  if (n.direction === 'in') txt = `<b>Se incorpora ${who}</b>${n.cargo_to_label ? ' como ' + escHtml(n.cargo_to_label) : ''}`;
+  else if (n.direction === 'out') txt = `<b>Sale ${who}</b> por traslado`;
+  else if (n.direction === 'baja') txt = `<b>Egresa ${who}</b>`;
+  else txt = `<b>${tp} de ${who}</b>${n.cargo_to_label ? ' a ' + escHtml(n.cargo_to_label) : ''}`;
+  const sub = n.direction === 'in' ? `Desde ${escHtml(n.empresa_origen || '')}`
+    : n.direction === 'out' ? `A ${escHtml(n.empresa_destino || '')}`
+    : 'En tu tienda';
+  return `<div class="pnl-bell-item" data-goto-nov="1" style="cursor:pointer"><span class="ic">${ic}</span><div>${txt}<div class="sub" style="color:var(--muted,#64748b);font-size:11.5px;margin-top:2px">${sub}</div></div></div>`;
 }
 async function bellLoad(user) {
   const badge = document.getElementById('pnlBellBadge');
@@ -789,6 +815,21 @@ async function bellLoad(user) {
         body: JSON.stringify({ action: 'bell', actor }),
       }).then(x => x.json());
       if (c && c.ok) { BELL_SOLIC = c.items || []; unreadSolic += (c.unread || 0); }
+    } catch (_) { /* nada */ }
+  }
+  // 4) v6.104: novedades de la tienda (cambios que la afectan). Solo company.
+  //    Las no vistas suman al badge; el 'visto' se marca al abrir la seccion
+  //    Novedades (no al abrir la campanita), para que el nudge persista.
+  if (user.kind === 'company') {
+    try {
+      const nv = await fetch('/api/cambio-cargo', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'novedades', user: { kind: 'company', companyCode: user.companyCode } }),
+      }).then(x => x.json());
+      if (nv && nv.ok) {
+        BELL_NOVEDADES = (nv.rows || []).filter(r => r.unseen).slice(0, 8);
+        unreadRojo += BELL_NOVEDADES.length;
+      }
     } catch (_) { /* nada */ }
   }
   const total = unreadRojo + unreadSolic;
@@ -7800,6 +7841,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'movquincena') renderMovQuincena(user);
   else if (view === 'cambiocargo') renderCambioCargo(user);
   else if (view === 'cargohistorial') renderCambioCargoHist(user);
+  else if (view === 'novedades') renderNovedades(user);
   else if (view === 'documentos') renderPersonnelDocs(user, null);
   else if (view === 'miempresa') viewMiEmpresa(user);
   else if (view === 'fotos') {
