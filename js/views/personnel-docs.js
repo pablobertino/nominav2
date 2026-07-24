@@ -280,13 +280,13 @@ function buildGroups(rows) {
   return groups;
 }
 
-/* ¿El usuario actual puede gestionar ESTE documento? Dueno (created_by ==
-   mi username) o superadmin. Espejo del canManageDoc del backend; aqui solo
-   gobierna que botones se muestran (la seguridad real la impone el backend). */
+/* v6.107: la gestion es POR PERMISO (matriz), no por propiedad. Muestra la
+   fila de gestion si el rol tiene alguna accion (docs.edit/version/archive);
+   cada boton se gatea luego por su permiso puntual. El backend valida igual. */
 function canManageDoc(d) {
   if (!(STATE.user && STATE.user.kind === 'admin')) return false;
   if (STATE.isSuper) return true;
-  return String(d.created_by || '') === String(STATE.myName || '');
+  return !!(STATE.perms['docs.edit'] || STATE.perms['docs.version'] || STATE.perms['docs.archive']);
 }
 
 function paintList() {
@@ -385,7 +385,7 @@ function cardHtml(d) {
   if (mine) {
     // Dueno o superadmin: gestion completa de este documento.
     // "Borrar definitivo" solo para superadmin.
-    const delBtn = STATE.isSuper
+    const delBtn = STATE.perms['docs.delete']
       ? `<button class="btn btn-mini pd-danger" data-del="${d.id}">🗑 Borrar definitivo</button>`
       : '';
     acts = `

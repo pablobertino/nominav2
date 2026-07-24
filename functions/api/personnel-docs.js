@@ -202,14 +202,14 @@ async function resolveUser(env, user) {
 function isManager(u) { return u && u.kind === 'admin' && (u.role === 'admin' || u.role === 'superadmin'); }
 /* Puede CREAR documentos nuevos: cualquier admin o superadmin (no gestor/editor). */
 function canCreate(u) { return isManager(u); }
-/* Puede GESTIONAR un documento concreto (editar, nueva version, archivar,
-   restaurar): solo el superadmin o el DUEnO (created_by === username actual).
-   La propiedad se compara por username, que es lo que se guarda en created_by
-   (== u.actor). No confia en el cliente: doc viene de la BD. */
-function canManageDoc(u, doc) {
-  if (!u || u.kind !== 'admin' || !doc) return false;
-  if (u.role === 'superadmin') return true;
-  return String(doc.created_by || '') === String(u.actor || '');
+/* v6.107: la gestion de documentos es POR PERMISO (matriz), no por propiedad.
+   Antes solo el dueño o superadmin podian editar/versionar/archivar; ahora un
+   rol con docs.edit/version/archive gestiona CUALQUIER documento (pedido de
+   Pablo: al Coordinador se le deja todo salvo Borrado definitivo, y todo
+   seteable). El permiso puntual de cada accion ya se valida en el dispatch;
+   esta funcion solo gobierna Versiones/Historial (requiere alguna gestion). */
+function canManageAny(actor) {
+  return canPerm(actor, 'docs.edit') || canPerm(actor, 'docs.version') || canPerm(actor, 'docs.archive');
 }
 /* Borrado DEFINITIVO: solo superadmin. */
 function canDeleteForever(u) { return u && u.kind === 'admin' && u.role === 'superadmin'; }
@@ -247,10 +247,16 @@ export async function onRequestPost({ request, env }) {
     if (action === 'download') return await downloadDoc(env, body, u);
     if (action === 'cat_list') return await catList(env);
 
-    // Versiones e Historial: solo el dueno del documento o superadmin.
-    // (Se resuelve el doc y se valida propiedad dentro de cada funcion.)
-    if (action === 'versions') return await listVersions(env, body, u);
-    if (action === 'audit') return await listAudit(env, body, u);
+    // Versiones e Historial: quien pueda gestionar documentos (docs.edit/
+    // version/archive). Las tiendas no acceden aqui.
+    if (action === 'versions') {
+      if (u.kind === 'company' || !canManageAny(actor)) return json({ ok: false, error: 'No tienes permiso.' }, 403);
+      return await listVersions(env, body, u);
+    }
+    if (action === 'audit') {
+      if (!canManageAny(actor)) return json({ ok: false, error: 'No tienes permiso.' }, 403);
+      return await listAudit(env, body, u);
+    }
 
     // Crear documento nuevo: exige docs.create en la matriz del rol.
     if (action === 'create') {
@@ -413,8 +419,7 @@ async function listVersions(env, body, u) {
   if (!doc || !doc.length) return json({ ok: false, error: 'Documento no encontrado.' }, 404);
   // La tienda no ve versiones de archivados.
   if (u.kind === 'company' && doc[0].is_archived) return json({ ok: false, error: 'No disponible.' }, 404);
-  // Versiones: solo el dueno o superadmin (la tienda no accede aqui).
-  if (u.kind === 'company' || !canManageDoc(u, doc[0])) return json({ ok: false, error: 'No tienes permiso.' }, 403);
+  // Autorizacion ya validada en el dispatch (canManageAny + no company).
 
   const vers = await sb(env,
     `personnel_document_versions?document_id=eq.${id}`
@@ -442,10 +447,9 @@ async function listVersions(env, body, u) {
 async function listAudit(env, body, u) {
   const id = parseInt(body.document_id, 10);
   if (!id) return json({ ok: false, error: 'Falta el documento.' }, 400);
-  // El rastro es informacion de gestion: solo el dueno del documento o superadmin.
+  // Autorizacion ya validada en el dispatch (canManageAny).
   const doc = await sb(env, `personnel_documents?id=eq.${id}&select=id,created_by`);
   if (!doc || !doc.length) return json({ ok: false, error: 'Documento no encontrado.' }, 404);
-  if (!canManageDoc(u, doc[0])) return json({ ok: false, error: 'No tienes permiso.' }, 403);
   const rows = await sb(env,
     `personnel_document_audit?document_id=eq.${id}`
     + `&select=action,detail,version_no,actor,actor_kind,created_at&order=created_at.desc`);
@@ -531,7 +535,7 @@ async function uploadVersion(env, body, u) {
   if (!id) return json({ ok: false, error: 'Falta el documento.' }, 400);
   const doc = await sb(env, `personnel_documents?id=eq.${id}&select=id,title,current_version,created_by`);
   if (!doc || !doc.length) return json({ ok: false, error: 'Documento no encontrado.' }, 404);
-  if (!canManageDoc(u, doc[0])) return json({ ok: false, error: 'Solo el dueno del documento o el superadmin pueden subir versiones.' }, 403);
+  // Autorizacion: docs.version, ya validado en el dispatch.
 
   const fileB64 = String(body.file_b64 || '');
   if (!fileB64) return json({ ok: false, error: 'Falta el archivo.' }, 400);
@@ -571,7 +575,7 @@ async function updateDoc(env, body, u) {
   if (!id) return json({ ok: false, error: 'Falta el documento.' }, 400);
   const own = await sb(env, `personnel_documents?id=eq.${id}&select=id,created_by`);
   if (!own || !own.length) return json({ ok: false, error: 'Documento no encontrado.' }, 404);
-  if (!canManageDoc(u, own[0])) return json({ ok: false, error: 'Solo el dueno del documento o el superadmin pueden editarlo.' }, 403);
+  // Autorizacion: docs.edit, ya validado en el dispatch.
   const title = String(body.title || '').trim();
   if (!title) return json({ ok: false, error: 'Falta el titulo.' }, 400);
   const patch = {
@@ -591,7 +595,7 @@ async function archiveDoc(env, body, u) {
   if (!id) return json({ ok: false, error: 'Falta el documento.' }, 400);
   const own = await sb(env, `personnel_documents?id=eq.${id}&select=id,created_by`);
   if (!own || !own.length) return json({ ok: false, error: 'Documento no encontrado.' }, 404);
-  if (!canManageDoc(u, own[0])) return json({ ok: false, error: 'Solo el dueno del documento o el superadmin pueden archivarlo.' }, 403);
+  // Autorizacion: docs.archive, ya validado en el dispatch.
   const reason = (body.reason || '').trim() || null;
   await sb(env, `personnel_documents?id=eq.${id}`, {
     method: 'PATCH',
@@ -609,7 +613,7 @@ async function restoreDoc(env, body, u) {
   if (!id) return json({ ok: false, error: 'Falta el documento.' }, 400);
   const own = await sb(env, `personnel_documents?id=eq.${id}&select=id,created_by`);
   if (!own || !own.length) return json({ ok: false, error: 'Documento no encontrado.' }, 404);
-  if (!canManageDoc(u, own[0])) return json({ ok: false, error: 'Solo el dueno del documento o el superadmin pueden restaurarlo.' }, 403);
+  // Autorizacion: docs.archive, ya validado en el dispatch.
   await sb(env, `personnel_documents?id=eq.${id}`, {
     method: 'PATCH',
     body: JSON.stringify({
