@@ -75,7 +75,9 @@ async function api(payload) {
 async function searchApi(q) {
   return fetch('/api/personnel-search', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'search', adminId: USER.id, q }),
+    // Solo empresas tipo Tienda. El alcance (zona del ejecutor) lo aplica el
+    // endpoint por adminId (get_admin_companies_scoped, seccion 'buscar').
+    body: JSON.stringify({ action: 'search', adminId: USER.id, q, type: 'Tienda' }),
   }).then(x => x.json()).catch(() => null);
 }
 async function historyApi(idNumber) {
@@ -88,38 +90,41 @@ async function historyApi(idNumber) {
 /* =====================================================================
    ENTRY
    ===================================================================== */
+/* Pantalla 1: WIZARD (menu Cargos -> Cambio de Cargo). */
 export async function renderCambioCargo(user) {
   USER = user;
   const host = $('#pnlMain');
   if (!host) return;
-  host.innerHTML = styleBlock() + `<div class="cc-wrap"><div class="cc-loading">Cargando…</div></div>`;
-
-  if (!CAT) {
-    const c = await api({ action: 'catalog' });
-    if (!c || !c.ok) {
-      host.querySelector('.cc-wrap').innerHTML = `<div class="cc-empty">${esc((c && c.error) || 'No se pudo cargar Cambio de Cargo.')}</div>`;
-      return;
-    }
-    CAT = c;
-  }
-  paintShell();
+  host.innerHTML = styleBlock() + `<div class="cc-wrap"><div id="ccBody"><div class="cc-loading">Cargando…</div></div></div>`;
+  if (!(await ensureCat())) return;
+  paintWizard();
 }
 
-function paintShell() {
+/* Pantalla 2: HISTORIAL (menu Cargos -> Historial). Pantalla aparte. */
+export async function renderCambioCargoHist(user) {
+  USER = user;
   const host = $('#pnlMain');
-  const pendCount = MOVES.filter(m => m.estado === 'sugerido').length;
-  host.querySelector('.cc-wrap').innerHTML = `
-    <div class="cc-nav">
-      <div class="cc-brand"><span class="cc-dot"></span>Cambio de Cargo</div>
-      <button data-v="nuevo" class="${VIEW === 'nuevo' ? 'on' : ''}">Cambio de Cargo</button>
-      <button data-v="cola" class="${VIEW === 'cola' ? 'on' : ''}">Historial de cambio de cargo${pendCount ? ` <span class="cc-cnt">${pendCount}</span>` : ''}</button>
-    </div>
-    <div id="ccBody"></div>`;
-  host.querySelector('.cc-nav').addEventListener('click', e => {
-    const b = e.target.closest('button'); if (!b) return;
-    VIEW = b.dataset.v; paintShell();
-  });
-  if (VIEW === 'nuevo') paintWizard(); else paintCola();
+  if (!host) return;
+  host.innerHTML = styleBlock() + `<div class="cc-wrap"><div id="ccBody"><div class="cc-loading">Cargando…</div></div></div>`;
+  if (!(await ensureCat())) return;
+  await paintCola();
+}
+
+async function ensureCat() {
+  if (CAT) return true;
+  const c = await api({ action: 'catalog' });
+  if (!c || !c.ok) {
+    const b = document.getElementById('ccBody');
+    if (b) b.innerHTML = `<div class="cc-empty">${esc((c && c.error) || 'No se pudo cargar Cambio de Cargo.')}</div>`;
+    return false;
+  }
+  CAT = c;
+  return true;
+}
+/* Navega a la pantalla Historial pulsando su item del menu lateral. */
+function gotoHistorial() {
+  const b = document.querySelector('.pnl-side [data-view="cargohistorial"]');
+  if (b) b.click();
 }
 
 /* =====================================================================
@@ -278,7 +283,7 @@ function stepDestino(el) {
     const opts = targetsFor(D.person, D.tipo);
     if (!opts.length) { el.innerHTML = `<div class="cc-warn err">No hay cargos que tu rol pueda asignar para este ${D.tipo}. Debe hacerlo un rol superior.</div>`; return; }
     el.innerHTML = `<div class="cc-fld"><label>Nuevo cargo</label>
-      <select id="ccCargo">${opts.map(c => `<option value="${c.code}" ${c.code === D.cargoTo ? 'selected' : ''}>${esc(c.label)} · ${esc(c.ambito)} (nivel ${c.hier_level})</option>`).join('')}</select>${roleNote}</div>`;
+      <select id="ccCargo">${opts.map(c => `<option value="${c.code}" ${c.code === D.cargoTo ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</select>${roleNote}</div>`;
     document.getElementById('ccCargo').addEventListener('change', e => { D.cargoTo = e.target.value; paintFicha(); });
     return;
   }
@@ -349,21 +354,44 @@ async function paintFicha() {
   const p = D.person;
   const ini = (norm(p.full_name) || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
   const av = p.thumb_url ? `<img src="${esc(p.thumb_url)}" alt="">` : esc(ini);
-  const curChip = p.cargo_code ? cch(p.cargo_code) : `<span class="cc-cchN">${esc(p.role_text || '—')}</span>`;
+  const cargoTxt = esc(String(p.role_text || cargoLabel(p.cargo_code) || '—')).toUpperCase();
   const after = (STEP >= 1 && D.tipo) ? afterCardHtml(p) : '';
   host.innerHTML = `
     <div class="cc-cmp-h">Ficha actual (para decidir)</div>
     <div class="cc-fichaFull">
       <div class="cc-top"><div class="cc-pav big">${av}</div>
-        <div style="flex:1"><h3>${esc(p.full_name)}</h3><div class="cc-ced">V-${esc(p.id_number)}</div>
-          <div class="cc-pills"><span class="cc-pill act">● Activo</span>${curChip}</div>
-          <div class="cc-grp">${esc(p.company_code)} ${esc(p.business_name)}</div></div></div>
+        <div class="cc-ffid">
+          <h2>${esc(p.full_name)}</h2>
+          <div class="cc-ced">V-${esc(p.id_number)}</div>
+          <div class="cc-meta"><span class="cc-pill act" title="Vigente a la fecha">Activo</span><span class="cc-pill">${cargoTxt}</span></div>
+          <div class="cc-fftrj" id="ccTenure"></div>
+          <div class="cc-grp">${esc(p.company_code)} ${esc(p.business_name)}</div>
+        </div></div>
       <div id="ccTraj"><div class="cc-hint" style="margin-top:10px">Cargando trayectoria…</div></div>
     </div>${after}`;
 
   const h = await historyApi(p.id_number);
+  const items = (h && h.ok && h.items) ? h.items : [];
   const box = document.getElementById('ccTraj');
-  if (box) box.innerHTML = trajBlock((h && h.ok && h.items) ? h.items : []);
+  if (box) box.innerHTML = trajBlock(items);
+  const ten = document.getElementById('ccTenure');
+  if (ten) ten.innerHTML = tenureLine(items);
+}
+/* Linea resumen de antiguedad, estilo ficha ("En el Grupo: X · tramo continuo…"). */
+function tenureLine(items) {
+  if (!items || !items.length) return '';
+  const toD = s => Date.parse(String(s).slice(0, 10) + 'T00:00:00Z');
+  const first = toD(items[0].ini); const hoy = toD(todayIso());
+  const totalDays = Math.round((hoy - first) / 86400000) + 1;
+  let continuous = !!items[items.length - 1].vigente;
+  for (let i = 0; i < items.length - 1 && continuous; i++) {
+    const gap = Math.round((toD(items[i + 1].ini) - toD(items[i].fin)) / 86400000) - 1;
+    if (gap > 0) continuous = false;
+  }
+  const dstr = dur(totalDays);
+  return continuous
+    ? `<b>En el Grupo: ${dstr}</b> · tramo continuo desde el ${fmt(items[0].ini)} · ✓ continuo`
+    : `<b>En el Grupo: ${dstr}</b> · con pausas`;
 }
 function afterCardHtml(p) {
   const cur = p.cargo_code;
@@ -450,12 +478,11 @@ async function finish(k) {
     toast((r && r.error) || 'No se pudo guardar el movimiento.', true);
     return;
   }
-  // reset y saltar al historial
+  // reset y saltar a la pantalla Historial (aparte)
   Object.assign(D, resetD());
-  STEP = 0; VIEW = 'cola';
-  await loadCola();
-  paintShell();
-  toast(k === 'a' ? 'Movimiento aprobado.' : 'Sugerencia enviada.');
+  STEP = 0;
+  toast(k === 'a' ? 'Movimiento aprobado. Míralo en Historial.' : 'Sugerencia enviada. Míralo en Historial.');
+  gotoHistorial();
 }
 
 /* =====================================================================
@@ -644,11 +671,14 @@ function styleBlock() {
   .cc-warn.err{color:#991b1b;background:#fef2f2;border-color:#fecaca}
   .cc-cmp-h{font-size:11px;font-weight:800;letter-spacing:.06em;color:var(--faint);text-transform:uppercase;margin:16px 4px 8px}
   .cc-fichaFull{background:#fff;border:1px solid var(--border);border-radius:14px;padding:16px 18px;max-width:900px}
-  .cc-top{display:flex;gap:14px;align-items:center}
-  .cc-top h3{font-size:16px;font-weight:800;margin:0}.cc-ced{font-size:12.5px;color:var(--muted)}
-  .cc-pills{display:flex;gap:7px;margin-top:6px;align-items:center;flex-wrap:wrap}
-  .cc-pill{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:700;border-radius:999px;padding:3px 10px;border:1px solid}
-  .cc-pill.act{color:#0e9f6e;background:#e9f7f1;border-color:#c4e8d9}
+  .cc-top{display:flex;gap:16px;align-items:flex-start}
+  .cc-ffid{flex:1}
+  .cc-ffid h2{font-size:20px;font-weight:800;letter-spacing:-.01em;margin:0;line-height:1.2}
+  .cc-ced{font-size:12.5px;color:var(--muted);margin-top:2px}
+  .cc-meta{display:flex;gap:7px;margin-top:7px;align-items:center;flex-wrap:wrap}
+  .cc-pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;border-radius:999px;padding:3px 11px;border:1px solid #e5e7eb;background:#f1f5f9;color:#475569}
+  .cc-pill.act{color:#0e9f6e;background:#e9f7f1;border-color:#c4e8d9;font-weight:800}
+  .cc-fftrj{font-size:12.5px;color:var(--soft);margin-top:8px}
   .cc-cchN{display:inline-block;font-size:11.5px;font-weight:800;border-radius:999px;padding:2px 10px;background:#eef2f7;color:#475569}
   .cc-cchN.egr{background:#fee2e2;color:#991b1b}
   .cc-grp{font-size:12.5px;color:var(--soft);margin-top:6px}

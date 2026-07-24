@@ -28,7 +28,7 @@ import { renderNoRehire, mountNoRehireConfigCard } from './no-rehire.js';
 import { renderNoRehireVerify } from './no-rehire-verify.js';
 import { renderMovements } from './movements.js';
 import { renderMovQuincena } from './mov-quincena.js';
-import { renderCambioCargo } from './cambio-cargo.js';
+import { renderCambioCargo, renderCambioCargoHist } from './cambio-cargo.js';
 import { renderPersonnelDocs } from './personnel-docs.js';
 import { renderDepartmentCargos } from './department-cargos.js';
 import { renderCertSigners } from './cert-signers.js';
@@ -174,12 +174,16 @@ const NAV_GROUPS = [
     // view.movquincena, gobernable desde Roles. Fuente: roster vivo (RPC
     // get_quincena_moves), NO los cortes de snapshot de Rotacion.
     ['movquincena', I.movesq, 'Movimientos'],
-    // Cambio de Cargo: consola de escritura (ascensos/descensos/traslados/
-    // egresos) con circuito sugerir->aprobar->exportar plantilla AX. Permiso
-    // propio view.cambiocargo (gerente_zona + supervisor_tiendas + admin).
-    ['cambiocargo', I.updown, 'Cambio de Cargo'],
     ['egmotivos', I.check, 'Ratificar egresos'],
     ['rostersync', I.sync, 'Carga de personal'],
+  ] },
+  // Cargos: consola de escritura (ascensos/descensos/traslados/egresos) con
+  // circuito sugerir->aprobar->exportar plantilla AX. Dos pantallas SEPARADAS:
+  // el wizard (cambiocargo) y el Historial (cargohistorial). Ambas gobernadas
+  // por view.cambiocargo (gerente_zona + supervisor_tiendas + admin).
+  { title: 'Cargos', items: [
+    ['cambiocargo', I.updown, 'Cambio de Cargo'],
+    ['cargohistorial', I.history, 'Historial'],
   ] },
   { title: 'Reportes', items: [
     ['historial', I.history, 'Historial'],
@@ -596,7 +600,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.89</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.90</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -7740,6 +7744,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'movimientos') renderMovements(user);
   else if (view === 'movquincena') renderMovQuincena(user);
   else if (view === 'cambiocargo') renderCambioCargo(user);
+  else if (view === 'cargohistorial') renderCambioCargoHist(user);
   else if (view === 'documentos') renderPersonnelDocs(user, null);
   else if (view === 'miempresa') viewMiEmpresa(user);
   else if (view === 'fotos') {
@@ -8081,6 +8086,7 @@ export function renderPanel() {
       movimientos: 'view.movimientos',
       movquincena: 'view.movquincena',
       cambiocargo: 'view.cambiocargo',
+      cargohistorial: 'view.cambiocargo',
       rostersync: 'view.rostersync',
       historial: 'view.historial', estadisticas: 'view.estadisticas',
       misstats: 'view.misstats', reportempresas: 'view.reportempresas',
