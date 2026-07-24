@@ -64,6 +64,7 @@ const VIEW_SUBGROUPS = [
   ['Menu principal', ['view.dashboard', 'view.usuarios', 'view.documentos', 'view.calendario']],
   ['Organizacion', ['view.empresas', 'view.estructura']],
   ['Personal', ['view.buscar', 'view.datosincompletos', 'view.dobleempleo', 'view.movimientos', 'view.egmotivos', 'view.rostersync', 'view.fotos']],
+  ['Cargos', ['view.cambiocargo', 'mov.sugerir', 'mov.aprobar']],
   ['Reportes', ['view.historial', 'view.estadisticas', 'view.reportempresas', 'view.estadopago', 'view.misstats']],
   ['Comunicacion', ['view.avisos', 'view.avisosconfig']],
   ['Solicitudes', ['view.solicitudes', 'view.firmantes']],
@@ -71,7 +72,7 @@ const VIEW_SUBGROUPS = [
   ['Datos bancarios', ['view.bankstats', 'view.banksync', 'view.bankhist', 'view.bankaccounts']],
   ['WhatsApp', ['view.whatsapp']],
   ['Administracion', ['view.equipo', 'view.permisos', 'view.config', 'view.roles', 'view.resetdata']],
-  ['Empresa (tienda)', ['view.miempresa']],
+  ['Empresa (tienda)', ['view.miempresa', 'view.novedades']],
   ['Ver pestañas de Configuracion', ['view.cfg.referencias', 'view.cfg.cargos', 'view.cfg.incidencias', 'view.cfg.calendario', 'view.cfg.sincronizacion', 'view.cfg.osticket', 'view.cfg.ajustes']],
 ];
 
@@ -86,6 +87,8 @@ const MENU_CATALOG = [
   { g: '', items: [
     { id: 'dashboard', lbl: 'Inicio', view: 'view.dashboard', acts: [] },
     { id: 'miempresa', lbl: 'Mi empresa', view: 'view.miempresa', acts: ['report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion'] },
+    // v6.106: Novedades (rol tienda) — cambios que afectan a la tienda.
+    { id: 'novedades', lbl: 'Novedades', view: 'view.novedades', acts: [] },
     { id: 'usuarios', lbl: 'Usuarios', view: 'view.usuarios', acts: ['compuser.create', 'compuser.reset', 'compuser.toggle', 'compuser.email', 'entuser.create', 'entuser.update', 'entuser.reset', 'entuser.toggle', 'entuser.scope'] },
     { id: 'documentos', lbl: 'Documentos', view: 'view.documentos', acts: ['docs.create', 'docs.version', 'docs.edit', 'docs.archive', 'docs.delete', 'docs.categories'] },
     { id: 'calendario', lbl: 'Calendario', view: 'view.calendario', acts: [] },
@@ -117,6 +120,11 @@ const MENU_CATALOG = [
     { id: 'movquincena', lbl: 'Movimientos', view: 'view.movquincena', acts: [] },
     { id: 'egmotivos', lbl: 'Ratificar egresos', view: 'view.egmotivos', acts: ['egress.ratify'] },
     { id: 'rostersync', lbl: 'Carga de personal', view: 'view.rostersync', acts: ['roster.upload', 'roster.upload_ax', 'roster.upload_api', 'roster.manual', 'roster.clear'] },
+  ] },
+  { g: 'Cargos', items: [
+    // v6.106: Cambio de Cargo (wizard) y Aprobaciones comparten view.cambiocargo;
+    // las acciones son sugerir y aprobar/ejecutar.
+    { id: 'cambiocargo', lbl: 'Cambio de Cargo', view: 'view.cambiocargo', acts: ['mov.sugerir', 'mov.aprobar'] },
   ] },
   { g: 'Reportes', items: [
     { id: 'historial', lbl: 'Historial', view: 'view.historial', acts: ['report.attention'] },

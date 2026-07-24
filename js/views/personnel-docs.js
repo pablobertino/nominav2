@@ -168,18 +168,40 @@ function rteValue(scopeEl) {
 /* ===================== ESTADO ===================== */
 let STATE = null;   // { user, onExit, canManage, isSuper, docs, cats, q, catFilter, scope, collapsed:Set }
 
+/* v6.106: los permisos docs.* de la MATRIZ deciden qué puede gestionar cada
+   rol (no un hardcode admin/superadmin). El backend valida igual; esto solo
+   pinta/oculta los controles. Fallo de red => permisivo (el server protege). */
+const DOCS_CODES = ['docs.create', 'docs.version', 'docs.edit', 'docs.archive', 'docs.delete', 'docs.categories'];
+async function fetchDocsPerms(user) {
+  const all = {}; DOCS_CODES.forEach(c => { all[c] = true; });
+  const none = {}; DOCS_CODES.forEach(c => { none[c] = false; });
+  if (user.kind === 'admin' && user.role === 'superadmin') return all;
+  if (user.kind !== 'admin') return none;   // tienda / company: solo consulta
+  try {
+    const r = await fetch('/api/my-perms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null }, codes: DOCS_CODES }),
+    }).then(x => x.json());
+    if (!r || !r.ok) return all;
+    if (r.super) return all;
+    const out = {}; DOCS_CODES.forEach(c => { out[c] = !!(r.perms && r.perms[c]); }); return out;
+  } catch (_) { return all; }
+}
+
 /* ===================== ENTRADA ===================== */
 export async function renderPersonnelDocs(user, onExit) {
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
-  // Puede CREAR documentos: admin o superadmin (no gestor_empresa ni editor_personal).
-  const canCreate = user.kind === 'admin' && (user.role === 'admin' || user.role === 'superadmin');
-  // La gestion por-documento (editar/archivar/etc.) depende de la PROPIEDAD;
-  // se decide por tarjeta con canManageDoc(). canCreate solo gobierna "Subir".
-  STATE = { user, onExit: onExit || null, canCreate, isSuper, myName: user.username || null, docs: [], cats: [], q: '', catFilter: '', scope: 'active', collapsed: new Set() };
+  const perms = await fetchDocsPerms(user);
+  // Puede CREAR documentos: quien tenga docs.create en la matriz (o superadmin).
+  const canCreate = isSuper || !!perms['docs.create'];
+  const canCats = isSuper || !!perms['docs.categories'];
+  // La gestion por-documento (editar/archivar/etc.) depende de la PROPIEDAD
+  // (canManageDoc) Y del permiso de cada accion (perms). canCreate gobierna "Subir".
+  STATE = { user, onExit: onExit || null, canCreate, canCats, perms, isSuper, myName: user.username || null, docs: [], cats: [], q: '', catFilter: '', scope: 'active', collapsed: new Set() };
 
   const back = onExit ? `<button class="btn" id="pdBack" style="margin-bottom:14px">← Volver</button>` : '';
   const headBtns = [];
-  if (isSuper) headBtns.push(`<button class="btn" id="pdCats"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Categorías</button>`);
+  if (canCats) headBtns.push(`<button class="btn" id="pdCats"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg> Categorías</button>`);
   if (canCreate) headBtns.push(`<button class="btn btn-primary" id="pdNew"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14M5 12h14"/></svg> Subir documento</button>`);
 
   const roBanner = canCreate ? '' : `
@@ -204,7 +226,7 @@ export async function renderPersonnelDocs(user, onExit) {
     <div id="pdModalHost"></div>`;
 
   if (onExit) $('#pdBack').addEventListener('click', onExit);
-  if (isSuper) $('#pdCats').addEventListener('click', openCategoriesModal);
+  if (canCats) $('#pdCats').addEventListener('click', openCategoriesModal);
   if (canCreate) $('#pdNew').addEventListener('click', () => openUploadModal(null));
   $('#pdSearch').addEventListener('input', e => { STATE.q = e.target.value; paintList(); });
   $('#pdCat').addEventListener('change', e => { STATE.catFilter = e.target.value; paintList(); });
@@ -373,11 +395,11 @@ function cardHtml(d) {
       </div>
       <div class="pd-arow">
         <button class="btn btn-mini" data-dl="${d.id}">${DL_ICON} Descargar</button>
-        <button class="btn btn-mini" data-edit="${d.id}">✎ Editar</button>
-        <button class="btn btn-mini" data-upv="${d.id}">↑ Nueva versión</button>
-        ${d.is_archived
+        ${STATE.perms['docs.edit'] ? `<button class="btn btn-mini" data-edit="${d.id}">✎ Editar</button>` : ''}
+        ${STATE.perms['docs.version'] ? `<button class="btn btn-mini" data-upv="${d.id}">↑ Nueva versión</button>` : ''}
+        ${STATE.perms['docs.archive'] ? (d.is_archived
           ? `<button class="btn btn-mini" data-rest="${d.id}">♻ Restaurar</button>`
-          : `<button class="btn btn-mini pd-danger" data-arch="${d.id}">⊘ Archivar</button>`}
+          : `<button class="btn btn-mini pd-danger" data-arch="${d.id}">⊘ Archivar</button>`) : ''}
         ${delBtn}
       </div>`;
   } else {
