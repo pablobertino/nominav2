@@ -268,10 +268,12 @@ async function runSearch(q) {
     const ini = (norm(p.full_name) || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
     const on = D.person && D.person.id_number === p.id_number;
     const av = p.thumb_url ? `<img src="${esc(p.thumb_url)}" alt="">` : esc(ini);
+    const zsc = [p.zona, p.subzona, p.concepto].filter(Boolean).map(esc).join(' · ');
     return `<div class="cc-prow ${on ? 'on' : ''}" data-ced="${esc(p.id_number)}">
       <div class="cc-pav">${av}</div>
       <div style="flex:1"><div class="cc-pnm">${esc(p.full_name || '')}</div>
-        <div class="cc-pmeta">V-${esc(p.id_number)}${p.company_code ? ' · ' + esc(p.company_code) : ''}${p.company_name ? ' ' + esc(p.company_name) : ''}</div></div>
+        <div class="cc-pmeta">V-${esc(p.id_number)}${p.company_code ? ' · ' + esc(p.company_code) : ''}${p.company_name ? ' ' + esc(p.company_name) : ''}</div>
+        ${zsc ? `<div class="cc-pmeta">${zsc}</div>` : ''}</div>
       <span class="cc-pcargo">${esc(cargoTxt)}</span>
       <button class="cc-openf" data-ced="${esc(p.id_number)}" title="Ver ficha completa">${IC_FICHA}</button></div>`;
   }).join('');
@@ -427,8 +429,15 @@ function stepRevision(el) {
   const p = D.person;
   const T = { ascenso: 'ASCENSO', descenso: 'DESCENSO', traslado: 'TRASLADO', egreso: 'EGRESO' }[D.tipo];
   const fEf = fmt(D.tipo === 'traslado' ? D.fechaA : D.fechaEf);
+  // Un traslado que ademas cambia de cargo es tambien ascenso o descenso.
+  let extra = '';
+  if (D.tipo === 'traslado' && D.cargoTo && D.cargoTo !== p.cargo_code) {
+    const a = cargoBy(p.cargo_code), b = cargoBy(D.cargoTo);
+    if (a && b && b.hier_level < a.hier_level) extra = ` <span class="cc-pillA ascenso">ASCENSO</span>`;
+    else if (a && b && b.hier_level > a.hier_level) extra = ` <span class="cc-pillA descenso">DESCENSO</span>`;
+  }
   el.innerHTML = `<div class="cc-after">
-      <div class="cc-rev-h">${esc(p.full_name)} <span class="cc-pillA ${D.tipo}">${T}</span></div>
+      <div class="cc-rev-h">${esc(p.full_name)} <span class="cc-pillA ${D.tipo}">${T}</span>${extra}</div>
       <div class="cc-hint" style="font-size:13px;margin-top:6px">${fraseHtml(p)}. Efectivo el <b>${fEf}</b>.</div>
       <div class="cc-hint" style="margin-top:10px">Al confirmar queda <b>${CAT.my.aprobar ? 'aprobado' : 'sugerido para el Gerente de Zona'}</b>. La plantilla AX se descarga después, desde el Historial.</div>
     </div>`;
@@ -459,8 +468,9 @@ async function paintFicha() {
           <div class="cc-ced">V-${esc(p.id_number)}</div>
           <div class="cc-meta"><span class="cc-pill act" title="Vigente a la fecha">Activo</span><span class="cc-pill">${cargoTxt}</span></div>
           <div class="cc-fftrj" id="ccTenure"></div>
-          <div class="cc-grp">${esc(p.company_code)} ${esc(p.business_name)} · <a class="cc-flink" id="ccOpenFicha">Ver ficha completa ↗</a></div>
-        </div></div>
+          <div class="cc-grp">${esc(p.company_code)} ${esc(p.business_name)}</div>
+        </div>
+        <button class="cc-openf" id="ccOpenFicha" title="Ver ficha completa">${IC_FICHA}</button></div>
       <div id="ccTraj"><div class="cc-hint" style="margin-top:10px">Cargando trayectoria…</div></div>
     </div>${after}`;
 
@@ -772,7 +782,7 @@ function styleBlock() {
   .cc-fichaFull{background:#fff;border:1px solid var(--border);border-radius:14px;padding:16px 18px;max-width:900px}
   .cc-top{display:flex;gap:16px;align-items:flex-start}
   .cc-ffid{flex:1}
-  .cc-ffid h2{font-size:19px;font-weight:700;margin:0;line-height:1.25;color:#0f172a}
+  .cc-ffid h2{font-size:19px;font-weight:500;margin:0;line-height:1.25;color:#0f172a}
   .cc-ced{font-size:12.5px;color:var(--muted);margin-top:2px}
   .cc-meta{display:flex;gap:7px;margin-top:7px;align-items:center;flex-wrap:wrap}
   .cc-pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;border-radius:999px;padding:3px 11px;border:1px solid #e5e7eb;background:#f1f5f9;color:#475569}
