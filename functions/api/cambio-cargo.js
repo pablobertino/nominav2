@@ -163,7 +163,7 @@ export async function onRequestPost({ request, env }) {
       if (q) rows = rows.filter(r => (r.full_name || '').toLowerCase().includes(q) || (r.id_number || '').includes(q));
       // Enriquecer con datos de la tienda origen (razon social, zona, subzona,
       // concepto) y la foto del trabajador (para la pantalla Aprobaciones).
-      const comps = [...new Set(rows.map(r => r.empresa_origen).filter(Boolean))];
+      const comps = [...new Set(rows.flatMap(r => [r.empresa_origen, r.empresa_destino]).filter(Boolean))];
       const ceds = [...new Set(rows.map(r => r.id_number).filter(Boolean))];
       const compMap = {};
       if (comps.length) {
@@ -187,8 +187,11 @@ export async function onRequestPost({ request, env }) {
       const thumb = k => k ? `${env.supabase_url}/storage/v1/object/public/worker-thumbs/${k}.jpg` : null;
       rows = rows.map(r => {
         const c = compMap[r.empresa_origen] || {};
+        const dc = compMap[r.empresa_destino] || {};
         const w = photoMap[r.id_number] || {};
-        return { ...r, rz: c.rz, zona: c.zona, subzona: c.subzona, concepto: c.concepto, thumb_url: thumb(w.photo_key), gender: w.gender || null, birth_date: w.birth_date || null };
+        return { ...r, rz: c.rz, zona: c.zona, subzona: c.subzona, concepto: c.concepto,
+          dest_rz: dc.rz || null, dest_concepto: dc.concepto || null,
+          thumb_url: thumb(w.photo_key), gender: w.gender || null, birth_date: w.birth_date || null };
       });
       return json({ ok: true, rows });
     }

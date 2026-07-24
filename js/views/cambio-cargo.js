@@ -24,7 +24,7 @@ let COLA_FILTER = 'todos', COLA_Q = '';
 let MOVES = [];                 // historial cargado
 const D = resetD();
 
-function resetD() { return { person: null, tipo: null, cargoTo: null, empTo: '', empToLabel: '', motivo: '', fechaEf: '', fechaB: '', fechaA: '', comentario: '' }; }
+function resetD() { return { person: null, tipo: null, cargoTo: null, empTo: '', empToLabel: '', empToConcepto: '', motivo: '', fechaEf: '', fechaB: '', fechaA: '', comentario: '' }; }
 
 /* Fecha de HOY en zona horaria de Venezuela (America/Caracas), no UTC. */
 function todayVE() {
@@ -305,6 +305,7 @@ function pickPerson(p) {
   D.person = {
     id_number: p.id_number, full_name: p.full_name || '', role_text: norm(p.role) || '',
     company_code: p.company_code || '', business_name: p.company_name || '',
+    concepto: p.concepto || '', zona: p.zona || '', subzona: p.subzona || '',
     thumb_url: p.thumb_url || null, start_date: p.start_date || null,
     cargo_code: matchCargoCode(p.role),
   };
@@ -402,7 +403,7 @@ function renderEmpToList(q) {
   box.querySelectorAll('.cc-prow').forEach(row => row.addEventListener('click', () => {
     const c = (COMPS || []).find(x => x.code === row.dataset.code);
     if (!c) return;
-    D.empTo = c.code; D.empToLabel = c.business_name || '';
+    D.empTo = c.code; D.empToLabel = c.business_name || ''; D.empToConcepto = c.concepto || '';
     paintStep(); paintFicha(); syncNext();
   }));
 }
@@ -522,8 +523,17 @@ function afterCardHtml(p) {
     empVal = `${esc(p.company_code)} ${esc(p.business_name)}`;
   }
   const pair = (k, val, chg, cls) => `<div class="cc-frow"><span class="k">${k}</span><span class="cc-vpair">${chg ? `<span class="cc-vchip old">${val.split('→')[0]}</span>` : ''}<span class="cc-vchip ${cls || ''}">${chg && val.includes('→') ? val.split('→')[1] : val}</span></span></div>`;
+  // Concepto: en traslado, origen → destino (muchos cambian de concepto, p.ej.
+  // MR PRICE → SHOE BOX). En el resto, el concepto de la tienda (informativo).
+  const cptFrom = p.concepto || '';
+  const cptTo = D.tipo === 'traslado' ? (D.empToConcepto || '') : cptFrom;
+  const cptChg = D.tipo === 'traslado' && cptTo && cptFrom && cptTo !== cptFrom;
+  const conceptVal = cptChg
+    ? `<span class="cc-vchip old">${esc(cptFrom)}</span><span class="cc-ar">→</span><span class="cc-vchip">${esc(cptTo)}</span>`
+    : `<span class="cc-vchip">${esc(cptTo || cptFrom || '—')}</span>`;
   return `<div class="cc-after"><div class="lab">Ficha nueva</div>${cargoLine}
     <div class="cc-frow"><span class="k">Empresa · Tienda</span><span class="cc-vpair">${empVal}</span></div>
+    <div class="cc-frow"><span class="k">Concepto</span><span class="cc-vpair">${conceptVal}</span></div>
     <div class="cc-frow"><span class="k">Estado</span><span class="cc-vpair"><span class="cc-vchip ${estChg ? 'egr' : ''}">${estado}</span></span></div>
     <div class="cc-frow"><span class="k">Efectivo</span><span class="cc-vpair"><span class="cc-vchip date">${fmt(D.tipo === 'traslado' ? D.fechaA : D.fechaEf)}</span></span></div></div>`;
 }
@@ -769,15 +779,24 @@ async function renderDetail() {
 }
 function aproTopicLabel(t) { if (t === 'egreso') return 'Egreso · tópico 33'; if (t === 'traslado') return 'Traslado · tópico 34'; return 'Modificación · tópico 32'; }
 function aproAfter(mv) {
+  // Fila Concepto: en traslado origen → destino (p.ej. MR PRICE → SHOE BOX);
+  // en el resto, el concepto de la tienda (informativo).
+  const cFrom = mv.concepto || '';
+  const cTo = mv.tipo === 'traslado' ? (mv.dest_concepto || '') : cFrom;
+  const cChg = mv.tipo === 'traslado' && cTo && cFrom && cTo !== cFrom;
+  const conceptRow = `<div class="cc-frow"><span class="k">Concepto</span><span class="v">${cChg ? `${esc(cFrom)} <span class="cc-ar">→</span> ${esc(cTo)}` : esc(cTo || cFrom || '—')}</span></div>`;
   if (mv.tipo === 'egreso') return `<div class="cc-cargoline">${mv.cargo_from ? cch(mv.cargo_from, true) : ''} <span style="color:#991b1b;font-weight:800">→ EGRESO</span></div>
     <div class="cc-frow"><span class="k">Motivo</span><span class="v">${esc(mv.motivo || '—')}</span></div>
+    ${conceptRow}
     <div class="cc-frow"><span class="k">Efectivo</span><span class="v">${fmt(mv.fecha_baja || mv.fecha_efectiva)}</span></div>`;
   if (mv.tipo === 'traslado') return `<div class="cc-cargoline">${mv.cargo_from ? cch(mv.cargo_from, true) : ''}<span class="cc-ar">→</span>${cch(mv.cargo_to || mv.cargo_from, true)}</div>
-    <div class="cc-frow"><span class="k">Empresa · Tienda</span><span class="v">${esc(mv.empresa_origen || '')} ${esc(mv.rz || '')} <span class="cc-ar">→</span> ${esc(mv.empresa_destino || '—')}</span></div>
+    <div class="cc-frow"><span class="k">Empresa · Tienda</span><span class="v">${esc(mv.empresa_origen || '')} ${esc(mv.rz || '')} <span class="cc-ar">→</span> ${esc(mv.empresa_destino || '—')}${mv.dest_rz ? ' ' + esc(mv.dest_rz) : ''}</span></div>
+    ${conceptRow}
     <div class="cc-frow"><span class="k">Baja origen (B)</span><span class="v">${fmt(mv.fecha_baja)}</span></div>
     <div class="cc-frow"><span class="k">Alta destino (A)</span><span class="v">${fmt(mv.fecha_alta)}</span></div>`;
   return `<div class="cc-cargoline">${mv.cargo_from ? cch(mv.cargo_from, true) : ''}<span class="cc-ar">→</span>${cch(mv.cargo_to, true)}</div>
     <div class="cc-frow"><span class="k">Empresa · Tienda</span><span class="v">${esc(mv.empresa_origen || '')} ${esc(mv.rz || '')}</span></div>
+    ${conceptRow}
     <div class="cc-frow"><span class="k">Efectivo</span><span class="v">${fmt(mv.fecha_efectiva)}</span></div>`;
 }
 function mvDetail(mv) {
