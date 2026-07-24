@@ -611,8 +611,8 @@ async function finish(k) {
    ===================================================================== */
 const TIPO_LB = { ascenso: 'Ascenso', descenso: 'Descenso', lateral: 'Lateral', traslado: 'Traslado', egreso: 'Egreso' };
 const APRO_FILTERS = [['sugerido', 'Pendientes'], ['reportado', 'Aprobados'], ['rechazado', 'Rechazados']];
-const APRO_PER = 6;
-let APRO_PAGE = 1, APRO_SEL = null;
+const APRO_PER = 8;
+let APRO_PAGE = 1, APRO_SEL = null, APRO_SUB = 'list';   // 'list' | 'detail'
 
 async function loadCola() {
   const r = await api({ action: 'list', estado: 'todos' });
@@ -623,7 +623,8 @@ async function paintCola() {
   body.innerHTML = `<div class="cc-cola"><div class="cc-loading">Cargando…</div></div>`;
   if (!['sugerido', 'reportado', 'rechazado'].includes(COLA_FILTER)) COLA_FILTER = 'sugerido';
   await loadCola();
-  renderApro();
+  if (APRO_SUB === 'detail' && MOVES.find(m => m.id === APRO_SEL)) renderDetail();
+  else { APRO_SUB = 'list'; renderApro(); }
 }
 function aproCnt(est) { return MOVES.filter(m => m.estado === est).length; }
 function aproFiltered() {
@@ -636,6 +637,7 @@ function avatarHtml(mv, big) {
   if (mv.thumb_url) return `<div class="${cls}"><img src="${esc(mv.thumb_url)}" alt=""></div>`;
   return `<div class="${cls}" style="background:linear-gradient(135deg,#e5e7eb,#cbd5e1);color:#475569">${iniOf(mv.full_name)}</div>`;
 }
+/* ---------- LISTA (mini-fichas, estilo Buscar) ---------- */
 function renderApro() {
   const body = document.getElementById('ccBody');
   const chips = APRO_FILTERS.map(([f, l]) => `<button data-f="${f}" class="${COLA_FILTER === f ? 'on' : ''}">${l}<span class="n">${aproCnt(f)}</span></button>`).join('');
@@ -643,9 +645,9 @@ function renderApro() {
   body.innerHTML = `<div class="cc-apro">
     <div class="cc-apro-head"><h2>Aprobaciones</h2>${pend ? `<span class="cc-cnt">${pend} pendiente${pend === 1 ? '' : 's'}</span>` : ''}<span class="cc-sp"></span><span class="cc-hint">Al aprobar se genera el reporte y su <b>ticket</b> → Reportes · Historial</span></div>
     <div class="cc-apro-filters"><div class="cc-fchips">${chips}</div><input class="cc-inp" id="ccAQ" placeholder="Buscar por nombre, cédula o tienda…" value="${esc(COLA_Q)}"></div>
-    <div class="cc-apro-grid"><div><div id="ccAList"></div><div class="cc-pager" id="ccAPager"></div></div><div class="cc-apanel" id="ccAPanel"></div></div>
+    <div id="ccAList"></div><div class="cc-pager" id="ccAPager"></div>
   </div>`;
-  body.querySelectorAll('.cc-fchips button').forEach(b => b.addEventListener('click', () => { COLA_FILTER = b.dataset.f; APRO_PAGE = 1; APRO_SEL = null; renderApro(); }));
+  body.querySelectorAll('.cc-fchips button').forEach(b => b.addEventListener('click', () => { COLA_FILTER = b.dataset.f; APRO_PAGE = 1; renderApro(); }));
   document.getElementById('ccAQ').addEventListener('input', e => { COLA_Q = e.target.value.toLowerCase(); APRO_PAGE = 1; renderAList(); });
   renderAList();
 }
@@ -657,20 +659,20 @@ function renderAList() {
   const slice = list.slice((APRO_PAGE - 1) * APRO_PER, APRO_PAGE * APRO_PER);
   el.innerHTML = slice.length ? slice.map(mv => {
     const loc = [mv.empresa_origen, mv.rz, mv.zona, mv.subzona, mv.concepto].filter(Boolean).map(esc).join(' · ');
-    return `<div class="cc-acard ${APRO_SEL === mv.id ? 'on' : ''}" data-id="${mv.id}">
+    return `<div class="cc-acard" data-id="${mv.id}">
       ${avatarHtml(mv)}
       <div style="flex:1;min-width:0">
         <div class="cc-anm">${esc(mv.full_name || ('V-' + mv.id_number))} <span class="cc-pillA ${mv.tipo}">${esc((TIPO_LB[mv.tipo] || mv.tipo).toUpperCase())}</span></div>
         <div class="cc-adet">${mvDetail(mv)}</div>
         <div class="cc-aloc">${loc || ('V-' + esc(mv.id_number))}</div>
-        <div class="cc-amt">Sugerido por ${esc(mv.suggested_by || '')}${mv.estado === 'reportado' && mv.osticket_id ? ` · <b style="color:#166534">✅ Ticket #${esc(mv.osticket_id)}</b>` : ''}</div>
+        <div class="cc-amt">Sugerido por ${esc(mv.suggested_by || '')}${mv.estado === 'reportado' && mv.osticket_id ? ` · <b style="color:#166534">✅ Ticket #${esc(mv.osticket_id)}</b>` : ''}${mv.estado === 'rechazado' && mv.rejected_by ? ` · <b style="color:#991b1b">Rechazado por ${esc(mv.rejected_by)}</b>` : ''}</div>
       </div>
       <button class="cc-openf" data-fic="${mv.id}" title="Ver ficha completa">${IC_FICHA}</button>
     </div>`;
   }).join('') : `<div class="cc-acard" style="cursor:default"><span class="cc-hint">${COLA_FILTER === 'sugerido' ? 'No hay sugerencias pendientes.' : 'Nada aquí.'}</span></div>`;
   el.querySelectorAll('.cc-acard[data-id]').forEach(c => c.addEventListener('click', e => {
     if (e.target.closest('.cc-openf')) return;
-    APRO_SEL = parseInt(c.dataset.id, 10); renderApro();
+    showDetail(parseInt(c.dataset.id, 10));
   }));
   el.querySelectorAll('.cc-openf').forEach(b => b.addEventListener('click', e => {
     e.stopPropagation();
@@ -683,40 +685,53 @@ function renderAList() {
     : `<span>${list.length} ${list.length === 1 ? 'sugerencia' : 'sugerencias'}</span>`;
   document.getElementById('aprPrev')?.addEventListener('click', () => { APRO_PAGE--; renderAList(); });
   document.getElementById('aprNext')?.addEventListener('click', () => { APRO_PAGE++; renderAList(); });
-  renderAPanel();
 }
-async function renderAPanel() {
-  const panel = document.getElementById('ccAPanel'); if (!panel) return;
+function showDetail(id) { APRO_SEL = id; APRO_SUB = 'detail'; renderDetail(); }
+function backToList() { APRO_SUB = 'list'; renderApro(); }
+
+/* ---------- DETALLE (página aparte con Volver) ---------- */
+async function renderDetail() {
+  const body = document.getElementById('ccBody');
   const mv = MOVES.find(x => x.id === APRO_SEL);
-  if (!mv) { panel.innerHTML = `<div class="cc-aempty">Elegí una sugerencia de la lista para revisarla y aprobarla.</div>`; return; }
+  if (!mv) { backToList(); return; }
   const my = CAT.my || {};
   const loc = [mv.empresa_origen, mv.rz, mv.zona, mv.subzona, mv.concepto].filter(Boolean);
-  panel.innerHTML = `
-    <div class="cc-ahead">
-      ${avatarHtml(mv, true)}
-      <div style="flex:1"><h2>${esc(mv.full_name || ('V-' + mv.id_number))}</h2><div class="cc-ced">V-${esc(mv.id_number)}</div>
-        <div class="cc-meta"><span class="cc-pill act">Activo</span>${mv.cargo_from ? `<span class="cc-pill">${esc(cargoLabel(mv.cargo_from))}</span>` : ''}</div></div>
-      <button class="cc-openf" id="ccAFicha" title="Ver ficha completa">${IC_FICHA}</button>
+  let whoExtra = '';
+  if (mv.estado === 'reportado' && mv.approved_by) whoExtra = `<br><span style="color:#166534">Aprobado por <b>${esc(mv.approved_by)}</b></span>`;
+  else if (mv.estado === 'rechazado' && mv.rejected_by) whoExtra = `<br><span style="color:#991b1b">Rechazado por <b>${esc(mv.rejected_by)}</b>${mv.reject_reason ? ` — ${esc(mv.reject_reason)}` : ''}</span>`;
+  body.innerHTML = `<div class="cc-apro">
+    <div class="cc-apro-head"><button class="cc-btn back" id="ccBackList">← Volver</button><h2 style="font-size:16px">Revisión de la sugerencia</h2></div>
+    <div class="cc-apanel" style="min-height:auto">
+      <div class="cc-ahead">
+        ${avatarHtml(mv, true)}
+        <div style="flex:1"><h2>${esc(mv.full_name || ('V-' + mv.id_number))}</h2><div class="cc-ced">V-${esc(mv.id_number)}</div>
+          <div class="cc-meta"><span class="cc-pill act">Activo</span>${mv.cargo_from ? `<span class="cc-pill">${esc(cargoLabel(mv.cargo_from))}</span>` : ''}</div></div>
+        <button class="cc-openf" id="ccAFicha" title="Ver ficha completa">${IC_FICHA}</button>
+      </div>
+      <div class="cc-abody">
+        <div class="cc-adatarow">${loc.map((v, i) => `<span><span class="k">${['Tienda', 'Razón social', 'Zona', 'Subzona', 'Concepto'][i] || ''}:</span> <b>${esc(v)}</b></span>`).join('')}</div>
+        <div class="cc-sec">Trayectoria en el Grupo</div>
+        <div id="ccATraj"><div class="cc-hint">Cargando trayectoria…</div></div>
+        <div class="cc-achange"><div class="cc-sec" style="color:var(--pri)">Cambio propuesto</div>${aproAfter(mv)}</div>
+        <div class="cc-awho">Sugerido por <b>${esc(mv.suggested_by || '')}</b>${mv.comentario ? `<br>“${esc(mv.comentario)}”` : ''}${whoExtra}</div>
+      </div>
+      ${mv.estado === 'reportado'
+        ? aproDoneBox(mv.osticket_id, mv.report_id)
+        : mv.estado === 'rechazado'
+          ? `<div class="cc-aact"><div class="cc-awill" style="color:#991b1b;background:#fef2f2;border-color:#fecaca">Sugerencia rechazada.</div></div>`
+          : (my.aprobar ? `<div class="cc-aact">
+              <div class="cc-awill">Al aprobar se genera el reporte de <b>${aproTopicLabel(mv.tipo)}</b> con su ticket, y va a <b>Reportes → Historial</b>.</div>
+              <button class="cc-btn back" id="ccARej">Rechazar</button>
+              <button class="cc-btn apr" id="ccAApr">✓ Aprobar y generar ticket</button>
+            </div>` : `<div class="cc-aact"><div class="cc-awill">⏳ Esperando aprobación del Gerente de Zona.</div></div>`)}
     </div>
-    <div class="cc-abody">
-      <div class="cc-adatarow">${loc.map((v, i) => `<span><span class="k">${['Tienda', 'Razón social', 'Zona', 'Subzona', 'Concepto'][i] || ''}:</span> <b>${esc(v)}</b></span>`).join('')}</div>
-      <div class="cc-sec">Trayectoria en el Grupo</div>
-      <div id="ccATraj"><div class="cc-hint">Cargando trayectoria…</div></div>
-      <div class="cc-achange"><div class="cc-sec" style="color:var(--pri)">Cambio propuesto</div>${aproAfter(mv)}</div>
-      <div class="cc-awho">Sugerido por <b>${esc(mv.suggested_by || '')}</b>${mv.comentario ? `<br>“${esc(mv.comentario)}”` : ''}</div>
-    </div>
-    ${mv.estado === 'reportado'
-      ? aproDoneBox(mv.osticket_id, mv.report_id)
-      : (my.aprobar ? `<div class="cc-aact">
-          <div class="cc-awill">Al aprobar se genera el reporte de <b>${aproTopicLabel(mv.tipo)}</b> con su ticket, y va a <b>Reportes → Historial</b>.</div>
-          <button class="cc-btn back" id="ccARej">Rechazar</button>
-          <button class="cc-btn apr" id="ccAApr">✓ Aprobar y generar ticket</button>
-        </div>` : `<div class="cc-aact"><div class="cc-awill">⏳ Esperando aprobación del Gerente de Zona.</div></div>`)}`;
+  </div>`;
+  document.getElementById('ccBackList')?.addEventListener('click', backToList);
   document.getElementById('ccAFicha')?.addEventListener('click', () => openFichaFor({ id_number: mv.id_number, company_code: mv.empresa_origen }, () => renderCambioCargoHist(USER)));
   document.getElementById('ccAApr')?.addEventListener('click', () => approveMove(mv.id));
   document.getElementById('ccARej')?.addEventListener('click', () => rejectMove(mv.id));
-  panel.querySelector('.cc-gorep')?.addEventListener('click', () => { const b = document.querySelector('.pnl-side [data-view="historial"]'); if (b) b.click(); });
-  panel.querySelector('.cc-apav')?.addEventListener('click', () => ccLightbox(mv));
+  document.querySelector('.cc-gorep')?.addEventListener('click', () => { const b = document.querySelector('.pnl-side [data-view="historial"]'); if (b) b.click(); });
+  document.querySelector('.cc-apav')?.addEventListener('click', () => ccLightbox(mv));
   const h = await historyApi(mv.id_number, mv.empresa_origen);
   const box = document.getElementById('ccATraj');
   if (box) box.innerHTML = trajHtml((h && h.ok && h.items) ? h.items : []);
@@ -746,12 +761,17 @@ function ccLightbox(mv) {
   lb.classList.add('on');
 }
 async function approveMove(id) {
+  const btn = document.getElementById('ccAApr');
+  if (btn) { btn.disabled = true; btn.textContent = 'Generando…'; }
   const r = await api({ action: 'approve', id });
-  if (!r || !r.ok) return toast((r && r.error) || 'No se pudo aprobar.', true);
+  if (!r || !r.ok) {
+    if (btn) { btn.disabled = false; btn.textContent = '✓ Aprobar y generar ticket'; }
+    return toast((r && r.error) || 'No se pudo aprobar.', true);
+  }
   await loadCola();
-  APRO_SEL = null;
-  renderApro();
-  aproSuccess(r);
+  APRO_SUB = 'detail'; APRO_SEL = id;
+  renderDetail();
+  toast(r.osticket_id ? `Aprobado. Ticket #${r.osticket_id} generado.` : 'Aprobado y reportado.');
 }
 function aproDoneBox(ost, repId) {
   const rep = repId ? String(repId).padStart(4, '0') : null;
@@ -764,16 +784,38 @@ function aproDoneBox(ost, repId) {
        <a class="cc-gorep"><span>📄 Reporte${rep ? ' <span class="tk">#' + rep + '</span>' : ''}</span> <span class="ext">Ver en Reportes → Historial →</span></a>
      </div></div></div>`;
 }
-function aproSuccess(r) {
-  const panel = document.getElementById('ccAPanel');
-  if (panel) panel.innerHTML = aproDoneBox(r.osticket_id, r.report_id);
-  document.querySelector('.cc-gorep')?.addEventListener('click', () => { const b = document.querySelector('.pnl-side [data-view="historial"]'); if (b) b.click(); });
-  toast(r.osticket_id ? `Aprobado. Ticket #${r.osticket_id} generado.` : 'Aprobado y reportado.');
+function ccPrompt(label) {
+  return new Promise(resolve => {
+    let ov = document.getElementById('ccPromptOv');
+    if (ov) ov.remove();
+    ov = document.createElement('div');
+    ov.id = 'ccPromptOv';
+    ov.className = 'cc-prompt-ov';
+    ov.innerHTML = `<div class="cc-prompt">
+      <div class="cc-prompt-l">${esc(label)}</div>
+      <textarea id="ccPromptTa" rows="3" placeholder="Escribe aquí…"></textarea>
+      <div class="cc-prompt-btns">
+        <button class="cc-btn back" id="ccPromptCancel">Cancelar</button>
+        <button class="cc-btn apr" id="ccPromptOk">Rechazar</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const ta = ov.querySelector('#ccPromptTa');
+    setTimeout(() => ta && ta.focus(), 30);
+    const done = val => { ov.remove(); resolve(val); };
+    ov.querySelector('#ccPromptCancel').addEventListener('click', () => done(null));
+    ov.querySelector('#ccPromptOk').addEventListener('click', () => done(ta.value.trim()));
+    ov.addEventListener('click', e => { if (e.target === ov) done(null); });
+  });
 }
 async function rejectMove(id) {
-  const r = await api({ action: 'reject', id });
+  const reason = await ccPrompt('Motivo del rechazo (opcional):');
+  if (reason === null) return;               // cancelado
+  const r = await api({ action: 'reject', id, reason: reason || undefined });
   if (!r || !r.ok) return toast((r && r.error) || 'No se pudo rechazar.', true);
-  await loadCola(); APRO_SEL = null; renderApro(); toast('Rechazado.');
+  await loadCola();
+  APRO_SUB = 'detail'; APRO_SEL = id;
+  renderDetail();
+  toast('Sugerencia rechazada.');
 }
 
 /* ---------- utils ---------- */
@@ -958,5 +1000,11 @@ function styleBlock() {
   .cc-lb .cap{position:absolute;bottom:40px;color:#e2e8f0;font-size:13px}
   .cc-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#0f172a;color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:10px;box-shadow:0 6px 24px rgba(15,23,42,.25);z-index:9999;transition:opacity .3s;opacity:0}
   .cc-toast.err{background:#b91c1c}
+  .cc-prompt-ov{position:fixed;inset:0;background:rgba(15,23,42,.5);display:flex;align-items:center;justify-content:center;z-index:9999;padding:20px}
+  .cc-prompt{background:#fff;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.3);padding:18px;width:min(420px,100%)}
+  .cc-prompt-l{font-size:14px;font-weight:700;color:var(--ink);margin-bottom:10px}
+  .cc-prompt textarea{width:100%;box-sizing:border-box;border:1px solid var(--border-2);border-radius:10px;padding:9px 11px;font-size:13px;font-family:inherit;resize:vertical}
+  .cc-prompt-btns{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+  .cc-prompt-btns .cc-btn.apr{background:#dc2626;border-color:#dc2626}.cc-prompt-btns .cc-btn.apr:hover{background:#b91c1c}
   </style>`;
 }
