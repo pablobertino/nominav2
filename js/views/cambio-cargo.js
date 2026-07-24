@@ -289,10 +289,10 @@ async function runSearch(q) {
   }));
 }
 const IC_FICHA = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
-function openFichaFor(p) {
+function openFichaFor(p, back) {
   const cc = p.company_code || (D.person && D.person.company_code);
   if (!cc) { toast('No pude abrir la ficha: falta la empresa.', true); return; }
-  renderWorkerPhotos(USER, cc, () => renderCambioCargo(USER), { mode: 'store', openCed: p.id_number });
+  renderWorkerPhotos(USER, cc, back || (() => renderCambioCargo(USER)), { mode: 'store', openCed: p.id_number });
 }
 function pickPerson(p) {
   // Mapea el cargo de texto del roster a un code de cargos (mejor esfuerzo).
@@ -606,12 +606,13 @@ async function finish(k) {
 }
 
 /* =====================================================================
-   PENDIENTES (cola de aprobación). Al aprobar se genera el reporte + ticket
-   y el movimiento pasa a Reportes → Historial (ya no vive aquí).
+   APROBACIONES — bandeja donde se revisa la sugerencia y, al aprobar, se
+   DISPARA el reporte + ticket (Reportes → Historial).
    ===================================================================== */
-const ST = { sugerido: ['sug', 'Pendiente'], aprobado: ['apr', 'Aprobado'], reportado: ['exp', 'Reportado'], exportado: ['exp', 'Reportado'], rechazado: ['rec', 'Rechazado'], ejecutado: ['exp', 'Ejecutado'], anulado: ['rec', 'Anulado'] };
 const TIPO_LB = { ascenso: 'Ascenso', descenso: 'Descenso', lateral: 'Lateral', traslado: 'Traslado', egreso: 'Egreso' };
-const FILTERS = [['sugerido', 'Pendientes'], ['rechazado', 'Rechazados']];
+const APRO_FILTERS = [['sugerido', 'Pendientes'], ['rechazado', 'Rechazados']];
+const APRO_PER = 6;
+let APRO_PAGE = 1, APRO_SEL = null;
 
 async function loadCola() {
   const r = await api({ action: 'list', estado: 'todos' });
@@ -622,74 +623,152 @@ async function paintCola() {
   body.innerHTML = `<div class="cc-cola"><div class="cc-loading">Cargando…</div></div>`;
   if (COLA_FILTER !== 'sugerido' && COLA_FILTER !== 'rechazado') COLA_FILTER = 'sugerido';
   await loadCola();
-  renderCola();
+  renderApro();
 }
-function cntBy(est) { return MOVES.filter(m => m.estado === est).length; }
-function colaFiltered() {
+function aproCnt(est) { return MOVES.filter(m => m.estado === est).length; }
+function aproFiltered() {
   return MOVES.filter(m => m.estado === COLA_FILTER &&
-    (!COLA_Q || (m.full_name || '').toLowerCase().includes(COLA_Q) || (m.id_number || '').includes(COLA_Q)));
+    (!COLA_Q || (m.full_name || '').toLowerCase().includes(COLA_Q) || (m.id_number || '').includes(COLA_Q) || ((m.empresa_origen || '') + ' ' + (m.rz || '')).toLowerCase().includes(COLA_Q)));
 }
-function renderCola() {
+function iniOf(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2) || '?').toUpperCase(); }
+function avatarHtml(mv, big) {
+  const cls = big ? 'cc-apav big' : 'cc-apav';
+  if (mv.thumb_url) return `<div class="${cls}"><img src="${esc(mv.thumb_url)}" alt=""></div>`;
+  return `<div class="${cls}" style="background:linear-gradient(135deg,#e5e7eb,#cbd5e1);color:#475569">${iniOf(mv.full_name)}</div>`;
+}
+function renderApro() {
   const body = document.getElementById('ccBody');
-  const my = CAT.my || {};
-  const pend = cntBy('sugerido');
-  const chips = FILTERS.map(([f, lb]) => `<button data-f="${f}" class="${COLA_FILTER === f ? 'on' : ''}">${lb}<span class="n">${cntBy(f)}</span></button>`).join('');
-  const approveBar = (pend > 0 && my.aprobar)
-    ? `<div class="cc-approvebar">⏳ <b>${pend}</b> sugerencia${pend === 1 ? '' : 's'} esperan tu aprobación. Al aprobar se genera el reporte y su ticket (Reportes → Historial).</div>`
-    : (pend > 0 ? `<div class="cc-approvebar">⏳ <b>${pend}</b> pendiente${pend === 1 ? '' : 's'}. Las aprueba el <b>Gerente de Zona</b>.</div>` : '');
-  body.innerHTML = `<div class="cc-cola">
-    <div class="cc-cola-h"><h2>Pendientes de aprobación</h2><span class="sub">viendo como <b>${esc(roleLabel())}</b></span></div>
-    <div class="cc-cola-filter"><div class="cc-fchips">${chips}</div><input class="cc-inp" id="ccColaQ" placeholder="Buscar por nombre o cédula…" value="${esc(COLA_Q)}"></div>
-    ${approveBar}
-    <div id="ccColaList"></div>
-    <div class="cc-cola-foot">Al <b>aprobar</b>, el movimiento se convierte en un reporte con su ticket y aparece en <b>Reportes → Historial</b> para Capital Humano.${my.aprobar ? '' : ' Con <b>mov.sugerir</b>, tus movimientos quedan pendientes hasta que el Gerente de Zona los apruebe.'}</div>
+  const chips = APRO_FILTERS.map(([f, l]) => `<button data-f="${f}" class="${COLA_FILTER === f ? 'on' : ''}">${l}<span class="n">${aproCnt(f)}</span></button>`).join('');
+  const pend = aproCnt('sugerido');
+  body.innerHTML = `<div class="cc-apro">
+    <div class="cc-apro-head"><h2>Aprobaciones</h2>${pend ? `<span class="cc-cnt">${pend} pendiente${pend === 1 ? '' : 's'}</span>` : ''}<span class="cc-sp"></span><span class="cc-hint">Al aprobar se genera el reporte y su <b>ticket</b> → Reportes · Historial</span></div>
+    <div class="cc-apro-filters"><div class="cc-fchips">${chips}</div><input class="cc-inp" id="ccAQ" placeholder="Buscar por nombre, cédula o tienda…" value="${esc(COLA_Q)}"></div>
+    <div class="cc-apro-grid"><div><div id="ccAList"></div><div class="cc-pager" id="ccAPager"></div></div><div class="cc-apanel" id="ccAPanel"></div></div>
   </div>`;
-  body.querySelectorAll('.cc-fchips button').forEach(b => b.addEventListener('click', () => { COLA_FILTER = b.dataset.f; renderCola(); }));
-  document.getElementById('ccColaQ').addEventListener('input', e => { COLA_Q = e.target.value.toLowerCase(); renderColaList(); });
-  renderColaList();
+  body.querySelectorAll('.cc-fchips button').forEach(b => b.addEventListener('click', () => { COLA_FILTER = b.dataset.f; APRO_PAGE = 1; APRO_SEL = null; renderApro(); }));
+  document.getElementById('ccAQ').addEventListener('input', e => { COLA_Q = e.target.value.toLowerCase(); APRO_PAGE = 1; renderAList(); });
+  renderAList();
 }
-function renderColaList() {
-  const el = document.getElementById('ccColaList');
-  if (!el) return;
-  const list = colaFiltered();
-  if (!list.length) { el.innerHTML = `<div class="cc-mvrow"><span class="cc-hint">${COLA_FILTER === 'sugerido' ? 'No hay sugerencias pendientes.' : 'Nada aquí.'}</span></div>`; return; }
-  el.innerHTML = list.map(mv => {
-    const st = ST[mv.estado] || ['sug', mv.estado];
-    return `<div class="cc-mvrow"><div class="cc-mv-main">
-        <div class="cc-mv-nm">${esc(mv.full_name || ('V-' + mv.id_number))} <span class="cc-pillA ${mv.tipo}">${esc((TIPO_LB[mv.tipo] || mv.tipo).toUpperCase())}</span></div>
-        <div class="cc-mv-det">${mvDetail(mv)}</div>
-        <div class="cc-mv-meta">Efectivo ${fmt(mv.fecha_efectiva || mv.fecha_alta || mv.fecha_baja)} · ${esc(mv.suggested_by || '')}${mv.reject_reason ? ' · ' + esc(mv.reject_reason) : ''}</div>
-      </div><div class="cc-mv-side"><span class="cc-stbadge ${st[0]}">${st[1]}</span>${mvActions(mv)}</div></div>`;
-  }).join('');
-  el.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => {
-    const id = parseInt(b.dataset.id, 10); const act = b.dataset.act;
-    if (act === 'approve') approveMove(id);
-    else if (act === 'reject') rejectMove(id);
+function renderAList() {
+  const el = document.getElementById('ccAList'); if (!el) return;
+  const list = aproFiltered();
+  const pages = Math.max(1, Math.ceil(list.length / APRO_PER));
+  if (APRO_PAGE > pages) APRO_PAGE = pages;
+  const slice = list.slice((APRO_PAGE - 1) * APRO_PER, APRO_PAGE * APRO_PER);
+  el.innerHTML = slice.length ? slice.map(mv => {
+    const loc = [mv.empresa_origen, mv.rz, mv.zona, mv.subzona, mv.concepto].filter(Boolean).map(esc).join(' · ');
+    return `<div class="cc-acard ${APRO_SEL === mv.id ? 'on' : ''}" data-id="${mv.id}">
+      ${avatarHtml(mv)}
+      <div style="flex:1;min-width:0">
+        <div class="cc-anm">${esc(mv.full_name || ('V-' + mv.id_number))} <span class="cc-pillA ${mv.tipo}">${esc((TIPO_LB[mv.tipo] || mv.tipo).toUpperCase())}</span></div>
+        <div class="cc-adet">${mvDetail(mv)}</div>
+        <div class="cc-aloc">${loc || ('V-' + esc(mv.id_number))}</div>
+        <div class="cc-amt">Sugerido por ${esc(mv.suggested_by || '')}</div>
+      </div>
+      <button class="cc-openf" data-fic="${mv.id}" title="Ver ficha completa">${IC_FICHA}</button>
+    </div>`;
+  }).join('') : `<div class="cc-acard" style="cursor:default"><span class="cc-hint">${COLA_FILTER === 'sugerido' ? 'No hay sugerencias pendientes.' : 'Nada aquí.'}</span></div>`;
+  el.querySelectorAll('.cc-acard[data-id]').forEach(c => c.addEventListener('click', e => {
+    if (e.target.closest('.cc-openf')) return;
+    APRO_SEL = parseInt(c.dataset.id, 10); renderApro();
   }));
+  el.querySelectorAll('.cc-openf').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    const mv = MOVES.find(x => x.id === parseInt(b.dataset.fic, 10));
+    if (mv) openFichaFor({ id_number: mv.id_number, company_code: mv.empresa_origen }, () => renderCambioCargoHist(USER));
+  }));
+  const pg = document.getElementById('ccAPager');
+  if (pg) pg.innerHTML = pages > 1
+    ? `<button ${APRO_PAGE <= 1 ? 'disabled' : ''} id="aprPrev">‹ Anterior</button><span>Página ${APRO_PAGE} de ${pages} · ${list.length} en total</span><button ${APRO_PAGE >= pages ? 'disabled' : ''} id="aprNext">Siguiente ›</button>`
+    : `<span>${list.length} ${list.length === 1 ? 'sugerencia' : 'sugerencias'}</span>`;
+  document.getElementById('aprPrev')?.addEventListener('click', () => { APRO_PAGE--; renderAList(); });
+  document.getElementById('aprNext')?.addEventListener('click', () => { APRO_PAGE++; renderAList(); });
+  renderAPanel();
+}
+async function renderAPanel() {
+  const panel = document.getElementById('ccAPanel'); if (!panel) return;
+  const mv = MOVES.find(x => x.id === APRO_SEL);
+  if (!mv) { panel.innerHTML = `<div class="cc-aempty">Elegí una sugerencia de la lista para revisarla y aprobarla.</div>`; return; }
+  const my = CAT.my || {};
+  const loc = [mv.empresa_origen, mv.rz, mv.zona, mv.subzona, mv.concepto].filter(Boolean);
+  panel.innerHTML = `
+    <div class="cc-ahead">
+      ${avatarHtml(mv, true)}
+      <div style="flex:1"><h2>${esc(mv.full_name || ('V-' + mv.id_number))}</h2><div class="cc-ced">V-${esc(mv.id_number)}</div>
+        <div class="cc-meta"><span class="cc-pill act">Activo</span>${mv.cargo_from ? `<span class="cc-pill">${esc(cargoLabel(mv.cargo_from))}</span>` : ''}</div></div>
+      <button class="cc-openf" id="ccAFicha" title="Ver ficha completa">${IC_FICHA}</button>
+    </div>
+    <div class="cc-abody">
+      <div class="cc-adatarow">${loc.map((v, i) => `<span><span class="k">${['Tienda', 'Razón social', 'Zona', 'Subzona', 'Concepto'][i] || ''}:</span> <b>${esc(v)}</b></span>`).join('')}</div>
+      <div class="cc-sec">Trayectoria en el Grupo</div>
+      <div id="ccATraj"><div class="cc-hint">Cargando trayectoria…</div></div>
+      <div class="cc-achange"><div class="cc-sec" style="color:var(--pri)">Cambio propuesto</div>${aproAfter(mv)}</div>
+      <div class="cc-awho">Sugerido por <b>${esc(mv.suggested_by || '')}</b>${mv.comentario ? `<br>“${esc(mv.comentario)}”` : ''}</div>
+    </div>
+    ${my.aprobar ? `<div class="cc-aact">
+      <div class="cc-awill">Al aprobar se genera el reporte de <b>${aproTopicLabel(mv.tipo)}</b> con su ticket, y va a <b>Reportes → Historial</b>.</div>
+      <button class="cc-btn back" id="ccARej">Rechazar</button>
+      <button class="cc-btn apr" id="ccAApr">✓ Aprobar y generar ticket</button>
+    </div>` : `<div class="cc-aact"><div class="cc-awill">⏳ Esperando aprobación del Gerente de Zona.</div></div>`}`;
+  document.getElementById('ccAFicha')?.addEventListener('click', () => openFichaFor({ id_number: mv.id_number, company_code: mv.empresa_origen }, () => renderCambioCargoHist(USER)));
+  document.getElementById('ccAApr')?.addEventListener('click', () => approveMove(mv.id));
+  document.getElementById('ccARej')?.addEventListener('click', () => rejectMove(mv.id));
+  panel.querySelector('.cc-apav')?.addEventListener('click', () => ccLightbox(mv));
+  const h = await historyApi(mv.id_number, mv.empresa_origen);
+  const box = document.getElementById('ccATraj');
+  if (box) box.innerHTML = trajHtml((h && h.ok && h.items) ? h.items : []);
+}
+function aproTopicLabel(t) { if (t === 'egreso') return 'Egreso · tópico 33'; if (t === 'traslado') return 'Traslado · tópico 34'; return 'Modificación · tópico 32'; }
+function aproAfter(mv) {
+  if (mv.tipo === 'egreso') return `<div class="cc-cargoline">${mv.cargo_from ? cch(mv.cargo_from, true) : ''} <span style="color:#991b1b;font-weight:800">→ EGRESO</span></div>
+    <div class="cc-frow"><span class="k">Motivo</span><span class="v">${esc(mv.motivo || '—')}</span></div>
+    <div class="cc-frow"><span class="k">Efectivo</span><span class="v">${fmt(mv.fecha_baja || mv.fecha_efectiva)}</span></div>`;
+  if (mv.tipo === 'traslado') return `<div class="cc-cargoline">${mv.cargo_from ? cch(mv.cargo_from, true) : ''}<span class="cc-ar">→</span>${cch(mv.cargo_to || mv.cargo_from, true)}</div>
+    <div class="cc-frow"><span class="k">Empresa · Tienda</span><span class="v">${esc(mv.empresa_origen || '')} ${esc(mv.rz || '')} <span class="cc-ar">→</span> ${esc(mv.empresa_destino || '—')}</span></div>
+    <div class="cc-frow"><span class="k">Baja origen (B)</span><span class="v">${fmt(mv.fecha_baja)}</span></div>
+    <div class="cc-frow"><span class="k">Alta destino (A)</span><span class="v">${fmt(mv.fecha_alta)}</span></div>`;
+  return `<div class="cc-cargoline">${mv.cargo_from ? cch(mv.cargo_from, true) : ''}<span class="cc-ar">→</span>${cch(mv.cargo_to, true)}</div>
+    <div class="cc-frow"><span class="k">Empresa · Tienda</span><span class="v">${esc(mv.empresa_origen || '')} ${esc(mv.rz || '')}</span></div>
+    <div class="cc-frow"><span class="k">Efectivo</span><span class="v">${fmt(mv.fecha_efectiva)}</span></div>`;
 }
 function mvDetail(mv) {
-  if (mv.tipo === 'egreso') return `${mv.cargo_from ? cch(mv.cargo_from) : ''} <span class="cc-ar">→</span> <span class="cc-cchN egr">Egreso</span>${mv.motivo ? ' · ' + esc(mv.motivo) : ''}`;
-  if (mv.tipo === 'traslado') return `${mv.cargo_from ? cch(mv.cargo_from) : ''}${mv.cargo_to && mv.cargo_to !== mv.cargo_from ? ` <span class="cc-ar">→</span> ${cch(mv.cargo_to)}` : ''} · <b>${esc(mv.empresa_origen || '')}</b> <span class="cc-ar">→</span> <b>${esc(mv.empresa_destino || '—')}</b>`;
+  if (mv.tipo === 'egreso') return `${mv.cargo_from ? cch(mv.cargo_from) : ''} <span class="cc-ar">→</span> <span class="cc-cchN egr">Egreso</span>`;
+  if (mv.tipo === 'traslado') return `${mv.cargo_from ? cch(mv.cargo_from) : ''}${mv.cargo_to && mv.cargo_to !== mv.cargo_from ? ` <span class="cc-ar">→</span> ${cch(mv.cargo_to)}` : ''} · ${esc(mv.empresa_origen || '')} <span class="cc-ar">→</span> ${esc(mv.empresa_destino || '—')}`;
   return `${mv.cargo_from ? cch(mv.cargo_from) : ''} <span class="cc-ar">→</span> ${mv.cargo_to ? cch(mv.cargo_to) : ''}`;
 }
-function mvActions(mv) {
-  const my = CAT.my || {};
-  if (mv.estado === 'sugerido') {
-    if (my.aprobar) return `<div class="cc-mv-acts"><button class="cc-sbtn apr" data-act="approve" data-id="${mv.id}">✓ Aprobar</button><button class="cc-sbtn rec" data-act="reject" data-id="${mv.id}">Rechazar</button></div>`;
-    return `<div class="cc-mv-wait">⏳ Esperando al Gerente de Zona</div>`;
-  }
-  return '';
+function ccLightbox(mv) {
+  let lb = document.getElementById('ccLb');
+  if (!lb) { lb = document.createElement('div'); lb.id = 'ccLb'; lb.className = 'cc-lb'; lb.addEventListener('click', () => lb.classList.remove('on')); document.body.appendChild(lb); }
+  lb.innerHTML = mv.thumb_url ? `<img src="${esc(mv.thumb_url)}" alt=""><div class="cap">${esc(mv.full_name || '')} · clic para cerrar</div>` : `<div class="big">${iniOf(mv.full_name)}</div><div class="cap">Sin foto · clic para cerrar</div>`;
+  lb.classList.add('on');
 }
 async function approveMove(id) {
   const r = await api({ action: 'approve', id });
   if (!r || !r.ok) return toast((r && r.error) || 'No se pudo aprobar.', true);
-  await loadCola(); renderCola();
-  toast(r.osticket_id ? `Aprobado. Ticket #${r.osticket_id} generado — velo en Reportes → Historial.` : 'Aprobado y reportado. Velo en Reportes → Historial.');
+  await loadCola();
+  APRO_SEL = null;
+  renderApro();
+  aproSuccess(r);
+}
+function aproSuccess(r) {
+  const ost = r.osticket_id;
+  const rep = r.report_id ? String(r.report_id).padStart(4, '0') : null;
+  const url = CAT && CAT.osticket_url;
+  const panel = document.getElementById('ccAPanel');
+  if (panel) panel.innerHTML = `<div class="cc-adone"><div class="cc-adone-box">
+     <div class="cc-adone-t">✅ Solicitud registrada correctamente</div>
+     <p>Se generó la solicitud y ${ost ? 'su ticket en osTicket' : 'el reporte'}. Capital Humano ya la tiene en <b>Reportes → Historial</b>.</p>
+     <div class="cc-adone-links">
+       ${ost ? `<a ${url ? `href="${esc(url)}" target="_blank" rel="noopener"` : ''}><span>🎫 Ticket osTicket</span> <span class="tk">#${esc(ost)}</span>${url ? '<span class="ext">Ver ↗</span>' : ''}</a>` : ''}
+       <a id="ccGoRep"><span>📄 Reporte${rep ? ' <span class="tk">#' + rep + '</span>' : ''}</span> <span class="ext">Ver en Reportes → Historial →</span></a>
+     </div></div></div>`;
+  document.getElementById('ccGoRep')?.addEventListener('click', () => { const b = document.querySelector('.pnl-side [data-view="historial"]'); if (b) b.click(); });
+  toast(ost ? `Aprobado. Ticket #${ost} generado.` : 'Aprobado y reportado.');
 }
 async function rejectMove(id) {
   const r = await api({ action: 'reject', id });
   if (!r || !r.ok) return toast((r && r.error) || 'No se pudo rechazar.', true);
-  await loadCola(); renderCola(); toast('Rechazado.');
+  await loadCola(); APRO_SEL = null; renderApro(); toast('Rechazado.');
 }
 
 /* ---------- utils ---------- */
@@ -825,6 +904,53 @@ function styleBlock() {
   .cc-stat{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;border-radius:999px;padding:2px 8px;border:1px solid;flex:none}
   .cc-stat.tmp{background:#fffbeb;color:#92400e;border-color:#fde68a}
   .cc-stat.proj{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
+  /* ===== Aprobaciones ===== */
+  .cc-apro-head{display:flex;align-items:center;gap:12px;margin-bottom:12px;flex-wrap:wrap}
+  .cc-apro-head h2{font-size:20px;font-weight:800;margin:0}
+  .cc-apro-head .cc-cnt{background:#fde68a;color:#92400e}
+  .cc-apro-filters{display:flex;align-items:center;gap:10px;background:#fff;border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:14px;flex-wrap:wrap}
+  .cc-apro-filters .cc-inp{flex:1;min-width:160px}
+  .cc-apro-grid{display:grid;grid-template-columns:360px 1fr;gap:16px;align-items:start}
+  @media(max-width:880px){.cc-apro-grid{grid-template-columns:1fr}}
+  .cc-acard{background:#fff;border:1px solid var(--border);border-radius:13px;padding:11px 12px;cursor:pointer;box-shadow:0 1px 2px rgba(15,23,42,.04);display:flex;gap:11px;align-items:flex-start;margin-bottom:8px}
+  .cc-acard:hover{border-color:#ddd6fe}
+  .cc-acard.on{border-color:var(--pri);box-shadow:0 0 0 3px #ede9fe}
+  .cc-apav{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex:none;overflow:hidden;cursor:zoom-in}
+  .cc-apav img{width:100%;height:100%;object-fit:cover}
+  .cc-apav.big{width:64px;height:64px;font-size:18px;border-radius:12px}
+  .cc-anm{font-size:13px;font-weight:800}
+  .cc-adet{font-size:11.5px;color:var(--soft);margin-top:5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
+  .cc-aloc{font-size:11px;color:var(--muted);margin-top:4px}
+  .cc-amt{font-size:10.5px;color:var(--faint);margin-top:4px}
+  .cc-pager{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px;font-size:12px;color:var(--muted)}
+  .cc-pager button{border:1px solid var(--border-2);background:#fff;border-radius:8px;padding:5px 10px;cursor:pointer;font-weight:700;color:var(--soft)}
+  .cc-pager button:disabled{opacity:.4;cursor:default}
+  .cc-apanel{background:#fff;border:1px solid var(--border);border-radius:16px;box-shadow:0 1px 3px rgba(15,23,42,.06);overflow:hidden;min-height:420px}
+  .cc-aempty{padding:66px 24px;text-align:center;color:var(--muted)}
+  .cc-ahead{padding:16px 20px;border-bottom:1px solid var(--border);display:flex;gap:14px;align-items:flex-start}
+  .cc-ahead h2{font-size:18px;font-weight:700;margin:0}
+  .cc-abody{padding:16px 20px}
+  .cc-adatarow{display:flex;flex-wrap:wrap;gap:6px 18px;font-size:12.5px;color:var(--soft);background:#fbfcfe;border:1px solid var(--border);border-radius:11px;padding:10px 13px;margin-bottom:14px}
+  .cc-adatarow b{color:var(--ink)}.cc-adatarow .k{color:var(--muted)}
+  .cc-achange{border:1px solid #ddd6fe;background:var(--pri-soft);border-radius:13px;padding:14px 16px;margin-top:12px}
+  .cc-awho{font-size:12px;color:var(--soft);background:#fbfcfe;border:1px solid var(--border);border-radius:10px;padding:9px 12px;margin-top:12px}.cc-awho b{color:var(--ink)}
+  .cc-aact{border-top:1px solid var(--border);background:#fbfcfe;padding:14px 20px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .cc-awill{font-size:12px;color:#1e40af;background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:8px 12px;flex:1;min-width:200px}
+  .cc-btn.apr{background:#8b5cf6;border-color:#8b5cf6;color:#fff}.cc-btn.apr:hover{background:#7c3aed}
+  .cc-adone{padding:18px 20px}
+  .cc-adone-box{border:1px solid #bbf7d0;background:#f0fdf4;border-radius:14px;padding:18px}
+  .cc-adone-t{font-size:15px;font-weight:800;color:#14532d}
+  .cc-adone p{font-size:13px;color:#166534;margin:8px 0 0}
+  .cc-adone-links{display:flex;flex-direction:column;gap:8px;margin-top:14px}
+  .cc-adone-links a{display:flex;align-items:center;gap:9px;font-size:13px;font-weight:700;text-decoration:none;border:1px solid #bbf7d0;background:#fff;border-radius:10px;padding:10px 13px;color:#166534;cursor:pointer}
+  .cc-adone-links a:hover{background:#f0fdf4}
+  .cc-adone-links .tk{font-family:ui-monospace,monospace;background:#dcfce7;border-radius:6px;padding:1px 7px}
+  .cc-adone-links .ext{margin-left:auto;color:#16a34a}
+  .cc-lb{position:fixed;inset:0;background:rgba(15,23,42,.78);display:none;align-items:center;justify-content:center;z-index:9998}
+  .cc-lb.on{display:flex}
+  .cc-lb img{max-width:80vw;max-height:80vh;border-radius:14px;box-shadow:0 20px 60px rgba(0,0,0,.4)}
+  .cc-lb .big{width:280px;height:280px;border-radius:18px;background:#334155;color:#fff;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:64px}
+  .cc-lb .cap{position:absolute;bottom:40px;color:#e2e8f0;font-size:13px}
   .cc-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#0f172a;color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:10px;box-shadow:0 6px 24px rgba(15,23,42,.25);z-index:9999;transition:opacity .3s;opacity:0}
   .cc-toast.err{background:#b91c1c}
   </style>`;

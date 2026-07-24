@@ -100,10 +100,11 @@ export async function onRequestPost({ request, env }) {
 
     if (action === 'catalog') {
       if (!myView) return json({ ok: false, error: 'No tienes permiso para Cambio de Cargo.' }, 403);
-      const [cargos, reasons, minLevel] = await Promise.all([
+      const [cargos, reasons, minLevel, ostRow] = await Promise.all([
         loadCargos(env),
         sb(env, 'egress_reasons?is_active=eq.true&select=code,label,sort_order&order=sort_order'),
         assignLevel(env, actor),
+        sb(env, 'app_settings?key=eq.osticket_url&select=value'),
       ]);
       return json({
         ok: true,
@@ -112,6 +113,7 @@ export async function onRequestPost({ request, env }) {
         my: { sugerir: mySugerir, aprobar: myAprobar, view: myView },
         assign_min_level: minLevel,
         role: actor.role,
+        osticket_url: (ostRow && ostRow[0] && ostRow[0].value) || null,
       });
     }
 
@@ -159,6 +161,35 @@ export async function onRequestPost({ request, env }) {
       let rows = await sb(env, path) || [];
       const q = norm(body.q).toLowerCase();
       if (q) rows = rows.filter(r => (r.full_name || '').toLowerCase().includes(q) || (r.id_number || '').includes(q));
+      // Enriquecer con datos de la tienda origen (razon social, zona, subzona,
+      // concepto) y la foto del trabajador (para la pantalla Aprobaciones).
+      const comps = [...new Set(rows.map(r => r.empresa_origen).filter(Boolean))];
+      const ceds = [...new Set(rows.map(r => r.id_number).filter(Boolean))];
+      const compMap = {};
+      if (comps.length) {
+        const inC = comps.map(c => `"${c}"`).join(',');
+        const [crows, zs, ss, cs] = await Promise.all([
+          sb(env, `companies?company_code=in.(${inC})&select=company_code,business_name,zone_id,subzone_id,concept_id`),
+          sb(env, 'zones?select=id,name'), sb(env, 'subzones?select=id,name'), sb(env, 'concepts?select=id,name'),
+        ]);
+        const zm = {}, sm = {}, cm = {};
+        (zs || []).forEach(z => { zm[z.id] = z.name; });
+        (ss || []).forEach(s => { sm[s.id] = s.name; });
+        (cs || []).forEach(c => { cm[c.id] = c.name; });
+        (crows || []).forEach(c => { compMap[c.company_code] = { rz: c.business_name || null, zona: zm[c.zone_id] || null, subzona: sm[c.subzone_id] || null, concepto: cm[c.concept_id] || null }; });
+      }
+      const photoMap = {};
+      if (ceds.length) {
+        const inCed = ceds.map(c => `"${c}"`).join(',');
+        const wrows = await sb(env, `workers_master?id_number=in.(${inCed})&select=id_number,photo_key,gender,birth_date`);
+        (wrows || []).forEach(w => { photoMap[w.id_number] = w; });
+      }
+      const thumb = k => k ? `${env.supabase_url}/storage/v1/object/public/worker-thumbs/${k}.jpg` : null;
+      rows = rows.map(r => {
+        const c = compMap[r.empresa_origen] || {};
+        const w = photoMap[r.id_number] || {};
+        return { ...r, rz: c.rz, zona: c.zona, subzona: c.subzona, concepto: c.concepto, thumb_url: thumb(w.photo_key), gender: w.gender || null, birth_date: w.birth_date || null };
+      });
       return json({ ok: true, rows });
     }
 
