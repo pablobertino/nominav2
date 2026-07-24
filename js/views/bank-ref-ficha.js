@@ -211,6 +211,7 @@ function ensureStyles() {
   .brf-chip{display:inline-flex;align-items:center;gap:7px;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;font-size:11.5px;font-weight:600;border-radius:999px;padding:4px 11px}
   .brf-badge{font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;border-radius:999px;padding:2px 8px}
   .brf-badge.pend{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
+  .brf-badge.load{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}
   .brf-badge.pub{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
   .brf-badge.none{background:#f3f4f6;border:1px solid #e5e7eb;color:#6b7280}
   .brf-help{margin-top:10px;padding-top:10px;border-top:1px dashed #e5e7eb;font-size:12px;color:#64748b;line-height:1.5}
@@ -285,7 +286,7 @@ export async function initBankRefCard(host, w, STATE, onRender) {
       const fecha = latest.fecha_emision || (latest.created_at ? String(latest.created_at).slice(0, 10) : '');
       badge = latest.estado === 'publicada'
         ? '<span class="brf-badge pub">publicada</span>'
-        : '<span class="brf-badge pend">pendiente de publicar</span>';
+        : '<span class="brf-badge load">cargada</span>';
       const nWarn = (latest.validaciones && latest.validaciones.warnings || []).length;
       const warnTxt = nWarn ? ` · <span style="color:#d97706;font-weight:700">⚠ ${nWarn} advertencia${nWarn === 1 ? '' : 's'}</span>` : '';
       sub = `Cargada el ${esc(fecha)} · <span class="brf-lnk" data-brf="view" data-path="${esc(latest.storage_path || '')}">Ver PDF</span>${warnTxt}`;
@@ -297,7 +298,8 @@ export async function initBankRefCard(host, w, STATE, onRender) {
     const btn = canUpload
       ? `<button class="brf-btn" data-brf="upload">${UP_SVG} ${latest ? 'Cargar / reemplazar' : 'Cargar referencia (PDF)'}</button>`
       : '';
-    const delLink = (latest && canUpload) ? `<a class="brf-del" data-brf="del" data-id="${latest.id}">Quitar</a>` : '';
+    const canRemove = !!(STATE.can && STATE.can.docsRemove);
+    const delLink = (latest && canRemove) ? `<a class="brf-del" data-brf="del" data-id="${latest.id}">Quitar</a>` : '';
 
     slot.innerHTML = `
       <div class="brf-card">
@@ -494,7 +496,7 @@ function openUploadModal(w, STATE, onSaved) {
         const r = await refApi(payload);
         if (r && r.ok) {
           verdict.className = 'brf-verdict ok';
-          verdict.innerHTML = '<b>Referencia guardada.</b> Queda como respaldo y pendiente de publicar. El número se adopta al Publicar (Sincronizar).';
+          verdict.innerHTML = '<b>Referencia guardada.</b> Queda <b>cargada</b> como respaldo. El número se adopta al Publicar (Sincronizar).';
           foot.style.display = 'none';
           if (onSaved) onSaved();
           setTimeout(close, 1400);

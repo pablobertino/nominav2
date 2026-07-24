@@ -156,6 +156,7 @@ function ensureStyles() {
   .rifd-chip{display:inline-flex;align-items:center;gap:7px;background:#f5f3ff;border:1px solid #ddd6fe;color:#6d28d9;font-size:11.5px;font-weight:600;border-radius:999px;padding:4px 11px}
   .rifd-badge{font-size:10px;font-weight:800;letter-spacing:.03em;text-transform:uppercase;border-radius:999px;padding:2px 8px}
   .rifd-badge.pend{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
+  .rifd-badge.load{background:#eff6ff;border:1px solid #bfdbfe;color:#1e40af}
   .rifd-badge.pub{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
   .rifd-badge.venc{background:#fef2f2;border:1px solid #fecaca;color:#991b1b}
   .rifd-badge.none{background:#f3f4f6;border:1px solid #e5e7eb;color:#6b7280}
@@ -229,9 +230,12 @@ export async function initRifCard(host, w, STATE, onRender) {
       const dat = latest.datos || {};
       const venc = dat.fecha_vencimiento || '';
       const vencido = isVencido(venc);
-      badge = vencido
-        ? '<span class="rifd-badge venc">vencido</span>'
-        : (latest.estado === 'publicada' ? '<span class="rifd-badge pub">validado</span>' : '<span class="rifd-badge pend">pendiente</span>');
+      // El documento SÍ está cargado: nunca decir "pendiente". Base "cargado"
+      // (o "validado" si ya se publicó); si está vencido se agrega ese aviso.
+      badge = latest.estado === 'publicada'
+        ? '<span class="rifd-badge pub">validado</span>'
+        : '<span class="rifd-badge load">cargado</span>';
+      if (vencido) badge += '<span class="rifd-badge venc" style="margin-left:5px">vencido</span>';
       const nWarn = (latest.validaciones && latest.validaciones.warnings || []).length;
       const warnTxt = nWarn ? ` · <span style="color:#d97706;font-weight:700">⚠ ${nWarn} advertencia${nWarn === 1 ? '' : 's'}</span>` : '';
       const vencTxt = venc ? ` · vence ${esc(venc)}` : '';
@@ -429,7 +433,7 @@ function openUploadModal(w, STATE, onSaved) {
         const r = await docApi(payload);
         if (r && r.ok) {
           verdict.className = 'rifd-verdict ok';
-          verdict.innerHTML = '<b>RIF guardado.</b> Queda como respaldo en la ficha, pendiente de publicar.';
+          verdict.innerHTML = '<b>RIF guardado.</b> Queda <b>cargado</b> como respaldo en la ficha.';
           foot.style.display = 'none';
           if (onSaved) onSaved();
           setTimeout(close, 1400);
