@@ -2164,7 +2164,10 @@ async function submitModificacion(env, body) {
   (fieldsRows || []).forEach(f => { fieldByCode[f.code] = f; });
   const hasField = (code) => !!fieldByCode[code];
 
-  const cargos = await sb(env, 'cargos?is_active=eq.true&selectable_on_ingreso=eq.true&select=code,ax_code,label');
+  // v6.93: se valida contra selectable_on_modificacion (no _ingreso), para que
+  // un cambio de cargo pueda ir a un cargo de ZONA (Supervisor, etc.) sin que
+  // esos cargos aparezcan en el wizard de Ingreso.
+  const cargos = await sb(env, 'cargos?is_active=eq.true&selectable_on_modificacion=eq.true&select=code,ax_code,label');
   const cargoMap = {};
   (cargos || []).forEach(c => { cargoMap[c.code] = c; });
   const bancos = await sb(env, 'bancos?is_active=eq.true&select=code,name');

@@ -230,18 +230,44 @@ export async function onRequestPost({ request, env }) {
         method: 'POST', headers: { Prefer: 'return=representation' },
         body: JSON.stringify(rowsToInsert),
       });
-      return json({ ok: true, inserted: ins || [], estado });
+      // Aprobacion directa (Gerente de Zona): generar el reporte de cada uno.
+      const reported = [];
+      if (wantApprove && Array.isArray(ins)) {
+        for (const mv of ins) {
+          const gen = await generateReport(env, request, actor, body.user, mv);
+          if (gen.ok) {
+            await sb(env, `personnel_movement_requests?id=eq.${mv.id}`, {
+              method: 'PATCH', headers: { Prefer: 'return=minimal' },
+              body: JSON.stringify({ estado: 'reportado', osticket_id: gen.osticket_id, report_id: gen.report_id, report_topic: gen.topic, updated_at: new Date().toISOString() }),
+            });
+            reported.push({ id: mv.id, ok: true, osticket_id: gen.osticket_id, topic: gen.topic });
+          } else {
+            reported.push({ id: mv.id, ok: false, error: gen.error, details: gen.details });
+          }
+        }
+      }
+      return json({ ok: true, inserted: ins || [], estado, reported });
     }
 
     if (action === 'approve') {
       if (!myAprobar) return json({ ok: false, error: 'No tienes permiso para aprobar (mov.aprobar).' }, 403);
       const id = parseInt(body.id, 10);
       if (!id) return json({ ok: false, error: 'Falta el id.' }, 400);
-      await sb(env, `personnel_movement_requests?id=eq.${id}&estado=eq.sugerido`, {
+      const rows = await sb(env, `personnel_movement_requests?id=eq.${id}&select=*`);
+      const mv = rows && rows[0];
+      if (!mv) return json({ ok: false, error: 'Movimiento no encontrado.' }, 404);
+      if (!['sugerido', 'aprobado'].includes(mv.estado)) return json({ ok: false, error: 'El movimiento ya no esta pendiente.' }, 409);
+      // Aprobar = generar el reporte/ticket como los demas reportes del sistema.
+      const gen = await generateReport(env, request, actor, body.user, mv);
+      if (!gen.ok) return json({ ok: false, error: gen.error, details: gen.details }, 422);
+      await sb(env, `personnel_movement_requests?id=eq.${id}`, {
         method: 'PATCH', headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify({ estado: 'aprobado', approved_by: String(actor.actor || ''), approved_at: new Date().toISOString(), updated_at: new Date().toISOString() }),
+        body: JSON.stringify({
+          estado: 'reportado', approved_by: String(actor.actor || ''), approved_at: new Date().toISOString(),
+          osticket_id: gen.osticket_id, report_id: gen.report_id, report_topic: gen.topic, updated_at: new Date().toISOString(),
+        }),
       });
-      return json({ ok: true });
+      return json({ ok: true, osticket_id: gen.osticket_id, report_topic: gen.topic });
     }
 
     if (action === 'reject') {
@@ -255,11 +281,6 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true });
     }
 
-    if (action === 'export') {
-      if (!myAprobar) return json({ ok: false, error: 'No tienes permiso para exportar (mov.aprobar).' }, 403);
-      return await exportPlantilla(env, actor, body);
-    }
-
     return json({ ok: false, error: 'Accion desconocida.' }, 400);
   } catch (e) {
     if (e instanceof AuthError) return json({ ok: false, error: e.message }, e.status);
@@ -267,11 +288,60 @@ export async function onRequestPost({ request, env }) {
   }
 }
 
-/* ---------- export: matriz de la plantilla de Modificacion AX ----------
-   18 columnas exactas del archivo MODIFICACIONES. Traslado = 2 filas (B origen
-   / A destino). Ascenso/descenso/lateral = 1 fila M. Egreso = 1 fila B.
-   Devuelve { columns, rows, filename } para que el front arme el .xlsx, y
-   marca los movimientos como 'exportado'. */
+/* ---------- generateReport: crea el reporte/ticket como los demas ----------
+   Ascenso/Descenso -> reporte de Modificacion (M, topic 32) con el nuevo cargo.
+   Egreso           -> reporte de Egreso (B, topic 33) con motivo.
+   Traslado         -> reporte de Traslado (B+A, topic 34) — en construccion.
+   Reutiliza /api/reports (misma validacion, mismo osTicket, misma cabecera).
+   Devuelve { ok, osticket_id, report_id, topic, error, details }. */
+async function generateReport(env, request, actor, user, mv) {
+  const origin = new URL(request.url).origin;
+  const call = (payload) => fetch(`${origin}/api/reports`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...payload, user }),
+  }).then(r => r.json()).catch(e => ({ ok: false, error: 'No se pudo contactar el generador de reportes: ' + String((e && e.message) || e) }));
+
+  const head = {
+    responsible: String(actor.actor || 'Gerente de Zona'),
+    position: 'Gerente de Zona',
+    source_kind: 'admin',
+    source_admin_id: (user && user.id) || null,
+  };
+
+  if (mv.tipo === 'ascenso' || mv.tipo === 'descenso') {
+    const r = await call({
+      action: 'submit_modificacion', company_code: mv.empresa_origen, ...head,
+      lines: [{ id_number: mv.id_number, worker_name: mv.full_name, changes: { cargo: mv.cargo_to } }],
+    });
+    return normReport(r, 'modificacion');
+  }
+  if (mv.tipo === 'egreso') {
+    const r = await call({
+      action: 'submit_egreso', company_code: mv.empresa_origen, ...head,
+      lines: [{
+        id_number: mv.id_number, name: mv.full_name,
+        report_date: mv.fecha_baja || mv.fecha_efectiva,
+        reason_code: mv.motivo, doc_cause: egresoDocCause(mv.motivo),
+      }],
+    });
+    return normReport(r, 'egreso');
+  }
+  if (mv.tipo === 'traslado') {
+    return { ok: false, error: 'El reporte de Traslado (Baja + Alta, topico 34) esta en construccion. El ascenso/descenso y el egreso ya generan su ticket.' };
+  }
+  return { ok: false, error: 'Tipo de movimiento no soportado para reporte.' };
+}
+function normReport(r, topic) {
+  if (!r || !r.ok) return { ok: false, error: (r && r.error) || 'No se pudo generar el reporte.', details: r && r.details };
+  const ost = (r.osticket && (r.osticket.pla || r.osticket.osticket_pla)) || r.osticket_id || null;
+  return { ok: true, osticket_id: ost != null ? String(ost) : null, report_id: r.report_id || null, topic };
+}
+// Causa de no-adjunto (egress_doc_causes) segun el motivo; todas eximen la carta.
+const EGRESO_DOC_CAUSE = { despido_just: 'dismissal', despido_injust: 'dismissal', abandono: 'abandonment', fin_contrato: 'contract_end' };
+function egresoDocCause(motivo) { return EGRESO_DOC_CAUSE[String(motivo || '')] || 'verbal'; }
+
+/* ---------- export (LEGACY, sin uso): matriz de la plantilla de Modificacion AX ----------
+   Se reemplazo por generateReport (reporte + ticket). Se conserva por referencia. */
 const AX_COLUMNS = [
   'Nombre', 'Segundo Nombre', 'Apellidos', 'Numero de Personal', 'Correo Electrónico',
   'Data ID', 'Fecha inicial de Empleo', 'Fecha Final de Empleo', 'Cargo', 'Direccion',

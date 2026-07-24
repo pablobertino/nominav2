@@ -587,19 +587,31 @@ async function finish(k) {
     toast((r && r.error) || 'No se pudo guardar el movimiento.', true);
     return;
   }
-  // reset y saltar a la pantalla Historial (aparte)
   Object.assign(D, resetD());
   STEP = 0;
-  toast(k === 'a' ? 'Movimiento aprobado. Míralo en Historial.' : 'Sugerencia enviada. Míralo en Historial.');
-  gotoHistorial();
+  if (k === 'a') {
+    const rep = (r.reported && r.reported[0]) || null;
+    if (rep && rep.ok) {
+      toast(rep.osticket_id ? `Aprobado. Ticket #${rep.osticket_id} generado — velo en Reportes → Historial.` : 'Aprobado y reportado. Velo en Reportes → Historial.');
+    } else if (rep && !rep.ok) {
+      toast('Guardado como aprobado, pero el reporte no se generó: ' + (rep.error || ''), true);
+    } else {
+      toast('Aprobado.');
+    }
+    paintWizard();
+  } else {
+    toast('Sugerencia enviada. Queda pendiente de aprobación.');
+    gotoHistorial();
+  }
 }
 
 /* =====================================================================
-   HISTORIAL (cola)
+   PENDIENTES (cola de aprobación). Al aprobar se genera el reporte + ticket
+   y el movimiento pasa a Reportes → Historial (ya no vive aquí).
    ===================================================================== */
-const ST = { sugerido: ['sug', 'Sugerido'], aprobado: ['apr', 'Aprobado'], exportado: ['exp', 'Exportado'], rechazado: ['rec', 'Rechazado'], ejecutado: ['exp', 'Ejecutado'], anulado: ['rec', 'Anulado'] };
+const ST = { sugerido: ['sug', 'Pendiente'], aprobado: ['apr', 'Aprobado'], reportado: ['exp', 'Reportado'], exportado: ['exp', 'Reportado'], rechazado: ['rec', 'Rechazado'], ejecutado: ['exp', 'Ejecutado'], anulado: ['rec', 'Anulado'] };
 const TIPO_LB = { ascenso: 'Ascenso', descenso: 'Descenso', lateral: 'Lateral', traslado: 'Traslado', egreso: 'Egreso' };
-const FILTERS = [['todos', 'Todos'], ['sugerido', 'Pendientes'], ['aprobado', 'Aprobados'], ['exportado', 'Exportados'], ['rechazado', 'Rechazados']];
+const FILTERS = [['sugerido', 'Pendientes'], ['rechazado', 'Rechazados']];
 
 async function loadCola() {
   const r = await api({ action: 'list', estado: 'todos' });
@@ -607,13 +619,14 @@ async function loadCola() {
 }
 async function paintCola() {
   const body = document.getElementById('ccBody');
-  body.innerHTML = `<div class="cc-cola"><div class="cc-loading">Cargando historial…</div></div>`;
+  body.innerHTML = `<div class="cc-cola"><div class="cc-loading">Cargando…</div></div>`;
+  if (COLA_FILTER !== 'sugerido' && COLA_FILTER !== 'rechazado') COLA_FILTER = 'sugerido';
   await loadCola();
   renderCola();
 }
-function cntBy(est) { return MOVES.filter(m => est === 'todos' ? true : m.estado === est).length; }
+function cntBy(est) { return MOVES.filter(m => m.estado === est).length; }
 function colaFiltered() {
-  return MOVES.filter(m => (COLA_FILTER === 'todos' || m.estado === COLA_FILTER) &&
+  return MOVES.filter(m => m.estado === COLA_FILTER &&
     (!COLA_Q || (m.full_name || '').toLowerCase().includes(COLA_Q) || (m.id_number || '').includes(COLA_Q)));
 }
 function renderCola() {
@@ -622,40 +635,36 @@ function renderCola() {
   const pend = cntBy('sugerido');
   const chips = FILTERS.map(([f, lb]) => `<button data-f="${f}" class="${COLA_FILTER === f ? 'on' : ''}">${lb}<span class="n">${cntBy(f)}</span></button>`).join('');
   const approveBar = (pend > 0 && my.aprobar)
-    ? `<div class="cc-approvebar">⏳ <b>${pend}</b> sugerencia${pend === 1 ? '' : 's'} esperan tu aprobación. Revisa cada una y pulsa <b>✓ Aprobar</b> o <b>Rechazar</b>.</div>`
-    : (pend > 0 ? `<div class="cc-approvebar">⏳ <b>${pend}</b> sugerencia${pend === 1 ? '' : 's'} pendiente${pend === 1 ? '' : 's'}. Las aprueba el <b>Gerente de Zona</b>.</div>` : '');
-  const exportBtn = my.aprobar && cntBy('aprobado') > 0
-    ? `<button class="cc-sbtn exp" id="ccExportAll">⬇ Exportar plantilla AX (${cntBy('aprobado')})</button>` : '';
+    ? `<div class="cc-approvebar">⏳ <b>${pend}</b> sugerencia${pend === 1 ? '' : 's'} esperan tu aprobación. Al aprobar se genera el reporte y su ticket (Reportes → Historial).</div>`
+    : (pend > 0 ? `<div class="cc-approvebar">⏳ <b>${pend}</b> pendiente${pend === 1 ? '' : 's'}. Las aprueba el <b>Gerente de Zona</b>.</div>` : '');
   body.innerHTML = `<div class="cc-cola">
-    <div class="cc-cola-h"><h2>Historial de cambio de cargo</h2><span class="sub">viendo como <b>${esc(roleLabel())}</b></span><span class="cc-sp"></span>${exportBtn}</div>
+    <div class="cc-cola-h"><h2>Pendientes de aprobación</h2><span class="sub">viendo como <b>${esc(roleLabel())}</b></span></div>
     <div class="cc-cola-filter"><div class="cc-fchips">${chips}</div><input class="cc-inp" id="ccColaQ" placeholder="Buscar por nombre o cédula…" value="${esc(COLA_Q)}"></div>
     ${approveBar}
     <div id="ccColaList"></div>
-    <div class="cc-cola-foot">${my.aprobar ? 'Con <b>mov.aprobar</b>: apruebas/rechazas sugerencias aquí, y desde <b>Cambio de Cargo</b> puedes crear un movimiento ya aprobado directo.' : 'Con <b>mov.sugerir</b>: tus movimientos quedan <b>sugeridos</b> hasta que el Gerente de Zona los apruebe.'} La plantilla AX se descarga una vez aprobado.</div>
+    <div class="cc-cola-foot">Al <b>aprobar</b>, el movimiento se convierte en un reporte con su ticket y aparece en <b>Reportes → Historial</b> para Capital Humano.${my.aprobar ? '' : ' Con <b>mov.sugerir</b>, tus movimientos quedan pendientes hasta que el Gerente de Zona los apruebe.'}</div>
   </div>`;
   body.querySelectorAll('.cc-fchips button').forEach(b => b.addEventListener('click', () => { COLA_FILTER = b.dataset.f; renderCola(); }));
   document.getElementById('ccColaQ').addEventListener('input', e => { COLA_Q = e.target.value.toLowerCase(); renderColaList(); });
-  document.getElementById('ccExportAll')?.addEventListener('click', () => exportPlantilla(null));
   renderColaList();
 }
 function renderColaList() {
   const el = document.getElementById('ccColaList');
   if (!el) return;
   const list = colaFiltered();
-  if (!list.length) { el.innerHTML = `<div class="cc-mvrow"><span class="cc-hint">Sin resultados para este filtro.</span></div>`; return; }
+  if (!list.length) { el.innerHTML = `<div class="cc-mvrow"><span class="cc-hint">${COLA_FILTER === 'sugerido' ? 'No hay sugerencias pendientes.' : 'Nada aquí.'}</span></div>`; return; }
   el.innerHTML = list.map(mv => {
     const st = ST[mv.estado] || ['sug', mv.estado];
     return `<div class="cc-mvrow"><div class="cc-mv-main">
         <div class="cc-mv-nm">${esc(mv.full_name || ('V-' + mv.id_number))} <span class="cc-pillA ${mv.tipo}">${esc((TIPO_LB[mv.tipo] || mv.tipo).toUpperCase())}</span></div>
         <div class="cc-mv-det">${mvDetail(mv)}</div>
-        <div class="cc-mv-meta">Efectivo ${fmt(mv.fecha_efectiva || mv.fecha_alta || mv.fecha_baja)} · ${esc(mv.suggested_by || '')}${mv.approved_by ? ' · aprobado por ' + esc(mv.approved_by) : ''}</div>
+        <div class="cc-mv-meta">Efectivo ${fmt(mv.fecha_efectiva || mv.fecha_alta || mv.fecha_baja)} · ${esc(mv.suggested_by || '')}${mv.reject_reason ? ' · ' + esc(mv.reject_reason) : ''}</div>
       </div><div class="cc-mv-side"><span class="cc-stbadge ${st[0]}">${st[1]}</span>${mvActions(mv)}</div></div>`;
   }).join('');
   el.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => {
     const id = parseInt(b.dataset.id, 10); const act = b.dataset.act;
     if (act === 'approve') approveMove(id);
     else if (act === 'reject') rejectMove(id);
-    else if (act === 'export') exportPlantilla([id]);
   }));
 }
 function mvDetail(mv) {
@@ -669,50 +678,18 @@ function mvActions(mv) {
     if (my.aprobar) return `<div class="cc-mv-acts"><button class="cc-sbtn apr" data-act="approve" data-id="${mv.id}">✓ Aprobar</button><button class="cc-sbtn rec" data-act="reject" data-id="${mv.id}">Rechazar</button></div>`;
     return `<div class="cc-mv-wait">⏳ Esperando al Gerente de Zona</div>`;
   }
-  if (mv.estado === 'aprobado') return `<div class="cc-mv-acts"><button class="cc-sbtn exp" data-act="export" data-id="${mv.id}">⬇ Plantilla AX</button>${my.aprobar ? `<button class="cc-sbtn ghost" data-act="reject" data-id="${mv.id}">Anular</button>` : ''}</div>`;
   return '';
 }
 async function approveMove(id) {
   const r = await api({ action: 'approve', id });
   if (!r || !r.ok) return toast((r && r.error) || 'No se pudo aprobar.', true);
-  await loadCola(); renderCola(); toast('Aprobado.');
+  await loadCola(); renderCola();
+  toast(r.osticket_id ? `Aprobado. Ticket #${r.osticket_id} generado — velo en Reportes → Historial.` : 'Aprobado y reportado. Velo en Reportes → Historial.');
 }
 async function rejectMove(id) {
   const r = await api({ action: 'reject', id });
   if (!r || !r.ok) return toast((r && r.error) || 'No se pudo rechazar.', true);
   await loadCola(); renderCola(); toast('Rechazado.');
-}
-async function exportPlantilla(ids) {
-  const r = await api({ action: 'export', ids: ids || null });
-  if (!r || !r.ok) return toast((r && r.error) || 'No se pudo exportar.', true);
-  if (!r.rows || !r.rows.length) return toast('No hay movimientos aprobados para exportar.', true);
-  await downloadXlsx(r.columns, r.rows, r.filename || 'MODIFICACIONES.xlsx');
-  await loadCola(); renderCola();
-  toast(`Plantilla generada (${r.exported} movimiento${r.exported === 1 ? '' : 's'}).`);
-}
-async function downloadXlsx(columns, rows, filename) {
-  const aoa = [columns].concat(rows);
-  try {
-    if (!window.XLSX) {
-      await new Promise((resolve, reject) => {
-        const s = document.createElement('script');
-        s.src = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
-        s.onload = resolve; s.onerror = () => reject(new Error('No se pudo cargar la librería Excel.'));
-        document.head.appendChild(s);
-      });
-    }
-    const ws = window.XLSX.utils.aoa_to_sheet(aoa);
-    const wb = window.XLSX.utils.book_new();
-    window.XLSX.utils.book_append_sheet(wb, ws, 'MODIFICACIONES');
-    window.XLSX.writeFile(wb, filename.replace(/\.xlsx$/i, '') + '.xlsx');
-  } catch (e) {
-    // Fallback CSV
-    const csv = aoa.map(r => r.map(c => `"${String(c == null ? '' : c).replace(/"/g, '""')}"`).join(',')).join('\r\n');
-    const blob = new Blob(['﻿' + csv], { type: 'text/csv;charset=utf-8' });
-    const a = document.createElement('a'); a.href = URL.createObjectURL(blob);
-    a.download = filename.replace(/\.xlsx$/i, '') + '.csv'; a.click();
-    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
-  }
 }
 
 /* ---------- utils ---------- */
