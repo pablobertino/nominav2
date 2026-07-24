@@ -199,8 +199,13 @@ function paintWizard() {
   const body = document.getElementById('ccBody');
   const my = CAT.my || {};
   ensureDefaults();
-  const stepper = STEP_LABELS.map((l, i) =>
-    `<div class="cc-stp ${i < STEP ? 'done' : ''} ${i === STEP ? 'on' : ''}"><div class="bar"></div><div class="lb">${l}</div></div>`).join('');
+  // Pasos con círculos numerados + conectores, como los wizards de Reportes.
+  const stepper = STEP_LABELS.map((l, i) => {
+    const st = i < STEP ? 'done' : (i === STEP ? 'on' : '');
+    const step = `<div class="cc-stp ${st}"><span class="cc-stp-c">${i < STEP ? '✓' : (i + 1)}</span><span class="cc-stp-l">${l}</span></div>`;
+    const line = i < STEP_LABELS.length - 1 ? `<div class="cc-stpline ${i < STEP ? 'done' : ''}"></div>` : '';
+    return step + line;
+  }).join('');
   const foot = STEP === 4
     ? (my.aprobar
       ? `<button class="cc-btn apr" id="ccFin" data-k="a">✓ Aprobar y preparar</button>`
@@ -887,10 +892,15 @@ function styleBlock() {
   .cc-cnt{font-size:10.5px;font-weight:800;background:#fde68a;color:#92400e;border-radius:999px;padding:1px 7px}
   .cc-wiz{background:#fff;border:1px solid var(--border);border-radius:16px;box-shadow:0 1px 3px rgba(15,23,42,.06);overflow:hidden;max-width:900px}
   .cc-wh{padding:16px 20px 0}.cc-wh h1{font-size:16px;font-weight:800;margin:0}.cc-wh .sub{color:var(--muted);font-size:12px;margin-top:2px}
-  .cc-steps{display:flex;gap:6px;padding:14px 20px 0}
-  .cc-stp{flex:1;display:flex;flex-direction:column;gap:5px}.cc-stp .bar{height:5px;border-radius:999px;background:#e5e7eb}
-  .cc-stp.done .bar,.cc-stp.on .bar{background:var(--pri)}
-  .cc-stp .lb{font-size:10px;font-weight:700;color:var(--faint);text-transform:uppercase}.cc-stp.on .lb{color:var(--pri)}.cc-stp.done .lb{color:var(--soft)}
+  .cc-steps{display:flex;align-items:center;padding:16px 20px 4px}
+  .cc-stp{display:flex;align-items:center;gap:8px;flex:none}
+  .cc-stp-c{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:700;border:1.5px solid #d1d5db;background:#fff;color:#9ca3af;flex:none;transition:all .15s}
+  .cc-stp.on .cc-stp-c,.cc-stp.done .cc-stp-c{background:var(--pri);border-color:var(--pri);color:#fff}
+  .cc-stp-l{font-size:12.5px;font-weight:600;color:#9ca3af;white-space:nowrap}
+  .cc-stp.on .cc-stp-l{color:var(--pri);font-weight:700}.cc-stp.done .cc-stp-l{color:var(--soft)}
+  .cc-stpline{flex:1;height:2px;background:#e5e7eb;margin:0 10px;border-radius:2px;min-width:14px}
+  .cc-stpline.done{background:var(--pri)}
+  @media(max-width:640px){.cc-stp:not(.on) .cc-stp-l{display:none}.cc-stpline{margin:0 6px}}
   .cc-wbody{padding:16px 20px;min-height:150px}
   .cc-wfoot{display:flex;gap:9px;align-items:center;padding:14px 20px;border-top:1px solid var(--border);background:#fbfcfe}
   .cc-sp{flex:1}.cc-fnote{font-size:12px;color:var(--muted)}
