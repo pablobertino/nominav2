@@ -37,6 +37,7 @@ const RPT_CODE_BY_ACTION = {
   submit_egreso: 'report.egreso',
   submit_ingreso: 'report.ingreso',
   submit_modificacion: 'report.modificacion',
+  submit_traslado: 'report.traslado',
 };
 
 function json(b, s = 200) {
@@ -240,6 +241,9 @@ export async function onRequestPost({ request, env }) {
     }
     if (body.action === 'submit_modificacion') {
       return await submitModificacion(env, body);
+    }
+    if (body.action === 'submit_traslado') {
+      return await submitTraslado(env, body);
     }
     if (body.action === 'window') {
       return await getWindow(env, body);
@@ -2593,5 +2597,221 @@ async function submitModificacion(env, body) {
       tickets_fail: result.tickets_fail,
       errors: result.ticket_errors,
     },
+  });
+}
+
+/* =====================================================================
+   TRASLADO (v6.96): reporte con plantilla de DOS filas por persona —
+   B (baja en la tienda anterior) + A (alta en la tienda nueva, con el
+   cargo destino). Un solo ticket PLA. Topic osticket_topic_traslado (34).
+   NO corre el gate de no-reempleables ni pide recaudos: es un movimiento
+   INTERNO (la persona ya existe en el Grupo, sus datos vienen del maestro).
+   Lo dispara Cambio de Cargo al aprobar un traslado.
+
+   body: { company_code (ORIGEN), responsible, position, source_kind,
+           source_admin_id, lines:[{ id_number, name, cargo_from, cargo_to,
+           empresa_destino, fecha_baja, fecha_alta }] }
+   ===================================================================== */
+async function submitTraslado(env, body) {
+  const cc = (body.company_code || '').trim();          // ORIGEN
+  const responsible = (body.responsible || '').trim();
+  const position = (body.position || '').trim();
+  const lines = Array.isArray(body.lines) ? body.lines : [];
+
+  let sourceKind = body.source_kind === 'admin' ? 'admin' : 'company';
+  let sourceAdminId = null;
+  if (sourceKind === 'admin') {
+    const aid = parseInt(body.source_admin_id, 10);
+    if (aid) {
+      const a = await sb(env, `admin_users?id=eq.${aid}&is_active=eq.true&select=id`);
+      if (a && a.length) sourceAdminId = aid;
+    }
+    if (!sourceAdminId) sourceKind = 'company';
+  }
+
+  if (!cc) return json({ ok: false, error: 'Falta la tienda de origen.' }, 400);
+  if (!responsible) return json({ ok: false, error: 'Falta el responsable.' }, 400);
+  if (!lines.length) return json({ ok: false, error: 'No hay traslados en el reporte.' }, 400);
+
+  const { ymd: today, hhmm: nowHHMM } = nowCaracas();
+
+  // Catalogo de cargos (code -> ax_code + label).
+  const cargos = await sb(env, 'cargos?is_active=eq.true&select=code,ax_code,label');
+  const cargoMap = {};
+  (cargos || []).forEach(c => { cargoMap[c.code] = c; });
+  const axOf = (codeC) => (cargoMap[codeC] && (cargoMap[codeC].ax_code || codeC)) || String(codeC || '').toUpperCase();
+  const labelOf = (codeC) => (cargoMap[codeC] && cargoMap[codeC].label) || codeC || '';
+
+  // Validacion + normalizacion por linea.
+  const clean = [];
+  const errors = [];
+  const seen = new Set();
+  const isYmd = s => /^\d{4}-\d{2}-\d{2}$/.test(String(s || ''));
+  lines.forEach((ln, i) => {
+    const ced = String(ln.id_number || '').replace(/[^0-9]/g, '');
+    const name = String(ln.name || '').trim();
+    const empDest = String(ln.empresa_destino || '').trim();
+    const fB = String(ln.fecha_baja || '').slice(0, 10);
+    const fA = String(ln.fecha_alta || '').slice(0, 10);
+    const tag = name || ced || `fila ${i + 1}`;
+    if (!ced || ced.length < 6 || ced.length > 8) { errors.push(`${tag}: cedula invalida.`); return; }
+    if (seen.has(ced)) { errors.push(`${tag}: cedula repetida.`); return; }
+    seen.add(ced);
+    if (!empDest) { errors.push(`${tag}: falta la tienda destino.`); return; }
+    if (empDest === cc) { errors.push(`${tag}: el destino no puede ser la misma tienda de origen.`); return; }
+    if (!isYmd(fB)) { errors.push(`${tag}: fecha de baja invalida.`); return; }
+    if (!isYmd(fA)) { errors.push(`${tag}: fecha de alta invalida.`); return; }
+    if (fA <= fB) { errors.push(`${tag}: el alta (${fA}) debe ser posterior a la baja (${fB}); nunca dos tiendas el mismo dia.`); return; }
+    clean.push({
+      id_number: ced, name,
+      cargo_from: String(ln.cargo_from || '').trim() || null,
+      cargo_to: String(ln.cargo_to || '').trim() || null,
+      empresa_destino: empDest,
+      fecha_baja: fB, fecha_alta: fA,
+    });
+  });
+  if (errors.length) return json({ ok: false, error: 'Hay datos que no cumplen las reglas.', details: errors }, 422);
+
+  // Datos de las empresas (origen + destinos).
+  const empCodes = [...new Set([cc, ...clean.map(l => l.empresa_destino)])];
+  const inEmp = empCodes.map(c => `"${c}"`).join(',');
+  const comps = await sb(env, `companies?company_code=in.(${inEmp})&select=company_code,data_area,business_name,email,phone,zone_id,subzone_id,concept_id`);
+  const compBy = {};
+  (comps || []).forEach(c => { compBy[c.company_code] = c; });
+  const origin = compBy[cc] || { company_code: cc };
+  const zone_id = origin.zone_id || null, subzone_id = origin.subzone_id || null;
+  const compBusinessName = origin.business_name || '';
+  const compEmail = origin.email || '';
+  const compPhone = origin.phone || '';
+  const compDataArea = origin.data_area || '';
+  let zonaName = '', subzonaName = '', marcaName = '';
+  if (subzone_id != null) { const s = await sb(env, `subzones?id=eq.${encodeURIComponent(subzone_id)}&select=name`); subzonaName = s && s[0] ? (s[0].name || '') : ''; }
+  if (zone_id != null) { const z = await sb(env, `zones?id=eq.${encodeURIComponent(zone_id)}&select=name`); zonaName = z && z[0] ? (z[0].name || '') : ''; }
+  if (origin.concept_id != null) { const cn = await sb(env, `concepts?id=eq.${encodeURIComponent(origin.concept_id)}&select=name`); marcaName = cn && cn[0] ? (cn[0].name || '') : ''; }
+  const mallZona = subzonaName || zonaName || '';
+
+  // Datos maestros de cada persona + ingreso original (para la fila B).
+  const ceds = clean.map(l => l.id_number);
+  const inCed = ceds.map(c => `"${c}"`).join(',');
+  const mrows = await sb(env, `workers_master?id_number=in.(${inCed})&select=id_number,first_name,second_name,last_names,full_name,email,address,birth_date,marital_status,phone,gender,account_number,todo_ticket`);
+  const masterBy = {};
+  (mrows || []).forEach(w => { masterBy[w.id_number] = w; });
+  const ingByCed = {};
+  await Promise.all(ceds.map(async ced => {
+    try { const h = await sb(env, 'rpc/get_group_history', { method: 'POST', body: JSON.stringify({ p_ced: ced }) }); if (h && h.length) ingByCed[ced] = h[0].ini || null; } catch (_) { /* sin historia */ }
+  }));
+
+  // --- Encabezado en reports_log (topic 'traslado') ---
+  const reportDeptId = await commonDepartment(env, cc, ceds);
+  const header = await sb(env, 'reports_log', {
+    method: 'POST', headers: { Prefer: 'return=representation' },
+    body: JSON.stringify({
+      company_code: cc, zone_id, subzone_id, topic: 'traslado',
+      responsible, position: position || null, workers_count: clean.length,
+      attention: 'open', email_sent: false, source_kind: sourceKind, source_admin_id: sourceAdminId,
+      department_id: reportDeptId,
+    }),
+  });
+  const reportId = header && header[0] && header[0].id;
+  if (!reportId) return json({ ok: false, error: 'No se pudo registrar el reporte.' }, 500);
+
+  // --- Detalle (una fila por persona) ---
+  await sb(env, 'traslado_report_lines', {
+    method: 'POST', headers: { Prefer: 'return=minimal' },
+    body: JSON.stringify(clean.map(l => ({
+      report_id: reportId, worker_id_number: l.id_number, worker_name: l.name,
+      empresa_origen: cc, empresa_destino: l.empresa_destino,
+      cargo_from: l.cargo_from, cargo_to: l.cargo_to,
+      fecha_baja: l.fecha_baja, fecha_alta: l.fecha_alta,
+    }))),
+  });
+
+  // --- osTicket: 1 PLA con la plantilla de 2 filas (B+A) por persona ---
+  const repCode = reportCode(reportId);
+  const base = await osticketBase(env);
+  const topicId = parseInt(await getSetting(env, 'osticket_topic_traslado', '34'), 10) || 34;
+  const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
+  const fromName = `${cc} - ${compBusinessName || cc}`;
+  const result = { osticket_pla: null, tickets_ok: 0, tickets_fail: 0, ticket_errors: [] };
+
+  const nameParts = (w, fallbackName) => {
+    if (w && (w.first_name || w.last_names)) return { nombre: (w.first_name || '').toUpperCase(), nombre2: (w.second_name || '').toUpperCase(), apellidos: (w.last_names || '').toUpperCase() };
+    const parts = String((w && w.full_name) || fallbackName || '').trim().toUpperCase().split(/\s+/).filter(Boolean);
+    if (parts.length > 1) return { nombre: parts.slice(0, -1).join(' '), nombre2: '', apellidos: parts[parts.length - 1] };
+    return { nombre: parts[0] || '', nombre2: '', apellidos: '' };
+  };
+  const axLines = [];
+  clean.forEach(l => {
+    const w = masterBy[l.id_number] || {};
+    const np = nameParts(w, l.name);
+    const common = {
+      id_number: l.id_number, nombre: np.nombre, nombre2: np.nombre2, apellidos: np.apellidos,
+      correo: w.email || '', direccion: w.address || '',
+      fechaNac: w.birth_date ? String(w.birth_date).slice(0, 10) : '',
+      estCivil: w.marital_status || '', telefono: w.phone || '', genero: w.gender || '',
+      cuenta: w.account_number || '',
+    };
+    // B: baja en origen (data_area origen, cargo actual, fechaIni = ingreso original, fechaFin = baja)
+    axLines.push({ ...common, accion: 'B', dataId: compDataArea, cargo: axOf(l.cargo_from), fechaIni: ingByCed[l.id_number] || '', fechaFin: l.fecha_baja, todoTicket: '' });
+    // A: alta en destino (data_area destino, cargo nuevo, fechaIni = alta)
+    const dest = compBy[l.empresa_destino] || {};
+    axLines.push({ ...common, accion: 'A', dataId: dest.data_area || '', cargo: axOf(l.cargo_to || l.cargo_from), fechaIni: l.fecha_alta, fechaFin: '', todoTicket: w.todo_ticket || 'N' });
+  });
+
+  if (!base || !env.osticket_api_key) {
+    result.ticket_errors.push('osTicket no configurado (url o api key).');
+  } else {
+    const ostUserId = await gcUser(env, base, { email: fromEmail, name: fromName, phone: compPhone });
+    if (ostUserId) {
+      try { await sb(env, `companies?company_code=eq.${encodeURIComponent(cc)}`, { method: 'PATCH', body: JSON.stringify({ osticket_user_id: ostUserId, osticket_synced_at: new Date().toISOString() }) }); } catch (_) { /* no critico */ }
+    }
+    const registros = clean.map(l => {
+      const dest = compBy[l.empresa_destino] || {};
+      const campos = [
+        ['Trabajador', l.name],
+        ['Cédula', l.id_number],
+        ['Tipo', 'Traslado (Baja + Alta)'],
+        ['Origen', `${cc} - ${compBusinessName || ''}`],
+        ['Destino', `${l.empresa_destino} - ${dest.business_name || ''}`],
+      ];
+      if (l.cargo_to && l.cargo_to !== l.cargo_from) campos.push(['Cargo', `${labelOf(l.cargo_from)} → ${labelOf(l.cargo_to)}`]);
+      else campos.push(['Cargo', labelOf(l.cargo_from)]);
+      campos.push(['Último día en origen (B)', dmy(l.fecha_baja)]);
+      campos.push(['Primer día en destino (A)', dmy(l.fecha_alta)]);
+      return campos;
+    });
+    const plaBody = buildReportText({
+      pieceLabel: 'PLANTILLA', reportCode: repCode, piece: 1, totalPieces: 1,
+      topicLabel: 'Traslado', fecha: dmy(today), hora: nowHHMM,
+      alias: cc, razon: compBusinessName, zona: mallZona, marca: marcaName, correoTienda: compEmail,
+      responsable: responsible, cargo: position, telefono: compPhone, correoResp: compEmail,
+      registros,
+    });
+    let plaAttachments = null;
+    try {
+      const wb = buildAxWorkbookBase64('traslado', { companyDataArea: compDataArea, companyName: compBusinessName, companyAlias: cc, todayYmd: today, reportCode: repCode, lines: axLines });
+      if (wb) plaAttachments = [osAttach(wb.filename, wb.base64, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')];
+    } catch (e) { result.ticket_errors.push(`Plantilla AX: ${String(e.message || e)}`); }
+
+    try {
+      const plaNum = await osticketCreateTicket(env, base, {
+        email: fromEmail, name: fromName,
+        subject: `[${repCode}] [1/1] PLA`, message: plaBody, topicId,
+        source: 'API', alert: false, autorespond: false,
+        report_code: repCode, report_kind: 'PLA',
+        ...(plaAttachments ? { attachments: plaAttachments } : {}),
+      });
+      result.osticket_pla = plaNum; result.tickets_ok++;
+      await gcReportLink(env, base, { report_code: repCode, ticket_number: plaNum, kind: 'PLA', company: cc, report_type: 'traslado', doc_total: 0 });
+    } catch (e) { result.tickets_fail++; result.ticket_errors.push(`PLA: ${String(e.message || e)}`); }
+
+    if (result.osticket_pla) {
+      try { await sb(env, `reports_log?id=eq.${reportId}`, { method: 'PATCH', body: JSON.stringify({ osticket_id: result.osticket_pla, email_sent: true }) }); } catch (_) { /* el reporte ya esta en BD */ }
+    }
+  }
+
+  return json({
+    ok: true, report_id: reportId, workers_count: clean.length,
+    osticket: { pla: result.osticket_pla, tickets_ok: result.tickets_ok, tickets_fail: result.tickets_fail, errors: result.ticket_errors },
   });
 }

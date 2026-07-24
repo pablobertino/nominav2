@@ -353,26 +353,35 @@ function axIngEgr(ctx, accion, filename, fillTodoTicket = true) {
     { hdr: 'Accion', key: 'accion', type: 'text' },
     { hdr: 'Clave', key: 'clave', type: 'text' },
   ];
-  const rows = ctx.lines.map(l => ({
-    nombre: (l.nombre || '').toUpperCase().trim(),
-    nombre2: (l.nombre2 || '').toUpperCase().trim(),
-    apellidos: (l.apellidos || '').toUpperCase().trim(),
-    cedula: String(l.id_number || '').replace(/[^0-9]/g, ''),
-    correo: l.correo || '',
-    dataId: ctx.companyDataArea || '',
-    fechaIni: l.fechaIni || '',
-    fechaFin: l.fechaFin || '',
-    cargo: (l.cargo || '').toUpperCase().trim(),
-    direccion: l.direccion || '',
-    fechaNac: l.fechaNac || '',
-    estCivil: l.estCivil || '',
-    telefono: l.telefono || '',
-    genero: l.genero || '',
-    cuenta: String(l.cuenta || '').replace(/[^0-9]/g, ''),
-    todoTicket: fillTodoTicket ? (l.todoTicket || 'N') : (l.todoTicket || ''),
-    accion: accion,
-    clave: '',
-  }));
+  // accion: si viene fijo (A/B/M) se usa para TODAS las filas; si es null, cada
+  // fila lleva su propia l.accion (caso Traslado: B en origen + A en destino).
+  // dataId (Data ID = data_area) puede venir por fila (traslado: origen vs destino).
+  const rows = ctx.lines.map(l => {
+    const acc = accion || l.accion || 'M';
+    const tt = accion
+      ? (fillTodoTicket ? (l.todoTicket || 'N') : (l.todoTicket || ''))
+      : (acc === 'A' ? (l.todoTicket || 'N') : (l.todoTicket || ''));
+    return {
+      nombre: (l.nombre || '').toUpperCase().trim(),
+      nombre2: (l.nombre2 || '').toUpperCase().trim(),
+      apellidos: (l.apellidos || '').toUpperCase().trim(),
+      cedula: String(l.id_number || '').replace(/[^0-9]/g, ''),
+      correo: l.correo || '',
+      dataId: (l.dataId != null && l.dataId !== '') ? l.dataId : (ctx.companyDataArea || ''),
+      fechaIni: l.fechaIni || '',
+      fechaFin: l.fechaFin || '',
+      cargo: (l.cargo || '').toUpperCase().trim(),
+      direccion: l.direccion || '',
+      fechaNac: l.fechaNac || '',
+      estCivil: l.estCivil || '',
+      telefono: l.telefono || '',
+      genero: l.genero || '',
+      cuenta: String(l.cuenta || '').replace(/[^0-9]/g, ''),
+      todoTicket: tt,
+      accion: acc,
+      clave: '',
+    };
+  });
   return { base64: packXlsx([{ name: 'Hoja1', xml: sheetXml(cols, rows) }]), filename };
 }
 
@@ -388,6 +397,7 @@ export function buildAxWorkbookBase64(kind, ctx) {
   else if (kind === 'ingreso') r = axIngEgr(ctx, 'A', 'INGRESOS_ALTA', true);
   else if (kind === 'egreso') r = axIngEgr(ctx, 'B', 'EGRESOS_BAJA', false);   // egreso: TodoTicket vacio
   else if (kind === 'modificacion') r = axIngEgr(ctx, 'M', 'MODIFICACIONES', true);
+  else if (kind === 'traslado') r = axIngEgr(ctx, null, 'TRASLADO');   // accion por fila: B (origen) + A (destino)
   if (!r) return null;
   const alias = ctx.companyAlias || 'tienda';
   const today = (ctx.todayYmd || new Date().toISOString().slice(0, 10)).replace(/-/g, '');

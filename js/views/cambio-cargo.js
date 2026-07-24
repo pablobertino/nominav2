@@ -610,7 +610,7 @@ async function finish(k) {
    DISPARA el reporte + ticket (Reportes → Historial).
    ===================================================================== */
 const TIPO_LB = { ascenso: 'Ascenso', descenso: 'Descenso', lateral: 'Lateral', traslado: 'Traslado', egreso: 'Egreso' };
-const APRO_FILTERS = [['sugerido', 'Pendientes'], ['rechazado', 'Rechazados']];
+const APRO_FILTERS = [['sugerido', 'Pendientes'], ['reportado', 'Aprobados'], ['rechazado', 'Rechazados']];
 const APRO_PER = 6;
 let APRO_PAGE = 1, APRO_SEL = null;
 
@@ -621,7 +621,7 @@ async function loadCola() {
 async function paintCola() {
   const body = document.getElementById('ccBody');
   body.innerHTML = `<div class="cc-cola"><div class="cc-loading">Cargando…</div></div>`;
-  if (COLA_FILTER !== 'sugerido' && COLA_FILTER !== 'rechazado') COLA_FILTER = 'sugerido';
+  if (!['sugerido', 'reportado', 'rechazado'].includes(COLA_FILTER)) COLA_FILTER = 'sugerido';
   await loadCola();
   renderApro();
 }
@@ -663,7 +663,7 @@ function renderAList() {
         <div class="cc-anm">${esc(mv.full_name || ('V-' + mv.id_number))} <span class="cc-pillA ${mv.tipo}">${esc((TIPO_LB[mv.tipo] || mv.tipo).toUpperCase())}</span></div>
         <div class="cc-adet">${mvDetail(mv)}</div>
         <div class="cc-aloc">${loc || ('V-' + esc(mv.id_number))}</div>
-        <div class="cc-amt">Sugerido por ${esc(mv.suggested_by || '')}</div>
+        <div class="cc-amt">Sugerido por ${esc(mv.suggested_by || '')}${mv.estado === 'reportado' && mv.osticket_id ? ` · <b style="color:#166534">✅ Ticket #${esc(mv.osticket_id)}</b>` : ''}</div>
       </div>
       <button class="cc-openf" data-fic="${mv.id}" title="Ver ficha completa">${IC_FICHA}</button>
     </div>`;
@@ -705,14 +705,17 @@ async function renderAPanel() {
       <div class="cc-achange"><div class="cc-sec" style="color:var(--pri)">Cambio propuesto</div>${aproAfter(mv)}</div>
       <div class="cc-awho">Sugerido por <b>${esc(mv.suggested_by || '')}</b>${mv.comentario ? `<br>“${esc(mv.comentario)}”` : ''}</div>
     </div>
-    ${my.aprobar ? `<div class="cc-aact">
-      <div class="cc-awill">Al aprobar se genera el reporte de <b>${aproTopicLabel(mv.tipo)}</b> con su ticket, y va a <b>Reportes → Historial</b>.</div>
-      <button class="cc-btn back" id="ccARej">Rechazar</button>
-      <button class="cc-btn apr" id="ccAApr">✓ Aprobar y generar ticket</button>
-    </div>` : `<div class="cc-aact"><div class="cc-awill">⏳ Esperando aprobación del Gerente de Zona.</div></div>`}`;
+    ${mv.estado === 'reportado'
+      ? aproDoneBox(mv.osticket_id, mv.report_id)
+      : (my.aprobar ? `<div class="cc-aact">
+          <div class="cc-awill">Al aprobar se genera el reporte de <b>${aproTopicLabel(mv.tipo)}</b> con su ticket, y va a <b>Reportes → Historial</b>.</div>
+          <button class="cc-btn back" id="ccARej">Rechazar</button>
+          <button class="cc-btn apr" id="ccAApr">✓ Aprobar y generar ticket</button>
+        </div>` : `<div class="cc-aact"><div class="cc-awill">⏳ Esperando aprobación del Gerente de Zona.</div></div>`)}`;
   document.getElementById('ccAFicha')?.addEventListener('click', () => openFichaFor({ id_number: mv.id_number, company_code: mv.empresa_origen }, () => renderCambioCargoHist(USER)));
   document.getElementById('ccAApr')?.addEventListener('click', () => approveMove(mv.id));
   document.getElementById('ccARej')?.addEventListener('click', () => rejectMove(mv.id));
+  panel.querySelector('.cc-gorep')?.addEventListener('click', () => { const b = document.querySelector('.pnl-side [data-view="historial"]'); if (b) b.click(); });
   panel.querySelector('.cc-apav')?.addEventListener('click', () => ccLightbox(mv));
   const h = await historyApi(mv.id_number, mv.empresa_origen);
   const box = document.getElementById('ccATraj');
@@ -750,20 +753,22 @@ async function approveMove(id) {
   renderApro();
   aproSuccess(r);
 }
-function aproSuccess(r) {
-  const ost = r.osticket_id;
-  const rep = r.report_id ? String(r.report_id).padStart(4, '0') : null;
+function aproDoneBox(ost, repId) {
+  const rep = repId ? String(repId).padStart(4, '0') : null;
   const url = CAT && CAT.osticket_url;
-  const panel = document.getElementById('ccAPanel');
-  if (panel) panel.innerHTML = `<div class="cc-adone"><div class="cc-adone-box">
-     <div class="cc-adone-t">✅ Solicitud registrada correctamente</div>
-     <p>Se generó la solicitud y ${ost ? 'su ticket en osTicket' : 'el reporte'}. Capital Humano ya la tiene en <b>Reportes → Historial</b>.</p>
+  return `<div class="cc-adone"><div class="cc-adone-box">
+     <div class="cc-adone-t">✅ Aprobado y reportado</div>
+     <p>Ya está en <b>Reportes → Historial</b> para Capital Humano.</p>
      <div class="cc-adone-links">
        ${ost ? `<a ${url ? `href="${esc(url)}" target="_blank" rel="noopener"` : ''}><span>🎫 Ticket osTicket</span> <span class="tk">#${esc(ost)}</span>${url ? '<span class="ext">Ver ↗</span>' : ''}</a>` : ''}
-       <a id="ccGoRep"><span>📄 Reporte${rep ? ' <span class="tk">#' + rep + '</span>' : ''}</span> <span class="ext">Ver en Reportes → Historial →</span></a>
+       <a class="cc-gorep"><span>📄 Reporte${rep ? ' <span class="tk">#' + rep + '</span>' : ''}</span> <span class="ext">Ver en Reportes → Historial →</span></a>
      </div></div></div>`;
-  document.getElementById('ccGoRep')?.addEventListener('click', () => { const b = document.querySelector('.pnl-side [data-view="historial"]'); if (b) b.click(); });
-  toast(ost ? `Aprobado. Ticket #${ost} generado.` : 'Aprobado y reportado.');
+}
+function aproSuccess(r) {
+  const panel = document.getElementById('ccAPanel');
+  if (panel) panel.innerHTML = aproDoneBox(r.osticket_id, r.report_id);
+  document.querySelector('.cc-gorep')?.addEventListener('click', () => { const b = document.querySelector('.pnl-side [data-view="historial"]'); if (b) b.click(); });
+  toast(r.osticket_id ? `Aprobado. Ticket #${r.osticket_id} generado.` : 'Aprobado y reportado.');
 }
 async function rejectMove(id) {
   const r = await api({ action: 'reject', id });

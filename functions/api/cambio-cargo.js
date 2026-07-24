@@ -358,7 +358,16 @@ async function generateReport(env, request, actor, user, mv) {
     return normReport(r, 'egreso');
   }
   if (mv.tipo === 'traslado') {
-    return { ok: false, error: 'El reporte de Traslado (Baja + Alta, topico 34) esta en construccion. El ascenso/descenso y el egreso ya generan su ticket.' };
+    const r = await call({
+      action: 'submit_traslado', company_code: mv.empresa_origen, ...head,
+      lines: [{
+        id_number: mv.id_number, name: mv.full_name,
+        cargo_from: mv.cargo_from, cargo_to: mv.cargo_to,
+        empresa_destino: mv.empresa_destino,
+        fecha_baja: mv.fecha_baja, fecha_alta: mv.fecha_alta,
+      }],
+    });
+    return normReport(r, 'traslado');
   }
   return { ok: false, error: 'Tipo de movimiento no soportado para reporte.' };
 }
