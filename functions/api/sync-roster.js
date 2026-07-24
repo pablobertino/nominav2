@@ -996,9 +996,14 @@ export async function onRequestPost({ request, env, ctx }) {
   }
   if (!env.canaima_apikey) return json({ ok: false, error: 'La clave del sistema no esta configurada.' }, 500);
 
-  // Alcance: tiendas abiertas.
+  // Alcance: tiendas OPERATIVAS = Abierto + Cerrada temporal + Proyectada.
+  // v6.105: antes filtraba is_active=true, que solo es TRUE para "Abierto",
+  // por lo que las Cerradas temporales y las Proyectadas quedaban sin
+  // sincronizar personal aunque en HCM ya tuvieran empleados (caso CA05/CC02:
+  // cerradas temporales con vendedores/cajeros ya cargados). Se excluyen solo
+  // las "Cerrado" (cierre definitivo) y las de estado "Nulo".
   const stores = await sb(env,
-    `companies?company_type=eq.Tienda&is_active=eq.true&select=company_code&order=company_code.asc`) || [];
+    `companies?company_type=eq.Tienda&status=in.("Abierto","Cerrada temporal","Proyectada")&select=company_code&order=company_code.asc`) || [];
   let codes = stores.map(s => s.company_code);
 
   /* v5.39 — SUBCONJUNTO OPCIONAL (`only`).
