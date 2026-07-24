@@ -13,16 +13,52 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { renderWorkerPhotos } from './worker-photos.js';
 
 let USER = null;
 let CAT = null;                 // catalogo (cargos, egress_reasons, my, assign_min_level)
-let VIEW = 'nuevo';             // 'nuevo' | 'cola'
+let COMPS = null;               // tiendas del alcance (para el traslado)
 let STEP = 0;
+let TRAJ_OPEN = true;           // estado abierto/plegado de la trayectoria (persiste entre pasos)
 let COLA_FILTER = 'todos', COLA_Q = '';
 let MOVES = [];                 // historial cargado
 const D = resetD();
 
-function resetD() { return { person: null, tipo: null, cargoTo: null, empTo: '', motivo: '', fechaEf: '', fechaB: '', fechaA: '', comentario: '' }; }
+function resetD() { return { person: null, tipo: null, cargoTo: null, empTo: '', empToLabel: '', motivo: '', fechaEf: '', fechaB: '', fechaA: '', comentario: '' }; }
+
+/* Fecha de HOY en zona horaria de Venezuela (America/Caracas), no UTC. */
+function todayVE() {
+  try { return new Date().toLocaleDateString('en-CA', { timeZone: 'America/Caracas' }); }
+  catch (_) { return new Date().toISOString().slice(0, 10); }
+}
+/* Defaults que deben existir ANTES de evaluar canNext (si no, el boton
+   Continuar queda deshabilitado aunque el dato ya este puesto). */
+function ensureDefaults() {
+  if (!D.person || !D.tipo) return;
+  if ((D.tipo === 'ascenso' || D.tipo === 'descenso') && !D.cargoTo) {
+    const opts = targetsFor(D.person, D.tipo);
+    if (opts.length) D.cargoTo = (D.tipo === 'ascenso' ? opts[opts.length - 1] : opts[0]).code;
+  }
+  if (D.tipo === 'traslado' && !D.cargoTo) {
+    const opts = targetsFor(D.person, 'traslado');
+    const cur = D.person.cargo_code;
+    D.cargoTo = (cur && opts.some(o => o.code === cur)) ? cur : (opts[0] ? opts[0].code : null);
+  }
+  if (D.tipo === 'traslado') {
+    if (!D.fechaB) D.fechaB = todayVE();
+    if (!D.fechaA || D.fechaA <= D.fechaB) D.fechaA = addDaysIso(D.fechaB, 1);
+  } else if (!D.fechaEf) {
+    D.fechaEf = todayVE();
+  }
+}
+/* Refresca solo el estado del boton Continuar sin re-render (no roba foco). */
+function syncNext() { const b = document.getElementById('ccNext'); if (b) b.disabled = !canNext(); }
+async function ensureCompanies() {
+  if (COMPS) return COMPS;
+  const r = await companiesApi();
+  COMPS = (r && r.ok && r.companies) ? r.companies : [];
+  return COMPS;
+}
 
 /* Colores por cargo (mismos del mockup; tienda alineado a la ficha). */
 const CARGO_COLOR = {
@@ -61,7 +97,12 @@ function targetsFor(person, tipo) {
   let list = assignable();
   if (tipo === 'ascenso') list = list.filter(c => c.hier_level < curLvl);
   else if (tipo === 'descenso') list = list.filter(c => c.hier_level > curLvl);
-  else if (tipo === 'traslado') list = list.filter(c => c.ambito === 'tienda');
+  else if (tipo === 'traslado') {
+    list = list.filter(c => c.ambito === 'tienda');
+    // El traslado suele mantener el MISMO cargo: incluir el actual aunque no
+    // sea "asignable" en el sentido de ascenso (ej. Vendedor).
+    if (cur && cur.ambito === 'tienda' && !list.some(c => c.code === cur.code)) list = list.concat([cur]);
+  }
   return list.sort((a, b) => a.hier_level - b.hier_level);
 }
 
@@ -80,10 +121,18 @@ async function searchApi(q) {
     body: JSON.stringify({ action: 'search', adminId: USER.id, q, type: 'Tienda' }),
   }).then(x => x.json()).catch(() => null);
 }
-async function historyApi(idNumber) {
+async function historyApi(idNumber, companyCode) {
   return fetch('/api/worker-photo', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'group_history', id_number: idNumber, user: USER }),
+    // El endpoint EXIGE company_code (userCanAccess); sin el, devuelve error
+    // y la trayectoria sale vacia.
+    body: JSON.stringify({ action: 'group_history', id_number: idNumber, company_code: companyCode || '', user: USER }),
+  }).then(x => x.json()).catch(() => null);
+}
+async function companiesApi() {
+  return fetch('/api/cambio-cargo', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'companies', user: USER }),
   }).then(x => x.json()).catch(() => null);
 }
 
@@ -149,6 +198,7 @@ const canNext = () => {
 function paintWizard() {
   const body = document.getElementById('ccBody');
   const my = CAT.my || {};
+  ensureDefaults();
   const stepper = STEP_LABELS.map((l, i) =>
     `<div class="cc-stp ${i < STEP ? 'done' : ''} ${i === STEP ? 'on' : ''}"><div class="bar"></div><div class="lb">${l}</div></div>`).join('');
   const foot = STEP === 4
@@ -222,12 +272,25 @@ async function runSearch(q) {
       <div class="cc-pav">${av}</div>
       <div style="flex:1"><div class="cc-pnm">${esc(p.full_name || '')}</div>
         <div class="cc-pmeta">V-${esc(p.id_number)}${p.company_code ? ' · ' + esc(p.company_code) : ''}${p.company_name ? ' ' + esc(p.company_name) : ''}</div></div>
-      <span class="cc-pcargo">${esc(cargoTxt)}</span></div>`;
+      <span class="cc-pcargo">${esc(cargoTxt)}</span>
+      <button class="cc-openf" data-ced="${esc(p.id_number)}" title="Ver ficha completa">${IC_FICHA}</button></div>`;
   }).join('');
-  box.querySelectorAll('.cc-prow').forEach(row => row.addEventListener('click', () => {
+  box.querySelectorAll('.cc-prow').forEach(row => row.addEventListener('click', e => {
+    if (e.target.closest('.cc-openf')) return;
     const p = rows.find(x => String(x.id_number) === row.dataset.ced);
     pickPerson(p);
   }));
+  box.querySelectorAll('.cc-openf').forEach(btn => btn.addEventListener('click', e => {
+    e.stopPropagation();
+    const p = rows.find(x => String(x.id_number) === btn.dataset.ced);
+    if (p) openFichaFor(p);
+  }));
+}
+const IC_FICHA = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+function openFichaFor(p) {
+  const cc = p.company_code || (D.person && D.person.company_code);
+  if (!cc) { toast('No pude abrir la ficha: falta la empresa.', true); return; }
+  renderWorkerPhotos(USER, cc, () => renderCambioCargo(USER), { mode: 'store', openCed: p.id_number });
 }
 function pickPerson(p) {
   // Mapea el cargo de texto del roster a un code de cargos (mejor esfuerzo).
@@ -284,18 +347,26 @@ function stepDestino(el) {
     if (!opts.length) { el.innerHTML = `<div class="cc-warn err">No hay cargos que tu rol pueda asignar para este ${D.tipo}. Debe hacerlo un rol superior.</div>`; return; }
     el.innerHTML = `<div class="cc-fld"><label>Nuevo cargo</label>
       <select id="ccCargo">${opts.map(c => `<option value="${c.code}" ${c.code === D.cargoTo ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</select>${roleNote}</div>`;
-    document.getElementById('ccCargo').addEventListener('change', e => { D.cargoTo = e.target.value; paintFicha(); });
+    document.getElementById('ccCargo').addEventListener('change', e => { D.cargoTo = e.target.value; paintFicha(); syncNext(); });
     return;
   }
   if (D.tipo === 'traslado') {
     const opts = targetsFor(D.person, 'traslado');
-    el.innerHTML = `<div class="cc-fld"><label>Empresa/tienda destino (código)</label>
-        <input class="cc-inp" id="ccEmpTo" placeholder="Ej. AA02" value="${esc(D.empTo)}"></div>
+    const selChip = D.empTo
+      ? `<div class="cc-selchip">Destino: <b>${esc(D.empTo)}</b>${D.empToLabel ? ' · ' + esc(D.empToLabel) : ''} <button id="ccEmpClear" title="Cambiar">✕</button></div>`
+      : '';
+    el.innerHTML = `<div class="cc-fld"><label>Empresa/tienda destino</label>
+        ${selChip}
+        <input class="cc-inp" id="ccEmpToQ" placeholder="Buscar por alias, razón social, zona, subzona o concepto…" autocomplete="off">
+        <div class="cc-plist" id="ccEmpToList"><div class="cc-hint">Cargando tiendas…</div></div></div>
       <div class="cc-fld"><label>Cargo en destino</label>
         <select id="ccCargo">${opts.map(c => `<option value="${c.code}" ${c.code === (D.cargoTo || D.person.cargo_code) ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</select></div>
       <div class="cc-warn">Sale del origen y entra al destino al día siguiente (nunca dos tiendas el mismo día). Las fechas van en el paso siguiente.</div>${roleNote}`;
-    document.getElementById('ccEmpTo').addEventListener('input', e => { D.empTo = e.target.value.toUpperCase(); paintFicha(); });
-    document.getElementById('ccCargo').addEventListener('change', e => { D.cargoTo = e.target.value; paintFicha(); });
+    document.getElementById('ccCargo').addEventListener('change', e => { D.cargoTo = e.target.value; paintFicha(); syncNext(); });
+    const q = document.getElementById('ccEmpToQ');
+    q.addEventListener('input', () => renderEmpToList(q.value));
+    document.getElementById('ccEmpClear')?.addEventListener('click', () => { D.empTo = ''; D.empToLabel = ''; paintStep(); paintFicha(); syncNext(); });
+    ensureCompanies().then(() => renderEmpToList(''));
     return;
   }
   // egreso
@@ -303,28 +374,51 @@ function stepDestino(el) {
   el.innerHTML = `<div class="cc-fld"><label>Motivo del egreso</label>
       <select id="ccMotivo"><option value="">Elige un motivo…</option>${reasons.map(r => `<option value="${esc(r.code)}" ${r.code === D.motivo ? 'selected' : ''}>${esc(r.label)}</option>`).join('')}</select></div>
     <div class="cc-fld"><label>Comentario (opcional)</label><textarea class="cc-inp" id="ccCom" rows="2">${esc(D.comentario)}</textarea></div>`;
-  document.getElementById('ccMotivo').addEventListener('change', e => { D.motivo = e.target.value; paintFicha(); document.getElementById('ccNext') && (document.getElementById('ccNext').disabled = !canNext()); });
+  document.getElementById('ccMotivo').addEventListener('change', e => { D.motivo = e.target.value; paintFicha(); syncNext(); });
   document.getElementById('ccCom').addEventListener('input', e => { D.comentario = e.target.value; });
+}
+/* Lista filtrable de tiendas del alcance para el traslado. */
+function renderEmpToList(q) {
+  const box = document.getElementById('ccEmpToList');
+  if (!box) return;
+  const list = COMPS || [];
+  const qq = norm(q).toLowerCase();
+  const originCode = D.person && D.person.company_code;
+  let f = (qq ? list.filter(c => [c.code, c.business_name, c.zona, c.subzona, c.concepto].some(v => String(v || '').toLowerCase().includes(qq))) : list)
+    .filter(c => c.code !== originCode);
+  if (!f.length) { box.innerHTML = `<div class="cc-hint">Sin tiendas que coincidan en tu alcance.</div>`; return; }
+  box.innerHTML = f.slice(0, 50).map(c => `<div class="cc-prow ${D.empTo === c.code ? 'on' : ''}" data-code="${esc(c.code)}">
+      <div style="flex:1"><div class="cc-pnm">${esc(c.code)} · ${esc(c.business_name || '')}</div>
+        <div class="cc-pmeta">${[c.zona, c.subzona, c.concepto].filter(Boolean).map(esc).join(' · ') || '—'}</div></div>
+      ${statusBadge(c.status)}</div>`).join('');
+  box.querySelectorAll('.cc-prow').forEach(row => row.addEventListener('click', () => {
+    const c = (COMPS || []).find(x => x.code === row.dataset.code);
+    if (!c) return;
+    D.empTo = c.code; D.empToLabel = c.business_name || '';
+    paintStep(); paintFicha(); syncNext();
+  }));
+}
+function statusBadge(st) {
+  if (st === 'Cerrada temporal') return `<span class="cc-stat tmp">Cerrada temporal</span>`;
+  if (st === 'Proyectada') return `<span class="cc-stat proj">Proyectada</span>`;
+  return '';
 }
 
 /* --- paso Fecha --- */
 function stepFecha(el) {
   const rule = `<div class="cc-hint">📅 Regla del sistema (corte de la quincena). Sugerido dentro de la quincena vigente.</div>`;
   if (D.tipo === 'traslado') {
-    if (!D.fechaB) D.fechaB = todayIso();
-    if (!D.fechaA) D.fechaA = addDaysIso(D.fechaB, 1);
     el.innerHTML = `<div class="cc-grid2">
-        <div class="cc-fld"><label>Último día en origen</label><input class="cc-inp" type="date" id="ccFB" value="${esc(D.fechaB)}"></div>
-        <div class="cc-fld"><label>Primer día en destino</label><input class="cc-inp" type="date" id="ccFA" value="${esc(D.fechaA)}"></div>
+        <div class="cc-fld"><label>Último día en origen</label><input class="cc-inp cc-date" type="date" id="ccFB" value="${esc(D.fechaB)}"></div>
+        <div class="cc-fld"><label>Primer día en destino</label><input class="cc-inp cc-date" type="date" id="ccFA" value="${esc(D.fechaA)}"></div>
       </div>${rule}`;
-    document.getElementById('ccFB').addEventListener('change', e => { D.fechaB = e.target.value; if (D.fechaA <= D.fechaB) D.fechaA = addDaysIso(D.fechaB, 1); paintWizard(); });
-    document.getElementById('ccFA').addEventListener('change', e => { D.fechaA = e.target.value; paintFicha(); });
+    document.getElementById('ccFB').addEventListener('change', e => { D.fechaB = e.target.value; if (D.fechaA <= D.fechaB) D.fechaA = addDaysIso(D.fechaB, 1); paintStep(); paintFicha(); syncNext(); });
+    document.getElementById('ccFA').addEventListener('change', e => { D.fechaA = e.target.value; paintFicha(); syncNext(); });
     return;
   }
-  if (!D.fechaEf) D.fechaEf = todayIso();
   el.innerHTML = `<div class="cc-fld"><label>${D.tipo === 'egreso' ? 'Fecha de egreso' : 'Fecha efectiva'}</label>
-      <input class="cc-inp" type="date" id="ccFE" value="${esc(D.fechaEf)}"></div>${rule}`;
-  document.getElementById('ccFE').addEventListener('change', e => { D.fechaEf = e.target.value; paintFicha(); });
+      <input class="cc-inp cc-date" type="date" id="ccFE" value="${esc(D.fechaEf)}"></div>${rule}`;
+  document.getElementById('ccFE').addEventListener('change', e => { D.fechaEf = e.target.value; paintFicha(); syncNext(); });
 }
 function addDaysIso(iso, d) { const t = Date.parse(iso + 'T00:00:00Z'); const nd = new Date(t + d * 86400000); return nd.toISOString().slice(0, 10); }
 
@@ -342,7 +436,7 @@ function stepRevision(el) {
 function fraseHtml(p) {
   const curLbl = esc(cargoLabel(p.cargo_code) || p.role_text || '—');
   if (D.tipo === 'ascenso' || D.tipo === 'descenso') return `${D.tipo === 'ascenso' ? 'Asciende' : 'Desciende'} de <b>${curLbl}</b> a <b>${esc(cargoLabel(D.cargoTo))}</b>`;
-  if (D.tipo === 'traslado') { const chg = D.cargoTo && D.cargoTo !== p.cargo_code; return `Se traslada de <b>${esc(p.company_code)} ${esc(p.business_name)}</b> a <b>${esc(D.empTo)}</b>` + (chg ? `, y de <b>${curLbl}</b> a <b>${esc(cargoLabel(D.cargoTo))}</b>` : ` (sigue como <b>${esc(cargoLabel(D.cargoTo) || curLbl)}</b>)`); }
+  if (D.tipo === 'traslado') { const chg = D.cargoTo && D.cargoTo !== p.cargo_code; const dest = `${esc(D.empTo)}${D.empToLabel ? ' ' + esc(D.empToLabel) : ''}`; return `Se traslada de <b>${esc(p.company_code)} ${esc(p.business_name)}</b> a <b>${dest}</b>` + (chg ? `, y de <b>${curLbl}</b> a <b>${esc(cargoLabel(D.cargoTo))}</b>` : ` (sigue como <b>${esc(cargoLabel(D.cargoTo) || curLbl)}</b>)`); }
   const rl = (CAT.egress_reasons || []).find(r => r.code === D.motivo);
   return `Egresa por <b>${esc(rl ? rl.label : '—')}</b>`;
 }
@@ -365,15 +459,20 @@ async function paintFicha() {
           <div class="cc-ced">V-${esc(p.id_number)}</div>
           <div class="cc-meta"><span class="cc-pill act" title="Vigente a la fecha">Activo</span><span class="cc-pill">${cargoTxt}</span></div>
           <div class="cc-fftrj" id="ccTenure"></div>
-          <div class="cc-grp">${esc(p.company_code)} ${esc(p.business_name)}</div>
+          <div class="cc-grp">${esc(p.company_code)} ${esc(p.business_name)} · <a class="cc-flink" id="ccOpenFicha">Ver ficha completa ↗</a></div>
         </div></div>
       <div id="ccTraj"><div class="cc-hint" style="margin-top:10px">Cargando trayectoria…</div></div>
     </div>${after}`;
 
-  const h = await historyApi(p.id_number);
+  document.getElementById('ccOpenFicha')?.addEventListener('click', () => openFichaFor(p));
+  const h = await historyApi(p.id_number, p.company_code);
   const items = (h && h.ok && h.items) ? h.items : [];
   const box = document.getElementById('ccTraj');
-  if (box) box.innerHTML = trajBlock(items);
+  if (box) {
+    box.innerHTML = trajBlock(items);
+    const det = box.querySelector('details.cc-trj');
+    if (det) det.addEventListener('toggle', e => { TRAJ_OPEN = e.target.open; });
+  }
   const ten = document.getElementById('ccTenure');
   if (ten) ten.innerHTML = tenureLine(items);
 }
@@ -381,7 +480,7 @@ async function paintFicha() {
 function tenureLine(items) {
   if (!items || !items.length) return '';
   const toD = s => Date.parse(String(s).slice(0, 10) + 'T00:00:00Z');
-  const first = toD(items[0].ini); const hoy = toD(todayIso());
+  const first = toD(items[0].ini); const hoy = toD(todayVE());
   const totalDays = Math.round((hoy - first) / 86400000) + 1;
   let continuous = !!items[items.length - 1].vigente;
   for (let i = 0; i < items.length - 1 && continuous; i++) {
@@ -401,7 +500,7 @@ function afterCardHtml(p) {
     empVal = `${esc(p.company_code)} ${esc(p.business_name)}`; estado = 'Egresado'; estChg = true;
   } else if (D.tipo === 'traslado') {
     cargoLine = `<div class="cc-cargoline">${cur ? cch(cur, true) : ''}<span class="cc-ar">→</span>${cch(D.cargoTo || cur, true)}</div>`;
-    empVal = `${esc(p.company_code)} ${esc(p.business_name)} <span class="cc-ar">→</span> ${esc(D.empTo || '—')}`;
+    empVal = `${esc(p.company_code)} ${esc(p.business_name)} <span class="cc-ar">→</span> ${D.empTo ? esc(D.empTo) + (D.empToLabel ? ' ' + esc(D.empToLabel) : '') : '—'}`;
   } else {
     cargoLine = `<div class="cc-cargoline">${cur ? cch(cur, true) : ''}<span class="cc-ar">→</span>${cch(D.cargoTo || cur, true)}</div>`;
     empVal = `${esc(p.company_code)} ${esc(p.business_name)}`;
@@ -416,12 +515,12 @@ function afterCardHtml(p) {
 /* trayectoria IGUAL que la ficha (get_group_history: alias, empresa, cargo,
    ini, fin, dias, vigente, zona, subzona). Colapsable. */
 function trajBlock(items) {
-  return `<details class="cc-trj" open><summary>Ver trayectoria completa</summary><div>${trajHtml(items)}</div></details>`;
+  return `<details class="cc-trj" ${TRAJ_OPEN ? 'open' : ''}><summary>Ver trayectoria completa</summary><div>${trajHtml(items)}</div></details>`;
 }
 function trajHtml(items) {
   if (!items || !items.length) return `<div class="cc-hint">Sin historia registrada en el Grupo.</div>`;
   const toD = s => Date.parse(String(s).slice(0, 10) + 'T00:00:00Z');
-  const hoy = toD(todayIso()); const first = toD(items[0].ini);
+  const hoy = toD(todayVE()); const first = toD(items[0].ini);
   const span = Math.max(1, (hoy - first) / 86400000 + 1);
   let segs = '', rows = '';
   for (let i = 0; i < items.length; i++) {
@@ -673,7 +772,7 @@ function styleBlock() {
   .cc-fichaFull{background:#fff;border:1px solid var(--border);border-radius:14px;padding:16px 18px;max-width:900px}
   .cc-top{display:flex;gap:16px;align-items:flex-start}
   .cc-ffid{flex:1}
-  .cc-ffid h2{font-size:20px;font-weight:800;letter-spacing:-.01em;margin:0;line-height:1.2}
+  .cc-ffid h2{font-size:19px;font-weight:700;margin:0;line-height:1.25;color:#0f172a}
   .cc-ced{font-size:12.5px;color:var(--muted);margin-top:2px}
   .cc-meta{display:flex;gap:7px;margin-top:7px;align-items:center;flex-wrap:wrap}
   .cc-pill{display:inline-flex;align-items:center;gap:5px;font-size:11.5px;font-weight:700;border-radius:999px;padding:3px 11px;border:1px solid #e5e7eb;background:#f1f5f9;color:#475569}
@@ -730,6 +829,15 @@ function styleBlock() {
   .cc-sbtn.apr{background:#f0fdf4;color:#166534;border-color:#bbf7d0}.cc-sbtn.rec{background:#fef2f2;color:#b91c1c;border-color:#fecaca}
   .cc-sbtn.exp{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}.cc-sbtn.ghost{background:#fff;color:var(--muted);border-color:var(--border-2)}
   .cc-mv-wait{font-size:11.5px;color:#92400e;font-weight:600}
+  .cc-date{max-width:190px}
+  .cc-openf{border:1px solid var(--border-2);background:#fff;color:var(--muted);border-radius:8px;width:30px;height:30px;display:flex;align-items:center;justify-content:center;cursor:pointer;flex:none}
+  .cc-openf:hover{color:var(--pri);border-color:#ddd6fe;background:#fbfbff}
+  .cc-flink{color:var(--pri);font-weight:700;cursor:pointer}
+  .cc-selchip{display:inline-flex;align-items:center;gap:8px;font-size:12px;background:var(--pri-soft);border:1px solid #ddd6fe;color:#5b21b6;border-radius:999px;padding:4px 8px 4px 12px;margin-bottom:8px}
+  .cc-selchip button{border:0;background:#ede9fe;color:#5b21b6;border-radius:999px;width:18px;height:18px;cursor:pointer;font-size:11px;line-height:1}
+  .cc-stat{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;border-radius:999px;padding:2px 8px;border:1px solid;flex:none}
+  .cc-stat.tmp{background:#fffbeb;color:#92400e;border-color:#fde68a}
+  .cc-stat.proj{background:#eff6ff;color:#1e40af;border-color:#bfdbfe}
   .cc-toast{position:fixed;left:50%;bottom:28px;transform:translateX(-50%);background:#0f172a;color:#fff;font-size:13px;font-weight:600;padding:10px 16px;border-radius:10px;box-shadow:0 6px 24px rgba(15,23,42,.25);z-index:9999;transition:opacity .3s;opacity:0}
   .cc-toast.err{background:#b91c1c}
   </style>`;

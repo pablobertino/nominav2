@@ -115,6 +115,35 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
+    if (action === 'companies') {
+      if (!myView) return json({ ok: false, error: 'No tienes permiso para Cambio de Cargo.' }, 403);
+      const codes = await scopeCodes(env, actor, body.user);
+      if (codes !== null && !codes.length) return json({ ok: true, companies: [] });
+      // Tiendas del alcance, excluyendo Cerrado/Nulo (se permiten Abierto,
+      // Cerrada temporal y Proyectada).
+      let path = `companies?company_type=eq.Tienda&status=in.("Abierto","Cerrada temporal","Proyectada")`
+        + `&select=company_code,business_name,status,zone_id,subzone_id,concept_id&order=company_code`;
+      if (codes !== null) {
+        const inList = codes.map(c => `"${c}"`).join(',');
+        path += `&company_code=in.(${inList})`;
+      }
+      const [comps, zs, ss, cs] = await Promise.all([
+        sb(env, path),
+        sb(env, 'zones?select=id,name'),
+        sb(env, 'subzones?select=id,name'),
+        sb(env, 'concepts?select=id,name'),
+      ]);
+      const zm = {}, sm = {}, cm = {};
+      (zs || []).forEach(z => { zm[z.id] = z.name; });
+      (ss || []).forEach(s => { sm[s.id] = s.name; });
+      (cs || []).forEach(c => { cm[c.id] = c.name; });
+      const out = (comps || []).map(c => ({
+        code: c.company_code, business_name: c.business_name || null, status: c.status || null,
+        zona: zm[c.zone_id] || null, subzona: sm[c.subzone_id] || null, concepto: cm[c.concept_id] || null,
+      }));
+      return json({ ok: true, companies: out });
+    }
+
     if (action === 'list') {
       if (!myView) return json({ ok: false, error: 'No tienes permiso para ver Cambio de Cargo.' }, 403);
       const codes = await scopeCodes(env, actor, body.user);
@@ -168,7 +197,10 @@ export async function onRequestPost({ request, env }) {
         if (tipo !== 'egreso' && cargoTo) {
           const c = byCode(cargoTo);
           if (!c) return json({ ok: false, error: 'Cargo destino no valido.' }, 400);
-          if (!(actor.role === 'superadmin') && c.hier_level <= minLevel) {
+          // El traslado que MANTIENE el mismo cargo se permite aunque ese cargo
+          // no sea "asignable" por rango (ej. Vendedor). Ascenso/descenso si exigen rango.
+          const sameAsCurrent = (tipo === 'traslado' && cargoTo === (norm(it.cargo_from) || null));
+          if (!sameAsCurrent && actor.role !== 'superadmin' && c.hier_level <= minLevel) {
             return json({ ok: false, error: `Tu rol no puede asignar el cargo ${c.label}.` }, 403);
           }
         }
