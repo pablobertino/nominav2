@@ -288,7 +288,8 @@ async function runSearch(q) {
     if (p) openFichaFor(p);
   }));
 }
-const IC_FICHA = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>';
+// Mismo icono "Ver ficha" que Buscar / Datos incompletos (tarjeta de persona).
+const IC_FICHA = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="10" r="2"/><path d="M13 9h5M13 13h5M6.5 15.5c.4-1.2 1.4-2 2.5-2s2.1.8 2.5 2"/></svg>';
 function openFichaFor(p, back) {
   const cc = p.company_code || (D.person && D.person.company_code);
   if (!cc) { toast('No pude abrir la ficha: falta la empresa.', true); return; }
@@ -665,7 +666,7 @@ function renderAList() {
         <div class="cc-anm">${esc(mv.full_name || ('V-' + mv.id_number))} <span class="cc-pillA ${mv.tipo}">${esc((TIPO_LB[mv.tipo] || mv.tipo).toUpperCase())}</span></div>
         <div class="cc-adet">${mvDetail(mv)}</div>
         <div class="cc-aloc">${loc || ('V-' + esc(mv.id_number))}</div>
-        <div class="cc-amt">Sugerido por ${esc(mv.suggested_by || '')}${mv.estado === 'reportado' && mv.osticket_id ? ` · <b style="color:#166534">✅ Ticket #${esc(mv.osticket_id)}</b>` : ''}${mv.estado === 'rechazado' && mv.rejected_by ? ` · <b style="color:#991b1b">Rechazado por ${esc(mv.rejected_by)}</b>` : ''}</div>
+        <div class="cc-amt"><span class="cc-mini sug">✎ Sugirió: ${esc(mv.suggested_by || '—')}</span>${mv.estado === 'reportado' ? ` <span class="cc-mini apr">✓ Aprobó: ${esc(mv.approved_by || '—')}</span>${mv.osticket_id ? ` <span class="cc-mini tk">Ticket #${esc(mv.osticket_id)}</span>` : ''}` : mv.estado === 'rechazado' ? ` <span class="cc-mini rec">✕ Rechazó: ${esc(mv.rejected_by || '—')}</span>` : ` <span class="cc-mini pend">⏳ Sin aprobar</span>`}</div>
       </div>
       <button class="cc-openf" data-fic="${mv.id}" title="Ver ficha completa">${IC_FICHA}</button>
     </div>`;
@@ -689,52 +690,77 @@ function renderAList() {
 function showDetail(id) { APRO_SEL = id; APRO_SUB = 'detail'; renderDetail(); }
 function backToList() { APRO_SUB = 'list'; renderApro(); }
 
-/* ---------- DETALLE (página aparte con Volver) ---------- */
+/* ---------- DETALLE (página aparte con Volver) ----------
+   Reproduce el estilo de la ficha del empleado: cabecera con nombre en peso
+   normal, cédula, chips, línea de empresa y trayectoria COLAPSABLE idéntica a
+   la ficha. Debajo el cambio propuesto y un bloque que separa con claridad
+   QUIÉN SUGIRIÓ de QUIÉN APROBÓ / RECHAZÓ (son cosas distintas). */
 async function renderDetail() {
   const body = document.getElementById('ccBody');
   const mv = MOVES.find(x => x.id === APRO_SEL);
   if (!mv) { backToList(); return; }
   const my = CAT.my || {};
-  const loc = [mv.empresa_origen, mv.rz, mv.zona, mv.subzona, mv.concepto].filter(Boolean);
-  let whoExtra = '';
-  if (mv.estado === 'reportado' && mv.approved_by) whoExtra = `<br><span style="color:#166534">Aprobado por <b>${esc(mv.approved_by)}</b></span>`;
-  else if (mv.estado === 'rechazado' && mv.rejected_by) whoExtra = `<br><span style="color:#991b1b">Rechazado por <b>${esc(mv.rejected_by)}</b>${mv.reject_reason ? ` — ${esc(mv.reject_reason)}` : ''}</span>`;
-  body.innerHTML = `<div class="cc-apro">
-    <div class="cc-apro-head"><button class="cc-btn back" id="ccBackList">← Volver</button><h2 style="font-size:16px">Revisión de la sugerencia</h2></div>
-    <div class="cc-apanel" style="min-height:auto">
-      <div class="cc-ahead">
-        ${avatarHtml(mv, true)}
-        <div style="flex:1"><h2>${esc(mv.full_name || ('V-' + mv.id_number))}</h2><div class="cc-ced">V-${esc(mv.id_number)}</div>
-          <div class="cc-meta"><span class="cc-pill act">Activo</span>${mv.cargo_from ? `<span class="cc-pill">${esc(cargoLabel(mv.cargo_from))}</span>` : ''}</div></div>
+  const ini = iniOf(mv.full_name);
+  const av = mv.thumb_url ? `<img src="${esc(mv.thumb_url)}" alt="">` : esc(ini);
+  const cargoTxt = mv.cargo_from ? esc(cargoLabel(mv.cargo_from)).toUpperCase() : '';
+  const grp = [mv.empresa_origen, mv.rz].filter(Boolean).map(esc).join(' ');
+  const zsc = [mv.zona, mv.subzona, mv.concepto].filter(Boolean).map(esc).join(' · ');
+  body.innerHTML = `
+    <button class="cc-btn back cc-backbtn" id="ccBackList">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
+      Volver a Aprobaciones
+    </button>
+    <div class="cc-cmp-h">Revisión de la sugerencia</div>
+    <div class="cc-fichaFull">
+      <div class="cc-top">
+        <div class="cc-pav big" id="ccDetPav" ${mv.thumb_url ? 'style="cursor:zoom-in"' : ''}>${av}</div>
+        <div class="cc-ffid">
+          <h2>${esc(mv.full_name || ('V-' + mv.id_number))}</h2>
+          <div class="cc-ced">V-${esc(mv.id_number)}</div>
+          <div class="cc-meta"><span class="cc-pill act" title="Vigente a la fecha">Activo</span>${cargoTxt ? `<span class="cc-pill">${cargoTxt}</span>` : ''}<span class="cc-pillA ${mv.tipo}">${esc((TIPO_LB[mv.tipo] || mv.tipo).toUpperCase())}</span></div>
+          <div class="cc-grp">${grp}${zsc ? ` · <span style="color:var(--muted)">${zsc}</span>` : ''}</div>
+        </div>
         <button class="cc-openf" id="ccAFicha" title="Ver ficha completa">${IC_FICHA}</button>
       </div>
-      <div class="cc-abody">
-        <div class="cc-adatarow">${loc.map((v, i) => `<span><span class="k">${['Tienda', 'Razón social', 'Zona', 'Subzona', 'Concepto'][i] || ''}:</span> <b>${esc(v)}</b></span>`).join('')}</div>
-        <div class="cc-sec">Trayectoria en el Grupo</div>
-        <div id="ccATraj"><div class="cc-hint">Cargando trayectoria…</div></div>
-        <div class="cc-achange"><div class="cc-sec" style="color:var(--pri)">Cambio propuesto</div>${aproAfter(mv)}</div>
-        <div class="cc-awho">Sugerido por <b>${esc(mv.suggested_by || '')}</b>${mv.comentario ? `<br>“${esc(mv.comentario)}”` : ''}${whoExtra}</div>
-      </div>
-      ${mv.estado === 'reportado'
-        ? aproDoneBox(mv.osticket_id, mv.report_id)
-        : mv.estado === 'rechazado'
-          ? `<div class="cc-aact"><div class="cc-awill" style="color:#991b1b;background:#fef2f2;border-color:#fecaca">Sugerencia rechazada.</div></div>`
-          : (my.aprobar ? `<div class="cc-aact">
-              <div class="cc-awill">Al aprobar se genera el reporte de <b>${aproTopicLabel(mv.tipo)}</b> con su ticket, y va a <b>Reportes → Historial</b>.</div>
-              <button class="cc-btn back" id="ccARej">Rechazar</button>
-              <button class="cc-btn apr" id="ccAApr">✓ Aprobar y generar ticket</button>
-            </div>` : `<div class="cc-aact"><div class="cc-awill">⏳ Esperando aprobación del Gerente de Zona.</div></div>`)}
+      <div id="ccATraj"><div class="cc-hint" style="margin-top:12px">Cargando trayectoria…</div></div>
     </div>
-  </div>`;
+
+    <div class="cc-after" style="margin-top:14px;border-color:#ddd6fe;background:var(--pri-soft)">
+      <div class="lab" style="color:var(--pri)">Cambio propuesto</div>
+      ${aproAfter(mv)}
+    </div>
+
+    <div class="cc-whoblock">
+      <div class="cc-whorow"><span class="cc-whoic sug">✎</span><div><div class="cc-whok">Sugerido por</div><div class="cc-whov">${esc(mv.suggested_by || '—')}${mv.created_at ? ` · <span class="cc-whod">${fmt(mv.created_at)}</span>` : ''}</div>${mv.comentario ? `<div class="cc-whocom">“${esc(mv.comentario)}”</div>` : ''}</div></div>
+      ${mv.estado === 'reportado' ? `<div class="cc-whorow"><span class="cc-whoic apr">✓</span><div><div class="cc-whok">Aprobado por</div><div class="cc-whov">${esc(mv.approved_by || '—')}${mv.approved_at ? ` · <span class="cc-whod">${fmt(mv.approved_at)}</span>` : ''}</div></div></div>` : ''}
+      ${mv.estado === 'rechazado' ? `<div class="cc-whorow"><span class="cc-whoic rec">✕</span><div><div class="cc-whok">Rechazado por</div><div class="cc-whov">${esc(mv.rejected_by || '—')}${mv.rejected_at ? ` · <span class="cc-whod">${fmt(mv.rejected_at)}</span>` : ''}</div>${mv.reject_reason ? `<div class="cc-whocom">“${esc(mv.reject_reason)}”</div>` : ''}</div></div>` : ''}
+      ${mv.estado === 'sugerido' ? `<div class="cc-whorow"><span class="cc-whoic pend">⏳</span><div><div class="cc-whok">Aprobación</div><div class="cc-whov" style="color:var(--muted);font-weight:500">Pendiente</div></div></div>` : ''}
+    </div>
+
+    ${mv.estado === 'reportado'
+      ? aproDoneBox(mv.osticket_id, mv.report_id)
+      : mv.estado === 'rechazado'
+        ? ''
+        : (my.aprobar ? `<div class="cc-aact cc-aact-box">
+            <div class="cc-awill">Al aprobar se genera el reporte de <b>${aproTopicLabel(mv.tipo)}</b> con su ticket, y va a <b>Reportes → Historial</b>.</div>
+            <button class="cc-btn back" id="ccARej">Rechazar</button>
+            <button class="cc-btn apr" id="ccAApr">✓ Aprobar y generar ticket</button>
+          </div>` : `<div class="cc-aact cc-aact-box"><div class="cc-awill">⏳ Esperando aprobación del Gerente de Zona.</div></div>`)}
+  `;
   document.getElementById('ccBackList')?.addEventListener('click', backToList);
   document.getElementById('ccAFicha')?.addEventListener('click', () => openFichaFor({ id_number: mv.id_number, company_code: mv.empresa_origen }, () => renderCambioCargoHist(USER)));
   document.getElementById('ccAApr')?.addEventListener('click', () => approveMove(mv.id));
   document.getElementById('ccARej')?.addEventListener('click', () => rejectMove(mv.id));
+  document.getElementById('ccDetPav')?.addEventListener('click', () => { if (mv.thumb_url) ccLightbox(mv); });
   document.querySelector('.cc-gorep')?.addEventListener('click', () => { const b = document.querySelector('.pnl-side [data-view="historial"]'); if (b) b.click(); });
-  document.querySelector('.cc-apav')?.addEventListener('click', () => ccLightbox(mv));
   const h = await historyApi(mv.id_number, mv.empresa_origen);
+  const items = (h && h.ok && h.items) ? h.items : [];
   const box = document.getElementById('ccATraj');
-  if (box) box.innerHTML = trajHtml((h && h.ok && h.items) ? h.items : []);
+  if (box) {
+    box.innerHTML = `<div class="cc-sec" style="margin:16px 0 6px">Trayectoria en el Grupo</div>${trajBlock(items)}`;
+    const det = box.querySelector('details.cc-trj');
+    if (det) det.addEventListener('toggle', e => { TRAJ_OPEN = e.target.open; });
+  }
 }
 function aproTopicLabel(t) { if (t === 'egreso') return 'Egreso · tópico 33'; if (t === 'traslado') return 'Traslado · tópico 34'; return 'Modificación · tópico 32'; }
 function aproAfter(mv) {
@@ -755,10 +781,21 @@ function mvDetail(mv) {
   return `${mv.cargo_from ? cch(mv.cargo_from) : ''} <span class="cc-ar">→</span> ${mv.cargo_to ? cch(mv.cargo_to) : ''}`;
 }
 function ccLightbox(mv) {
-  let lb = document.getElementById('ccLb');
-  if (!lb) { lb = document.createElement('div'); lb.id = 'ccLb'; lb.className = 'cc-lb'; lb.addEventListener('click', () => lb.classList.remove('on')); document.body.appendChild(lb); }
+  // Se cuelga DENTRO de #pnlMain (no de <body>): así, al navegar a cualquier
+  // otra pantalla, el visor desaparece con el resto de la vista y no queda
+  // flotando. Al hacer clic se elimina por completo.
+  const host = document.getElementById('pnlMain') || document.body;
+  const old = document.getElementById('ccLb');
+  if (old) old.remove();
+  const lb = document.createElement('div');
+  lb.id = 'ccLb';
+  lb.className = 'cc-lb on';
+  const close = () => { lb.remove(); document.removeEventListener('keydown', onKey); };
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  lb.addEventListener('click', close);
+  document.addEventListener('keydown', onKey);
   lb.innerHTML = mv.thumb_url ? `<img src="${esc(mv.thumb_url)}" alt=""><div class="cap">${esc(mv.full_name || '')} · clic para cerrar</div>` : `<div class="big">${iniOf(mv.full_name)}</div><div class="cap">Sin foto · clic para cerrar</div>`;
-  lb.classList.add('on');
+  host.appendChild(lb);
 }
 async function approveMove(id) {
   const btn = document.getElementById('ccAApr');
@@ -965,10 +1002,31 @@ function styleBlock() {
   .cc-apav{width:42px;height:42px;border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;flex:none;overflow:hidden;cursor:zoom-in}
   .cc-apav img{width:100%;height:100%;object-fit:cover}
   .cc-apav.big{width:64px;height:64px;font-size:18px;border-radius:12px}
-  .cc-anm{font-size:13px;font-weight:800}
+  .cc-anm{font-size:13.5px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:7px;flex-wrap:wrap}
   .cc-adet{font-size:11.5px;color:var(--soft);margin-top:5px;display:flex;align-items:center;gap:6px;flex-wrap:wrap}
   .cc-aloc{font-size:11px;color:var(--muted);margin-top:4px}
-  .cc-amt{font-size:10.5px;color:var(--faint);margin-top:4px}
+  .cc-amt{font-size:11px;color:var(--muted);margin-top:5px;display:flex;align-items:center;gap:5px;flex-wrap:wrap}
+  .cc-mini{display:inline-flex;align-items:center;gap:4px;font-weight:600;border-radius:999px;padding:1px 8px;font-size:10.5px}
+  .cc-mini.sug{background:#eff6ff;color:#1d4ed8}
+  .cc-mini.apr{background:#ecfdf5;color:#15803d}
+  .cc-mini.rec{background:#fef2f2;color:#b91c1c}
+  .cc-mini.pend{background:#fffbeb;color:#92400e}
+  .cc-mini.tk{background:#f1f5f9;color:#475569;font-family:ui-monospace,monospace}
+  /* Detalle: bloque "quién sugirió / quién aprobó" (dos cosas distintas) */
+  .cc-backbtn{display:inline-flex;align-items:center;gap:7px;margin-bottom:14px}
+  .cc-whoblock{margin-top:14px;border:1px solid var(--border);border-radius:14px;overflow:hidden;max-width:900px;background:#fff}
+  .cc-whorow{display:flex;gap:11px;align-items:flex-start;padding:12px 15px;border-top:1px solid var(--border)}
+  .cc-whorow:first-child{border-top:0}
+  .cc-whoic{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:13px;flex:none}
+  .cc-whoic.sug{background:#eff6ff;color:#1d4ed8}
+  .cc-whoic.apr{background:#ecfdf5;color:#16a34a}
+  .cc-whoic.rec{background:#fef2f2;color:#dc2626}
+  .cc-whoic.pend{background:#fffbeb;color:#b45309}
+  .cc-whok{font-size:11px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+  .cc-whov{font-size:13.5px;color:var(--ink);font-weight:600;margin-top:1px}
+  .cc-whod{color:var(--muted);font-weight:500;font-size:12px}
+  .cc-whocom{font-size:12.5px;color:var(--soft);margin-top:3px;font-style:italic}
+  .cc-aact-box{border:1px solid var(--border);border-radius:14px;margin-top:14px;max-width:900px;box-sizing:border-box}
   .cc-pager{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:10px;font-size:12px;color:var(--muted)}
   .cc-pager button{border:1px solid var(--border-2);background:#fff;border-radius:8px;padding:5px 10px;cursor:pointer;font-weight:700;color:var(--soft)}
   .cc-pager button:disabled{opacity:.4;cursor:default}
