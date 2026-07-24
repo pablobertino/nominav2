@@ -66,6 +66,18 @@ function isoDate(v) { const s = norm(v); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? 
 
 const TIPOS = new Set(['ascenso', 'descenso', 'lateral', 'traslado', 'egreso']);
 
+/* Etiqueta del rol para el "responsable/origen" del reporte (rol real de quien
+   aprueba/genera). Fallback: el code con guiones->espacios. */
+function roleLabelES(role) {
+  const M = {
+    superadmin: 'Superadmin', admin: 'Administrador',
+    gerente_zona: 'Gerente de Zona', subgerente_zona: 'Subgerente de Zona',
+    supervisor_tiendas: 'Supervisor de Tiendas', coordinador: 'Coordinador',
+    gestor_empresa: 'Gestor de Empresa', editor_personal: 'Editor de Personal',
+  };
+  return M[role] || (role ? String(role).replace(/_/g, ' ') : 'Administrador');
+}
+
 /* Nivel de asignacion del rol (mov_role_scope). superadmin = -1 (todo).
    Sin fila = 999 (no asigna nada). */
 async function assignLevel(env, actor) {
@@ -335,9 +347,12 @@ async function generateReport(env, request, actor, user, mv) {
     body: JSON.stringify({ ...payload, user }),
   }).then(r => r.json()).catch(e => ({ ok: false, error: 'No se pudo contactar el generador de reportes: ' + String((e && e.message) || e) }));
 
+  // El responsable es QUIEN aprobó/generó el reporte, con su ROL REAL (no un
+  // "Gerente de Zona" fijo): superadmin sale como Superadmin, etc. Se anota
+  // "· Cambio de Cargo" para que el Origen deje claro de qué flujo proviene.
   const head = {
-    responsible: String(actor.actor || 'Gerente de Zona'),
-    position: 'Gerente de Zona',
+    responsible: String(actor.actor || ''),
+    position: `${roleLabelES(actor.role)} · Cambio de Cargo`,
     source_kind: 'admin',
     source_admin_id: (user && user.id) || null,
   };

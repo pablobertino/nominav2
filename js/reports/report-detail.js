@@ -27,6 +27,7 @@ const TYPES = {
   ingreso:      { label: 'Ingreso — Alta', icon: '✅' },
   egreso:       { label: 'Egreso — Baja', icon: '🔴' },
   modificacion: { label: 'Modificación de Datos', icon: '✏️' },
+  traslado:     { label: 'Traslado', icon: '🔁' },
 };
 
 function fmtDate(iso) {
@@ -61,9 +62,11 @@ function otPill(r, osticketUrl, isAgent) {
   return `<span class="pill pill-set">Enviado · #${r.osticket_id}</span>`;
 }
 function originPill(r) {
+  // Igual que el Historial (history.js): para envios de la central se muestra
+  // el ROL guardado con el reporte (position), no un generico "Administrador".
   return r.source_kind === 'admin'
-    ? '<span class="pill pill-origin-admin">Administrador</span>'
-    : '<span class="pill pill-origin-company">Empresa</span>';
+    ? `<span class="pill pill-origin-admin">${r.position || 'Administrador'}</span>`
+    : `<span class="pill pill-origin-company">${r.company_type || 'Empresa'}</span>`;
 }
 
 /* Lineas especificas por tipo. */

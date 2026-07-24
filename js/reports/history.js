@@ -39,6 +39,7 @@ const TYPES = {
   ingreso:      { label: 'Ingreso — Alta', icon: '✅' },
   egreso:       { label: 'Egreso — Baja', icon: '🔴' },
   modificacion: { label: 'Modificación de Datos', icon: '✏️' },
+  traslado:     { label: 'Traslado', icon: '🔁' },
 };
 
 function fmtSent(iso) {
