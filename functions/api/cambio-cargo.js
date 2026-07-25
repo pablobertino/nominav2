@@ -64,6 +64,38 @@ const norm = s => String(s == null ? '' : s).trim();
 const cleanDigits = s => String(s || '').replace(/\D/g, '');
 function isoDate(v) { const s = norm(v); return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null; }
 
+/* v6.114: fecha efectiva con la regla del sistema. Hacia el PASADO, el mismo
+   margen del corte de quincena que ingresos/egresos (corte_margen_dias +
+   corte_hora_limite). Hacia el FUTURO, el tope propio de cambios de cargo
+   (futuro_cambio_cargo_dias). Se calcula server-side; el wizard lo usa de guia. */
+function addDaysIso(ymd, delta) {
+  const [y, m, d] = ymd.split('-').map(Number);
+  const base = new Date(Date.UTC(y, m - 1, d));
+  base.setUTCDate(base.getUTCDate() + delta);
+  return base.toISOString().slice(0, 10);
+}
+function nowCaracas() {
+  const car = new Date(Date.now() - 4 * 3600 * 1000);
+  return { ymd: car.toISOString().slice(0, 10), hhmm: `${String(car.getUTCHours()).padStart(2, '0')}:${String(car.getUTCMinutes()).padStart(2, '0')}` };
+}
+function toMin(hhmm) { const [h, m] = String(hhmm).split(':').map(Number); return h * 60 + m; }
+async function getSetting(env, key, fallback) {
+  const r = await sb(env, `app_settings?key=eq.${encodeURIComponent(key)}&select=value`);
+  return (r && r[0] && r[0].value != null) ? r[0].value : fallback;
+}
+async function ccWindow(env) {
+  const { ymd: today, hhmm } = nowCaracas();
+  const margin = parseInt(await getSetting(env, 'corte_margen_dias', '2'), 10) || 2;
+  const cutoff = await getSetting(env, 'corte_hora_limite', '14:00');
+  const futuro = parseInt(await getSetting(env, 'futuro_cambio_cargo_dias', '7'), 10);
+  const futuroDias = (isNaN(futuro) || futuro < 0) ? 7 : futuro;
+  // Límite inferior móvil: hoy-margen, pero si ya pasó la hora tope sube 1 día.
+  const pastCutoff = toMin(hhmm) >= toMin(cutoff);
+  const minDate = addDaysIso(today, pastCutoff ? -(margin - 1) : -margin);
+  const maxDate = addDaysIso(today, futuroDias);
+  return { today, minDate, maxDate, marginDays: margin, futuroDias };
+}
+
 const TIPOS = new Set(['ascenso', 'descenso', 'lateral', 'traslado', 'egreso']);
 
 /* Etiqueta del rol para el "responsable/origen" del reporte (rol real de quien
@@ -287,6 +319,12 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, rows });
     }
 
+    // v6.114: ventana de fecha efectiva (min/max) para el wizard.
+    if (action === 'window') {
+      if (!myView) return json({ ok: false, error: 'Sin acceso.' }, 403);
+      return json({ ok: true, window: await ccWindow(env) });
+    }
+
     if (action === 'suggest') {
       if (!mySugerir) return json({ ok: false, error: 'No tienes permiso para sugerir cambios (mov.sugerir).' }, 403);
       const wantApprove = body.approve === true;
@@ -304,10 +342,27 @@ export async function onRequestPost({ request, env }) {
       const estado = wantApprove ? 'aprobado' : 'sugerido';
       const rowsToInsert = [];
 
+      // v6.114: ventana de fecha efectiva (regla del sistema). Server manda.
+      const win = await ccWindow(env);
+      const inWin = d => !!d && d >= win.minDate && d <= win.maxDate;
+
       for (const it of items) {
         const idNumber = cleanDigits(it.id_number);
         const tipo = norm(it.tipo);
         if (!idNumber || !TIPOS.has(tipo)) return json({ ok: false, error: 'Movimiento invalido (cedula o tipo).' }, 400);
+
+        // v6.114: validar la(s) fecha(s) efectiva(s) contra la ventana.
+        const fEf = isoDate(it.fecha_efectiva), fB = isoDate(it.fecha_baja), fA = isoDate(it.fecha_alta);
+        const rango = `entre ${win.minDate} y ${win.maxDate}`;
+        if (tipo === 'traslado') {
+          if (!fB || !fA) return json({ ok: false, error: 'Faltan las fechas del traslado.' }, 400);
+          if (!inWin(fB) || !inWin(fA)) return json({ ok: false, error: `La fecha del traslado debe estar ${rango}.` }, 400);
+          if (fA <= fB) return json({ ok: false, error: 'El primer día en destino debe ser posterior al último día en origen (nunca dos tiendas el mismo día).' }, 400);
+        } else if (tipo === 'egreso') {
+          if (!inWin(fB)) return json({ ok: false, error: `La fecha de egreso debe estar ${rango}.` }, 400);
+        } else {
+          if (!inWin(fEf)) return json({ ok: false, error: `La fecha efectiva debe estar ${rango}.` }, 400);
+        }
 
         const empOrigen = norm(it.empresa_origen) || null;
         const empDestino = norm(it.empresa_destino) || null;

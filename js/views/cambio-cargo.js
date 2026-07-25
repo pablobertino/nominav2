@@ -17,6 +17,7 @@ import { renderWorkerPhotos } from './worker-photos.js';
 
 let USER = null;
 let CAT = null;                 // catalogo (cargos, egress_reasons, my, assign_min_level)
+let CC_WIN = null;              // v6.114: ventana de fecha efectiva {minDate,maxDate,...}
 let COMPS = null;               // tiendas del alcance (para el traslado)
 let STEP = 0;
 let TRAJ_OPEN = true;           // estado abierto/plegado de la trayectoria (persiste entre pasos)
@@ -168,6 +169,12 @@ async function ensureCat() {
     return false;
   }
   CAT = c;
+  // v6.114: ventana de fecha efectiva (regla del sistema). Guia del wizard;
+  // el server revalida al sugerir/aprobar.
+  if (!CC_WIN) {
+    const w = await api({ action: 'window' });
+    if (w && w.ok) CC_WIN = w.window;
+  }
   return true;
 }
 /* Navega a la pantalla Historial pulsando su item del menu lateral. */
@@ -189,8 +196,11 @@ const canNext = () => {
     return !!D.cargoTo;
   }
   if (STEP === 3) {
-    if (D.tipo === 'traslado') return !!(D.fechaB && D.fechaA);
-    return !!D.fechaEf;
+    // v6.114: además de estar cargadas, las fechas deben caer en la ventana
+    // (regla del sistema). Sin ventana cargada no bloquea (el server revalida).
+    const inW = d => !!d && (!CC_WIN || (d >= CC_WIN.minDate && d <= CC_WIN.maxDate));
+    if (D.tipo === 'traslado') return inW(D.fechaB) && inW(D.fechaA) && D.fechaA > D.fechaB;
+    return inW(D.fechaEf);
   }
   return true;
 };
@@ -415,18 +425,27 @@ function statusBadge(st) {
 
 /* --- paso Fecha --- */
 function stepFecha(el) {
-  const rule = `<div class="cc-hint">📅 Regla del sistema (corte de la quincena). Sugerido dentro de la quincena vigente.</div>`;
+  // v6.114: min/max de la ventana (regla del sistema). Fallback sin límites si
+  // aún no cargó; el server revalida igual.
+  const mn = CC_WIN ? CC_WIN.minDate : '';
+  const mx = CC_WIN ? CC_WIN.maxDate : '';
+  const at = (a, b) => `${a ? ` min="${a}"` : ''}${b ? ` max="${b}"` : ''}`;
+  const rule = CC_WIN
+    ? `<div class="cc-hint">📅 Fecha permitida: del <b>${fmt(mn)}</b> al <b>${fmt(mx)}</b> (corte de quincena hacia atrás · hasta ${CC_WIN.futuroDias} días a futuro).</div>`
+    : `<div class="cc-hint">📅 Regla del sistema (corte de la quincena).</div>`;
   if (D.tipo === 'traslado') {
+    const bMax = mx ? addDaysIso(mx, -1) : '';               // deja lugar al +1 en destino
+    const aMin = D.fechaB ? addDaysIso(D.fechaB, 1) : mn;     // destino: día siguiente al origen
     el.innerHTML = `<div class="cc-grid2">
-        <div class="cc-fld"><label>Último día en origen</label><input class="cc-inp cc-date" type="date" id="ccFB" value="${esc(D.fechaB)}"></div>
-        <div class="cc-fld"><label>Primer día en destino</label><input class="cc-inp cc-date" type="date" id="ccFA" value="${esc(D.fechaA)}"></div>
+        <div class="cc-fld"><label>Último día en origen</label><input class="cc-inp cc-date" type="date" id="ccFB" value="${esc(D.fechaB)}"${at(mn, bMax)}></div>
+        <div class="cc-fld"><label>Primer día en destino</label><input class="cc-inp cc-date" type="date" id="ccFA" value="${esc(D.fechaA)}"${at(aMin, mx)}></div>
       </div>${rule}`;
-    document.getElementById('ccFB').addEventListener('change', e => { D.fechaB = e.target.value; if (D.fechaA <= D.fechaB) D.fechaA = addDaysIso(D.fechaB, 1); paintStep(); paintFicha(); syncNext(); });
+    document.getElementById('ccFB').addEventListener('change', e => { D.fechaB = e.target.value; if (!D.fechaA || D.fechaA <= D.fechaB) D.fechaA = addDaysIso(D.fechaB, 1); paintStep(); paintFicha(); syncNext(); });
     document.getElementById('ccFA').addEventListener('change', e => { D.fechaA = e.target.value; paintFicha(); syncNext(); });
     return;
   }
   el.innerHTML = `<div class="cc-fld"><label>${D.tipo === 'egreso' ? 'Fecha de egreso' : 'Fecha efectiva'}</label>
-      <input class="cc-inp cc-date" type="date" id="ccFE" value="${esc(D.fechaEf)}"></div>${rule}`;
+      <input class="cc-inp cc-date" type="date" id="ccFE" value="${esc(D.fechaEf)}"${at(mn, mx)}></div>${rule}`;
   document.getElementById('ccFE').addEventListener('change', e => { D.fechaEf = e.target.value; paintFicha(); syncNext(); });
 }
 function addDaysIso(iso, d) { const t = Date.parse(iso + 'T00:00:00Z'); const nd = new Date(t + d * 86400000); return nd.toISOString().slice(0, 10); }

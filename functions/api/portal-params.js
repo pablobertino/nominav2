@@ -43,7 +43,7 @@ async function sb(env, path, opts = {}) {
 // Gate: devuelve el admin (id + username) solo si es superadmin activo.
 async function superadminOf(env, adminId) {
   if (!adminId) return null;
-  const r = await sb(env, `admin_users?id=eq.${encodeURIComponent(adminId)}&role=eq.superadmin&is_active=eq.true&select=id,username,full_name`);
+  const r = await sb(env, `admin_users?id=eq.${encodeURIComponent(adminId)}&role=eq.superadmin&is_active=eq.true&select=id,username,name`);
   return (r && r[0]) || null;
 }
 
@@ -81,7 +81,7 @@ export async function onRequestPost({ request, env }) {
         body: JSON.stringify({
           value,
           updated_at: new Date().toISOString(),
-          updated_by: admin.full_name || admin.username || String(admin.id),
+          updated_by: admin.name || admin.username || String(admin.id),
         }),
       });
       return json({ ok: true, param: (upd && upd[0]) || null });
