@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="es"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0"><title>Cómo usar Cambio de Cargo · Portal de Nómina</title>
+<style>
+  :root{--ink:#111827;--soft:#374151;--muted:#6b7280;--faint:#9ca3af;--border:#eceff3;--pri:#7c3aed;--pri-soft:#f5f3ff;--warn:#d97706;--warn-bg:#fffbeb;--warn-bd:#fde68a;--ok:#16a34a;--ok-bg:#f0fdf4;--ok-bd:#bbf7d0;--dan:#b91c1c;--dan-bg:#fef2f2;--dan-bd:#fecaca}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;background:#f3f4f6;color:var(--ink);font-size:15px;line-height:1.5;padding:28px 18px 60px}
+  .wrap{max-width:660px;margin:0 auto}
+  .head{display:flex;align-items:center;gap:12px;margin-bottom:6px}
+  .head .ic{width:40px;height:40px;border-radius:11px;background:var(--pri-soft);color:var(--pri);display:flex;align-items:center;justify-content:center;flex:none}
+  h1{font-size:21px;font-weight:800;letter-spacing:-.01em;margin:0}
+  .lead{color:var(--muted);font-size:13.5px;margin:8px 0 16px}
+  .lead b{color:var(--soft)}
+  .flow{display:flex;align-items:center;gap:8px;flex-wrap:wrap;background:var(--pri-soft);border:1px solid #ddd6fe;border-radius:11px;padding:12px 14px;margin-bottom:18px;font-size:13px;font-weight:700;color:#5b21b6}
+  .flow .ar{color:var(--faint)}
+  details.acc{border:1px solid var(--border);border-radius:12px;margin-bottom:10px;overflow:hidden;background:#fff}
+  details.acc summary{display:flex;align-items:center;gap:10px;padding:14px 16px;font-size:15px;font-weight:700;cursor:pointer;list-style:none}
+  details.acc summary::-webkit-details-marker{display:none}
+  details.acc summary::after{content:'＋';margin-left:auto;color:var(--faint);font-weight:800;font-size:18px}
+  details.acc[open] summary::after{content:'－'}
+  .st{width:26px;height:26px;border-radius:999px;background:var(--pri-soft);color:var(--pri);display:inline-flex;align-items:center;justify-content:center;font-size:13px;font-weight:800;flex:none}
+  .st.warn{background:var(--warn-bg);color:var(--warn)}
+  .st.dan{background:var(--dan-bg);color:var(--dan)}
+  .acc-b{margin:0;padding:2px 18px 16px 46px}
+  .acc-b li{font-size:13.5px;color:var(--soft);line-height:1.6;margin-bottom:6px}
+  .acc-b li b{color:var(--ink)}
+  .pill{display:inline-block;font-size:11px;font-weight:800;border-radius:999px;padding:1px 8px;margin-right:4px}
+  .pill.asc{background:#eff6ff;color:#1d4ed8}.pill.desc{background:#fff7ed;color:#c2410c}
+  .pill.tras{background:#f5f3ff;color:#6d28d9}.pill.egr{background:#fef2f2;color:#b91c1c}
+  .note{font-size:12.5px;color:#92400e;background:var(--warn-bg);border:1px solid var(--warn-bd);border-radius:10px;padding:12px 14px;margin-top:14px;line-height:1.5}
+  .note b{color:#7c3a00}
+  .safe{font-size:12.5px;color:#166534;background:var(--ok-bg);border:1px solid var(--ok-bd);border-radius:10px;padding:12px 14px;margin-top:10px;line-height:1.5}
+  .foot{font-size:12px;color:var(--faint);margin-top:20px;text-align:center}
+</style></head>
+<body>
+  <div class="wrap">
+    <div class="head">
+      <div class="ic"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M16 3h5v5"/><path d="M8 3H3v5"/><path d="M21 3l-7 7"/><path d="M3 21l7-7"/><path d="M16 21h5v-5"/></svg></div>
+      <h1>Cómo usar Cambio de Cargo</h1>
+    </div>
+    <p class="lead">Cambio de Cargo es la consola para <b>proponer y aprobar</b> movimientos de personal: ascensos, descensos, traslados y egresos. Cada cambio aprobado genera su <b>reporte y ticket</b> hacia Capital Humano, y se avisa a las tiendas afectadas en <b>Novedades</b>.</p>
+
+    <div class="flow"><span>Sugerir</span> <span class="ar">→</span> <span>Aprobar</span> <span class="ar">→</span> <span>Reporte + ticket</span> <span class="ar">→</span> <span>Novedades a la tienda</span></div>
+
+    <details class="acc" open>
+      <summary><span class="st">1</span> Los cuatro tipos de movimiento</summary>
+      <ul class="acc-b">
+        <li><span class="pill asc">ASCENSO</span> sube a la persona a un cargo superior (ej. Depositario→Vendedor, Vendedor→Cajero, Cajero→Gerente). En la misma tienda.</li>
+        <li><span class="pill desc">DESCENSO</span> baja a un cargo inferior en la misma tienda. Ojo: normalmente a un Vendedor se le da <b>egreso</b> en vez de descenderlo; bajarlo a Depositario debe ser una decisión explícita.</li>
+        <li><span class="pill tras">TRASLADO</span> mueve a la persona a <b>otra tienda</b> (puede además cambiarle el cargo). Sale de la tienda de origen y entra a la de destino <b>al día siguiente</b> — nunca figura en dos tiendas el mismo día.</li>
+        <li><span class="pill egr">EGRESO</span> da de baja a la persona, con su motivo.</li>
+      </ul>
+    </details>
+
+    <details class="acc">
+      <summary><span class="st">2</span> Sugerir un cambio (paso a paso)</summary>
+      <ul class="acc-b">
+        <li><b>Persona:</b> buscá por nombre o cédula dentro de tu alcance.</li>
+        <li><b>Tipo:</b> elegí ascenso, descenso, traslado o egreso.</li>
+        <li><b>Destino:</b> el nuevo cargo (y la tienda destino si es traslado) o el motivo si es egreso.</li>
+        <li><b>Fecha:</b> la fecha efectiva del cambio (ver punto 4).</li>
+        <li><b>Revisión:</b> confirmá el resumen. Si sos Supervisor, la sugerencia queda <b>pendiente</b> hasta que un rol con aprobación la ejecute.</li>
+      </ul>
+    </details>
+
+    <details class="acc">
+      <summary><span class="st">3</span> Aprobar (y avisar a la tienda)</summary>
+      <ul class="acc-b">
+        <li>En <b>Aprobaciones</b> ves las sugerencias. Al <b>Aprobar</b> se genera el reporte y su <b>ticket</b>, y el movimiento pasa a <b>Reportes → Historial</b>.</li>
+        <li>Antes de aprobar podés dejar el <b>aviso a la tienda</b> encendido (lo verá en sus Novedades apenas apruebes) o apagarlo para <b>retrasar el anuncio</b> y liberarlo después.</li>
+        <li>Si no corresponde, <b>Rechazá</b> con un motivo; el Supervisor que la sugirió lo verá.</li>
+      </ul>
+    </details>
+
+    <details class="acc">
+      <summary><span class="st warn">4</span> La fecha efectiva (regla del sistema)</summary>
+      <ul class="acc-b">
+        <li>La fecha puede ser <b>cualquier día</b> dentro de una ventana permitida — sirve para reemplazos a mitad de quincena (ej. una renuncia repentina).</li>
+        <li><b>Hacia atrás:</b> no se puede fechar dentro de una quincena ya cerrada (el mismo margen del corte que ingresos y egresos).</li>
+        <li><b>Hacia adelante:</b> hay un tope de días configurable (Configuración → Corte y períodos).</li>
+        <li>El wizard te marca el rango permitido y no te deja pasar fuera de él. En el traslado, el destino es siempre el día siguiente al último día en el origen.</li>
+      </ul>
+    </details>
+
+    <details class="acc">
+      <summary><span class="st dan">5</span> Anular un movimiento ya reportado</summary>
+      <ul class="acc-b">
+        <li>Si un cambio ya aprobado/reportado se hizo por error, un <b>Administrador o Coordinador</b> puede <b>Anular</b>lo desde el detalle.</li>
+        <li><b>Importante:</b> anular NO revierte el sistema por sí solo. Como no sabemos en qué punto de la ejecución está Capital Humano, hay que <b>comunicarse con ellos</b> para que <b>cierren el ticket sin ejecutarlo</b> (o lo reviertan si aún no lo hicieron). En el portal el movimiento queda marcado como <b>anulado</b>.</li>
+      </ul>
+    </details>
+
+    <div class="note"><b>Una persona a la vez.</b> No se puede tener dos cambios en curso para la misma persona: primero se resuelve o anula el pendiente y luego se crea otro.</div>
+    <div class="safe"><b>Todo queda registrado.</b> Cada movimiento guarda quién lo sugirió, quién lo aprobó o rechazó, la fecha y el ticket. Y cada cambio que afecta a una tienda aparece en sus <b>Novedades</b>.</div>
+
+    <div class="foot">Portal de Nómina · Grupo Canaima · Capital Humano</div>
+  </div>
+</body></html>

@@ -224,7 +224,7 @@ function paintWizard() {
 
   body.innerHTML = `
     <div class="cc-wiz">
-      <div class="cc-wh"><h1>Cambio de Cargo</h1><div class="sub">Paso ${STEP + 1} de 5 · ${esc(STEP_LABELS[STEP])}</div></div>
+      <div class="cc-wh"><div><h1>Cambio de Cargo</h1><div class="sub">Paso ${STEP + 1} de 5 · ${esc(STEP_LABELS[STEP])}</div></div><a class="cc-guia" href="/guias/cambio-cargo.html" target="_blank" rel="noopener">📘 ¿Cómo funciona?</a></div>
       <div class="cc-steps">${stepper}</div>
       <div class="cc-wbody" id="ccStep"></div>
       <div class="cc-wfoot">
@@ -645,7 +645,7 @@ async function finish(k) {
    DISPARA el reporte + ticket (Reportes → Historial).
    ===================================================================== */
 const TIPO_LB = { ascenso: 'Ascenso', descenso: 'Descenso', lateral: 'Lateral', traslado: 'Traslado', egreso: 'Egreso' };
-const APRO_FILTERS = [['sugerido', 'Pendientes'], ['reportado', 'Aprobados'], ['rechazado', 'Rechazados']];
+const APRO_FILTERS = [['sugerido', 'Pendientes'], ['reportado', 'Aprobados'], ['rechazado', 'Rechazados'], ['anulado', 'Anulados']];
 const APRO_PER = 8;
 let APRO_PAGE = 1, APRO_SEL = null, APRO_SUB = 'list';   // 'list' | 'detail'
 
@@ -656,7 +656,7 @@ async function loadCola() {
 async function paintCola() {
   const body = document.getElementById('ccBody');
   body.innerHTML = `<div class="cc-cola"><div class="cc-loading">Cargando…</div></div>`;
-  if (!['sugerido', 'reportado', 'rechazado'].includes(COLA_FILTER)) COLA_FILTER = 'sugerido';
+  if (!['sugerido', 'reportado', 'rechazado', 'anulado'].includes(COLA_FILTER)) COLA_FILTER = 'sugerido';
   await loadCola();
   if (APRO_SUB === 'detail' && MOVES.find(m => m.id === APRO_SEL)) renderDetail();
   else { APRO_SUB = 'list'; renderApro(); }
@@ -678,7 +678,7 @@ function renderApro() {
   const chips = APRO_FILTERS.map(([f, l]) => `<button data-f="${f}" class="${COLA_FILTER === f ? 'on' : ''}">${l}<span class="n">${aproCnt(f)}</span></button>`).join('');
   const pend = aproCnt('sugerido');
   body.innerHTML = `<div class="cc-apro">
-    <div class="cc-apro-head"><h2>Aprobaciones</h2>${pend ? `<span class="cc-cnt">${pend} pendiente${pend === 1 ? '' : 's'}</span>` : ''}<span class="cc-sp"></span><span class="cc-hint">Al aprobar se genera el reporte y su <b>ticket</b> → Reportes · Historial</span></div>
+    <div class="cc-apro-head"><h2>Aprobaciones</h2>${pend ? `<span class="cc-cnt">${pend} pendiente${pend === 1 ? '' : 's'}</span>` : ''}<span class="cc-sp"></span><a class="cc-guia" href="/guias/cambio-cargo.html" target="_blank" rel="noopener">📘 ¿Cómo funciona?</a><span class="cc-hint">Al aprobar se genera el reporte y su <b>ticket</b> → Reportes · Historial</span></div>
     <div class="cc-apro-filters"><div class="cc-fchips">${chips}</div><input class="cc-inp" id="ccAQ" placeholder="Buscar por nombre, cédula o tienda…" value="${esc(COLA_Q)}"></div>
     <div id="ccAList"></div><div class="cc-pager" id="ccAPager"></div>
   </div>`;
@@ -739,6 +739,11 @@ async function renderDetail() {
   const cargoTxt = mv.cargo_from ? esc(cargoLabel(mv.cargo_from)).toUpperCase() : '';
   const grp = [mv.empresa_origen, mv.rz].filter(Boolean).map(esc).join(' ');
   const zsc = [mv.zona, mv.subzona, mv.concepto].filter(Boolean).map(esc).join(' · ');
+  // v6.115: botón Anular (gate mov.anular) para movimientos ya aprobados/reportados.
+  const anularHtml = (my.anular && ['aprobado', 'reportado', 'exportado'].includes(mv.estado))
+    ? `<div class="cc-anular-box"><button class="cc-btn danger" id="ccAAnular">⊘ Anular movimiento</button>`
+      + `<div class="cc-anular-note">No revierte el sistema por sí solo: coordiná con <b>Capital Humano</b> para que cierren el ticket sin ejecutarlo (o lo reviertan si aún no lo hicieron). Acá queda marcado como <b>anulado</b>.</div></div>`
+    : '';
   body.innerHTML = `
     <button class="cc-btn back cc-backbtn" id="ccBackList">
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M19 12H5M12 19l-7-7 7-7"/></svg>
@@ -769,10 +774,15 @@ async function renderDetail() {
       ${mv.estado === 'reportado' ? `<div class="cc-whorow"><span class="cc-whoic apr">✓</span><div><div class="cc-whok">Aprobado por</div><div class="cc-whov">${esc(mv.approved_by || '—')}${mv.approved_at ? ` · <span class="cc-whod">${fmt(mv.approved_at)}</span>` : ''}</div></div></div>` : ''}
       ${mv.estado === 'rechazado' ? `<div class="cc-whorow"><span class="cc-whoic rec">✕</span><div><div class="cc-whok">Rechazado por</div><div class="cc-whov">${esc(mv.rejected_by || '—')}${mv.rejected_at ? ` · <span class="cc-whod">${fmt(mv.rejected_at)}</span>` : ''}</div>${mv.reject_reason ? `<div class="cc-whocom">“${esc(mv.reject_reason)}”</div>` : ''}</div></div>` : ''}
       ${mv.estado === 'sugerido' ? `<div class="cc-whorow"><span class="cc-whoic pend">⏳</span><div><div class="cc-whok">Aprobación</div><div class="cc-whov" style="color:var(--muted);font-weight:500">Pendiente</div></div></div>` : ''}
+      ${mv.estado === 'anulado' ? `<div class="cc-whorow"><span class="cc-whoic rec">⊘</span><div><div class="cc-whok">Anulado por</div><div class="cc-whov">${esc(mv.anulado_by || '—')}${mv.anulado_at ? ` · <span class="cc-whod">${fmt(mv.anulado_at)}</span>` : ''}</div>${mv.anulado_reason ? `<div class="cc-whocom">“${esc(mv.anulado_reason)}”</div>` : ''}</div></div>` : ''}
     </div>
 
-    ${mv.estado === 'reportado'
-      ? aproDoneBox(mv.osticket_id, mv.report_id) + aproNotifyBox(mv)
+    ${mv.estado === 'anulado'
+      ? `<div class="cc-anulado-banner">⊘ Movimiento anulado. Coordiná con Capital Humano el cierre del ticket.</div>${mv.osticket_id ? aproDoneBox(mv.osticket_id, mv.report_id) : ''}`
+      : (mv.estado === 'reportado' || mv.estado === 'exportado')
+      ? aproDoneBox(mv.osticket_id, mv.report_id) + (mv.estado === 'reportado' ? aproNotifyBox(mv) : '') + anularHtml
+      : mv.estado === 'aprobado'
+      ? anularHtml
       : mv.estado === 'rechazado'
         ? ''
         : (my.aprobar ? `<div class="cc-aact-box" style="margin-top:14px">
@@ -795,6 +805,7 @@ async function renderDetail() {
   document.getElementById('ccAFicha')?.addEventListener('click', () => openFichaFor({ id_number: mv.id_number, company_code: mv.empresa_origen }, () => renderCambioCargoHist(USER)));
   document.getElementById('ccAApr')?.addEventListener('click', () => approveMove(mv.id));
   document.getElementById('ccARej')?.addEventListener('click', () => rejectMove(mv.id));
+  document.getElementById('ccAAnular')?.addEventListener('click', () => anularMove(mv));
   document.getElementById('ccPubNotice')?.addEventListener('click', () => publishNotice(mv.id));
   document.getElementById('ccDetPav')?.addEventListener('click', () => { if (mv.thumb_url) ccLightbox(mv); });
   document.querySelector('.cc-gorep')?.addEventListener('click', () => { const b = document.querySelector('.pnl-side [data-view="historial"]'); if (b) b.click(); });
@@ -902,7 +913,7 @@ function aproDoneBox(ost, repId) {
        <a class="cc-gorep"><span>📄 Reporte${rep ? ' <span class="tk">#' + rep + '</span>' : ''}</span> <span class="ext">Ver en Reportes → Historial →</span></a>
      </div></div></div>`;
 }
-function ccPrompt(label) {
+function ccPrompt(label, okLabel) {
   return new Promise(resolve => {
     let ov = document.getElementById('ccPromptOv');
     if (ov) ov.remove();
@@ -914,7 +925,7 @@ function ccPrompt(label) {
       <textarea id="ccPromptTa" rows="3" placeholder="Escribe aquí…"></textarea>
       <div class="cc-prompt-btns">
         <button class="cc-btn back" id="ccPromptCancel">Cancelar</button>
-        <button class="cc-btn apr" id="ccPromptOk">Rechazar</button>
+        <button class="cc-btn apr" id="ccPromptOk">${esc(okLabel || 'Aceptar')}</button>
       </div></div>`;
     document.body.appendChild(ov);
     const ta = ov.querySelector('#ccPromptTa');
@@ -926,7 +937,7 @@ function ccPrompt(label) {
   });
 }
 async function rejectMove(id) {
-  const reason = await ccPrompt('Motivo del rechazo (opcional):');
+  const reason = await ccPrompt('Motivo del rechazo (opcional):', 'Rechazar');
   if (reason === null) return;               // cancelado
   const r = await api({ action: 'reject', id, reason: reason || undefined });
   if (!r || !r.ok) return toast((r && r.error) || 'No se pudo rechazar.', true);
@@ -934,6 +945,17 @@ async function rejectMove(id) {
   APRO_SUB = 'detail'; APRO_SEL = id;
   renderDetail();
   toast('Sugerencia rechazada.');
+}
+/* v6.115: anular un movimiento ya aprobado/reportado (gate mov.anular). */
+async function anularMove(mv) {
+  const reason = await ccPrompt('Motivo de la anulación (opcional). Coordiná con Capital Humano para que cierren el ticket sin ejecutarlo.', 'Anular movimiento');
+  if (reason === null) return;               // cancelado
+  const r = await api({ action: 'anular', id: mv.id, reason: reason || undefined });
+  if (!r || !r.ok) return toast((r && r.error) || 'No se pudo anular.', true);
+  await loadCola();
+  APRO_SUB = 'detail'; APRO_SEL = mv.id;
+  renderDetail();
+  toast('Movimiento anulado. Coordiná con Capital Humano el cierre del ticket.');
 }
 
 /* ---------- utils ---------- */
@@ -1053,7 +1075,9 @@ function styleBlock() {
   .cc-nav button.on{color:var(--pri);border-bottom-color:var(--pri)}
   .cc-cnt{font-size:10.5px;font-weight:800;background:#fde68a;color:#92400e;border-radius:999px;padding:1px 7px}
   .cc-wiz{background:#fff;border:1px solid var(--border);border-radius:16px;box-shadow:0 1px 3px rgba(15,23,42,.06);overflow:hidden;max-width:900px}
-  .cc-wh{padding:16px 20px 0}.cc-wh h1{font-size:16px;font-weight:800;margin:0}.cc-wh .sub{color:var(--muted);font-size:12px;margin-top:2px}
+  .cc-wh{padding:16px 20px 0;display:flex;align-items:flex-start;justify-content:space-between;gap:12px}.cc-wh h1{font-size:16px;font-weight:800;margin:0}.cc-wh .sub{color:var(--muted);font-size:12px;margin-top:2px}
+  .cc-guia{font-size:12px;font-weight:700;color:var(--pri);text-decoration:none;background:var(--pri-soft);border:1px solid #ddd6fe;border-radius:999px;padding:5px 11px;white-space:nowrap;flex:none}
+  .cc-guia:hover{background:#ede9fe}
   .cc-steps{display:flex;align-items:center;padding:16px 20px 4px}
   .cc-stp{display:flex;align-items:center;gap:8px;flex:none}
   .cc-stp-c{width:26px;height:26px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:12.5px;font-weight:700;border:1.5px solid #d1d5db;background:#fff;color:#9ca3af;flex:none;transition:all .15s}
@@ -1070,6 +1094,11 @@ function styleBlock() {
   .cc-btn.back{background:#fff;border-color:var(--border-2);color:var(--soft)}
   .cc-btn.next{background:#8b5cf6;border-color:#8b5cf6;color:#fff}.cc-btn.next:hover{background:#7c3aed}.cc-btn.next:disabled{background:#e5e1f7;border-color:#e5e1f7;cursor:not-allowed}
   .cc-btn.sug{background:#f5f3ff;border-color:#ddd6fe;color:#6d28d9}.cc-btn.apr{background:#8b5cf6;border-color:#8b5cf6;color:#fff}
+  .cc-btn.danger{background:#fff;border-color:#fecaca;color:#b91c1c}.cc-btn.danger:hover{background:#fef2f2}
+  /* v6.115: anular movimiento */
+  .cc-anular-box{margin-top:14px;border:1px dashed #fecaca;background:#fef7f7;border-radius:12px;padding:12px 14px;display:flex;flex-direction:column;gap:8px}
+  .cc-anular-note{font-size:11.5px;color:#9f1239;line-height:1.5}
+  .cc-anulado-banner{margin-top:14px;background:#fef2f2;border:1px solid #fecaca;border-radius:12px;padding:11px 14px;font-size:13px;font-weight:700;color:#b91c1c}
   .cc-sec{font-size:10.5px;font-weight:800;letter-spacing:.08em;color:var(--faint);text-transform:uppercase;margin-bottom:10px}
   .cc-inp{width:100%;border:1px solid var(--border-2);border-radius:9px;padding:9px 11px;font-size:13px;font-family:inherit}
   .cc-plist{display:flex;flex-direction:column;gap:7px;max-height:260px;overflow:auto;margin-top:10px}

@@ -124,7 +124,7 @@ const MENU_CATALOG = [
   { g: 'Cargos', items: [
     // v6.106: Cambio de Cargo (wizard) y Aprobaciones comparten view.cambiocargo;
     // las acciones son sugerir y aprobar/ejecutar.
-    { id: 'cambiocargo', lbl: 'Cambio de Cargo', view: 'view.cambiocargo', acts: ['mov.sugerir', 'mov.aprobar'] },
+    { id: 'cambiocargo', lbl: 'Cambio de Cargo', view: 'view.cambiocargo', acts: ['mov.sugerir', 'mov.aprobar', 'mov.anular'] },
   ] },
   { g: 'Reportes', items: [
     { id: 'historial', lbl: 'Historial', view: 'view.historial', acts: ['report.attention'] },

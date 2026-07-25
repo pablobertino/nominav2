@@ -233,7 +233,7 @@ export async function onRequestPost({ request, env }) {
         ok: true,
         cargos,
         egress_reasons: (reasons || []).map(r => ({ code: r.code, label: r.label })),
-        my: { sugerir: mySugerir, aprobar: myAprobar, view: myView },
+        my: { sugerir: mySugerir, aprobar: myAprobar, view: myView, anular: can(actor, 'mov.anular') },
         assign_min_level: minLevel,
         role: actor.role,
         osticket_url: (ostRow && ostRow[0] && ostRow[0].value) || null,
@@ -346,10 +346,27 @@ export async function onRequestPost({ request, env }) {
       const win = await ccWindow(env);
       const inWin = d => !!d && d >= win.minDate && d <= win.maxDate;
 
+      // v6.115: no duplicar cambios EN CURSO para la misma persona. "En curso"
+      // = sugerido o aprobado (pendiente, aún no reportado). Bloquea tanto
+      // contra lo ya guardado como contra duplicados dentro del mismo lote.
+      const batchCeds = [...new Set(items.map(x => cleanDigits(x.id_number)).filter(Boolean))];
+      const enCurso = new Set();
+      if (batchCeds.length) {
+        const prev = await sb(env, `personnel_movement_requests?id_number=in.(${batchCeds.join(',')})&estado=in.(%22sugerido%22,%22aprobado%22)&select=id_number`);
+        (prev || []).forEach(p => enCurso.add(String(p.id_number)));
+      }
+      const seenCeds = new Set();
+
       for (const it of items) {
         const idNumber = cleanDigits(it.id_number);
         const tipo = norm(it.tipo);
         if (!idNumber || !TIPOS.has(tipo)) return json({ ok: false, error: 'Movimiento invalido (cedula o tipo).' }, 400);
+
+        // v6.115: una sola persona por movimiento en curso.
+        const quien = norm(it.full_name) || ('V-' + idNumber);
+        if (enCurso.has(idNumber)) return json({ ok: false, error: `Ya hay un cambio de cargo en curso para ${quien}. Resolvé o anulá ese antes de crear otro.` }, 409);
+        if (seenCeds.has(idNumber)) return json({ ok: false, error: `${quien} aparece dos veces en este envío. Dejá un solo movimiento por persona.` }, 409);
+        seenCeds.add(idNumber);
 
         // v6.114: validar la(s) fecha(s) efectiva(s) contra la ventana.
         const fEf = isoDate(it.fecha_efectiva), fB = isoDate(it.fecha_baja), fA = isoDate(it.fecha_alta);
@@ -481,6 +498,31 @@ export async function onRequestPost({ request, env }) {
         body: JSON.stringify({ store_notify: true, store_notified_at: nowP, updated_at: nowP }),
       });
       return json({ ok: true, store_notified_at: nowP });
+    }
+
+    // v6.115: ANULAR un movimiento ya aprobado/reportado. No revierte el sistema
+    // por sí solo (no sabemos en qué punto está Capital Humano): marca el
+    // movimiento como anulado y la UI indica coordinar con Capital Humano para
+    // que cierre el ticket sin ejecutar (o revierta si aún no lo hizo).
+    // Gate propio: mov.anular (admin/coordinador/superadmin).
+    if (action === 'anular') {
+      if (!can(actor, 'mov.anular')) return json({ ok: false, error: 'No tienes permiso para anular (mov.anular).' }, 403);
+      const id = parseInt(body.id, 10);
+      if (!id) return json({ ok: false, error: 'Falta el id.' }, 400);
+      const reason = (norm(body.reason) || '').slice(0, 500) || null;
+      const rows = await sb(env, `personnel_movement_requests?id=eq.${id}&select=id,estado,full_name,id_number`);
+      const mv = rows && rows[0];
+      if (!mv) return json({ ok: false, error: 'Movimiento no encontrado.' }, 404);
+      if (mv.estado === 'anulado') return json({ ok: false, error: 'Ese movimiento ya está anulado.' }, 400);
+      if (!['aprobado', 'reportado', 'exportado'].includes(mv.estado)) {
+        return json({ ok: false, error: 'Solo se anula un movimiento ya aprobado o reportado.' }, 400);
+      }
+      const nowA = new Date().toISOString();
+      await sb(env, `personnel_movement_requests?id=eq.${id}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ estado: 'anulado', anulado_by: String(actor.actor || ''), anulado_at: nowA, anulado_reason: reason, updated_at: nowA }),
+      });
+      return json({ ok: true, id, anulado_at: nowA });
     }
 
     return json({ ok: false, error: 'Accion desconocida.' }, 400);
