@@ -585,6 +585,7 @@ function shell(user) {
     .pnl-bell:hover{background:var(--bg-soft,#f1f2f4);color:var(--text,#0f172a)}
     .pnl-bell-badge{position:absolute;top:-1px;right:-1px;min-width:16px;height:16px;padding:0 4px;border-radius:9px;background:#e11d48;color:#fff;font-size:10px;font-weight:700;display:flex;align-items:center;justify-content:center;line-height:1}
     .pnl-bell-badge.is-solic{background:#16a34a}
+    .pnl-bell-badge.is-cambio{background:#8b5cf6}
     .pnl-bell-pop{position:absolute;top:calc(100% + 8px);right:0;width:340px;max-width:calc(100vw - 24px);max-height:70vh;overflow:auto;background:var(--card,#fff);border:1px solid var(--border,#e5e7eb);border-radius:12px;box-shadow:0 12px 32px rgba(15,23,42,.16);z-index:60}
     .pnl-bell-pop h4{margin:0;padding:12px 14px;border-bottom:1px solid var(--border,#e5e7eb);font-size:13px;position:sticky;top:0;background:var(--card,#fff);display:flex;justify-content:space-between;align-items:center}
     .pnl-bell-pop h4 a{color:var(--brand,#2563eb);text-decoration:none}
@@ -602,7 +603,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.116</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.117</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -673,7 +674,7 @@ const BELL_SVG = {
 };
 
 /* Estado de la campanita: feed de avisos (todos) + novedades de empresa (admin). */
-let BELL_AUTO = [], BELL_MANUAL = [], BELL_EMPRESA = [], BELL_SOLIC = [], BELL_NOVEDADES = [];
+let BELL_AUTO = [], BELL_MANUAL = [], BELL_EMPRESA = [], BELL_SOLIC = [], BELL_NOVEDADES = [], BELL_MISUG = [];
 
 function bellAutoHtml(a) {
   return `<div class="pnl-bell-item">`
@@ -727,6 +728,9 @@ function bellRender() {
   if (BELL_NOVEDADES.length) {
     html += `<div class="bell-group">Novedades de tu tienda</div>` + BELL_NOVEDADES.map(bellNovedadHtml).join('');
   }
+  if (BELL_MISUG.length) {
+    html += `<div class="bell-group">Mis sugerencias de cambio de cargo</div>` + BELL_MISUG.map(bellMisugHtml).join('');
+  }
   if (html.indexOf('pnl-bell-item') < 0) html += '<div class="pnl-bell-empty">Sin avisos.</div>';
   pop.innerHTML = html;
   // "Ver todos" -> ir a la seccion Avisos
@@ -758,6 +762,25 @@ function bellRender() {
       pop.hidden = true;
       navigate('novedades', BELL_USER);
     }));
+  // v6.117: clic en un resultado de mi sugerencia -> abrir Aprobaciones en
+  // "Mis sugerencias".
+  pop.querySelectorAll('[data-goto-misug]').forEach(el =>
+    el.addEventListener('click', () => {
+      pop.hidden = true;
+      window.__ccOpenMias = true;
+      const b = document.querySelector('.pnl-side [data-view="cargohistorial"]');
+      if (b) b.click();
+    }));
+}
+/* v6.117: item de la campanita para el RESULTADO de una sugerencia propia. */
+function bellMisugHtml(n) {
+  const who = escHtml(n.full_name || ('V-' + n.id_number));
+  const tp = { ascenso: 'ascenso', descenso: 'descenso', lateral: 'cambio', traslado: 'traslado', egreso: 'egreso' }[n.tipo] || 'cambio';
+  let ic, txt, sub;
+  if (n.estado === 'reportado') { ic = '✅'; txt = `<b>Aprobada</b> tu sugerencia de ${tp} de ${who}`; sub = n.osticket_id ? `Ticket #${escHtml(n.osticket_id)}` : 'Reportada a Capital Humano'; }
+  else if (n.estado === 'rechazado') { ic = '⛔'; txt = `<b>Rechazada</b> tu sugerencia de ${tp} de ${who}`; sub = n.reject_reason ? `“${escHtml(n.reject_reason)}”` : 'Sin motivo'; }
+  else { ic = '⊘'; txt = `<b>Anulada</b> la sugerencia de ${tp} de ${who}`; sub = 'El cambio se dejó sin efecto'; }
+  return `<div class="pnl-bell-item" data-goto-misug="1" style="cursor:pointer"><span class="ic">${ic}</span><div>${txt}<div class="sub" style="color:var(--muted,#64748b);font-size:11.5px;margin-top:2px">${sub}</div></div></div>`;
 }
 /* Item de la campanita para una novedad de la tienda (cambio que la afecta). */
 function bellNovedadHtml(n) {
@@ -781,6 +804,7 @@ async function bellLoad(user) {
   // unreadSolic = constancias listas (solo company) -> VERDE si no hay rojo.
   let unreadRojo = 0;
   let unreadSolic = 0;
+  let unreadCambio = 0;   // v6.117: resultado de mis sugerencias -> VIOLETA
   // 1) feed de avisos (todos los usuarios)
   try {
     const a = await fetch('/api/announcements', {
@@ -800,6 +824,19 @@ async function bellLoad(user) {
         body: JSON.stringify({ action: 'get', adminId: user.id }),
       }).then(x => x.json());
       if (r && r.ok) { BELL_EMPRESA = r.items || []; unreadRojo += (r.unread || 0); }
+    } catch (_) { /* nada */ }
+    // v6.117: resultado de MIS SUGERENCIAS de cambio de cargo (solo admin).
+    // No se marca visto al abrir la campanita: el nudge persiste hasta que el
+    // usuario abre "Mis sugerencias" en la consola.
+    try {
+      const ms = await fetch('/api/cambio-cargo', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'mis_sug', user: { kind: 'admin', id: user.id } }),
+      }).then(x => x.json());
+      if (ms && ms.ok) {
+        BELL_MISUG = (ms.items || []).filter(x => x.unseen).slice(0, 8);
+        unreadCambio += (ms.unread || 0);
+      }
     } catch (_) { /* nada */ }
   }
   // 3) constancias listas -> aviso VERDE. Para tienda (company) y para
@@ -832,14 +869,16 @@ async function bellLoad(user) {
       }
     } catch (_) { /* nada */ }
   }
-  const total = unreadRojo + unreadSolic;
+  const total = unreadRojo + unreadCambio + unreadSolic;
   if (total > 0) {
     badge.textContent = total > 99 ? '99+' : String(total);
-    // Rojo PRIMA: solo verde si no hay ningun aviso rojo.
-    badge.classList.toggle('is-solic', unreadRojo === 0 && unreadSolic > 0);
+    // Prioridad de color: ROJO > VIOLETA (mis sugerencias) > VERDE (constancias).
+    badge.classList.toggle('is-cambio', unreadRojo === 0 && unreadCambio > 0);
+    badge.classList.toggle('is-solic', unreadRojo === 0 && unreadCambio === 0 && unreadSolic > 0);
     badge.style.display = 'flex';
   } else {
     badge.classList.remove('is-solic');
+    badge.classList.remove('is-cambio');
     badge.style.display = 'none';
   }
   const pop = document.getElementById('pnlBellPop');
@@ -847,6 +886,9 @@ async function bellLoad(user) {
 }
 function initBell(user) {
   BELL_USER = user;
+  // v6.117: permitir que otras vistas refresquen la campanita (ej. al marcar
+  // vistas "Mis sugerencias" desde Cambio de Cargo).
+  window.__pnlBellRefresh = () => { try { bellLoad(BELL_USER); } catch (_) {} };
   const bell = document.getElementById('pnlBell');
   const pop = document.getElementById('pnlBellPop');
   if (!bell || !pop) return;

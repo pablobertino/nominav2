@@ -248,6 +248,7 @@ export async function onRequestPost({ request, env }) {
         role: actor.role,
         osticket_url: (ostRow && ostRow[0] && ostRow[0].value) || null,
         viewer_is_agent: await viewerIsAgent(env, body.user || null),
+        me: String(actor.actor || ''),   // v6.117: para filtrar "Mis sugerencias"
       });
     }
 
@@ -509,6 +510,37 @@ export async function onRequestPost({ request, env }) {
         body: JSON.stringify({ store_notify: true, store_notified_at: nowP, updated_at: nowP }),
       });
       return json({ ok: true, store_notified_at: nowP });
+    }
+
+    // v6.117: MIS SUGERENCIAS — avisar al usuario que sugirió el resultado
+    // (aprobada/rechazada/anulada). Cuenta no-vistas para la campanita y marca
+    // visto (mark_seen) al abrir la sección. No cuenta las que él mismo resolvió.
+    if (action === 'mis_sug') {
+      if (!myView) return json({ ok: false, error: 'Sin acceso.' }, 403);
+      const me = String(actor.actor || '');
+      if (!me) return json({ ok: true, items: [], unread: 0 });
+      const seenRows = await sb(env, `movement_suggester_seen?suggested_by=eq.${encodeURIComponent(me)}&select=seen_at`);
+      const seenMs = (seenRows && seenRows[0]) ? Date.parse(seenRows[0].seen_at || 0) : 0;
+      const rows = await sb(env, `personnel_movement_requests?suggested_by=eq.${encodeURIComponent(me)}`
+        + `&order=updated_at.desc&limit=60&select=id,tipo,id_number,full_name,cargo_to,estado,updated_at,approved_by,rejected_by,anulado_by,reject_reason,osticket_id`);
+      const cargos = await loadCargos(env);
+      const lbl = c => (cargos.find(x => x.code === c) || {}).label || c || '';
+      const resolved = st => st === 'reportado' || st === 'rechazado' || st === 'anulado';
+      const selfDid = r => (r.estado === 'reportado' && r.approved_by === me) || (r.estado === 'rechazado' && r.rejected_by === me) || (r.estado === 'anulado' && r.anulado_by === me);
+      const items = (rows || []).map(r => ({
+        id: r.id, tipo: r.tipo, full_name: r.full_name, id_number: r.id_number,
+        cargo_to_label: lbl(r.cargo_to), estado: r.estado, updated_at: r.updated_at,
+        osticket_id: r.osticket_id, reject_reason: r.reject_reason,
+        unseen: resolved(r.estado) && !selfDid(r) && Date.parse(r.updated_at || 0) > seenMs,
+      }));
+      const unread = items.filter(x => x.unseen).length;
+      if (body.mark_seen) {
+        await sb(env, 'movement_suggester_seen?on_conflict=suggested_by', {
+          method: 'POST', headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify({ suggested_by: me, seen_at: new Date().toISOString() }),
+        });
+      }
+      return json({ ok: true, items, unread });
     }
 
     // v6.115: ANULAR un movimiento ya aprobado/reportado. No revierte el sistema

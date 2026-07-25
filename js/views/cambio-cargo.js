@@ -645,26 +645,47 @@ async function finish(k) {
    DISPARA el reporte + ticket (Reportes → Historial).
    ===================================================================== */
 const TIPO_LB = { ascenso: 'Ascenso', descenso: 'Descenso', lateral: 'Lateral', traslado: 'Traslado', egreso: 'Egreso' };
-const APRO_FILTERS = [['sugerido', 'Pendientes'], ['reportado', 'Aprobados'], ['rechazado', 'Rechazados'], ['anulado', 'Anulados']];
+const APRO_FILTERS = [['sugerido', 'Pendientes'], ['reportado', 'Aprobados'], ['rechazado', 'Rechazados'], ['anulado', 'Anulados'], ['mias', 'Mis sugerencias']];
 const APRO_PER = 8;
 let APRO_PAGE = 1, APRO_SEL = null, APRO_SUB = 'list';   // 'list' | 'detail'
 
+let MIS_UNSEEN = new Set();   // v6.117: ids de mis sugerencias resueltas sin ver
 async function loadCola() {
   const r = await api({ action: 'list', estado: 'todos' });
   MOVES = (r && r.ok && r.rows) ? r.rows : [];
+  // v6.117: qué sugerencias mías se resolvieron y no vi (para el contador).
+  if (CAT && CAT.my && CAT.my.sugerir) {
+    const ms = await api({ action: 'mis_sug' });
+    MIS_UNSEEN = new Set((ms && ms.ok ? (ms.items || []) : []).filter(x => x.unseen).map(x => x.id));
+  } else MIS_UNSEEN = new Set();
 }
+function aproMiasUnseen() { return MIS_UNSEEN.size; }
 async function paintCola() {
   const body = document.getElementById('ccBody');
   body.innerHTML = `<div class="cc-cola"><div class="cc-loading">Cargando…</div></div>`;
-  if (!['sugerido', 'reportado', 'rechazado', 'anulado'].includes(COLA_FILTER)) COLA_FILTER = 'sugerido';
+  // v6.117: si venimos desde la campanita (aviso violeta), abrir en Mis sugerencias.
+  if (window.__ccOpenMias) { window.__ccOpenMias = false; COLA_FILTER = 'mias'; }
+  if (!['sugerido', 'reportado', 'rechazado', 'anulado', 'mias'].includes(COLA_FILTER)) COLA_FILTER = 'sugerido';
   await loadCola();
+  // v6.117: al entrar directo a "Mis sugerencias", marcarlas vistas.
+  if (COLA_FILTER === 'mias' && MIS_UNSEEN.size) {
+    MIS_UNSEEN = new Set();
+    try { await api({ action: 'mis_sug', mark_seen: true }); } catch (_) {}
+    try { window.__pnlBellRefresh && window.__pnlBellRefresh(); } catch (_) {}
+  }
   if (APRO_SUB === 'detail' && MOVES.find(m => m.id === APRO_SEL)) renderDetail();
   else { APRO_SUB = 'list'; renderApro(); }
 }
-function aproCnt(est) { return MOVES.filter(m => m.estado === est).length; }
+function aproCnt(est) {
+  if (est === 'mias') { const me = CAT && CAT.me; return me ? MOVES.filter(m => m.suggested_by === me).length : 0; }
+  return MOVES.filter(m => m.estado === est).length;
+}
 function aproFiltered() {
-  return MOVES.filter(m => m.estado === COLA_FILTER &&
-    (!COLA_Q || (m.full_name || '').toLowerCase().includes(COLA_Q) || (m.id_number || '').includes(COLA_Q) || ((m.empresa_origen || '') + ' ' + (m.rz || '')).toLowerCase().includes(COLA_Q)));
+  const me = CAT && CAT.me;
+  const base = COLA_FILTER === 'mias'
+    ? MOVES.filter(m => me && m.suggested_by === me)
+    : MOVES.filter(m => m.estado === COLA_FILTER);
+  return base.filter(m => !COLA_Q || (m.full_name || '').toLowerCase().includes(COLA_Q) || (m.id_number || '').includes(COLA_Q) || ((m.empresa_origen || '') + ' ' + (m.rz || '')).toLowerCase().includes(COLA_Q));
 }
 function iniOf(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2) || '?').toUpperCase(); }
 function avatarHtml(mv, big) {
@@ -675,14 +696,30 @@ function avatarHtml(mv, big) {
 /* ---------- LISTA (mini-fichas, estilo Buscar) ---------- */
 function renderApro() {
   const body = document.getElementById('ccBody');
-  const chips = APRO_FILTERS.map(([f, l]) => `<button data-f="${f}" class="${COLA_FILTER === f ? 'on' : ''}">${l}<span class="n">${aproCnt(f)}</span></button>`).join('');
+  // v6.117: "Mis sugerencias" solo para quien puede sugerir; su contador
+  // resalta las no-vistas (violeta).
+  const canSug = !!(CAT && CAT.my && CAT.my.sugerir);
+  const chips = APRO_FILTERS.filter(([f]) => f !== 'mias' || canSug).map(([f, l]) => {
+    const nUnseen = f === 'mias' ? aproMiasUnseen() : 0;
+    const n = f === 'mias' ? aproCnt('mias') : aproCnt(f);
+    return `<button data-f="${f}" class="${COLA_FILTER === f ? 'on' : ''}${f === 'mias' && nUnseen ? ' has-new' : ''}">${l}<span class="n">${n}</span></button>`;
+  }).join('');
   const pend = aproCnt('sugerido');
   body.innerHTML = `<div class="cc-apro">
     <div class="cc-apro-head"><h2>Aprobaciones</h2>${pend ? `<span class="cc-cnt">${pend} pendiente${pend === 1 ? '' : 's'}</span>` : ''}<span class="cc-sp"></span><a class="cc-guia" href="/guias/cambio-cargo.html" target="_blank" rel="noopener">📘 ¿Cómo funciona?</a><span class="cc-hint">Al aprobar se genera el reporte y su <b>ticket</b> → Reportes · Historial</span></div>
     <div class="cc-apro-filters"><div class="cc-fchips">${chips}</div><input class="cc-inp" id="ccAQ" placeholder="Buscar por nombre, cédula o tienda…" value="${esc(COLA_Q)}"></div>
     <div id="ccAList"></div><div class="cc-pager" id="ccAPager"></div>
   </div>`;
-  body.querySelectorAll('.cc-fchips button').forEach(b => b.addEventListener('click', () => { COLA_FILTER = b.dataset.f; APRO_PAGE = 1; renderApro(); }));
+  body.querySelectorAll('.cc-fchips button').forEach(b => b.addEventListener('click', async () => {
+    COLA_FILTER = b.dataset.f; APRO_PAGE = 1;
+    // v6.117: al abrir "Mis sugerencias" se marcan vistas (baja el aviso violeta).
+    if (COLA_FILTER === 'mias' && MIS_UNSEEN.size) {
+      MIS_UNSEEN = new Set();
+      try { await api({ action: 'mis_sug', mark_seen: true }); } catch (_) {}
+      try { window.__pnlBellRefresh && window.__pnlBellRefresh(); } catch (_) {}
+    }
+    renderApro();
+  }));
   document.getElementById('ccAQ').addEventListener('input', e => { COLA_Q = e.target.value.toLowerCase(); APRO_PAGE = 1; renderAList(); });
   renderAList();
 }
@@ -1171,6 +1208,8 @@ function styleBlock() {
   .cc-fchips button.on{background:var(--pri-soft);border-color:#ddd6fe;color:var(--pri)}
   .cc-fchips button .n{font-size:10px;font-weight:800;background:#f1f5f9;color:#64748b;border-radius:999px;padding:0 6px}
   .cc-fchips button.on .n{background:#ddd6fe;color:var(--pri)}
+  .cc-fchips button.has-new{border-color:#c4b5fd;background:#f5f3ff;color:#6d28d9}
+  .cc-fchips button.has-new .n{background:#8b5cf6;color:#fff}
   .cc-cola-filter .cc-inp{flex:1;min-width:160px}
   .cc-approvebar{display:flex;align-items:center;gap:8px;font-size:12px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:9px 12px;margin:12px 18px 0}
   .cc-cola-foot{padding:12px 18px;border-top:1px solid var(--border);background:#fbfcfe;font-size:11.5px;color:var(--muted)}
