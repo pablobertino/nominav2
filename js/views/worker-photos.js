@@ -204,6 +204,18 @@ function tenureLong(days) {
   const rm = Math.floor((days - y * 365.25) / 30.44);
   return rm > 0 ? `${y} año${y === 1 ? '' : 's'} y ${rm} mes${rm === 1 ? '' : 'es'}` : `${y} año${y === 1 ? '' : 's'}`;
 }
+/* v6.109: antigüedad PROMEDIO compacta para los KPI de Personal ("1a 2m" /
+   "7 m" / "12 d"). Mantiene meses hasta el año y luego años+meses; a
+   diferencia de tenureShort (una sola unidad) el promedio sí muestra "Xa Ym"
+   porque es un agregado, no la etiqueta anti-deformación de la grilla. */
+function tenureAvgFmt(days) {
+  if (days == null || isNaN(days) || days < 0) return '—';
+  if (days < 30) return `${Math.round(days)} d`;
+  const totM = Math.round(days / 30.44);
+  if (totM < 12) return `${totM} m`;
+  const y = Math.floor(totM / 12), m = totM % 12;
+  return m ? `${y}a ${m}m` : `${y}a`;
+}
 /* v5.92: ¿la fecha cae en la QUINCENA CALENDARIO en curso? (1-15 / 16-fin
    del mes actual, hora Caracas — misma regla que la nomina). La marca se
    apaga sola al cambiar de quincena. */
@@ -911,32 +923,74 @@ function demoStatsHtml(workers, mode) {
   const ageBody = ages.length
     ? `<div class="wpd-bars">${demoBars(ageBuckets, '#4f46e5')}</div>`
     : '<div class="wpd-empty">Sin fechas de nacimiento</div>';
+  // v6.109: esquina de Edades = total + PROMEDIO de edad (aporta el centro
+  // de la distribución que la barra sola no resume).
+  const avgAge = ages.length ? Math.round(ages.reduce((a, b) => a + b, 0) / ages.length) : null;
+  const ageCorner = ages.length
+    ? `${ages.length} con fecha · <b>prom. ${avgAge} años</b>`
+    : `${ages.length} con fecha`;
   // Estado civil
-  const civDefs = [['Soltero', 'S'], ['Casado', 'C'], ['Divorc.', 'D'], ['Viudo', 'V'], ['Conviv.', 'O'], ['Un. reg.', 'R']];
+  const civDefs = [['Soltero', 'S', 'solteros'], ['Casado', 'C', 'casados'], ['Divorc.', 'D', 'divorciados'], ['Viudo', 'V', 'viudos'], ['Conviv.', 'O', 'convivientes'], ['Un. reg.', 'R', 'unión reg.']];
   const civBuckets = civDefs.map(([lbl, code]) => [lbl, workers.filter(w => w.marital_status === code).length]);
   const civWith = civBuckets.reduce((a, x) => a + x[1], 0);
   const civBody = civWith
     ? `<div class="wpd-bars">${demoBars(civBuckets, '#0d9488')}</div>`
     : '<div class="wpd-empty">Sin estado civil</div>';
+  // v6.109: esquina de Estado civil = total + % del estado DOMINANTE (aporta
+  // la concentración, ej. "94% solteros").
+  let civTop = null;
+  civDefs.forEach((d, i) => { const c = civBuckets[i][1]; if (c > 0 && (!civTop || c > civTop.c)) civTop = { c, pl: d[2] }; });
+  const civCorner = civWith && civTop
+    ? `${civWith} con dato · <b>${Math.round(civTop.c / civWith * 100)}% ${civTop.pl}</b>`
+    : `${civWith} con dato`;
   // Cargos: solo tiendas (en no-tienda los cargos son muy diversos).
   let cargoCard = '';
   if (mode !== 'enterprise') {
     const rc = {};
     workers.forEach(w => { if (w.role) rc[w.role] = (rc[w.role] || 0) + 1; });
+    const roleTot = workers.filter(w => w.role).length;
     const cargos = Object.entries(rc).sort((a, b) => b[1] - a[1]).slice(0, 8);
     const cargoBody = cargos.length
       ? `<div class="wpd-bars">${demoBars(cargos, '#d97706')}</div>`
       : '<div class="wpd-empty">Sin cargos</div>';
+    // v6.109: esquina de Cargos = nº de tipos + % del cargo DOMINANTE (primera
+    // palabra en Título, ej. "62% Vendedor").
+    let cargoCorner = `${cargos.length} tipo${cargos.length === 1 ? '' : 's'}`;
+    if (cargos.length && roleTot) {
+      const w0 = cargos[0][0].split(/\s+/)[0];
+      const w0t = w0.charAt(0) + w0.slice(1).toLowerCase();
+      cargoCorner += ` · <b>${Math.round(cargos[0][1] / roleTot * 100)}% ${w0t}</b>`;
+    }
     cargoCard = `<div class="wpd-card"><div class="wpd-head"><span class="t">Cargos</span>`
-      + `<span class="n">${cargos.length} tipo${cargos.length === 1 ? '' : 's'}</span></div>${cargoBody}</div>`;
+      + `<span class="n">${cargoCorner}</span></div>${cargoBody}</div>`;
   }
-  const cols3 = mode === 'enterprise' ? ' cols3' : '';
+  // v6.109: Antigüedad PROMEDIO — sobre personal VIGENTE (los egresos
+  // distorsionan la foto del equipo actual). Tienda/Empresa = tramo vigente
+  // (start_date); Grupo = antigüedad total en el Grupo Canaima (grp_days
+  // efectivos si el endpoint los trae, si no el tramo continuo cont_days).
+  const vig = workers.filter(isVigente);
+  const stDays = vig.map(w => daysFrom(w.start_date)).filter(d => d != null);
+  const grDays = vig.map(w => (typeof w.grp_days === 'number' ? w.grp_days
+    : (typeof w.cont_days === 'number' ? w.cont_days : null))).filter(d => d != null);
+  const avgSt = stDays.length ? stDays.reduce((a, b) => a + b, 0) / stDays.length : null;
+  const avgGr = grDays.length ? grDays.reduce((a, b) => a + b, 0) / grDays.length : null;
+  const firstLbl = mode === 'enterprise' ? 'Empresa' : 'Tienda';
+  const tenBody = (stDays.length || grDays.length)
+    ? `<div class="wpd-tenure">`
+      + `<div class="side" title="Antigüedad promedio en ${mode === 'enterprise' ? 'la empresa' : 'la tienda'} (personal vigente)"><span class="lab">${firstLbl}</span><b class="val">${tenureAvgFmt(avgSt)}</b><span class="sub">promedio</span></div>`
+      + `<div class="side gr" title="Antigüedad promedio en el Grupo Canaima (personal vigente)"><span class="lab">Grupo</span><b class="val">${tenureAvgFmt(avgGr)}</b><span class="sub">promedio</span></div>`
+      + `</div>`
+    : '<div class="wpd-empty">Sin fechas de ingreso</div>';
+  const tenCard = `<div class="wpd-card"><div class="wpd-head"><span class="t">Antigüedad</span>`
+    + `<span class="n" title="Calculado solo sobre personal vigente">${stDays.length} vigentes</span></div>${tenBody}</div>`;
+  const gridCls = mode === 'enterprise' ? ' cols4' : '';
   return `
-    <div class="wpd-stats${cols3}">
+    <div class="wpd-stats${gridCls}">
       <div class="wpd-card"><div class="wpd-head"><span class="t">Sexo</span><span class="n">${sexTot} con dato</span></div>${sexBody}</div>
-      <div class="wpd-card"><div class="wpd-head"><span class="t">Edades</span><span class="n">${ages.length} con fecha</span></div>${ageBody}</div>
-      <div class="wpd-card"><div class="wpd-head"><span class="t">Estado civil</span><span class="n">${civWith} con dato</span></div>${civBody}</div>
+      <div class="wpd-card"><div class="wpd-head"><span class="t">Edades</span><span class="n">${ageCorner}</span></div>${ageBody}</div>
+      <div class="wpd-card"><div class="wpd-head"><span class="t">Estado civil</span><span class="n">${civCorner}</span></div>${civBody}</div>
       ${cargoCard}
+      ${tenCard}
     </div>`;
 }
 function paintDemo() {
