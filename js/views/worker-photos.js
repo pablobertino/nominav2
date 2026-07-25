@@ -599,20 +599,20 @@ export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   // (ej. rol Supervisor Tiendas con solo view.*). La tienda (rol 'tienda')
   // tiene photo.manage + ficha.edit en la matriz: su flujo no cambia. Si la
   // consulta falla, se queda el comportamiento historico y decide el server.
-  let CANP = { photo: true, ficha: true, publish: isAdmin, dept: isAdmin, bankref: true, rif: true, cedula: true, docsRemove: false };
+  let CANP = { photo: true, ficha: true, publish: isAdmin, dept: isAdmin, bankref: true, rif: true, cedula: true, docsRemove: false, antiguedad: true };
   try {
     const pr = await fetch('/api/my-perms', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null },
-        codes: ['photo.manage', 'ficha.edit', 'hcm.publish', 'dept.assign', 'bankref.upload', 'rif.upload', 'cedula.upload', 'docs.remove'],
+        codes: ['photo.manage', 'ficha.edit', 'hcm.publish', 'dept.assign', 'bankref.upload', 'rif.upload', 'cedula.upload', 'docs.remove', 'view.antiguedad'],
       }),
     }).then(r => r.json());
     if (pr && pr.ok) {
       const p = pr.perms || {};
       CANP = pr.super
-        ? { photo: true, ficha: true, publish: true, dept: true, bankref: true, rif: true, cedula: true, docsRemove: true }
-        : { photo: !!p['photo.manage'], ficha: !!p['ficha.edit'], publish: !!p['hcm.publish'], dept: !!p['dept.assign'], bankref: !!p['bankref.upload'], rif: !!p['rif.upload'], cedula: !!p['cedula.upload'], docsRemove: !!p['docs.remove'] };
+        ? { photo: true, ficha: true, publish: true, dept: true, bankref: true, rif: true, cedula: true, docsRemove: true, antiguedad: true }
+        : { photo: !!p['photo.manage'], ficha: !!p['ficha.edit'], publish: !!p['hcm.publish'], dept: !!p['dept.assign'], bankref: !!p['bankref.upload'], rif: !!p['rif.upload'], cedula: !!p['cedula.upload'], docsRemove: !!p['docs.remove'], antiguedad: !!p['view.antiguedad'] };
     }
   } catch (_) { /* sin red: UI historica, el server protege */ }
 
@@ -989,7 +989,9 @@ function demoStatsHtml(workers, mode) {
   }
   // v6.110: la Antigüedad ya no es una card más de la fila: es una card PROPIA
   // de ancho completo (tenureCardHtml) con desglose por cargo (Opción C).
-  const tenCard = tenureCardHtml(workers, mode);
+  // v6.112: gateada por el permiso view.antiguedad (apagado en tienda y
+  // gestor_empresa por defecto; setteable en Roles).
+  const tenCard = (STATE.can && STATE.can.antiguedad) ? tenureCardHtml(workers, mode) : '';
   const gridCls = mode === 'enterprise' ? ' cols3' : '';
   return `
     <div class="wpd-stats${gridCls}">

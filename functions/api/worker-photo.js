@@ -336,7 +336,13 @@ export async function onRequestPost({ request, env }) {
     // Alcance por departamento del que llama (null = sin restriccion).
     const deptScope = await allowedDeptIds(env, user, cc);
 
-    if (action === 'directory') return await directory(env, cc, table, deptScope);
+    if (action === 'directory') {
+      // v6.112: el bloque de Antigüedad solo se calcula/envía si el rol tiene
+      // view.antiguedad (apagado en tienda y gestor_empresa por defecto).
+      let canAnt = false;
+      try { canAnt = can(await resolveActor(env, user), 'view.antiguedad'); } catch (_) { /* sin perm */ }
+      return await directory(env, cc, table, deptScope, canAnt);
+    }
     if (action === 'group_history') return await groupHistory(env, body);
     if (action === 'sign') return await signPhotos(env, cc, body, table, deptScope);
     if (action === 'save') return await savePhoto(env, cc, body, table, deptScope);
@@ -367,7 +373,7 @@ async function groupHistory(env, body) {
 }
 
 /* ---------- DIRECTORY ---------- */
-async function directory(env, cc, table, deptScope) {
+async function directory(env, cc, table, deptScope, canAnt) {
   table = table || 'store_workers';
   const isEnterprise = table === 'enterprise_workers';
   // Datos de la empresa (cabecera de la ficha). Zona/subzona/concepto por id.
@@ -659,7 +665,7 @@ async function directory(env, cc, table, deptScope) {
   // en ESTA tienda y la antigüedad de grupo se calculan en el cliente con el
   // roster. Si falla, la card degrada (oculta concepto/chip) sin romper.
   let tenureBench = null, tenurePos = null;
-  if (table === 'store_workers') {
+  if (table === 'store_workers' && canAnt) {
     try {
       const tb = await sb(env, 'rpc/company_tenure_benchmarks', {
         method: 'POST', body: JSON.stringify({ p_company_code: cc }),
