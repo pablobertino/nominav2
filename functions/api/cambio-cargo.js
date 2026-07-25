@@ -119,6 +119,16 @@ async function assignLevel(env, actor) {
   return 999;
 }
 
+/* v6.115: ¿el que mira es AGENTE de osTicket? (tiene osticket_staff_id). Decide
+   el tipo de link al ticket, igual que Reportes → Historial. Company = nunca. */
+async function viewerIsAgent(env, user) {
+  if (!user || user.kind === 'company' || !user.id) return false;
+  try {
+    const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&select=osticket_staff_id`);
+    return !!(a && a[0] && a[0].osticket_staff_id != null);
+  } catch { return false; }
+}
+
 async function loadCargos(env) {
   const rows = await sb(env, 'cargos?is_active=eq.true&select=code,label,ax_code,ambito,hier_level,movable,sort_order&order=hier_level');
   return (rows || []).map(c => ({
@@ -237,6 +247,7 @@ export async function onRequestPost({ request, env }) {
         assign_min_level: minLevel,
         role: actor.role,
         osticket_url: (ostRow && ostRow[0] && ostRow[0].value) || null,
+        viewer_is_agent: await viewerIsAgent(env, body.user || null),
       });
     }
 

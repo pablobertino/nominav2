@@ -905,11 +905,19 @@ async function publishNotice(id) {
 function aproDoneBox(ost, repId) {
   const rep = repId ? String(repId).padStart(4, '0') : null;
   const url = CAT && CAT.osticket_url;
+  // v6.115: link al ticket PUNTUAL (mismo patrón que Reportes → Historial).
+  // Agente osTicket -> panel de staff por número; usuario -> puente gc_ticket.php
+  // (el PHP traduce número→id interno y redirige). Sin url, no hay link.
+  const tHref = (url && ost)
+    ? (CAT.viewer_is_agent
+        ? `${url}/scp/tickets.php?number=${encodeURIComponent(ost)}`
+        : `${url}/gc_ticket.php?number=${encodeURIComponent(ost)}`)
+    : '';
   return `<div class="cc-adone"><div class="cc-adone-box">
      <div class="cc-adone-t">✅ Aprobado y reportado</div>
      <p>Ya está en <b>Reportes → Historial</b> para Capital Humano.</p>
      <div class="cc-adone-links">
-       ${ost ? `<a ${url ? `href="${esc(url)}" target="_blank" rel="noopener"` : ''}><span>🎫 Ticket osTicket</span> <span class="tk">#${esc(ost)}</span>${url ? '<span class="ext">Ver ↗</span>' : ''}</a>` : ''}
+       ${ost ? `<a ${tHref ? `href="${esc(tHref)}" target="_blank" rel="noopener"` : ''}><span>🎫 Ticket osTicket</span> <span class="tk">#${esc(ost)}</span>${tHref ? '<span class="ext">Ver ↗</span>' : ''}</a>` : ''}
        <a class="cc-gorep"><span>📄 Reporte${rep ? ' <span class="tk">#' + rep + '</span>' : ''}</span> <span class="ext">Ver en Reportes → Historial →</span></a>
      </div></div></div>`;
 }
