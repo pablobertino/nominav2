@@ -36,6 +36,7 @@ const RPT_CODE_BY_ACTION = {
   submit_ausencia: 'report.ausencia',
   submit_egreso: 'report.egreso',
   submit_ingreso: 'report.ingreso',
+  send_ingreso_docs: 'report.ingreso',   // v6.108/#2: tandas de recaudos
   submit_modificacion: 'report.modificacion',
   submit_traslado: 'report.traslado',
 };
@@ -88,6 +89,16 @@ function nowCaracas() {
 async function getSetting(env, key, fallback) {
   const r = await sb(env, `app_settings?key=eq.${encodeURIComponent(key)}&select=value`);
   return (r && r[0] && r[0].value != null) ? r[0].value : fallback;
+}
+// v6.108: lee VARIAS claves de app_settings en UNA sola subrequest (Cloudflare
+// limita ~50 salientes por invocacion; un ingreso con documentos las gasta).
+// Devuelve un getter g(key, fallback) con la misma semantica que getSetting.
+async function getSettings(env, keys) {
+  const list = [...new Set(keys)].map(k => encodeURIComponent(k)).join(',');
+  const rows = await sb(env, `app_settings?key=in.(${list})&select=key,value`) || [];
+  const map = {};
+  (rows || []).forEach(r => { if (r && r.key != null) map[r.key] = r.value; });
+  return (key, fallback) => (map[key] != null ? map[key] : fallback);
 }
 
 // Quincena en curso (la que contiene la fecha 'hoy' de Venezuela).
@@ -238,6 +249,9 @@ export async function onRequestPost({ request, env }) {
     }
     if (body.action === 'submit_ingreso') {
       return await submitIngreso(env, body);
+    }
+    if (body.action === 'send_ingreso_docs') {
+      return await sendIngresoDocs(env, body);
     }
     if (body.action === 'submit_modificacion') {
       return await submitModificacion(env, body);
@@ -1623,15 +1637,18 @@ async function submitIngreso(env, body) {
   if (!lines.length) return json({ ok: false, error: 'No hay trabajadores en el reporte.' }, 400);
 
   // --- Ventana reportable (regla general del corte, server-side) ---
+  // v6.108: TODA la configuracion del ingreso (corte + osticket) se lee de una
+  // sola vez para no gastar ~6 subrequests sueltas (limite de Cloudflare).
+  const g = await getSettings(env, ['corte_margen_dias', 'corte_hora_limite', 'futuro_ingreso_egreso_dias', 'doc_max_file_mb', 'osticket_url', 'osticket_topic_ingreso']);
   const { ymd: today, hhmm: nowHHMM } = nowCaracas();
-  const margin = parseInt(await getSetting(env, 'corte_margen_dias', '2'), 10) || 2;
-  const cutoffTime = await getSetting(env, 'corte_hora_limite', '14:00');
-  const futureDays = parseInt(await getSetting(env, 'futuro_ingreso_egreso_dias', '7'), 10) || 7;
+  const margin = parseInt(g('corte_margen_dias', '2'), 10) || 2;
+  const cutoffTime = g('corte_hora_limite', '14:00');
+  const futureDays = parseInt(g('futuro_ingreso_egreso_dias', '7'), 10) || 7;
   // Limite de tamano por recaudo (MB), configurable en app_settings. El
   // cliente ya valida, pero el servidor NO confia: revalida el tamano real
   // de cada archivo base64 antes de aceptarlo (un cliente podria saltarse
   // la validacion del navegador). Fallback 2 si el setting faltara.
-  const docMaxFileMb = parseFloat(await getSetting(env, 'doc_max_file_mb', '2')) || 2;
+  const docMaxFileMb = parseFloat(g('doc_max_file_mb', '2')) || 2;
   const docMaxFileBytes = docMaxFileMb * 1024 * 1024;
   const pastCutoff = toMin(nowHHMM) >= toMin(cutoffTime);
   const reportMin = addDays(today, pastCutoff ? -(margin - 1) : -margin);
@@ -1912,8 +1929,9 @@ async function submitIngreso(env, body) {
   // no generan ticket; quedan registrados en ingreso_report_docs.
   // El telefono se muestra en nacional en el cuerpo; al Excel va el +58.
   const code = reportCode(reportId);
-  const base = await osticketBase(env);
-  const topicId = parseInt(await getSetting(env, 'osticket_topic_ingreso', '31'), 10) || 31;
+  // v6.108: base y topico salen del batch de settings ya leido (sin 2 subrequests mas).
+  const base = String(g('osticket_url', '') || '').replace(/\/+$/, '');
+  const topicId = parseInt(g('osticket_topic_ingreso', '31'), 10) || 31;
   const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
   const fromName = `${cc} - ${compBusinessName || cc}`;
 
@@ -1929,6 +1947,13 @@ async function submitIngreso(env, body) {
   const totalPieces = 1 + nDocs;   // PLA (1) + un DOC por recaudo adjunto
 
   const result = { osticket_pla: null, tickets_ok: 0, tickets_fail: 0, ticket_errors: [] };
+  // v6.108/#2: los tickets DOC NO se envian en esta invocacion (el setup + el
+  // PLA ya consumen buena parte del presupuesto de subrequests de Cloudflare).
+  // Todos los recaudos viajan como 'pending' y el cliente los manda por tandas
+  // a send_ingreso_docs, cada tanda en su propia invocacion. DOC_FIRST se deja
+  // configurable por si en el futuro se quieren mandar algunos aqui mismo.
+  const DOC_FIRST = 0;
+  const pendingDocs = [];
 
   if (!base || !env.osticket_api_key) {
     result.ticket_errors.push('osTicket no configurado (url o api key).');
@@ -2032,52 +2057,24 @@ async function submitIngreso(env, body) {
       result.ticket_errors.push(`PLA: ${String(e.message || e)}`);
     }
 
-    // Un ticket DOC por cada recaudo adjunto, aplanando todas las personas.
-    // Pieza k = 2,3,... (el PLA es la 1). El cuerpo lleva los datos de la
-    // persona + el nombre del recaudo. El asunto incluye ced y recaudo para
-    // identificarlo de un vistazo en osTicket.
+    // Un ticket DOC por cada recaudo adjunto. Pieza k = 2,3,... (el PLA es 1).
+    // Se envian aqui hasta DOC_FIRST; el resto queda en pendingDocs para las
+    // tandas del cliente (send_ingreso_docs). El contexto del cuerpo se pasa
+    // en ctx (mismo para todas las piezas del reporte).
+    const ctx = { code, base, topicId, cc, compBusinessName, mallZona, marcaName, compEmail, compPhone, fromEmail, fromName, responsible, position, today, nowHHMM, totalPieces };
     for (let i = 0; i < docPieces.length; i++) {
       const { line: l, doc: d } = docPieces[i];
-      const ced = l.worker_id_number;
       const piece = i + 2;   // el PLA ocupo la pieza 1
-      const docBody = buildReportText({
-        pieceLabel: 'DOCUMENTO', reportCode: code, piece, totalPieces,
-        topicLabel: `Ingreso — ${d.doc_name}`,
-        fecha: dmy(today), hora: nowHHMM,
-        alias: cc, razon: compBusinessName, zona: mallZona, marca: marcaName,
-        correoTienda: compEmail,
-        responsable: responsible, cargo: position, telefono: compPhone, correoResp: compEmail,
-        registros: [[
-          ['Trabajador', l.worker_name],
-          ['Cédula', `${l.ced_kind}-${ced}`],
-          ['Tipo', 'Alta (A)'],
-          ['Recaudo', d.doc_name],
-        ]],
-      });
-      try {
-        const docNum = await osticketCreateTicket(env, base, {
-          email: fromEmail,
-          name: fromName,
-          subject: `[${code}] [${piece}/${totalPieces}] DOC ${ced} ${d.doc_name}`,
-          message: docBody,
-          topicId,
-          source: 'API',
-          alert: false,
-          autorespond: false,
-          report_code: code,
-          report_kind: 'DOC',
-          attachments: [osAttach(d._fname, d._b64, d._ftype || 'application/octet-stream')],
+      if (i < DOC_FIRST) {
+        await ingresoDocTicket(env, ctx, {
+          piece, worker_id: l.worker_id_number, ced_kind: l.ced_kind, worker_name: l.worker_name,
+          doc_name: d.doc_name, file_b64: d._b64, file_name: d._fname, file_type: d._ftype,
+        }, result);
+      } else {
+        pendingDocs.push({
+          piece, worker_id: l.worker_id_number, ced_kind: l.ced_kind, worker_name: l.worker_name,
+          required_doc_id: d.required_doc_id, doc_name: d.doc_name,
         });
-        result.tickets_ok++;
-        await gcReportLink(env, base, {
-          report_code: code, ticket_number: docNum, kind: 'DOC',
-          company: cc, report_type: 'ingreso',
-          worker_id: ced, worker_name: l.worker_name,
-          doc_pos: piece, doc_total: totalPieces,
-        });
-      } catch (e) {
-        result.tickets_fail++;
-        result.ticket_errors.push(`DOC ${ced} ${d.doc_name}: ${String(e.message || e)}`);
       }
     }
 
@@ -2094,7 +2091,12 @@ async function submitIngreso(env, body) {
   return json({
     ok: true,
     report_id: reportId,
+    code,
+    total_pieces: totalPieces,
     workers_count: clean.length,
+    // Recaudos que faltan por enviar (sin archivo): el cliente los manda por
+    // tandas a send_ingreso_docs. Vacio si todo entro en esta llamada.
+    pending_docs: pendingDocs,
     window: { today, now: nowHHMM, report_min: reportMin, report_max: reportMax },
     osticket: {
       pla: result.osticket_pla,
@@ -2103,6 +2105,95 @@ async function submitIngreso(env, body) {
       errors: result.ticket_errors,
     },
   });
+}
+
+/* v6.108/#2: crea UN ticket DOC (recaudo) en osTicket. Reutilizado por el
+   envio inicial (submitIngreso) y por las tandas (sendIngresoDocs). ctx trae
+   el contexto comun del reporte; dp trae la pieza + su archivo. Acumula en
+   result.tickets_ok/fail/ticket_errors. No lanza. */
+async function ingresoDocTicket(env, ctx, dp, result) {
+  const docBody = buildReportText({
+    pieceLabel: 'DOCUMENTO', reportCode: ctx.code, piece: dp.piece, totalPieces: ctx.totalPieces,
+    topicLabel: `Ingreso — ${dp.doc_name}`,
+    fecha: dmy(ctx.today), hora: ctx.nowHHMM,
+    alias: ctx.cc, razon: ctx.compBusinessName, zona: ctx.mallZona, marca: ctx.marcaName,
+    correoTienda: ctx.compEmail,
+    responsable: ctx.responsible, cargo: ctx.position, telefono: ctx.compPhone, correoResp: ctx.compEmail,
+    registros: [[
+      ['Trabajador', dp.worker_name],
+      ['Cédula', `${dp.ced_kind}-${dp.worker_id}`],
+      ['Tipo', 'Alta (A)'],
+      ['Recaudo', dp.doc_name],
+    ]],
+  });
+  try {
+    const docNum = await osticketCreateTicket(env, ctx.base, {
+      email: ctx.fromEmail, name: ctx.fromName,
+      subject: `[${ctx.code}] [${dp.piece}/${ctx.totalPieces}] DOC ${dp.worker_id} ${dp.doc_name}`,
+      message: docBody, topicId: ctx.topicId, source: 'API', alert: false, autorespond: false,
+      report_code: ctx.code, report_kind: 'DOC',
+      attachments: [osAttach(dp.file_name, dp.file_b64, dp.file_type || 'application/octet-stream')],
+    });
+    result.tickets_ok++;
+    await gcReportLink(env, ctx.base, {
+      report_code: ctx.code, ticket_number: docNum, kind: 'DOC',
+      company: ctx.cc, report_type: 'ingreso',
+      worker_id: dp.worker_id, worker_name: dp.worker_name,
+      doc_pos: dp.piece, doc_total: ctx.totalPieces,
+    });
+    return true;
+  } catch (e) {
+    result.tickets_fail++;
+    result.ticket_errors.push(`DOC ${dp.worker_id} ${dp.doc_name}: ${String(e.message || e)}`);
+    return false;
+  }
+}
+
+/* v6.108/#2: envia una TANDA de recaudos (tickets DOC) de un reporte de
+   ingreso ya creado. Cada llamada es una invocacion aparte -> su propio
+   presupuesto de subrequests. Reconstruye el contexto desde reports_log +
+   companies. El archivo (base64) lo re-manda el cliente (no se persiste). */
+async function sendIngresoDocs(env, body) {
+  const reportId = parseInt(body.report_id, 10);
+  if (!reportId) return json({ ok: false, error: 'Falta el report_id.' }, 400);
+  const docs = Array.isArray(body.docs) ? body.docs : [];
+  const result = { tickets_ok: 0, tickets_fail: 0, ticket_errors: [] };
+  if (!docs.length) return json({ ok: true, tickets_ok: 0, tickets_fail: 0, errors: [] });
+
+  const rep = await sb(env, `reports_log?id=eq.${reportId}&select=company_code,responsible,position`);
+  const r0 = rep && rep[0];
+  if (!r0) return json({ ok: false, error: 'Reporte no encontrado.' }, 404);
+  const cc = r0.company_code;
+  const code = reportCode(reportId);
+  const g = await getSettings(env, ['osticket_url', 'osticket_topic_ingreso']);
+  const base = String(g('osticket_url', '') || '').replace(/\/+$/, '');
+  const topicId = parseInt(g('osticket_topic_ingreso', '31'), 10) || 31;
+  if (!base || !env.osticket_api_key) return json({ ok: false, error: 'osTicket no configurado.' }, 500);
+
+  const comp = await sb(env, `companies?company_code=eq.${encodeURIComponent(cc)}&select=business_name,email,phone,zone_id,subzone_id,concept_id`);
+  const c0 = (comp && comp[0]) || {};
+  let subzonaName = '', zonaName = '', marcaName = '';
+  if (c0.subzone_id != null) { const s = await sb(env, `subzones?id=eq.${encodeURIComponent(c0.subzone_id)}&select=name`); subzonaName = (s && s[0] && s[0].name) || ''; }
+  if (c0.zone_id != null) { const z = await sb(env, `zones?id=eq.${encodeURIComponent(c0.zone_id)}&select=name`); zonaName = (z && z[0] && z[0].name) || ''; }
+  if (c0.concept_id != null) { const cn = await sb(env, `concepts?id=eq.${encodeURIComponent(c0.concept_id)}&select=name`); marcaName = (cn && cn[0] && cn[0].name) || ''; }
+  const compBusinessName = c0.business_name || '';
+  const { ymd: today, hhmm: nowHHMM } = nowCaracas();
+  const ctx = {
+    code, base, topicId, cc, compBusinessName, mallZona: subzonaName || zonaName, marcaName,
+    compEmail: c0.email || '', compPhone: c0.phone || '',
+    fromEmail: c0.email || 'portal-nomina@grupocanaima.com', fromName: `${cc} - ${compBusinessName || cc}`,
+    responsible: r0.responsible || '', position: r0.position || '',
+    today, nowHHMM, totalPieces: parseInt(body.total_pieces, 10) || (docs.length + 1),
+  };
+  for (const d of docs) {
+    if (!d || !d.file_b64) { result.tickets_fail++; result.ticket_errors.push(`DOC ${(d && d.worker_id) || '?'}: sin archivo.`); continue; }
+    await ingresoDocTicket(env, ctx, {
+      piece: parseInt(d.piece, 10) || 0, worker_id: String(d.worker_id || ''), ced_kind: d.ced_kind || 'V',
+      worker_name: d.worker_name || '', doc_name: d.doc_name || 'Recaudo',
+      file_b64: d.file_b64, file_name: d.file_name || `${d.doc_name || 'doc'}_${d.worker_id}`, file_type: d.file_type,
+    }, result);
+  }
+  return json({ ok: true, tickets_ok: result.tickets_ok, tickets_fail: result.tickets_fail, errors: result.ticket_errors });
 }
 
 /* =====================================================================

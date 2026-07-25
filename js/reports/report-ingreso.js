@@ -295,7 +295,53 @@ export const ingresoReport = {
         source_kind, source_admin_id,
       }),
     });
-    return res.json();
+    const out = await res.json();
+
+    // v6.108/#2: los recaudos que el servidor dejo 'pending' (para no pasar el
+    // limite de subrequests de Cloudflare) se envian por TANDAS, cada una en su
+    // propia invocacion. El archivo lo tenemos localmente en `lines`.
+    if (out && out.ok && Array.isArray(out.pending_docs) && out.pending_docs.length) {
+      const kced = v => String(v || '').replace(/\D/g, '');   // el server guarda la cédula solo con dígitos
+      const fileMap = {};
+      lines.forEach(w => (w.docs || []).forEach(d => {
+        if (d.file_b64) fileMap[`${kced(w.id_number)}|${d.required_doc_id}`] = d;
+      }));
+      out.osticket = out.osticket || { tickets_ok: 0, tickets_fail: 0, errors: [] };
+      const BATCH = 12;
+      const pend = out.pending_docs;
+      for (let i = 0; i < pend.length; i += BATCH) {
+        const chunk = pend.slice(i, i + BATCH).map(pd => {
+          const f = fileMap[`${kced(pd.worker_id)}|${pd.required_doc_id}`] || {};
+          return {
+            piece: pd.piece, worker_id: pd.worker_id, ced_kind: pd.ced_kind, worker_name: pd.worker_name,
+            doc_name: pd.doc_name, file_b64: f.file_b64 || null, file_name: f.file_name || null, file_type: f.file_type || null,
+          };
+        });
+        let r2 = null;
+        try {
+          r2 = await fetch('/api/reports', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              action: 'send_ingreso_docs',
+              company_code: companyCode,
+              report_id: out.report_id,
+              total_pieces: out.total_pieces,
+              docs: chunk,
+              source_kind, source_admin_id,
+            }),
+          }).then(x => x.json());
+        } catch (_) { r2 = null; }
+        if (r2 && r2.ok) {
+          out.osticket.tickets_ok += r2.tickets_ok || 0;
+          out.osticket.tickets_fail += r2.tickets_fail || 0;
+          if (Array.isArray(r2.errors)) out.osticket.errors.push(...r2.errors);
+        } else {
+          out.osticket.tickets_fail += chunk.length;
+          out.osticket.errors.push(`No se pudo enviar una tanda de ${chunk.length} documento(s).`);
+        }
+      }
+    }
+    return out;
   },
 };
 
