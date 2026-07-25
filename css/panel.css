@@ -1443,10 +1443,10 @@
 /* ===================== PERSONAL — CARDS DEMOGRAFICAS (detalle empresa) ===
    Sexo / Edades / Estado civil / Cargos sobre el roster cargado. En no-tienda
    se omite Cargos (3 columnas con .cols3). */
-/* v6.109: 5ta card (Antigüedad). Tienda = 5 columnas; no-tienda = 4 (.cols4,
-   sin Cargos). */
-.wpd-stats { display:grid; grid-template-columns:repeat(5,1fr); gap:12px; margin-bottom:14px; }
-.wpd-stats.cols4 { grid-template-columns:repeat(4,1fr); }
+/* v6.110: la fila vuelve a 4 cards (Sexo/Edades/Estado civil/Cargos); la
+   Antigüedad pasó a card propia de ancho completo (.wpd-ten), abajo. */
+.wpd-stats { display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin-bottom:14px; }
+.wpd-stats.cols3 { grid-template-columns:repeat(3,1fr); }
 .wpd-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md);
   padding:13px 15px 15px; display:flex; flex-direction:column; min-height:150px; }
 .wpd-head { display:flex; align-items:baseline; justify-content:space-between; gap:8px; flex-wrap:wrap; row-gap:2px; margin-bottom:11px; }
@@ -1471,17 +1471,35 @@
 .wpd-bt i { display:block; height:100%; border-radius:6px; }
 .wpd-bn { font-size:11.5px; font-weight:600; text-align:right; color:var(--ink); }
 .wpd-empty { font-size:11.5px; color:var(--faint); font-style:italic; margin:auto 0; text-align:center; padding:8px; }
-/* v6.109: card de Antigüedad — dos promedios (Tienda/Empresa y Grupo). */
-.wpd-tenure { display:flex; align-items:stretch; gap:10px; margin:auto 0; }
-.wpd-tenure .side { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; text-align:center; }
-.wpd-tenure .side.gr { border-left:1px solid var(--border-soft); }
-.wpd-tenure .lab { font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.02em; }
-.wpd-tenure .val { font-size:23px; font-weight:750; color:var(--ink); line-height:1.05; font-variant-numeric:tabular-nums; }
-.wpd-tenure .side.gr .val { color:#4f46e5; }
-.wpd-tenure .sub { font-size:10.5px; color:var(--faint); }
-@media (max-width:1400px) { .wpd-stats { grid-template-columns:repeat(3,1fr); } .wpd-stats.cols4 { grid-template-columns:repeat(2,1fr); } }
-@media (max-width:1000px) { .wpd-stats, .wpd-stats.cols4 { grid-template-columns:repeat(2,1fr); } }
-@media (max-width:600px)  { .wpd-stats, .wpd-stats.cols4 { grid-template-columns:1fr; } }
+@media (max-width:1000px) { .wpd-stats, .wpd-stats.cols3 { grid-template-columns:repeat(2,1fr); } }
+@media (max-width:600px)  { .wpd-stats, .wpd-stats.cols3 { grid-template-columns:1fr; } }
+
+/* ===== v6.110: card ANTIGÜEDAD (Opción C · foco tienda) ===== */
+.wpd-ten { margin-bottom:14px; min-height:0; }
+.wpd-ten-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(210px,1fr)); }
+.wpd-ten-cg { padding:6px 16px; }
+.wpd-ten-cg + .wpd-ten-cg { border-left:1px solid var(--border-soft); }
+.wpd-ten-cg .cg-top { display:flex; align-items:baseline; justify-content:space-between; gap:8px; }
+.wpd-ten-cg .cg-n { font-size:11.5px; font-weight:700; color:var(--ink-soft); }
+.wpd-ten-cg .cg-n .cc { color:var(--faint); font-weight:600; font-size:10.5px; margin-left:5px; }
+.wpd-dl { font-size:10.5px; font-weight:800; white-space:nowrap; }
+.wpd-dl.up { color:#0f766e; }
+.wpd-dl.dn { color:#b45309; }
+.wpd-ten-cg .cg-mid { display:flex; align-items:baseline; justify-content:space-between; gap:8px; margin:4px 0 3px; }
+.wpd-ten-cg .cg-big { font-size:21px; font-weight:750; color:var(--ink); line-height:1.1; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.wpd-ten-cg .cg-big .bl { font-size:9.5px; font-weight:700; color:var(--faint); text-transform:uppercase; letter-spacing:.03em; margin-left:6px; }
+.wpd-ten-cg .cg-bench { text-align:right; }
+.wpd-bench { font-size:10px; color:var(--faint); white-space:nowrap; font-variant-numeric:tabular-nums; }
+.wpd-bench b { color:var(--muted); font-weight:700; }
+.wpd-ten-cg .cg-refs { font-size:11px; color:var(--muted); font-variant-numeric:tabular-nums; }
+.wpd-ten-cg .cg-refs .rk { color:var(--faint); }
+.wpd-ten-simple { display:flex; align-items:stretch; gap:10px; }
+.wpd-ten-simple .s { flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center; gap:3px; text-align:center; padding:6px 0; }
+.wpd-ten-simple .s.gr { border-left:1px solid var(--border-soft); }
+.wpd-ten-simple .l { font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.02em; }
+.wpd-ten-simple .v { font-size:22px; font-weight:750; color:var(--ink); font-variant-numeric:tabular-nums; }
+.wpd-ten-simple .s.gr .v { color:#4f46e5; }
+@media (max-width:600px) { .wpd-ten-cg + .wpd-ten-cg { border-left:0; border-top:1px solid var(--border-soft); } }
 
 /* ===================== SINCRONIZAR TODO (modal de progreso) ============ */
 .sa-okbox { background:var(--success-bg); border:1px solid #b6e3c8; color:#15803d;

@@ -216,6 +216,27 @@ function tenureAvgFmt(days) {
   const y = Math.floor(totM / 12), m = totM % 12;
   return m ? `${y}a ${m}m` : `${y}a`;
 }
+/* v6.110: diferencia (con signo) contra un benchmark, para el chip ▲/▼. */
+function tenureDeltaFmt(days) {
+  const m = Math.round(days / 30.44);
+  const a = Math.abs(m), sign = m >= 0 ? '+' : '−';
+  if (a < 12) return `${sign}${a}m`;
+  const y = Math.floor(a / 12), mm = a % 12;
+  return mm ? `${sign}${y}a ${mm}m` : `${sign}${y}a`;
+}
+/* v6.110: antigüedad ACUMULADA en el Grupo de un trabajador (grp_days
+   efectivos si el endpoint los trae, si no el tramo continuo cont_days). */
+function grpDaysOf(w) {
+  return (typeof w.grp_days === 'number') ? w.grp_days
+    : (typeof w.cont_days === 'number' ? w.cont_days : null);
+}
+/* v6.110: cargo en Título ("VENDEDOR" -> "Vendedor") para la card de
+   Antigüedad. */
+function cargoLabel(r) {
+  if (!r) return '—';
+  return String(r).split(/\s+/).map(x => x.charAt(0).toUpperCase() + x.slice(1).toLowerCase()).join(' ');
+}
+function mean(arr) { return arr.length ? arr.reduce((a, b) => a + b, 0) / arr.length : null; }
 /* v5.92: ¿la fecha cae en la QUINCENA CALENDARIO en curso? (1-15 / 16-fin
    del mes actual, hora Caracas — misma regla que la nomina). La marca se
    apaga sola al cambiar de quincena. */
@@ -770,6 +791,7 @@ async function load() {
   // v4.76: catalogo de jerarquia de cargos (solo tiendas). Reset del cache
   // de resolucion cargo->rank por si el catalogo cambio entre recargas.
   STATE.cargoRanks = d.cargo_ranks || [];
+  STATE.tenureBench = d.tenure_bench || null;   // v6.110: benchmark antigüedad por cargo
   RANK_CACHE = new Map();
   STATE.meta = d.meta || null;
   STATE.manualCount = d.manual_count || 0;
@@ -964,34 +986,92 @@ function demoStatsHtml(workers, mode) {
     cargoCard = `<div class="wpd-card"><div class="wpd-head"><span class="t">Cargos</span>`
       + `<span class="n">${cargoCorner}</span></div>${cargoBody}</div>`;
   }
-  // v6.109: Antigüedad PROMEDIO — sobre personal VIGENTE (los egresos
-  // distorsionan la foto del equipo actual). Tienda/Empresa = tramo vigente
-  // (start_date); Grupo = antigüedad total en el Grupo Canaima (grp_days
-  // efectivos si el endpoint los trae, si no el tramo continuo cont_days).
-  const vig = workers.filter(isVigente);
-  const stDays = vig.map(w => daysFrom(w.start_date)).filter(d => d != null);
-  const grDays = vig.map(w => (typeof w.grp_days === 'number' ? w.grp_days
-    : (typeof w.cont_days === 'number' ? w.cont_days : null))).filter(d => d != null);
-  const avgSt = stDays.length ? stDays.reduce((a, b) => a + b, 0) / stDays.length : null;
-  const avgGr = grDays.length ? grDays.reduce((a, b) => a + b, 0) / grDays.length : null;
-  const firstLbl = mode === 'enterprise' ? 'Empresa' : 'Tienda';
-  const tenBody = (stDays.length || grDays.length)
-    ? `<div class="wpd-tenure">`
-      + `<div class="side" title="Antigüedad promedio en ${mode === 'enterprise' ? 'la empresa' : 'la tienda'} (personal vigente)"><span class="lab">${firstLbl}</span><b class="val">${tenureAvgFmt(avgSt)}</b><span class="sub">promedio</span></div>`
-      + `<div class="side gr" title="Antigüedad promedio en el Grupo Canaima (personal vigente)"><span class="lab">Grupo</span><b class="val">${tenureAvgFmt(avgGr)}</b><span class="sub">promedio</span></div>`
-      + `</div>`
-    : '<div class="wpd-empty">Sin fechas de ingreso</div>';
-  const tenCard = `<div class="wpd-card"><div class="wpd-head"><span class="t">Antigüedad</span>`
-    + `<span class="n" title="Calculado solo sobre personal vigente">${stDays.length} vigentes</span></div>${tenBody}</div>`;
-  const gridCls = mode === 'enterprise' ? ' cols4' : '';
+  // v6.110: la Antigüedad ya no es una card más de la fila: es una card PROPIA
+  // de ancho completo (tenureCardHtml) con desglose por cargo (Opción C).
+  const tenCard = tenureCardHtml(workers, mode);
+  const gridCls = mode === 'enterprise' ? ' cols3' : '';
   return `
     <div class="wpd-stats${gridCls}">
       <div class="wpd-card"><div class="wpd-head"><span class="t">Sexo</span><span class="n">${sexTot} con dato</span></div>${sexBody}</div>
       <div class="wpd-card"><div class="wpd-head"><span class="t">Edades</span><span class="n">${ageCorner}</span></div>${ageBody}</div>
       <div class="wpd-card"><div class="wpd-head"><span class="t">Estado civil</span><span class="n">${civCorner}</span></div>${civBody}</div>
       ${cargoCard}
-      ${tenCard}
-    </div>`;
+    </div>
+    ${tenCard}`;
+}
+/* ===================== v6.110: CARD ANTIGÜEDAD (Opción C) =====================
+   Card de ancho completo, debajo de la fila de KPIs. Por cargo (personal
+   VIGENTE, orden por jerarquía):
+     - número grande = antigüedad promedio EN ESTA TIENDA del cargo (start_date);
+     - referencias grises = promedio del cargo en el CONCEPTO (benchmark del RPC
+       company_tenure_benchmarks) y antigüedad ACUMULADA en el Grupo de la gente
+       de esta tienda (grp_days del roster);
+     - chip ▲/▼ = tienda vs promedio del cargo en TODAS las tiendas (benchmark),
+       con el valor de referencia debajo.
+   Sin benchmark (RPC caído o no-tienda) la card degrada con gracia. */
+function tenureCardHtml(workers, mode) {
+  const vig = (workers || []).filter(isVigente);
+  const allSt = vig.map(w => daysFrom(w.start_date)).filter(d => d != null);
+  const avgStAll = mean(allSt);
+  const entLbl = mode === 'enterprise' ? 'empresa' : 'tienda';
+  const corner = `${allSt.length} vigente${allSt.length === 1 ? '' : 's'}`
+    + (avgStAll != null ? ` · prom. ${entLbl} ${tenureAvgFmt(avgStAll)}` : '');
+  const head = `<div class="wpd-head"><span class="t">Antigüedad</span>`
+    + `<span class="n" title="Promedio de antigüedad del personal vigente">${corner}</span></div>`;
+
+  // Empresas no-tienda: cargos muy diversos y sin benchmark de tiendas → card
+  // simple (Empresa + Grupo), sin desglose.
+  if (mode === 'enterprise') {
+    const avgGrAll = mean(vig.map(grpDaysOf).filter(d => d != null));
+    const body = allSt.length
+      ? `<div class="wpd-ten-simple">`
+        + `<div class="s"><span class="l">Empresa</span><b class="v">${tenureAvgFmt(avgStAll)}</b></div>`
+        + `<div class="s gr"><span class="l">Grupo</span><b class="v">${tenureAvgFmt(avgGrAll)}</b></div>`
+        + `</div>`
+      : '<div class="wpd-empty">Sin fechas de ingreso</div>';
+    return `<div class="wpd-card wpd-ten">${head}${body}</div>`;
+  }
+
+  // Benchmark por cargo (concepto / todas las tiendas).
+  const bench = Array.isArray(STATE.tenureBench) ? STATE.tenureBench : [];
+  const benchConc = {}, benchTda = {};
+  bench.forEach(b => {
+    if (!b || b.role == null) return;
+    if (b.scope === 'concepto') benchConc[b.role] = Number(b.avg_days);
+    else if (b.scope === 'tiendas') benchTda[b.role] = Number(b.avg_days);
+  });
+
+  const byRole = {};
+  vig.forEach(w => { if (w.role) (byRole[w.role] = byRole[w.role] || []).push(w); });
+  const roles = Object.keys(byRole);
+  if (!roles.length) {
+    return `<div class="wpd-card wpd-ten">${head}<div class="wpd-empty">Sin personal vigente con cargo</div></div>`;
+  }
+  roles.sort((a, b) => (workerRank(byRole[a][0]) - workerRank(byRole[b][0])) || a.localeCompare(b, 'es'));
+
+  const cols = roles.map(r => {
+    const grp = byRole[r];
+    const avgSt = mean(grp.map(w => daysFrom(w.start_date)).filter(d => d != null));
+    const avgGr = mean(grp.map(grpDaysOf).filter(d => d != null));
+    const conc = benchConc[r] != null ? benchConc[r] : null;
+    const tda = benchTda[r] != null ? benchTda[r] : null;
+    const big = avgSt != null ? tenureAvgFmt(avgSt) : '—';
+    let chip = '', benchLine = '';
+    if (avgSt != null && tda != null) {
+      const diff = avgSt - tda, up = diff >= 0;
+      chip = `<span class="wpd-dl ${up ? 'up' : 'dn'}" title="Antigüedad en tienda vs. promedio del cargo en todas las tiendas">${up ? '▲' : '▼'} ${tenureDeltaFmt(diff)} vs tiendas</span>`;
+      benchLine = `<div class="cg-bench"><span class="wpd-bench">prom. tiendas <b>${tenureAvgFmt(tda)}</b></span></div>`;
+    }
+    const refs = `<span class="rk">Concepto</span> ${conc != null ? tenureAvgFmt(conc) : '—'}`
+      + ` · <span class="rk">Grupo</span> ${avgGr != null ? tenureAvgFmt(avgGr) : '—'}`;
+    return `<div class="wpd-ten-cg">`
+      + `<div class="cg-top"><span class="cg-n">${esc(cargoLabel(r))}<span class="cc">${grp.length}</span></span>${chip}</div>`
+      + `<div class="cg-mid"><div class="cg-big">${big}<span class="bl">en ${entLbl}</span></div>${benchLine}</div>`
+      + `<div class="cg-refs">${refs}</div>`
+      + `</div>`;
+  }).join('');
+
+  return `<div class="wpd-card wpd-ten">${head}<div class="wpd-ten-grid">${cols}</div></div>`;
 }
 function paintDemo() {
   const host = $('#wpDemo');

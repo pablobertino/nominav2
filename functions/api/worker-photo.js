@@ -652,6 +652,24 @@ async function directory(env, cc, table, deptScope) {
 
   const withPhoto = items.filter(i => i.has_photo).length;
   const manualCount = items.filter(i => i.source === 'manual').length;
+
+  // v6.110: benchmark de antigüedad por cargo (promedio EN TIENDA de ese cargo
+  // en el mismo concepto y en todas las tiendas del grupo), para el KPI de
+  // Personal (card Antigüedad · Opción C). Solo aplica a tiendas; el promedio
+  // en ESTA tienda y la antigüedad de grupo se calculan en el cliente con el
+  // roster. Si falla, la card degrada (oculta concepto/chip) sin romper.
+  let tenureBench = null;
+  if (table === 'store_workers') {
+    try {
+      const tb = await sb(env, 'rpc/company_tenure_benchmarks', {
+        method: 'POST', body: JSON.stringify({ p_company_code: cc }),
+      });
+      tenureBench = Array.isArray(tb) ? tb : null;
+    } catch (e) {
+      console.log('company_tenure_benchmarks fallo:', String(e && e.message || e));
+    }
+  }
+
   return json({
     ok: true,
     company,
@@ -663,6 +681,7 @@ async function directory(env, cc, table, deptScope) {
     report_count: items.length - manualCount,
     departments: deptList,
     cargo_ranks: cargoRanks,
+    tenure_bench: tenureBench,
     meta,
     workers: items,
   });
