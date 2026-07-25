@@ -792,6 +792,7 @@ async function load() {
   // de resolucion cargo->rank por si el catalogo cambio entre recargas.
   STATE.cargoRanks = d.cargo_ranks || [];
   STATE.tenureBench = d.tenure_bench || null;   // v6.110: benchmark antigüedad por cargo
+  STATE.tenurePos = d.tenure_pos || null;       // v6.111: posición (concepto/grupo × tienda/grupo)
   RANK_CACHE = new Map();
   STATE.meta = d.meta || null;
   STATE.manualCount = d.manual_count || 0;
@@ -999,30 +1000,55 @@ function demoStatsHtml(workers, mode) {
     </div>
     ${tenCard}`;
 }
-/* ===================== v6.110: CARD ANTIGÜEDAD (Opción C) =====================
-   Card de ancho completo, debajo de la fila de KPIs. Por cargo (personal
-   VIGENTE, orden por jerarquía):
-     - número grande = antigüedad promedio EN ESTA TIENDA del cargo (start_date);
-     - referencias grises = promedio del cargo en el CONCEPTO (benchmark del RPC
-       company_tenure_benchmarks) y antigüedad ACUMULADA en el Grupo de la gente
-       de esta tienda (grp_days del roster);
-     - chip ▲/▼ = tienda vs promedio del cargo en TODAS las tiendas (benchmark),
-       con el valor de referencia debajo.
-   Sin benchmark (RPC caído o no-tienda) la card degrada con gracia. */
+/* v6.111: etiqueta de posición por tercios (1 = la más antigua). */
+function posTag(rank, total) {
+  if (!total || rank == null) return { lbl: '', cls: 'mid' };
+  const r = rank / total;
+  if (r <= 1 / 3) return { lbl: 'veterana', cls: 'good' };
+  if (r <= 2 / 3) return { lbl: 'media tabla', cls: 'mid' };
+  return { lbl: 'más nuevas', cls: 'bad' };
+}
+/* v6.111: una columna de un panel de posición (métrica en tienda o en grupo). */
+function posCol(k, rank, total, isGrp) {
+  const t = posTag(rank, total);
+  return `<div class="p"><div class="pk">${k}</div>`
+    + `<div class="pr${isGrp ? ' g' : ''}">${rank}<span class="of">/${total}</span></div>`
+    + (t.lbl ? `<div class="pt ${t.cls}">${t.lbl}</div>` : '')
+    + `</div>`;
+}
+/* v6.111: un panel de posición (grupo o concepto) con sus dos columnas. */
+function posPanel(cap, capCls, rkTienda, rkGrupo, total) {
+  return `<div class="wpd-pos"><div class="cap${capCls}">${cap} · ${total} tienda${total === 1 ? '' : 's'}</div>`
+    + `<div class="wpd-duo">${posCol('En tienda', rkTienda, total, false)}${posCol('En grupo', rkGrupo, total, true)}</div></div>`;
+}
+/* ===================== v6.111: CARD ANTIGÜEDAD (Variante A) ===================
+   Card de ancho completo. Por cargo (personal VIGENTE, orden por jerarquía):
+     - dos números apilados: antigüedad promedio EN TIENDA (start_date) y EN
+       GRUPO (grp_days acumulado del roster);
+     - línea de comparación ▲/▼ = tienda vs promedio del cargo en TODAS las
+       tiendas (benchmark del RPC company_tenure_benchmarks), con el valor al lado;
+     - referencia gris del CONCEPTO (benchmark del mismo RPC).
+   A la derecha, DOS paneles de posición (company_tenure_position): dónde cae la
+   tienda por antigüedad en tienda / en grupo, dentro del GRUPO y del CONCEPTO.
+   Todo degrada con gracia si los RPC no responden. */
 function tenureCardHtml(workers, mode) {
   const vig = (workers || []).filter(isVigente);
   const allSt = vig.map(w => daysFrom(w.start_date)).filter(d => d != null);
   const avgStAll = mean(allSt);
+  const avgGrAll = mean(vig.map(grpDaysOf).filter(d => d != null));
   const entLbl = mode === 'enterprise' ? 'empresa' : 'tienda';
-  const corner = `${allSt.length} vigente${allSt.length === 1 ? '' : 's'}`
-    + (avgStAll != null ? ` · prom. ${entLbl} ${tenureAvgFmt(avgStAll)}` : '');
+  let corner = `${allSt.length} vigente${allSt.length === 1 ? '' : 's'}`;
+  if (avgStAll != null) {
+    corner += ` · <b>prom. ${entLbl} ${tenureAvgFmt(avgStAll)}`;
+    if (avgGrAll != null) corner += ` · grupo ${tenureAvgFmt(avgGrAll)}`;
+    corner += `</b>`;
+  }
   const head = `<div class="wpd-head"><span class="t">Antigüedad</span>`
     + `<span class="n" title="Promedio de antigüedad del personal vigente">${corner}</span></div>`;
 
   // Empresas no-tienda: cargos muy diversos y sin benchmark de tiendas → card
-  // simple (Empresa + Grupo), sin desglose.
+  // simple (Empresa + Grupo), sin desglose ni posición.
   if (mode === 'enterprise') {
-    const avgGrAll = mean(vig.map(grpDaysOf).filter(d => d != null));
     const body = allSt.length
       ? `<div class="wpd-ten-simple">`
         + `<div class="s"><span class="l">Empresa</span><b class="v">${tenureAvgFmt(avgStAll)}</b></div>`
@@ -1055,23 +1081,33 @@ function tenureCardHtml(workers, mode) {
     const avgGr = mean(grp.map(grpDaysOf).filter(d => d != null));
     const conc = benchConc[r] != null ? benchConc[r] : null;
     const tda = benchTda[r] != null ? benchTda[r] : null;
-    const big = avgSt != null ? tenureAvgFmt(avgSt) : '—';
-    let chip = '', benchLine = '';
+    let cmp = '';
     if (avgSt != null && tda != null) {
       const diff = avgSt - tda, up = diff >= 0;
-      chip = `<span class="wpd-dl ${up ? 'up' : 'dn'}" title="Antigüedad en tienda vs. promedio del cargo en todas las tiendas">${up ? '▲' : '▼'} ${tenureDeltaFmt(diff)} vs tiendas</span>`;
-      benchLine = `<div class="cg-bench"><span class="wpd-bench">prom. tiendas <b>${tenureAvgFmt(tda)}</b></span></div>`;
+      cmp = `<div class="cg-cmp ${up ? 'up' : 'dn'}" title="Antigüedad en tienda vs. promedio del cargo en todas las tiendas">`
+        + `${up ? '▲' : '▼'} ${tenureDeltaFmt(diff)} vs tiendas <span class="bm">(${tenureAvgFmt(tda)})</span></div>`;
     }
-    const refs = `<span class="rk">Concepto</span> ${conc != null ? tenureAvgFmt(conc) : '—'}`
-      + ` · <span class="rk">Grupo</span> ${avgGr != null ? tenureAvgFmt(avgGr) : '—'}`;
     return `<div class="wpd-ten-cg">`
-      + `<div class="cg-top"><span class="cg-n">${esc(cargoLabel(r))}<span class="cc">${grp.length}</span></span>${chip}</div>`
-      + `<div class="cg-mid"><div class="cg-big">${big}<span class="bl">en ${entLbl}</span></div>${benchLine}</div>`
-      + `<div class="cg-refs">${refs}</div>`
+      + `<div class="cg-n">${esc(cargoLabel(r))}<span class="cc">${grp.length}</span></div>`
+      + `<div class="cg-stat"><span class="v">${avgSt != null ? tenureAvgFmt(avgSt) : '—'}</span><span class="k">en ${entLbl}</span></div>`
+      + `<div class="cg-stat grp"><span class="v">${avgGr != null ? tenureAvgFmt(avgGr) : '—'}</span><span class="k">en grupo</span></div>`
+      + cmp
+      + `<div class="cg-refs"><span class="rk">Concepto</span> ${conc != null ? tenureAvgFmt(conc) : '—'}</div>`
       + `</div>`;
   }).join('');
 
-  return `<div class="wpd-card wpd-ten">${head}<div class="wpd-ten-grid">${cols}</div></div>`;
+  // Dos paneles de posición (grupo + concepto), si el RPC respondió.
+  let posPanels = '';
+  const p = STATE.tenurePos;
+  if (p && p.rk_tienda_grupo != null) {
+    posPanels = `<div class="wpd-pos-wrap">`
+      + posPanel('En el grupo', '', p.rk_tienda_grupo, p.rk_grupo_grupo, p.tot_grupo)
+      + posPanel('En el concepto', ' cc', p.rk_tienda_concepto, p.rk_grupo_concepto, p.tot_concepto)
+      + `</div>`;
+  }
+
+  return `<div class="wpd-card wpd-ten">${head}`
+    + `<div class="wpd-ten-body"><div class="wpd-ten-cgs">${cols}</div>${posPanels}</div></div>`;
 }
 function paintDemo() {
   const host = $('#wpDemo');

@@ -658,7 +658,7 @@ async function directory(env, cc, table, deptScope) {
   // Personal (card Antigüedad · Opción C). Solo aplica a tiendas; el promedio
   // en ESTA tienda y la antigüedad de grupo se calculan en el cliente con el
   // roster. Si falla, la card degrada (oculta concepto/chip) sin romper.
-  let tenureBench = null;
+  let tenureBench = null, tenurePos = null;
   if (table === 'store_workers') {
     try {
       const tb = await sb(env, 'rpc/company_tenure_benchmarks', {
@@ -667,6 +667,16 @@ async function directory(env, cc, table, deptScope) {
       tenureBench = Array.isArray(tb) ? tb : null;
     } catch (e) {
       console.log('company_tenure_benchmarks fallo:', String(e && e.message || e));
+    }
+    // v6.111: posición de la tienda (por antigüedad en tienda y en grupo,
+    // dentro del concepto y del grupo) para los dos paneles de la card.
+    try {
+      const tp = await sb(env, 'rpc/company_tenure_position', {
+        method: 'POST', body: JSON.stringify({ p_company_code: cc }),
+      });
+      tenurePos = (Array.isArray(tp) && tp[0]) ? tp[0] : null;
+    } catch (e) {
+      console.log('company_tenure_position fallo:', String(e && e.message || e));
     }
   }
 
@@ -682,6 +692,7 @@ async function directory(env, cc, table, deptScope) {
     departments: deptList,
     cargo_ranks: cargoRanks,
     tenure_bench: tenureBench,
+    tenure_pos: tenurePos,
     meta,
     workers: items,
   });
