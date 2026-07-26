@@ -176,6 +176,63 @@ function ensureStyles() {
     .nr-tbl tbody tr{display:block;border-bottom:1px solid var(--border)!important;padding:11px 0}
     .nr-obs{white-space:normal;max-width:none}
     .nr-fgrid{grid-template-columns:1fr}
+  }
+  /* ===== v6.130: pantalla de Estadisticas ===== */
+  .nrs-back{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12.5px;color:var(--muted);
+     border:1px solid var(--border);background:var(--surface,#fff);border-radius:9px;padding:6px 11px;margin:0 0 14px;cursor:pointer}
+  .nrs-back:hover{background:var(--bg-soft,#f8fafc)}
+  .nrs-kpis{display:flex;gap:12px;flex-wrap:wrap;margin:2px 0 16px}
+  .nrs-kpi{background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;padding:12px 15px;min-width:160px;flex:1 1 160px}
+  .nrs-kpi .l{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--faint,#94a3b8)}
+  .nrs-kpi .v{font-size:24px;font-weight:800;margin-top:2px}
+  .nrs-kpi .s{font-size:11px;color:var(--muted);margin-top:1px}
+  .nrs-kpi.mot{border-top:3px solid var(--muted)}
+  .nrs-kpi .zl{font-size:11px;color:var(--muted);margin-top:8px;padding-top:7px;border-top:1px solid var(--border-soft,#eef1f5)}
+  .nrs-kpi .zl b{color:var(--soft,#334155)}
+  .nrs-kpi.zona .zrow{display:flex;justify-content:space-between;gap:10px;font-size:12.5px;margin-top:6px}
+  .nrs-kpi.zona .zrow:first-of-type{margin-top:8px}
+  .nrs-kpi.zona .zrow b{font-weight:800}.nrs-kpi.zona .zrow.top b{color:#4f46e5}
+  .nrs-kpi.zona .zrow span{color:var(--muted);font-weight:700}
+  .nrs-grid{display:grid;grid-template-columns:1fr 1.35fr;gap:16px;align-items:start}
+  @media(max-width:900px){.nrs-grid{grid-template-columns:1fr}}
+  .nrs-card{background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;padding:15px 16px;margin:0 0 16px}
+  .nrs-card h3{font-size:13px;margin:0 0 12px;font-weight:800;display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .nrs-card h3 .n{font-size:11.5px;color:var(--muted);font-weight:500}
+  .nrs-row{display:grid;grid-template-columns:150px 1fr 30px;align-items:center;gap:10px;margin:0 0 9px;cursor:pointer;border-radius:8px}
+  .nrs-row.static{cursor:default}
+  .nrs-row .l{font-size:12.5px;color:var(--soft,#334155);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .nrs-row .t{height:15px;background:#eef1f6;border-radius:99px;position:relative;overflow:hidden}
+  .nrs-row .f{position:absolute;left:0;top:0;bottom:0;border-radius:99px;background:#4f46e5}
+  .nrs-row .f.g{background:#cbd5e1}
+  .nrs-row .v{font-size:12.5px;font-weight:800;text-align:right;color:var(--ink)}
+  .nrs-row.sel{background:#eef2ff}
+  .nrs-row.sel .l{font-weight:800;color:#4338ca}
+  .nrs-row:not(.static):hover .l{color:#4338ca}
+  .nrs-hint{font-size:11px;color:var(--faint,#94a3b8);margin:2px 0 10px}
+  table.nrs-hm{border-collapse:separate;border-spacing:3px;font-size:12px;width:100%}
+  table.nrs-hm th{font-weight:700;color:var(--muted);font-size:11px;padding:3px 4px;text-align:center;white-space:nowrap}
+  table.nrs-hm th.rowh{text-align:left;color:var(--soft,#334155);font-weight:600;min-width:112px;cursor:pointer}
+  table.nrs-hm th.rowh:hover{color:#4338ca}
+  table.nrs-hm tr.sel th.rowh{color:#4338ca;font-weight:800}
+  table.nrs-hm td{width:40px;height:28px;text-align:center;border-radius:7px;font-weight:800;color:#7c2d12}
+  table.nrs-hm td.z{background:#f8fafc;color:#cbd5e1;font-weight:600}
+  table.nrs-hm td.tot{background:#eef2ff;color:#3730a3}
+  table.nrs-hm tr.trtot th,table.nrs-hm tr.trtot td{color:#3730a3}
+  table.nrs-hm tr.trtot th.rowh{cursor:default;font-weight:800}
+  .nrs-legend{display:flex;gap:7px;align-items:center;font-size:11px;color:var(--muted);margin-top:10px;flex-wrap:wrap}
+  .nrs-legend .sw{width:15px;height:11px;border-radius:3px;display:inline-block}
+  table.nrs-lead{width:100%;border-collapse:collapse;font-size:12.5px}
+  table.nrs-lead td,table.nrs-lead th{padding:7px 8px;border-bottom:1px solid var(--border-soft,#eef1f5);text-align:left}
+  table.nrs-lead tbody tr:last-child td{border-bottom:none}
+  table.nrs-lead th{font-size:11px;color:var(--faint,#94a3b8);text-transform:uppercase;letter-spacing:.04em}
+  table.nrs-lead .mn{font-weight:700}table.nrs-lead .sz{color:var(--soft,#334155)}table.nrs-lead .nn{text-align:right;font-weight:800}
+  .nrs-tie{font-size:10.5px;color:#b45309;background:#fff7ed;border:1px solid #fde7c8;border-radius:5px;padding:0 6px;margin-left:6px;white-space:nowrap}
+  .nrs-note{font-size:11.5px;color:var(--muted);margin:12px 0 0;background:var(--bg-soft,#fafbff);border:1px dashed var(--border);border-radius:9px;padding:9px 12px;line-height:1.55}
+  .nrs-note b{color:var(--soft,#334155)}
+  @media(max-width:560px){
+    .nrs-row{grid-template-columns:120px 1fr 28px}
+    table.nrs-hm{font-size:11px}
+    table.nrs-hm td{width:32px;height:26px}
   }`;
   document.head.appendChild(css);
 }
@@ -350,6 +407,7 @@ export async function renderNoRehire(user) {
         <p>Personas que el sistema marca como no aptas para recontratar. Se sincroniza a diario.</p>
       </div>
       <div style="display:flex;gap:8px">
+        <button class="btn" id="nrStats"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg> Ver estadísticas</button>
         <button class="btn" id="nrXlsx">Excel</button>
         <button class="btn" id="nrCsv">CSV</button>
         <button class="btn" id="nrTxt">TXT</button>
@@ -357,6 +415,7 @@ export async function renderNoRehire(user) {
     </div>
     <div id="nrBody"><div class="nr-loading">Cargando la lista…</div></div>
   `;
+  $('#nrStats')?.addEventListener('click', () => renderNoRehireStats(user));
 
   const r = await api(user, { action: 'list' });
   const body = $('#nrBody');
@@ -476,6 +535,192 @@ export async function renderNoRehire(user) {
     $('#nrCsv')?.addEventListener('click', () => expCsv(visibleRows(rows)));
     $('#nrTxt')?.addEventListener('click', () => expTxt(visibleRows(rows)));
   }
+}
+
+/* =====================================================================
+   v6.130 — ESTADISTICAS DE NO REEMPLEABLES (pantalla aparte)
+   Se llega con el boton "Ver estadisticas" de la lista y se vuelve con
+   "← Volver a la lista". TODO el calculo vive en la RPC de Postgres
+   nomina_v2.no_rehire_stats (via accion 'stats' del endpoint): nada de
+   numeros hardcodeados. La zona/subzona sale del ULTIMO egreso de cada
+   persona (ax_egresos → companies → zones/subzones); quien no tiene egreso
+   localizable cae en "Sin zona", que se cuenta aparte para no inventarle
+   ubicacion. Solo VIGENTES (igual que los KPI de la lista).
+
+   La card de Motivos y las filas del heatmap son clicables: seleccionan un
+   motivo y el panel "Detalle por subzona" se actualiza (arranca en el
+   motivo lider). Barras con relleno absoluto (no <span> con width, que en
+   algunos visores queda gris). Sin escapes octales en el CSS/HTML. */
+async function renderNoRehireStats(user) {
+  ensureStyles();
+  const main = $('#pnlMain');
+  if (!main) return;
+  main.innerHTML = `
+    <button class="nrs-back" id="nrsBack">← Volver a la lista</button>
+    <div class="nr-head"><div>
+      <h2>Estadísticas · No reempleables</h2>
+      <p>Dónde se concentra cada motivo, por zona y subzona. Se calcula sobre los vigentes, tomando el último egreso de cada persona.</p>
+    </div></div>
+    <div id="nrsBody"><div class="nr-loading">Calculando…</div></div>`;
+  $('#nrsBack')?.addEventListener('click', () => renderNoRehire(user));
+
+  const r = await api(user, { action: 'stats' });
+  const body = $('#nrsBody');
+  if (!body) return;   // navegó a otra vista mientras cargaba
+  if (!r || !r.ok) {
+    body.innerHTML = `<div class="nr-card"><div class="nr-loading">${esc((r && r.error) || 'No se pudo cargar.')}</div></div>`;
+    return;
+  }
+
+  const st = r.stats || {};
+  const total = st.total || 0;
+  const motivos = st.motivos || [];
+  const zonas = st.zonas || [];
+  const byZona = st.by_zona || [];
+  const bySub = st.by_subzona || [];
+  const sinZona = st.sin_zona || 0;
+
+  if (!total || !motivos.length) {
+    body.innerHTML = `<div class="nr-card"><div class="nr-empty">
+      <div class="big">📊</div><div class="t">Sin datos todavía</div>
+      <div class="s">No hay personas vigentes en la lista para analizar.</div></div></div>`;
+    return;
+  }
+
+  const pct = (n, d) => d ? Math.round(n / d * 100) : 0;
+  const MOTCOL = { 1: '#be123c', 2: '#c2410c', 3: '#b91c1c', 4: '#6d28d9', 5: '#a16207', 6: '#1d4ed8', 7: '#4338ca', 8: '#a21caf' };
+  const colOf = v => MOTCOL[Number(v)] || '#475569';
+  const shortPlace = p => String(p).split(' · ').pop();
+
+  // Zona líder de un motivo (excluye "Sin zona": una ubicación desconocida
+  // no lidera nada). Devuelve la zona real con más casos de ese motivo.
+  const zonaLeader = v => byZona
+    .filter(z => String(z.mval) === String(v) && !z.sinzona)
+    .sort((a, b) => b.cnt - a.cnt)[0] || null;
+
+  // Subzona líder de un motivo, con detección de empate.
+  const subLeader = v => {
+    const rows = bySub.filter(s => String(s.mval) === String(v)).sort((a, b) => b.cnt - a.cnt);
+    if (!rows.length) return null;
+    const top = rows[0];
+    const ties = rows.filter(s => s.cnt === top.cnt).slice(1).map(s => s.place);
+    return { place: top.place, cnt: top.cnt, ties };
+  };
+
+  const maxMot = Math.max(1, ...motivos.map(m => m.cnt));
+
+  /* ---- KPIs: Vigentes + top 3 motivos (con su zona líder) + zonas ---- */
+  const kpisMot = motivos.slice(0, 3).map((m, i) => {
+    const zl = zonaLeader(m.mval);
+    const zlTxt = zl
+      ? `Zona líder: <b>${esc(zl.zona)}</b> · ${pct(zl.cnt, m.cnt)}% del motivo`
+      : 'Sin zona localizable';
+    return `<div class="nrs-kpi mot" style="border-top-color:${colOf(m.mval)}">
+      <div class="l">${i + 1}º ${esc(m.label)}</div>
+      <div class="v" style="color:${colOf(m.mval)}">${m.cnt}</div>
+      <div class="s">${pct(m.cnt, total)}% del total</div>
+      <div class="zl">${zlTxt}</div>
+    </div>`;
+  }).join('');
+  const zonaTile = `<div class="nrs-kpi zona"><div class="l">Zonas con más casos</div>
+    ${zonas.slice(0, 3).map((z, i) => `<div class="zrow ${i === 0 ? 'top' : ''}"><b>${esc(z.zona)}</b><span>${z.cnt} · ${pct(z.cnt, total)}%</span></div>`).join('')}
+    ${sinZona ? `<div class="zrow"><b style="color:var(--muted);font-weight:700">Sin zona</b><span>${sinZona} · ${pct(sinZona, total)}%</span></div>` : ''}
+  </div>`;
+
+  /* ---- barras de Motivos (clicables) ---- */
+  const motBars = motivos.map(m => `
+    <div class="nrs-row" data-mval="${esc(String(m.mval))}">
+      <span class="l" title="${esc(m.label)}">${esc(m.label)}</span>
+      <span class="t"><span class="f" style="width:${Math.max(2, Math.round(m.cnt / maxMot * 100))}%;background:${colOf(m.mval)}"></span></span>
+      <span class="v">${m.cnt}</span>
+    </div>`).join('');
+
+  /* ---- heatmap Motivo × Zona (columnas: zonas reales + Sin zona) ---- */
+  const cols = zonas.map(z => z.zona).concat(sinZona ? ['Sin zona'] : []);
+  const cellMap = new Map();
+  byZona.forEach(z => cellMap.set(String(z.mval) + '|' + z.zona, z.cnt));
+  let maxCell = 1;
+  motivos.forEach(m => cols.forEach(c => { const v = cellMap.get(String(m.mval) + '|' + c) || 0; if (v > maxCell) maxCell = v; }));
+  const CELLBG = { c1: '#fff7ed', c2: '#fed7aa', c3: '#fdba74', c4: '#fb923c', c5: '#ea580c' };
+  const cellClass = v => { if (!v) return 'z'; const r = v / maxCell; return r <= .12 ? 'c1' : r <= .28 ? 'c2' : r <= .55 ? 'c3' : r <= .8 ? 'c4' : 'c5'; };
+  const cellStyle = cl => cl === 'z' ? '' : `background:${CELLBG[cl]};${(cl === 'c4' || cl === 'c5') ? 'color:#fff' : ''}`;
+  const abbr = z => z.length > 10 ? z.slice(0, 4) + '.' : z;
+  const colTotal = {}; cols.forEach(c => colTotal[c] = 0);
+  const hmRows = motivos.map(m => {
+    const tds = cols.map(c => {
+      const v = cellMap.get(String(m.mval) + '|' + c) || 0; colTotal[c] += v;
+      const cl = cellClass(v);
+      return v ? `<td class="${cl}" style="${cellStyle(cl)}">${v}</td>` : '<td class="z">·</td>';
+    }).join('');
+    return `<tr data-mval="${esc(String(m.mval))}"><th class="rowh" title="${esc(m.label)}">${esc(m.label)}</th>${tds}<td class="tot">${m.cnt}</td></tr>`;
+  }).join('');
+  const hmHead = `<tr><th class="rowh">Motivo</th>${cols.map(c => `<th title="${esc(c)}">${esc(abbr(c))}</th>`).join('')}<th>Total</th></tr>`;
+  const hmFoot = `<tr class="trtot"><th class="rowh">Total</th>${cols.map(c => `<td class="tot">${colTotal[c]}</td>`).join('')}<td class="tot">${total}</td></tr>`;
+
+  /* ---- tabla "subzona líder por motivo" ---- */
+  const leadRows = motivos.map(m => {
+    const sl = subLeader(m.mval);
+    if (!sl) return `<tr><td class="mn">${esc(m.label)}</td><td class="sz" style="color:var(--muted)">—</td><td class="nn">0</td></tr>`;
+    const tie = sl.ties.length
+      ? `<span class="nrs-tie">empata ${esc(shortPlace(sl.ties[0]))}${sl.ties.length > 1 ? ' +' + (sl.ties.length - 1) : ''}</span>`
+      : '';
+    return `<tr><td class="mn">${esc(m.label)}</td><td class="sz">${esc(sl.place)}${tie}</td><td class="nn">${sl.cnt}</td></tr>`;
+  }).join('');
+
+  body.innerHTML = `
+    <div class="nrs-kpis">
+      <div class="nrs-kpi"><div class="l">Vigentes</div><div class="v">${total}</div><div class="s">en la lista hoy</div></div>
+      ${kpisMot}${zonaTile}
+    </div>
+    <div class="nrs-grid">
+      <div class="nrs-card">
+        <h3>Motivos <span class="n">${total} vigentes</span></h3>
+        <div class="nrs-hint">Toca un motivo para ver su detalle por subzona →</div>
+        <div id="nrsMot">${motBars}</div>
+      </div>
+      <div class="nrs-card">
+        <h3>¿Dónde ocurre? · Motivo × Zona <span class="n">color = cantidad</span></h3>
+        <table class="nrs-hm"><thead>${hmHead}</thead><tbody id="nrsHm">${hmRows}${hmFoot}</tbody></table>
+        <div class="nrs-legend">Menos <span class="sw" style="background:#fff7ed"></span><span class="sw" style="background:#fed7aa"></span><span class="sw" style="background:#fdba74"></span><span class="sw" style="background:#fb923c"></span><span class="sw" style="background:#ea580c"></span> Más · <span style="color:#cbd5e1">·</span> = 0</div>
+        ${sinZona ? `<div class="nrs-note"><b>“Sin zona” (${sinZona}):</b> personas sin un egreso localizable en el sistema, así que no se les puede asignar tienda. Se cuentan aparte para no inventarles una ubicación.</div>` : ''}
+      </div>
+    </div>
+    <div class="nrs-grid">
+      <div class="nrs-card">
+        <h3>Subzona donde más ocurre cada motivo</h3>
+        <table class="nrs-lead"><thead><tr><th>Motivo</th><th>Subzona líder</th><th style="text-align:right">Casos</th></tr></thead><tbody>${leadRows}</tbody></table>
+      </div>
+      <div class="nrs-card">
+        <h3 id="nrsDetTitle">Detalle por subzona</h3>
+        <div id="nrsDet"></div>
+      </div>
+    </div>`;
+
+  /* ---- panel de detalle interactivo ---- */
+  const detTitle = $('#nrsDetTitle'), det = $('#nrsDet');
+  function showDetail(v) {
+    const rows = bySub.filter(s => String(s.mval) === String(v)).sort((a, b) => b.cnt - a.cnt);
+    const m = motivos.find(x => String(x.mval) === String(v));
+    if (detTitle) detTitle.innerHTML = `Detalle · ${esc(m ? m.label : '')} por subzona <span class="n">${m ? m.cnt : 0} casos</span>`;
+    if (det) {
+      if (!rows.length) {
+        det.innerHTML = '<div class="nrs-hint">Sin subzonas para este motivo.</div>';
+      } else {
+        const mx = Math.max(1, ...rows.map(x => x.cnt));
+        det.innerHTML = rows.map(x => `
+          <div class="nrs-row static">
+            <span class="l" title="${esc(x.place)}">${esc(x.place)}</span>
+            <span class="t"><span class="f${x.sinzona ? ' g' : ''}" style="width:${Math.max(2, Math.round(x.cnt / mx * 100))}%${x.sinzona ? '' : ';background:' + colOf(v)}"></span></span>
+            <span class="v">${x.cnt}</span>
+          </div>`).join('');
+      }
+    }
+    document.querySelectorAll('#nrsMot .nrs-row').forEach(el => el.classList.toggle('sel', el.dataset.mval === String(v)));
+    document.querySelectorAll('#nrsHm tr[data-mval]').forEach(el => el.classList.toggle('sel', el.dataset.mval === String(v)));
+  }
+  $('#nrsMot')?.addEventListener('click', e => { const row = e.target.closest('.nrs-row[data-mval]'); if (row) showDetail(row.dataset.mval); });
+  $('#nrsHm')?.addEventListener('click', e => { const tr = e.target.closest('tr[data-mval]'); if (tr) showDetail(tr.dataset.mval); });
+  showDetail(motivos[0].mval);
 }
 
 /* ===== v5.75: LA CONFIGURACION VIVE EN SINCRONIZACION → CONFIGURAR =====

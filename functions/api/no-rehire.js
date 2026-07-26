@@ -483,6 +483,21 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, rows: out, config: (cfgRows && cfgRows[0]) || null });
     }
 
+    /* ---------- stats (v6.130): estadísticas de la lista ----------
+       Mismo gate que la lista (view.norehire). Toda la agregación vive en
+       una RPC de Postgres (nomina_v2.no_rehire_stats): motivos, zonas y el
+       cruce motivo×zona/subzona derivado del ÚLTIMO egreso de cada persona
+       (ax_egresos → companies → zones/subzones). Los que no tienen egreso
+       localizable caen en `sin_zona`. Se calcula solo sobre VIGENTES
+       (removed_at is null), igual que los KPI de la lista. */
+    if (action === 'stats') {
+      if (!can(actor, 'view.norehire')) {
+        return json({ ok: false, error: 'No tienes permiso para ver los no reempleables (view.norehire).' }, 403);
+      }
+      const stats = await sb(env, 'rpc/no_rehire_stats', { method: 'POST', body: '{}' });
+      return json({ ok: true, stats: stats || {} });
+    }
+
     if (action === 'get_config') {
       if (actor.role !== 'superadmin') return json({ ok: false, error: 'Solo superadmin.' }, 403);
       const cfg = await sb(env, 'no_rehire_config?id=eq.1&select=*');
