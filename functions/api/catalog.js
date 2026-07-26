@@ -178,6 +178,22 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, types: out, cutoff_time: cutoffTime, global_margin: globalMargin });
     }
 
+    // --- Historia de UNA empresa (v6.120): concepto/estatus en el tiempo,
+    // colapsada por cambios (rpc get_company_history). Gate por alcance: la
+    // empresa debe estar en el alcance del usuario (superadmin = todas). ---
+    if (body.action === 'company_history') {
+      const alias = String(body.company_code || body.alias || '').trim();
+      if (!alias) return json({ ok: false, error: 'Falta la empresa.' }, 400);
+      const allow = await allowedSet(env, user);
+      if (allow !== null && !allow.has(alias)) {
+        return json({ ok: false, error: 'No tienes acceso a esa empresa.' }, 403);
+      }
+      const events = await sb(env, 'rpc/get_company_history', {
+        method: 'POST', body: JSON.stringify({ p_alias: alias }),
+      });
+      return json({ ok: true, alias, events: events || [] });
+    }
+
     const allowed = await allowedSet(env, user); // null=todas | Set
 
     // v4.72: fin del shadow view.empresas aqui. Este listado es

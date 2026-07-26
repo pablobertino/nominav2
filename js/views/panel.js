@@ -113,6 +113,7 @@ const I = {
   chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><rect x="7" y="12" width="3" height="6"/><rect x="12" y="8" width="3" height="10"/><rect x="17" y="5" width="3" height="13"/></svg>',
   bizreport: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l5-4v18"/><path d="M19 21V11l-5-4"/><path d="M9 9v0M9 13v0M9 17v0"/></svg>',
   bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
+  histclock: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 3"/></svg>',
   megaphone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 13v-2z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>',
   wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
   pin: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
@@ -603,7 +604,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.119</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.120</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1501,7 +1502,7 @@ async function viewTiendas(user) {
         <td>${personalCell(c)}</td>
         <td>${statusPill(c.status)}${axModCell(c.axModifiedAt)}</td>
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
-        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" title="Personal / fichas" style="margin-right:4px">${I.photo} Personal</button>${(canDepartments && NON_STORE_TYPES.has(c.type)) ? `<button class="btn btn-mini" data-dep-code="${c.code}" title="Departamentos" style="margin-right:4px">${I.grid} Deptos${c.deptCount ? ` <span class="dep-count">${c.deptCount}</span>` : ''}</button>` : ''}${canReport ? `<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}" title="Reportar" style="margin-right:4px">${I.bizreport} Reportar</button>` : ''}<button class="btn btn-mini" data-addr-code="${c.code}" data-addr-name="${(c.name||'').replace(/"/g,'')}" title="${canEditCompany ? 'Editar direccion y contacto' : 'Ver direccion y contacto'}">${I.pin} Direcci\u00f3n</button></td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" title="Personal / fichas" style="margin-right:4px">${I.photo} Personal</button><button class="btn btn-mini" data-hist-code="${c.code}" data-hist-name="${(c.name||'').replace(/"/g,'')}" title="Historia: concepto y estatus en el tiempo" style="margin-right:4px">${I.histclock} Historia</button>${(canDepartments && NON_STORE_TYPES.has(c.type)) ? `<button class="btn btn-mini" data-dep-code="${c.code}" title="Departamentos" style="margin-right:4px">${I.grid} Deptos${c.deptCount ? ` <span class="dep-count">${c.deptCount}</span>` : ''}</button>` : ''}${canReport ? `<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}" title="Reportar" style="margin-right:4px">${I.bizreport} Reportar</button>` : ''}<button class="btn btn-mini" data-addr-code="${c.code}" data-addr-name="${(c.name||'').replace(/"/g,'')}" title="${canEditCompany ? 'Editar direccion y contacto' : 'Ver direccion y contacto'}">${I.pin} Direcci\u00f3n</button></td>
       </tr>`;
   }
 
@@ -1532,6 +1533,7 @@ async function viewTiendas(user) {
     const nameEsc = (c.name || '').replace(/"/g, '');
     // Acciones: Personal (principal, con texto) + iconos segun permisos.
     const iconBtns = []
+      .concat([`<button class="btn hc-ib" data-hist-code="${c.code}" data-hist-name="${nameEsc}" title="Historia: concepto y estatus en el tiempo" aria-label="Historia">${I.histclock}</button>`])
       .concat(canReport
         ? [`<button class="btn hc-ib" data-report-code="${c.code}" data-report-name="${nameEsc}" title="Reportar" aria-label="Reportar">${I.bizreport}</button>`]
         : [])
@@ -1595,6 +1597,11 @@ async function viewTiendas(user) {
         const c = CATALOG.companies.find(x => x.code === b.dataset.depCode);
         if (!c) return;
         renderDepartments(user, c, () => { navigate('tiendas', user); });
+      }));
+    host.querySelectorAll('[data-hist-code]').forEach(b =>
+      b.addEventListener('click', () => {
+        const c = CATALOG.companies.find(x => x.code === b.dataset.histCode);
+        companyHistoryModal(user, c || { code: b.dataset.histCode, name: b.dataset.histName });
       }));
   }
 
@@ -1708,6 +1715,94 @@ async function exportTiendas(fmt, rows) {
     }
     return;
   }
+}
+
+/* ---------- Historia de la empresa (v6.120) ----------
+   Modal con la trayectoria de UNA empresa en el tiempo (concepto + estatus),
+   colapsada por cambios reales (rpc get_company_history via /api/catalog).
+   Cada nodo dice que cambio. Tiene "Volver" y ✕. Datos del histórico
+   (tabla company_history), sincronizado tras el catalogo de empresas. */
+function companyHistoryDur(d) {
+  d = Number(d) || 0;
+  if (d < 31) return `${d} d`;
+  const m = Math.floor(d / 30.4);
+  if (m < 12) return `${m} m`;
+  const y = Math.floor(m / 12), mm = m % 12;
+  return `${y} a${mm ? ` ${mm} m` : ''}`;
+}
+function companyHistoryHtml(evs) {
+  const chip = t => `<span class="chist-con">${esc(t || '—')}</span>`;
+  const cur = evs.find(e => e.vigente) || evs[evs.length - 1];
+  const nConc = new Set(evs.map(e => e.concepto).filter(Boolean)).size;
+  const nodes = evs.map((e, i) => {
+    let chg = '';
+    if (i === 0) chg = 'Primer registro conocido.';
+    else if (e.concepto_cambio && e.estatus_cambio) chg = `Cambió de concepto (${esc(e.concepto_prev || '—')} → ${esc(e.concepto || '—')}) y de estatus.`;
+    else if (e.concepto_cambio) chg = `Cambió de concepto (${esc(e.concepto_prev || '—')} → ${esc(e.concepto || '—')}).`;
+    else if (e.estatus_cambio) chg = `Cambió de estatus (${esc(e.estatus_prev || '—')} → ${esc(e.status || '—')}).`;
+    return `<div class="chist-ev${e.vigente ? ' vig' : ''}">
+      <div class="chist-dot"></div>
+      <div class="chist-date">${fmtDate(e.desde, true)}<span class="chist-dur">· ${e.vigente ? 'vigente' : companyHistoryDur(e.dias)}</span></div>
+      <div class="chist-tags">${chip(e.concepto)} ${statusPill(e.status)}</div>
+      ${chg ? `<div class="chist-chg">${chg}</div>` : ''}
+    </div>`;
+  }).join('');
+  return `
+    <div class="chist-now">Hoy: ${chip(cur.concepto)} ${statusPill(cur.status)} <span class="muted">· desde el ${fmtDate(cur.desde, true)}</span></div>
+    <p class="chist-cap"><b>${evs.length} ${evs.length === 1 ? 'tramo' : 'cambios'}</b> · ${nConc} concepto${nConc === 1 ? '' : 's'} distinto${nConc === 1 ? '' : 's'} en el tiempo</p>
+    <div class="chist-tl">${nodes}</div>
+    <div class="chist-foot">Se agrupan los tramos consecutivos con el mismo concepto y estatus (reprocesos de la sincronización); se listan solo los cambios reales.</div>`;
+}
+async function companyHistoryModal(user, c) {
+  const code = c.code, name = c.name || '';
+  openModal(`
+    <style>
+      .chist-sub{font-size:13px;color:var(--muted,#64748b);margin:-4px 0 12px}
+      #chistBody{max-height:58vh;overflow:auto}
+      .chist-now{display:flex;align-items:center;gap:7px;flex-wrap:wrap;font-size:12.5px;color:var(--muted,#64748b);background:#fafbff;border:1px solid #eef1f6;border-radius:9px;padding:8px 11px}
+      .chist-cap{font-size:12px;color:var(--muted,#64748b);margin:12px 2px}
+      .chist-con{display:inline-flex;align-items:center;border-radius:7px;padding:2px 9px;font-size:12px;font-weight:700;color:#0e7490;background:#ecfeff;border:1px solid #cffafe}
+      .chist-tl{padding-left:6px}
+      .chist-ev{position:relative;padding:0 0 18px 24px;border-left:2px solid #e6eaf0;margin-left:6px}
+      .chist-ev:last-child{border-left-color:transparent;padding-bottom:2px}
+      .chist-dot{position:absolute;left:-8px;top:2px;width:13px;height:13px;border-radius:50%;background:#fff;border:2.5px solid #94a3b8}
+      .chist-ev.vig .chist-dot{border-color:#0f766e;box-shadow:0 0 0 4px #e7f7ee}
+      .chist-date{font-size:12px;font-weight:800;color:#0f172a}
+      .chist-dur{font-weight:600;color:#94a3b8;margin-left:7px;font-size:11px}
+      .chist-tags{display:flex;align-items:center;gap:7px;flex-wrap:wrap;margin-top:6px}
+      .chist-chg{font-size:11.5px;color:#64748b;margin-top:5px}
+      .chist-foot{margin-top:8px;padding:9px 11px;background:#fafbff;border:1px dashed #e6eaf0;border-radius:9px;font-size:11px;color:#94a3b8}
+    </style>
+    <div class="modal-head"><span>Historia · ${esc(code)}</span><button class="modal-x" id="mX">✕</button></div>
+    <div class="chist-sub">${esc(name)} · concepto y estatus en el tiempo</div>
+    <div id="chistBody"><div class="pnl-loading" style="padding:18px">Cargando historia…</div></div>
+    <div class="modal-actions"><button class="btn" id="mBack">Volver</button></div>
+  `);
+  const close = () => closeModal();
+  const x = document.getElementById('mX'); if (x) x.addEventListener('click', close);
+  const bk = document.getElementById('mBack'); if (bk) bk.addEventListener('click', close);
+
+  let data;
+  try {
+    const res = await fetch('/api/catalog', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'company_history', company_code: code, user }),
+    });
+    data = await res.json();
+  } catch (e) { data = { ok: false, error: String(e && e.message || e) }; }
+
+  const body = document.getElementById('chistBody');
+  if (!body) return;   // modal cerrado antes de responder
+  if (!data.ok) {
+    body.innerHTML = `<p class="muted" style="padding:6px 2px">No se pudo cargar la historia: ${esc(data.error || 'error')}</p>`;
+    return;
+  }
+  const evs = data.events || [];
+  if (!evs.length) {
+    body.innerHTML = `<p class="muted" style="padding:6px 2px">Sin historia registrada para esta empresa todavía. Se llena tras sincronizar el catálogo.</p>`;
+    return;
+  }
+  body.innerHTML = companyHistoryHtml(evs);
 }
 
 /* Modal para editar datos de contacto (correo + teléfono) de una compañía */
