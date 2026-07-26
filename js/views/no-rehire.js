@@ -921,6 +921,12 @@ export async function renderNoRehireFicha(user, idNumber, onBack) {
         ${m.fiscal_address ? F('Dirección fiscal', m.fiscal_address, true) : ''}
       </div></div>` : '';
 
+  // v6.138: Historia laboral va PRIMERO (bajo el encabezado), luego Identidad.
+  const histSec = `<div class="nrf-sec">
+        <div class="nrf-sec-h">Historia laboral <span style="font-weight:600;text-transform:none;letter-spacing:0;color:var(--muted)">${traj.length} contrato${traj.length === 1 ? '' : 's'}${sm.ultima_empresa ? ` · última: ${esc(sm.ultima_empresa)}` : ''}</span></div>
+        ${trajSec}
+      </div>`;
+
   body.innerHTML = `
     ${topbar}
     <div class="nrf-main">
@@ -937,6 +943,8 @@ export async function renderNoRehireFicha(user, idNumber, onBack) {
           ${f.notes ? `<div class="nrf-obs"><b>Observaciones:</b> ${esc(f.notes)}</div>` : ''}
         </div>
       </div>
+
+      ${histSec}
 
       <div class="nrf-sec">
         <div class="nrf-sec-h">Identidad</div>
@@ -959,11 +967,6 @@ export async function renderNoRehireFicha(user, idNumber, onBack) {
           ${f.removed_at ? F('Salió de la lista', fmtDate(f.removed_at)) : ''}
         </div>
       </div>` : ''}
-
-      <div class="nrf-sec">
-        <div class="nrf-sec-h">Historia laboral <span style="font-weight:600;text-transform:none;letter-spacing:0;color:var(--muted)">${traj.length} contrato${traj.length === 1 ? '' : 's'}${sm.ultima_empresa ? ` · última: ${esc(sm.ultima_empresa)}` : ''}</span></div>
-        ${trajSec}
-      </div>
 
       ${cargoSec}${bancoSec}${contactoSec}
       ${!m ? '<div class="nrf-sec"><div class="nrf-empty">Es un <b>egresado</b>: no está en el maestro activo, así que el sistema no conserva sus datos bancarios ni de contacto. Lo que sí guarda es su <b>historia laboral</b> (arriba).</div></div>' : ''}
