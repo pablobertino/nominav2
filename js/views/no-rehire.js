@@ -905,7 +905,7 @@ export async function renderNoRehireFicha(user, idNumber, onBack) {
   }).join('')}</div>` : '';
 
   const trajSec = traj.length
-    ? `${statsHtml}<details class="nrf-tlwrap"${traj.length <= 6 ? ' open' : ''}><summary>Ver trayectoria completa (${traj.length})</summary>${tl}</details>`
+    ? `${statsHtml}<details class="nrf-tlwrap"><summary>Ver trayectoria completa (${traj.length})</summary>${tl}</details>`
     : '<div class="nrf-empty">Sin historia laboral registrada en el sistema.</div>';
 
   // Secciones de datos del maestro (solo si la persona está en el maestro).

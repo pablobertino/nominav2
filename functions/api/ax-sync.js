@@ -118,6 +118,8 @@ export async function onRequestPost({ request, env }) {
           method: 'POST', body: JSON.stringify({ p_empleos: empleos, p_asignaciones: asignaciones }),
         });
         const ap = await sb(env, 'rpc/ax_egresos_apply', { method: 'POST', body: '{}' });
+        // v6.135: refrescar la vista de Egresados (mejor esfuerzo; no tumba la corrida).
+        await sb(env, 'rpc/refresh_mv_egresados', { method: 'POST', body: '{}' }).catch(() => null);
         let empresas = null;
         try {
           const cat = await axGet(emUrl, key, null);
@@ -207,6 +209,7 @@ export async function onRequestPost({ request, env }) {
     // explicito de la API, jamas por ausencia (regla sync-roster v5.31).
     if (action === 'egresos_apply') {
       const up = await sb(env, 'rpc/ax_egresos_apply', { method: 'POST', body: '{}' });
+      await sb(env, 'rpc/refresh_mv_egresados', { method: 'POST', body: '{}' }).catch(() => null);   // v6.135
       return json({ ok: true, apply: up || null });
     }
 

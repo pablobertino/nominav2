@@ -68,6 +68,10 @@ function ensureStyles() {
   .eg-head p{margin:3px 0 0;color:var(--muted);font-size:13px;max-width:760px}
   .eg-filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:15px 0 0}
   .eg-filters input[type=text]{font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:9px;background:var(--surface,#fff);color:var(--ink);width:280px;max-width:100%}
+  .eg-sel{font:inherit;font-size:12.5px;padding:8px 11px;border:1px solid var(--border);border-radius:9px;background:#fff;color:var(--soft)}
+  .eg-btn{font:inherit;font-size:13px;font-weight:600;padding:8px 18px;border:1px solid var(--accent,#2563eb);border-radius:9px;background:var(--accent,#2563eb);color:#fff;cursor:pointer}
+  .eg-btn:hover{filter:brightness(.95)}
+  .eg-empty b{color:var(--ink)}
   .eg-count{font-size:12.5px;color:var(--muted)}
   .eg-card{background:var(--card,#fff);border:1px solid var(--border);border-radius:13px;margin-top:13px;overflow:hidden}
   .eg-tbl{width:100%;border-collapse:collapse;font-size:13px}
@@ -100,7 +104,17 @@ function ensureStyles() {
   document.head.appendChild(css);
 }
 
-const STATE = { q: '', offset: 0, total: 0, rows: [] };
+/* Tiempo de egresado: días desde el último egreso [min, max). */
+const TIMES = [
+  { v: '', lbl: 'Cualquier tiempo', min: null, max: null },
+  { v: '0-30', lbl: 'Menos de 1 mes', min: 0, max: 30 },
+  { v: '30-90', lbl: '1 a 3 meses', min: 30, max: 90 },
+  { v: '90-180', lbl: '3 a 6 meses', min: 90, max: 180 },
+  { v: '180-365', lbl: '6 a 12 meses', min: 180, max: 365 },
+  { v: '365-', lbl: 'Más de 1 año', min: 365, max: null },
+];
+
+const STATE = { q: '', time: '', minDays: null, maxDays: null, offset: 0, total: 0, rows: [], queried: false };
 
 function rowHtml(r) {
   const ced = cedStr(r);
@@ -163,16 +177,20 @@ function paint(user) {
       openWorkerLightbox(r.thumb_url, `${r.full_name || ''} · ${cedStr(r)}`, `${r.id_number}.jpg`);
       return;
     }
-    renderNoRehireFicha(user, r.id_number, () => renderEgresados(user));
+    renderNoRehireFicha(user, r.id_number, () => renderEgresados(user, { restore: true }));
   });
   $('#egPrev')?.addEventListener('click', () => { STATE.offset = Math.max(0, STATE.offset - PAGE); load(user); });
   $('#egNext')?.addEventListener('click', () => { STATE.offset += PAGE; load(user); });
 }
 
 async function load(user) {
+  STATE.queried = true;
   const body = $('#egBody');
-  if (body) body.innerHTML = '<div class="eg-loading">Cargando egresados…</div>';
-  const r = await api(user, { action: 'list', q: STATE.q, offset: STATE.offset, limit: PAGE });
+  if (body) body.innerHTML = '<div class="eg-loading">Consultando egresados…</div>';
+  const r = await api(user, {
+    action: 'list', q: STATE.q, min_days: STATE.minDays, max_days: STATE.maxDays,
+    offset: STATE.offset, limit: PAGE,
+  });
   if (!$('#egBody')) return;   // navegó a otra vista
   const cnt = $('#egCount');
   if (!r || !r.ok) {
@@ -186,8 +204,9 @@ async function load(user) {
   paint(user);
 }
 
-export async function renderEgresados(user) {
+export async function renderEgresados(user, opts) {
   ensureStyles();
+  const restore = !!(opts && opts.restore && STATE.queried);
   $('#pnlMain').innerHTML = `
     <div class="eg-head">
       <h2>Egresados</h2>
@@ -195,16 +214,25 @@ export async function renderEgresados(user) {
     </div>
     <div class="eg-filters">
       <input type="text" id="egQ" placeholder="Buscar por cédula o nombre" value="${esc(STATE.q)}">
+      <select class="eg-sel" id="egTime">${TIMES.map(o => `<option value="${o.v}" ${o.v === STATE.time ? 'selected' : ''}>Tiempo de egresado: ${esc(o.lbl)}</option>`).join('')}</select>
+      <button class="eg-btn" id="egGo">Consultar</button>
       <span class="eg-count" id="egCount"></span>
     </div>
-    <div id="egBody"><div class="eg-loading">Cargando egresados…</div></div>`;
+    <div id="egBody">${restore
+      ? '<div class="eg-loading">Consultando egresados…</div>'
+      : `<div class="eg-card"><div class="eg-empty">Elegí el <b>tiempo de egresado</b> o escribí una búsqueda y tocá <b>Consultar</b>.<br>
+          <span style="font-size:12px">Son muchos egresados, por eso no se cargan todos de una: filtrá y consultá.</span></div></div>`}</div>`;
 
-  let t = null;
-  $('#egQ')?.addEventListener('input', e => {
-    clearTimeout(t);
-    const v = e.target.value;
-    t = setTimeout(() => { STATE.q = v.trim(); STATE.offset = 0; load(user); }, 350);
-  });
+  const run = () => {
+    STATE.q = ($('#egQ')?.value || '').trim();
+    const sel = TIMES.find(o => o.v === ($('#egTime')?.value || '')) || TIMES[0];
+    STATE.time = sel.v; STATE.minDays = sel.min; STATE.maxDays = sel.max;
+    STATE.offset = 0;
+    load(user);
+  };
+  $('#egGo')?.addEventListener('click', run);
+  $('#egQ')?.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+  $('#egTime')?.addEventListener('change', run);
 
-  await load(user);
+  if (restore) await load(user);
 }
