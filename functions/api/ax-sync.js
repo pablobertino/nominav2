@@ -118,8 +118,9 @@ export async function onRequestPost({ request, env }) {
           method: 'POST', body: JSON.stringify({ p_empleos: empleos, p_asignaciones: asignaciones }),
         });
         const ap = await sb(env, 'rpc/ax_egresos_apply', { method: 'POST', body: '{}' });
-        // v6.135: refrescar la vista de Egresados (mejor esfuerzo; no tumba la corrida).
+        // v6.135/v6.137: refrescar las vistas materializadas (mejor esfuerzo; no tumban la corrida).
         await sb(env, 'rpc/refresh_mv_egresados', { method: 'POST', body: '{}' }).catch(() => null);
+        await sb(env, 'rpc/refresh_mv_mov_eventos', { method: 'POST', body: '{}' }).catch(() => null);
         let empresas = null;
         try {
           const cat = await axGet(emUrl, key, null);

@@ -31,6 +31,7 @@
 
 import { $ } from '../core/dom.js';
 import { renderWorkerPhotos, openWorkerLightbox } from './worker-photos.js';
+import { renderMovEvolucion } from './mov-evolucion.js';   // v6.137
 
 const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
 
@@ -213,6 +214,7 @@ export async function renderMovQuincena(user) {
       <div><h1>Movimientos de la quincena</h1>
         <p id="mqSubt">Ingresados, trasladados, egresados y cambios de cargo, con sus fichas</p></div>
       <div class="head-actions">
+        <button class="btn" id="mqEvolBtn"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><path d="M3 3v18h18"/><path d="M7 14l4-4 3 3 5-6"/></svg> Ver evolución</button>
         <div class="export-wrap">
           <button class="btn" id="mqExportBtn">Exportar ▾</button>
           <div class="export-menu" id="mqExportMenu" hidden>
@@ -238,6 +240,7 @@ export async function renderMovQuincena(user) {
   // Export
   const eb = $('#mqExportBtn'), em = $('#mqExportMenu');
   eb.addEventListener('click', (e) => { e.stopPropagation(); em.hidden = !em.hidden; });
+  $('#mqEvolBtn')?.addEventListener('click', () => renderMovEvolucion(MQ.user, () => renderMovQuincena(MQ.user)));
   document.addEventListener('click', () => { em.hidden = true; });
   em.querySelectorAll('button').forEach(b =>
     b.addEventListener('click', () => { em.hidden = true; doExport(b.dataset.fmt); }));

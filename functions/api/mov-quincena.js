@@ -105,6 +105,28 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, facets, periods: periods || [] });
     }
 
+    /* ---------- evolucion (v6.137): tendencia por quincena del año ----------
+       Serie de las quincenas YA CERRADAS del año: ingresados/egresados/
+       trasladados/cambios (eventos) + plantilla activa (headcount del corte).
+       La en curso no entra (RPC filtra range_end < hoy). Respeta el alcance
+       y los filtros territoriales (mismos que la lista). Eventos desde la
+       vista materializada mv_mov_eventos (instantáneo); plantilla en vivo de
+       hcm_snapshot. */
+    if (action === 'evolucion') {
+      if (codes !== null && !codes.length) return json({ ok: true, rows: [] });
+      const year = parseInt(body.year, 10) || null;
+      const zone = body.zone ? String(body.zone) : null;
+      const subzone = body.subzone ? String(body.subzone) : null;
+      const concept = body.concept ? String(body.concept) : null;
+      const rows = await sb(env, 'rpc/movimientos_evolucion', {
+        method: 'POST',
+        body: JSON.stringify({
+          p_codes: codes, p_zone: zone, p_subzone: subzone, p_concept: concept, p_year: year,
+        }),
+      });
+      return json({ ok: true, rows: rows || [] });
+    }
+
     /* ---------- moves: las filas de la quincena ---------- */
     if (action === 'moves') {
       const from = isoDate(body.from);
