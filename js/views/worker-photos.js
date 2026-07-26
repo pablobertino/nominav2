@@ -378,6 +378,11 @@ function ensureFootStyles() {
   .ff-trj-det summary::-webkit-details-marker{display:none}
   .ff-trj-det summary::before{content:'▸ '}
   .ff-trj-det[open] summary::before{content:'▾ '}
+  /* v6.129: card Antigüedad plegable (nace cerrado, abre al clic) */
+  .wpd-ten-fold > summary{cursor:pointer;list-style:none;user-select:none}
+  .wpd-ten-fold > summary::-webkit-details-marker{display:none}
+  .wpd-ten-fold > summary .t::before{content:'▸ ';color:#4f46e5;font-weight:700}
+  .wpd-ten-fold[open] > summary .t::before{content:'▾ '}
   .ff-hist{border:1px solid var(--border,#e5e7eb);border-radius:10px;overflow:hidden}
   .ff-hrow{display:flex;gap:9px;padding:7px 11px;border-top:1px solid var(--border-soft,#eef1f5);font-size:12px;align-items:center;flex-wrap:wrap}
   .ff-hrow:first-child{border-top:0}
@@ -1046,8 +1051,11 @@ function tenureCardHtml(workers, mode) {
     if (avgGrAll != null) corner += ` · grupo ${tenureAvgFmt(avgGrAll)}`;
     corner += `</b>`;
   }
-  const head = `<div class="wpd-head"><span class="t">Antigüedad</span>`
-    + `<span class="n" title="Promedio de antigüedad del personal vigente">${corner}</span></div>`;
+  // v6.129: cabecera como <summary> para que el card nazca PLEGADO y se abra al
+  // clic (igual que "Ver trayectoria completa"). El resumen (vigentes/prom.)
+  // queda visible aun plegado.
+  const head = `<summary class="wpd-head wpd-ten-sum"><span class="t">Antigüedad</span>`
+    + `<span class="n" title="Promedio de antigüedad del personal vigente">${corner}</span></summary>`;
 
   // Empresas no-tienda: cargos muy diversos y sin benchmark de tiendas → card
   // simple (Empresa + Grupo), sin desglose ni posición.
@@ -1058,7 +1066,7 @@ function tenureCardHtml(workers, mode) {
         + `<div class="s gr"><span class="l">Grupo</span><b class="v">${tenureAvgFmt(avgGrAll)}</b></div>`
         + `</div>`
       : '<div class="wpd-empty">Sin fechas de ingreso</div>';
-    return `<div class="wpd-card wpd-ten">${head}${body}</div>`;
+    return `<details class="wpd-card wpd-ten wpd-ten-fold">${head}${body}</details>`;
   }
 
   // Benchmark por cargo (concepto / todas las tiendas).
@@ -1074,7 +1082,7 @@ function tenureCardHtml(workers, mode) {
   vig.forEach(w => { if (w.role) (byRole[w.role] = byRole[w.role] || []).push(w); });
   const roles = Object.keys(byRole);
   if (!roles.length) {
-    return `<div class="wpd-card wpd-ten">${head}<div class="wpd-empty">Sin personal vigente con cargo</div></div>`;
+    return `<details class="wpd-card wpd-ten wpd-ten-fold">${head}<div class="wpd-empty">Sin personal vigente con cargo</div></details>`;
   }
   roles.sort((a, b) => (workerRank(byRole[a][0]) - workerRank(byRole[b][0])) || a.localeCompare(b, 'es'));
 
@@ -1109,8 +1117,8 @@ function tenureCardHtml(workers, mode) {
       + `</div>`;
   }
 
-  return `<div class="wpd-card wpd-ten">${head}`
-    + `<div class="wpd-ten-body"><div class="wpd-ten-cgs">${cols}</div>${posPanels}</div></div>`;
+  return `<details class="wpd-card wpd-ten wpd-ten-fold">${head}`
+    + `<div class="wpd-ten-body"><div class="wpd-ten-cgs">${cols}</div>${posPanels}</div></details>`;
 }
 function paintDemo() {
   const host = $('#wpDemo');
