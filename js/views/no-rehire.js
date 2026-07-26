@@ -263,31 +263,41 @@ function ensureStyles() {
     table.nrs-hm{font-size:11px}
     table.nrs-hm td{width:32px;height:26px}
   }
-  /* ===== v6.133: ficha completa (solo lectura) del no reempleable/egresado ===== */
-  .nrf-hero{display:flex;gap:16px;align-items:flex-start;background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;padding:16px 18px;margin:2px 0 14px}
-  .nrf-photo{width:92px;height:92px;border-radius:14px;object-fit:cover;border:1px solid var(--border);flex:none;cursor:zoom-in}
-  .nrf-photo.noimg{display:flex;align-items:center;justify-content:center;background:#eef2f7;color:#64748b;font-weight:800;font-size:28px;cursor:default}
+  /* ===== v6.134: ficha completa (solo lectura), estilo secciones ===== */
+  .nrf-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;padding:11px 16px;margin:2px 0 14px;font-size:13px}
+  .nrf-top .eg{display:inline-flex;align-items:center;gap:8px;font-weight:800;color:var(--soft,#334155)}
+  .nrf-top .eg .dot{width:9px;height:9px;border-radius:50%;background:#94a3b8}
+  .nrf-top .since{color:var(--muted)}
+  .nrf-top.active .eg{color:#b91c1c}.nrf-top.active .eg .dot{background:#dc2626}
+  .nrf-main{background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;padding:18px 20px}
+  .nrf-hd{display:flex;gap:16px;align-items:flex-start}
+  .nrf-photo{width:96px;height:96px;border-radius:14px;object-fit:cover;border:1px solid var(--border);flex:none;cursor:zoom-in}
+  .nrf-photo.noimg{display:flex;align-items:center;justify-content:center;background:#eef2f7;color:#64748b;font-weight:800;font-size:30px;cursor:default}
   .nrf-hid{min-width:0;flex:1}
-  .nrf-nm{font-size:19px;font-weight:800;line-height:1.15}
+  .nrf-nm{font-size:21px;font-weight:800;line-height:1.15}
   .nrf-ced{font-family:ui-monospace,Menlo,monospace;font-size:13px;color:var(--muted);margin-top:2px}
-  .nrf-role{font-size:12.5px;color:var(--soft,#334155);margin-top:2px}
   .nrf-tags{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px;align-items:center}
-  .nrf-activo{margin:0 0 14px;background:#dc2626;color:#fff;border-radius:11px;padding:11px 14px;font-size:12.5px;font-weight:700}
-  .nrf-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
-  @media(max-width:820px){.nrf-grid{grid-template-columns:1fr}}
-  .nrf-card{background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;padding:15px 16px}
-  .nrf-card h3{font-size:12.5px;margin:0 0 12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);display:flex;align-items:center;justify-content:space-between;gap:10px}
-  .nrf-kv{display:grid;grid-template-columns:1fr 1fr;gap:9px 16px;font-size:12.5px}
-  .nrf-kv .lbl{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--faint,#94a3b8);font-weight:800}
-  .nrf-kv .one{grid-column:1/-1}
-  .nrf-obs{margin-top:2px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:11px 13px;font-size:12.5px;color:#7f1d1d;line-height:1.5}
+  .nrf-obs{margin-top:12px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:11px 13px;font-size:12.5px;color:#7f1d1d;line-height:1.5}
+  .nrf-sec{margin-top:18px}
+  .nrf-sec-h{font-size:11px;font-weight:800;text-transform:uppercase;letter-spacing:.06em;color:var(--faint,#94a3b8);border-bottom:1px solid var(--border-soft,#eef1f5);padding-bottom:7px;margin-bottom:12px;display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .nrf-kv{display:grid;grid-template-columns:1fr 1fr;gap:12px 22px;font-size:13px}
+  @media(max-width:640px){.nrf-kv{grid-template-columns:1fr}}
+  .nrf-f.one{grid-column:1/-1}
+  .nrf-f .lbl{display:block;font-size:11px;color:var(--muted);margin-bottom:2px}
+  .nrf-f .val{font-weight:600;color:var(--ink)}
+  .nrf-f .val.mut{font-weight:400;color:var(--faint,#94a3b8)}
   .nrf-empty{font-size:12.5px;color:var(--muted);line-height:1.55}
-  .nrf-stats{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
-  .nrf-stat{background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;padding:11px 14px;min-width:118px;flex:1 1 118px}
+  .nrf-stats{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 4px}
+  .nrf-stat{background:var(--bg-soft,#f8fafc);border:1px solid var(--border-soft,#eef1f5);border-radius:11px;padding:10px 13px;min-width:112px;flex:1 1 112px}
   .nrf-stat .l{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--faint,#94a3b8)}
-  .nrf-stat .v{font-size:19px;font-weight:800;margin-top:2px}
+  .nrf-stat .v{font-size:18px;font-weight:800;margin-top:2px}
   .nrf-stat .s{font-size:11px;color:var(--muted);margin-top:1px}
-  .nrf-tl{position:relative;margin:2px 0 0;padding-left:18px}
+  details.nrf-tlwrap{margin-top:12px}
+  details.nrf-tlwrap>summary{list-style:none;cursor:pointer;font-size:12.5px;font-weight:700;color:#4338ca;user-select:none}
+  details.nrf-tlwrap>summary::-webkit-details-marker{display:none}
+  details.nrf-tlwrap>summary::before{content:'▸ '}
+  details.nrf-tlwrap[open]>summary::before{content:'▾ '}
+  .nrf-tl{position:relative;margin:12px 0 0;padding-left:18px}
   .nrf-tl::before{content:'';position:absolute;left:5px;top:4px;bottom:4px;width:2px;background:var(--border)}
   .nrf-ti{position:relative;padding:0 0 15px 10px}
   .nrf-ti:last-child{padding-bottom:0}
@@ -843,6 +853,23 @@ async function renderNoRehireFicha(user, idNumber) {
   const traj = f.trajectory || [];
   const sm = f.summary || {};
 
+  const GEN = { M: 'Masculino', F: 'Femenino' };
+  const MAR = { S: 'Soltero/a', C: 'Casado/a', D: 'Divorciado/a', V: 'Viudo/a', O: 'Conviviente', R: 'Unión registrada' };
+  const edad = bd => {
+    if (!bd) return null;
+    const t = Date.parse(String(bd).slice(0, 10)); if (!Number.isFinite(t)) return null;
+    const a = Math.floor((Date.now() - t) / (365.2425 * 86400000));
+    return (a >= 0 && a < 130) ? a : null;
+  };
+  const relSince = d => {
+    if (!d) return null;
+    const t = Date.parse(String(d).slice(0, 10) + 'T00:00:00'); if (!Number.isFinite(t)) return null;
+    return fmtDur(Math.max(0, Math.floor((Date.now() - t) / 86400000)));
+  };
+  // Campo etiqueta/valor (— cuando no hay dato).
+  const F = (label, val, one) =>
+    `<div class="nrf-f${one ? ' one' : ''}"><span class="lbl">${esc(label)}</span><span class="val${val ? '' : ' mut'}">${val ? esc(val) : '—'}</span></div>`;
+
   const estado = f.removed_at
     ? `<span class="nr-pill out">Salió de la lista · ${fmtDate(f.removed_at)}</span>`
     : (activos.length
@@ -853,18 +880,11 @@ async function renderNoRehireFicha(user, idNumber) {
     ? `<img class="nrf-photo" data-zoom="1" title="Ampliar foto" src="${esc(f.thumb_url)}" alt="">`
     : `<div class="nrf-photo noimg">${esc(initials(name))}</div>`;
 
-  const persona = m ? `
-    <div class="nrf-kv">
-      ${m.role ? `<div><span class="lbl">Cargo</span>${esc(m.role)}</div>` : ''}
-      ${m.gender ? `<div><span class="lbl">Sexo</span>${esc(m.gender)}</div>` : ''}
-      ${m.birth_date ? `<div><span class="lbl">Nacimiento</span>${fmtDate(m.birth_date)}</div>` : ''}
-      ${m.marital_status ? `<div><span class="lbl">Estado civil</span>${esc(m.marital_status)}</div>` : ''}
-      ${m.phone ? `<div><span class="lbl">Teléfono</span>${esc(m.phone)}</div>` : ''}
-      ${m.email ? `<div><span class="lbl">Correo</span>${esc(m.email)}</div>` : ''}
-      ${m.address ? `<div class="one"><span class="lbl">Dirección</span>${esc(m.address)}</div>` : ''}
-      ${m.fiscal_address ? `<div class="one"><span class="lbl">Dirección fiscal</span>${esc(m.fiscal_address)}</div>` : ''}
-    </div>`
-    : `<div class="nrf-empty">No está en el maestro activo (es un <b>egresado</b>). Sus datos personales no se conservan aquí, pero su <b>historia laboral</b> completa está más abajo.</div>`;
+  // Barra superior: en lugar de la empresa, el estado de egreso + hace cuánto.
+  const rel = relSince(sm.ultimo_fin);
+  const topbar = activos.length
+    ? `<div class="nrf-top active"><span class="eg"><span class="dot"></span>También ACTIVO en ${esc(activos.join(' · '))}</span><span class="since">· está en la lista de no reempleables y empleado a la vez</span></div>`
+    : `<div class="nrf-top"><span class="eg"><span class="dot"></span>Egresado</span>${rel ? `<span class="since">· hace ${esc(rel)}${sm.ultimo_fin ? ` · último egreso ${fmtDate(sm.ultimo_fin)}` : ''}</span>` : ''}</div>`;
 
   const statsHtml = traj.length ? `
     <div class="nrf-stats">
@@ -882,43 +902,71 @@ async function renderNoRehireFicha(user, idNumber) {
       <div class="loc">${loc}</div>
       <div class="per">${fmtDate(t.inicio)} → ${fmtDate(t.fin)} ${dias}</div>
     </div>`;
-  }).join('')}</div>` : '<div class="nrf-empty">Sin historia laboral registrada en el sistema.</div>';
+  }).join('')}</div>` : '';
+
+  const trajSec = traj.length
+    ? `${statsHtml}<details class="nrf-tlwrap"${traj.length <= 6 ? ' open' : ''}><summary>Ver trayectoria completa (${traj.length})</summary>${tl}</details>`
+    : '<div class="nrf-empty">Sin historia laboral registrada en el sistema.</div>';
+
+  // Secciones de datos del maestro (solo si la persona está en el maestro).
+  const cargoSec = (m && m.role)
+    ? `<div class="nrf-sec"><div class="nrf-sec-h">Cargo</div><div class="nrf-kv">${F('Cargo', m.role)}</div></div>` : '';
+  const bancoSec = (m && m.account_number)
+    ? `<div class="nrf-sec"><div class="nrf-sec-h">Datos bancarios</div><div class="nrf-kv">${F('Cuenta bancaria', m.account_number, true)}</div></div>` : '';
+  const contactoSec = (m && (m.phone || m.email || m.address || m.fiscal_address))
+    ? `<div class="nrf-sec"><div class="nrf-sec-h">Contacto</div><div class="nrf-kv">
+        ${m.phone ? F('Teléfono', m.phone) : ''}
+        ${m.email ? F('Correo', m.email) : ''}
+        ${m.address ? F('Dirección personal', m.address, true) : ''}
+        ${m.fiscal_address ? F('Dirección fiscal', m.fiscal_address, true) : ''}
+      </div></div>` : '';
 
   body.innerHTML = `
-    <div class="nrf-hero">
-      ${foto}
-      <div class="nrf-hid">
-        <div class="nrf-nm">${esc(name)}</div>
-        <div class="nrf-ced">${esc(ced)}</div>
-        ${m && m.role ? `<div class="nrf-role">${esc(m.role)}</div>` : ''}
-        <div class="nrf-tags">
-          <span class="nr-pill ${motClass(f.reason_value)}">${esc(f.reason_label || '')}</span>
-          ${f.reason_unknown ? '<span class="nr-pill unk" title="Este motivo no está en el catálogo del portal">motivo sin traducir</span>' : ''}
-          ${estado}
+    ${topbar}
+    <div class="nrf-main">
+      <div class="nrf-hd">
+        ${foto}
+        <div class="nrf-hid">
+          <div class="nrf-nm">${esc(name)}</div>
+          <div class="nrf-ced">${esc(ced)}</div>
+          <div class="nrf-tags">
+            <span class="nr-pill ${motClass(f.reason_value)}">${esc(f.reason_label || '')}</span>
+            ${f.reason_unknown ? '<span class="nr-pill unk" title="Este motivo no está en el catálogo del portal">motivo sin traducir</span>' : ''}
+            ${estado}
+          </div>
+          ${f.notes ? `<div class="nrf-obs"><b>Observaciones:</b> ${esc(f.notes)}</div>` : ''}
         </div>
       </div>
-    </div>
-    ${activos.length ? `<div class="nrf-activo">⚠ Actualmente ACTIVO en ${esc(activos.join(' · '))}. Está en la lista de no reempleables y empleado al mismo tiempo.</div>` : ''}
-    <div class="nrf-grid">
-      <div class="nrf-card">
-        <h3>No reempleable</h3>
+
+      <div class="nrf-sec">
+        <div class="nrf-sec-h">Identidad</div>
         <div class="nrf-kv">
-          <div><span class="lbl">Motivo</span>${esc(f.reason_label || '—')}</div>
-          <div><span class="lbl">En la lista desde</span>${fmtDate(f.detected_at)}</div>
-          <div><span class="lbl">Última vez visto</span>${fmtDate(f.last_seen_at)}</div>
-          ${f.removed_at ? `<div><span class="lbl">Salió de la lista</span>${fmtDate(f.removed_at)}</div>` : ''}
+          ${F('Nombre completo', name, true)}
+          ${F('Cédula', ced)}
+          ${m && m.birth_date ? F('Fecha de nacimiento', fmtDate(m.birth_date)) : ''}
+          ${m && edad(m.birth_date) != null ? F('Edad', edad(m.birth_date) + ' años') : ''}
+          ${m && m.gender ? F('Género', GEN[m.gender] || m.gender) : ''}
+          ${m && m.marital_status ? F('Estado civil', MAR[m.marital_status] || m.marital_status) : ''}
         </div>
-        ${f.notes ? `<div class="nrf-obs"><b>Observaciones:</b> ${esc(f.notes)}</div>` : ''}
       </div>
-      <div class="nrf-card">
-        <h3>Datos personales</h3>
-        ${persona}
+
+      <div class="nrf-sec">
+        <div class="nrf-sec-h">No reempleable</div>
+        <div class="nrf-kv">
+          ${F('Motivo', f.reason_label)}
+          ${F('En la lista desde', fmtDate(f.detected_at))}
+          ${F('Última vez visto', fmtDate(f.last_seen_at))}
+          ${f.removed_at ? F('Salió de la lista', fmtDate(f.removed_at)) : ''}
+        </div>
       </div>
-    </div>
-    <div class="nrf-card" style="margin-top:14px">
-      <h3>Historia laboral <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)">${traj.length} contrato${traj.length === 1 ? '' : 's'}${sm.ultima_empresa ? ` · última: ${esc(sm.ultima_empresa)}` : ''}</span></h3>
-      ${statsHtml}
-      ${tl}
+
+      <div class="nrf-sec">
+        <div class="nrf-sec-h">Historia laboral <span style="font-weight:600;text-transform:none;letter-spacing:0;color:var(--muted)">${traj.length} contrato${traj.length === 1 ? '' : 's'}${sm.ultima_empresa ? ` · última: ${esc(sm.ultima_empresa)}` : ''}</span></div>
+        ${trajSec}
+      </div>
+
+      ${cargoSec}${bancoSec}${contactoSec}
+      ${!m ? '<div class="nrf-sec"><div class="nrf-empty">Es un <b>egresado</b>: no está en el maestro activo, así que el sistema no conserva sus datos bancarios ni de contacto. Lo que sí guarda es su <b>historia laboral</b> (arriba).</div></div>' : ''}
     </div>`;
 
   if (f.thumb_url) {
