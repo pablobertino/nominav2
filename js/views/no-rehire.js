@@ -181,7 +181,7 @@ function ensureStyles() {
   .nrs-back{display:inline-flex;align-items:center;gap:6px;font:inherit;font-size:12.5px;color:var(--muted);
      border:1px solid var(--border);background:var(--surface,#fff);border-radius:9px;padding:6px 11px;margin:0 0 14px;cursor:pointer}
   .nrs-back:hover{background:var(--bg-soft,#f8fafc)}
-  .nrs-kpis{display:flex;gap:12px;flex-wrap:wrap;margin:2px 0 16px}
+  .nrs-kpis{display:flex;gap:12px;flex-wrap:wrap;margin:22px 0 16px}
   .nrs-kpi{background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;padding:12px 15px;min-width:160px;flex:1 1 160px}
   .nrs-kpi .l{font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--faint,#94a3b8)}
   .nrs-kpi .v{font-size:24px;font-weight:800;margin-top:2px}
@@ -214,7 +214,7 @@ function ensureStyles() {
   table.nrs-hm th.rowh{text-align:left;color:var(--soft,#334155);font-weight:600;min-width:112px;cursor:pointer}
   table.nrs-hm th.rowh:hover{color:#4338ca}
   table.nrs-hm tr.sel th.rowh{color:#4338ca;font-weight:800}
-  table.nrs-hm td{width:40px;height:28px;text-align:center;border-radius:7px;font-weight:800;color:#7c2d12}
+  table.nrs-hm td{width:40px;height:28px;text-align:center;border-radius:7px;font-weight:800;color:#3730a3}
   table.nrs-hm td.z{background:#f8fafc;color:#cbd5e1;font-weight:600}
   table.nrs-hm td.tot{background:#eef2ff;color:#3730a3}
   table.nrs-hm tr.trtot th,table.nrs-hm tr.trtot td{color:#3730a3}
@@ -588,7 +588,10 @@ async function renderNoRehireStats(user) {
   }
 
   const pct = (n, d) => d ? Math.round(n / d * 100) : 0;
-  const MOTCOL = { 1: '#be123c', 2: '#c2410c', 3: '#b91c1c', 4: '#6d28d9', 5: '#a16207', 6: '#1d4ed8', 7: '#4338ca', 8: '#a21caf' };
+  // v6.131: paleta ATENUADA (Pablo: "como en el resto del sitio"). Mismos
+  // matices que los chips de la lista pero desaturados, para que las barras
+  // no salgan tan fuertes.
+  const MOTCOL = { 1: '#cd8792', 2: '#d29a6a', 3: '#cd8585', 4: '#9b8fca', 5: '#c6ad6a', 6: '#8098ce', 7: '#9095cc', 8: '#bd8cc2' };
   const colOf = v => MOTCOL[Number(v)] || '#475569';
   const shortPlace = p => String(p).split(' · ').pop();
 
@@ -641,9 +644,11 @@ async function renderNoRehireStats(user) {
   byZona.forEach(z => cellMap.set(String(z.mval) + '|' + z.zona, z.cnt));
   let maxCell = 1;
   motivos.forEach(m => cols.forEach(c => { const v = cellMap.get(String(m.mval) + '|' + c) || 0; if (v > maxCell) maxCell = v; }));
-  const CELLBG = { c1: '#fff7ed', c2: '#fed7aa', c3: '#fdba74', c4: '#fb923c', c5: '#ea580c' };
+  // v6.131: rampa índigo suave (antes naranja fuerte). Texto índigo oscuro
+  // en todas las celdas: se lee sin necesidad de blanco.
+  const CELLBG = { c1: '#eef2ff', c2: '#dbe3fb', c3: '#c7d2fe', c4: '#aeb9f2', c5: '#909ce4' };
   const cellClass = v => { if (!v) return 'z'; const r = v / maxCell; return r <= .12 ? 'c1' : r <= .28 ? 'c2' : r <= .55 ? 'c3' : r <= .8 ? 'c4' : 'c5'; };
-  const cellStyle = cl => cl === 'z' ? '' : `background:${CELLBG[cl]};${(cl === 'c4' || cl === 'c5') ? 'color:#fff' : ''}`;
+  const cellStyle = cl => cl === 'z' ? '' : `background:${CELLBG[cl]}`;
   const abbr = z => z.length > 10 ? z.slice(0, 4) + '.' : z;
   const colTotal = {}; cols.forEach(c => colTotal[c] = 0);
   const hmRows = motivos.map(m => {
@@ -681,7 +686,7 @@ async function renderNoRehireStats(user) {
       <div class="nrs-card">
         <h3>¿Dónde ocurre? · Motivo × Zona <span class="n">color = cantidad</span></h3>
         <table class="nrs-hm"><thead>${hmHead}</thead><tbody id="nrsHm">${hmRows}${hmFoot}</tbody></table>
-        <div class="nrs-legend">Menos <span class="sw" style="background:#fff7ed"></span><span class="sw" style="background:#fed7aa"></span><span class="sw" style="background:#fdba74"></span><span class="sw" style="background:#fb923c"></span><span class="sw" style="background:#ea580c"></span> Más · <span style="color:#cbd5e1">·</span> = 0</div>
+        <div class="nrs-legend">Menos <span class="sw" style="background:#eef2ff"></span><span class="sw" style="background:#dbe3fb"></span><span class="sw" style="background:#c7d2fe"></span><span class="sw" style="background:#aeb9f2"></span><span class="sw" style="background:#909ce4"></span> Más · <span style="color:#cbd5e1">·</span> = 0</div>
         ${sinZona ? `<div class="nrs-note"><b>“Sin zona” (${sinZona}):</b> personas sin un egreso localizable en el sistema, así que no se les puede asignar tienda. Se cuentan aparte para no inventarles una ubicación.</div>` : ''}
       </div>
     </div>
