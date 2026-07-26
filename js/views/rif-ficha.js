@@ -86,19 +86,27 @@ function parseRif(rawText) {
   const out = { es_rif: looksLikeRif(text), rif: null, cedula_rif: null, nombre_pdf: null,
     nro_comprobante: null, fecha_inscripcion: null, fecha_actualizacion: null, fecha_vencimiento: null };
 
-  // RIF (letra + 9 digitos) + nombre, anclado a "FECHA DE INSCRIPCI..."
-  let m = text.match(/\b([VEJPG])\s?-?\s?(\d{9})\b\s+([A-ZÁÉÍÓÚÑ&. ]+?)\s+FECHA DE INSCRIPCI/i);
-  if (m) {
-    out.rif = (m[1].toUpperCase() + m[2]);
-    out.cedula_rif = normCed(m[2].slice(0, 8));
-    out.nombre_pdf = collapse(m[3]);
-  } else {
-    // fallback: RIF suelto (sin nombre pegado)
-    const mr = text.match(/\b([VEJPG])\s?-?\s?(\d{9})\b/);
-    if (mr) { out.rif = mr[1].toUpperCase() + mr[2]; out.cedula_rif = normCed(mr[2].slice(0, 8)); }
+  // RIF (letra + 9 dígitos). Es el primer V/E/J/P/G + 9 dígitos del documento.
+  const mrif = text.match(/\b([VEJPG])\s?-?\s?(\d{9})\b/i);
+  if (mrif) {
+    out.rif = mrif[1].toUpperCase() + mrif[2];
+    out.cedula_rif = normCed(mrif[2].slice(0, 8));
   }
 
-  const mc = text.match(/N[°º]\s*COMPROBANTE:\s*([A-Z0-9]+)/i);
+  // Nombre del titular: va JUSTO DESPUÉS del número de RIF y termina en la
+  // siguiente sección del certificado. v6.125: en el PDF "columnar" del SENIAT
+  // el nombre no venía pegado a "FECHA DE INSCRIPCI" sino seguido de "DOMICILIO
+  // FISCAL…", así que el match viejo (anclado a FECHA) fallaba y quedaba vacío.
+  // Se ancla en el número de RIF y se corta en la primera sección conocida.
+  // El orden (apellidos primero) no afecta: nameSim compara tokens ordenados.
+  const mnom = text.match(/\b[VEJPG]\s?-?\s?\d{9}\b\s+(.+?)\s+(?:DOMICILIO|FECHA\s+DE|GERENCIA|ESTE\s+CONTRIBUYENTE|N[°º]\s*(?:DE\s+)?COMPROBANTE|FIRMA\s+AUTORIZADA)/i);
+  if (mnom) {
+    const nm = collapse(mnom[1]);
+    if (nm && !/REGISTRO|INFORMACI[ÓO]N\s+FISCAL/i.test(nm)) out.nombre_pdf = nm;
+  }
+
+  // Nº de comprobante ("N° DE COMPROBANTE:" — el certificado incluye el "DE").
+  const mc = text.match(/N[°º]\s*(?:DE\s+)?COMPROBANTE:\s*([A-Z0-9]+)/i);
   if (mc) out.nro_comprobante = mc[1];
 
   // Fechas: inscripción / actualización / vencimiento. v6.124: el certificado
