@@ -603,7 +603,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.118</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.119</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5607,7 +5607,7 @@ async function viewSync(user) {
     if (cfg.last_status === 'ok') {
       const r = cfg.last_result || {};
       return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="pill pill-open">✅ OK</span><b>${when}</b><span class="muted">${src}${dur}</span></div>`
-        + `<div style="margin-top:8px">${r.companies || 0} empresas · ${r.zones || 0} zonas · ${r.subzones || 0} subzonas · ${r.concepts || 0} conceptos</div>`;
+        + `<div style="margin-top:8px">${r.companies || 0} empresas · ${r.zones || 0} zonas · ${r.subzones || 0} subzonas · ${r.concepts || 0} conceptos · ${r.history || 0} en histórico</div>`;
     }
     const err = (cfg.last_result && cfg.last_result.error) || 'error desconocido';
     return `<div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap"><span class="pill pill-closed">❌ Error</span><b>${when}</b><span class="muted">${src}${dur}</span></div>`
@@ -5666,14 +5666,14 @@ async function viewSync(user) {
   const showHour = (cfg.frequency === 'daily' || cfg.frequency === '2d');
 
   $('#pnlMain').innerHTML = `
-    <div class="pnl-head"><div><h1>Sincronización</h1><p>Catálogo de empresas · AX → Supabase</p></div>
-      <div class="head-actions"><button class="btn" id="syncLogBtn" title="Ver el registro completo de corridas">Registro</button><button class="btn btn-primary" id="syncBtn">${I.sync} Sincronizar ahora</button></div>
-    </div>
+    <div class="pnl-head"><div><h1>Sincronización</h1><p>AX → Supabase · catálogos y estados</p></div></div>
 
     <div class="card">
-      <h3 style="margin:0 0 10px;font-size:15px">Última sincronización</h3>
-      <div id="syncLast">${lastRunHtml(cfg)}</div>
-      <p class="muted" style="font-size:12px;margin:12px 0 0">Vuelca empresas, zonas, subzonas y conceptos desde la API de AX. Es un upsert: actualiza lo que viene, no borra lo ausente.</p>
+      <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">Catálogo de empresas + histórico</h3>
+        <div class="head-actions"><button class="btn" id="syncLogBtn" title="Ver el registro completo de corridas">Registro</button><button class="btn btn-primary" id="syncBtn">${I.sync} Sincronizar ahora</button></div>
+      </div>
+      <div id="syncLast" style="margin-top:10px">${lastRunHtml(cfg)}</div>
+      <p class="muted" style="font-size:12px;margin:12px 0 0">Vuelca empresas, zonas, subzonas y conceptos desde la API de AX, y el histórico del grupo/concepto de cada empresa en el tiempo (una tabla relacionada al catálogo). Es un upsert: actualiza lo que viene, no borra lo ausente.</p>
     </div>
 
     <div class="card">

@@ -578,6 +578,7 @@ function trajHtml(items) {
       <span class="hd">${fmt(it.ini)} → ${it.fin ? fmt(it.fin) : 'hoy'}</span>
       <span class="ha">${esc(it.alias || '')}</span>
       <span class="hr">${esc(it.empresa || '')}</span>
+      <span class="hcon">${it.concepto ? `<em title="Concepto en ese momento">${esc(it.concepto)}</em>` : ''}</span>
       <span class="hz">${esc(zsub)}</span>
       <span class="hc">${esc(it.cargo || '')}</span>
       <span class="hdur">${vig ? `<b>${dur(it.dias)} · vigente</b>` : dur(it.dias)}</span></div>`;
@@ -593,7 +594,7 @@ function trajHtml(items) {
   return `<div style="display:flex;align-items:center;height:10px;border-radius:99px;overflow:hidden;background:#e2e8f0;margin-top:8px" title="Desde el ${fmt(items[0].ini)} hasta hoy">${segs}</div>`
     + `<div style="display:flex;justify-content:space-between;font-size:10.5px;color:#94a3b8;margin:3px 0 7px"><span>${fmt(items[0].ini)}</span><span>hoy</span></div>`
     + `<div class="cc-hist">${rows}</div>`
-    + `<div style="font-size:11px;color:#94a3b8;margin-top:5px">Razón social del momento según el sistema · el empleo vigente muestra la razón social actual.</div>`;
+    + `<div style="font-size:11px;color:#94a3b8;margin-top:5px">Razón social y <span style="color:#0e7490">concepto</span> del momento según el sistema · el empleo vigente muestra los datos actuales. En blanco cuando no hay histórico.</div>`;
 }
 function dur(d) { if (d == null) return ''; d = Number(d); if (d < 31) return `${d} d`; const m = Math.floor(d / 30.4); if (m < 12) return `${m} m`; const y = Math.floor(m / 12), mm = m % 12; return `${y} a${mm ? ` ${mm} m` : ''}`; }
 
@@ -1182,9 +1183,10 @@ function styleBlock() {
   .cc-trj>summary::-webkit-details-marker{display:none}
   .cc-trj>summary::before{content:'▸ ';color:#94a3b8}.cc-trj[open]>summary::before{content:'▾ '}
   .cc-hist{display:flex;flex-direction:column;margin-top:2px}
-  .cc-hrow{display:grid;grid-template-columns:150px 50px minmax(150px,1.5fr) minmax(120px,1.1fr) 110px 78px;gap:10px;align-items:center;font-size:12px;padding:7px 8px;border-bottom:1px solid var(--border)}
+  .cc-hrow{display:grid;grid-template-columns:150px 50px minmax(140px,1.4fr) minmax(90px,0.9fr) minmax(110px,1.05fr) 100px 74px;gap:10px;align-items:center;font-size:12px;padding:7px 8px;border-bottom:1px solid var(--border)}
   .cc-hrow.now{background:#f5f7ff;border-radius:8px}
   .cc-hrow .hd{font-weight:700}.cc-hrow .ha{font-weight:800;color:#4f46e5}.cc-hrow .hr{color:var(--soft)}
+  .cc-hrow .hcon em{font-style:normal;color:#0e7490;background:#ecfeff;border:1px solid #cffafe;border-radius:6px;padding:0 6px;font-size:11px;white-space:nowrap}
   .cc-hrow .hz{color:var(--muted);font-size:11px}.cc-hrow .hc{font-weight:800;font-size:11.5px;color:#334155}
   .cc-hrow .hdur{text-align:right;color:var(--soft);font-weight:600}
   .cc-hpause{font-size:11.5px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:7px;padding:4px 9px;margin:4px 0}
