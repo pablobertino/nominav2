@@ -134,7 +134,37 @@ let USER = null;
 let FACETS = null;          // { zones, subzones, concepts, statuses, types, companies } cache
 let SCOPE_COUNT = 0;        // universo del alcance con los filtros aplicados (denominador del contador)
 // Criterios (se conservan al volver de una ficha).
-let C = { q: '', type: '', company: '', photo: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
+let C = { q: '', type: '', company: '', photo: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '',
+  // v6.123: documentos (with|without|'') y antiguedad en el grupo.
+  docCedula: '', docRif: '', docRef: '', antBucket: '', antFrom: '', antTo: '', antUnit: 'dias' };
+// Rangos predefinidos de antiguedad EN EL GRUPO, en dias (tramo continuo).
+const ANT_BUCKETS = {
+  lt15: [null, 14], d15_1m: [15, 30], m1_3: [31, 91], m3_6: [92, 183],
+  m6_12: [184, 365], y1_2: [366, 730], y2_5: [731, 1825], gt5: [1826, null],
+};
+function antRangeDays() {
+  if (C.antBucket === 'custom') {
+    const mult = C.antUnit === 'anios' ? 365 : (C.antUnit === 'meses' ? 30 : 1);
+    const from = C.antFrom !== '' ? Math.round(Number(C.antFrom) * mult) : null;
+    const to = C.antTo !== '' ? Math.round(Number(C.antTo) * mult) : null;
+    return [Number.isFinite(from) ? from : null, Number.isFinite(to) ? to : null];
+  }
+  return ANT_BUCKETS[C.antBucket] || [null, null];
+}
+function docsActive() { return !!(C.docCedula || C.docRif || C.docRef); }
+function antActive() { const [a, b] = antRangeDays(); return a != null || b != null; }
+function refreshDocsBtn() {
+  const b = document.getElementById('psDocsBtn'); if (!b) return;
+  const n = [C.docCedula, C.docRif, C.docRef].filter(Boolean).length;
+  b.classList.toggle('act', n > 0);
+  b.textContent = n > 0 ? `Documentos (${n}) ▾` : 'Documentos ▾';
+}
+function refreshAntBtn() {
+  const b = document.getElementById('psAntBtn'); if (!b) return;
+  const on = antActive();
+  b.classList.toggle('act', on);
+  b.textContent = on ? 'Antigüedad ● ▾' : 'Antigüedad ▾';
+}
 let SEARCH_ROWS = null;     // null = aun no se ha buscado
 // Filtro en cliente sobre los resultados ya traidos (separador por coma, igual
 // que la vista Personal). No dispara busqueda: refina lo que ya esta en pantalla.
@@ -248,6 +278,23 @@ function ensureStyles() {
   .ps-export-menu[hidden]{display:none}
   .ps-export-menu button{font:inherit;font-size:13px;text-align:left;padding:9px 11px;border:0;border-radius:8px;background:transparent;color:var(--ink);cursor:pointer}
   .ps-export-menu button:hover{background:var(--bg-soft,#f1f5f9)}
+  /* v6.123: menus desplegables de filtros (Documentos / Antiguedad) */
+  .ps-fdrop{position:relative}
+  .ps-fdrop-btn{font:inherit;font-size:12.5px;padding:7px 12px;border:1px solid var(--border);border-radius:9px;background:var(--surface);color:var(--ink);cursor:pointer}
+  .ps-fdrop-btn:hover{background:var(--bg-soft,#f1f5f9)}
+  .ps-fdrop-btn.act{border-color:#c7d2fe;background:#eef2ff;color:#4f46e5;font-weight:600}
+  .ps-fmenu{position:absolute;z-index:30;top:calc(100% + 6px);left:0;min-width:252px;background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;box-shadow:0 12px 34px rgba(15,23,42,.16);padding:12px}
+  .ps-fmenu[hidden]{display:none}
+  .ps-fmenu .mrow{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:0 0 9px}
+  .ps-fmenu .mrow:last-child{margin-bottom:0}
+  .ps-fmenu label{font-size:12.5px;color:var(--ink);font-weight:600}
+  .ps-fmenu select{font:inherit;font-size:12.5px;padding:6px 9px;border:1px solid var(--border);border-radius:8px;background:var(--surface);color:var(--ink);min-width:134px}
+  .ps-antrange{display:flex;align-items:center;gap:7px;margin-top:10px;padding:10px;background:var(--bg-soft,#f1f5f9);border-radius:9px}
+  .ps-antrange[hidden]{display:none}
+  .ps-antrange input{width:58px;font:inherit;font-size:12.5px;padding:6px 8px;border:1px solid var(--border);border-radius:8px;text-align:right;background:#fff}
+  .ps-antrange .lb{font-size:11px;color:var(--muted);font-weight:600}
+  .ps-antrange .to{color:var(--faint,#94a3b8);font-weight:800}
+  .ps-antrange select{min-width:auto}
   .ps-count{color:var(--muted);font-size:12px;margin:6px 2px 10px}
   .ps-filterbar{margin:2px 0 10px}
   .ps-filterbar[hidden]{display:none}
@@ -350,7 +397,7 @@ async function api(payload) {
 
 function hasCriteria() {
   return C.q.trim().length >= 2 || C.type || C.company || C.photo || C.gender || C.ageMin !== '' || C.ageMax !== ''
-    || C.zone || C.subzone || C.concept || C.status;
+    || C.zone || C.subzone || C.concept || C.status || docsActive() || antActive();
 }
 
 // Subzonas que pertenecen a la zona elegida (los id de subzona empiezan por
@@ -412,6 +459,39 @@ export async function renderPersonnelSearch(user) {
       <span class="fg">Subzona <select id="psSubzone"><option value="">Todas</option></select></span>
       <span class="fg">Concepto <select id="psConcept"><option value="">Todos</option></select></span>
       <span class="fg">Estado <select id="psStatus"><option value="">Todos</option></select></span>
+      <div class="ps-fdrop">
+        <button class="ps-fdrop-btn" id="psDocsBtn" type="button">Documentos ▾</button>
+        <div class="ps-fmenu" id="psDocsMenu" hidden>
+          <div class="mrow"><label>Cédula</label><select id="psDocCed"><option value="">Todas</option><option value="with">Con cédula</option><option value="without">Sin cédula</option></select></div>
+          <div class="mrow"><label>RIF</label><select id="psDocRif"><option value="">Todos</option><option value="with">Con RIF</option><option value="without">Sin RIF</option></select></div>
+          <div class="mrow"><label>Referencia bancaria</label><select id="psDocRef"><option value="">Todas</option><option value="with">Con referencia</option><option value="without">Sin referencia</option></select></div>
+        </div>
+      </div>
+      <div class="ps-fdrop">
+        <button class="ps-fdrop-btn" id="psAntBtn" type="button">Antigüedad ▾</button>
+        <div class="ps-fmenu" id="psAntMenu" hidden>
+          <div class="mrow"><label>En el grupo</label>
+            <select id="psAntBucket">
+              <option value="">Cualquiera</option>
+              <option value="lt15">Menos de 15 días</option>
+              <option value="d15_1m">15 días a 1 mes</option>
+              <option value="m1_3">1 a 3 meses</option>
+              <option value="m3_6">3 a 6 meses</option>
+              <option value="m6_12">6 a 12 meses</option>
+              <option value="y1_2">1 a 2 años</option>
+              <option value="y2_5">2 a 5 años</option>
+              <option value="gt5">Más de 5 años</option>
+              <option value="custom">Personalizado…</option>
+            </select>
+          </div>
+          <div class="ps-antrange" id="psAntRange" hidden>
+            <span class="lb">Desde</span><input id="psAntFrom" type="number" min="0" inputmode="numeric" placeholder="0">
+            <span class="to">–</span>
+            <span class="lb">Hasta</span><input id="psAntTo" type="number" min="0" inputmode="numeric" placeholder="—">
+            <select id="psAntUnit"><option value="dias">días</option><option value="meses">meses</option><option value="anios">años</option></select>
+          </div>
+        </div>
+      </div>
       <button class="ps-clear" id="psClear">Limpiar</button>
       <div class="ps-export-wrap">
         <button class="ps-export-btn" id="psExportBtn" type="button">Exportar ▾</button>
@@ -475,6 +555,17 @@ export async function renderPersonnelSearch(user) {
     stSel.value = (FACETS.statuses || []).includes(C.status) ? C.status : '';
   }
 
+  // v6.123: restaurar controles de Documentos y Antigüedad desde C.
+  { const e = $('#psDocCed'); if (e) e.value = C.docCedula || ''; }
+  { const e = $('#psDocRif'); if (e) e.value = C.docRif || ''; }
+  { const e = $('#psDocRef'); if (e) e.value = C.docRef || ''; }
+  { const e = $('#psAntBucket'); if (e) e.value = C.antBucket || ''; }
+  { const e = $('#psAntFrom'); if (e) e.value = C.antFrom || ''; }
+  { const e = $('#psAntTo'); if (e) e.value = C.antTo || ''; }
+  { const e = $('#psAntUnit'); if (e) e.value = C.antUnit || 'dias'; }
+  { const r = $('#psAntRange'); if (r) r.hidden = (C.antBucket !== 'custom'); }
+  refreshDocsBtn(); refreshAntBtn();
+
   // Eventos.
   const input = $('#psInput');
   input.addEventListener('keydown', e => { if (e.key === 'Enter') runSearch(); });
@@ -493,7 +584,8 @@ export async function renderPersonnelSearch(user) {
     fillSelect($('#psSubzone'), subzonesFor(C.zone), '', 'Todas');
   });
   $('#psClear').addEventListener('click', () => {
-    C = { q: '', type: '', company: '', photo: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '' };
+    C = { q: '', type: '', company: '', photo: '', gender: '', ageMin: '', ageMax: '', zone: '', subzone: '', concept: '', status: '',
+      docCedula: '', docRif: '', docRef: '', antBucket: '', antFrom: '', antTo: '', antUnit: 'dias' };
     FQ = '';
     SORT = '';
     SEARCH_ROWS = null;
@@ -506,7 +598,28 @@ export async function renderPersonnelSearch(user) {
   exMenu.addEventListener('click', (e) => e.stopPropagation());
   exMenu.querySelectorAll('button').forEach(b =>
     b.addEventListener('click', () => { exMenu.hidden = true; doExport(b.dataset.fmt); }));
-  document.addEventListener('click', () => { const em = $('#psExportMenu'); if (em) em.hidden = true; });
+
+  // v6.123: menús desplegables Documentos / Antigüedad (mismo patrón que Exportar).
+  const docsBtn = $('#psDocsBtn'), docsMenu = $('#psDocsMenu');
+  const antBtn = $('#psAntBtn'), antMenu = $('#psAntMenu');
+  const closeFilterMenus = () => { if (docsMenu) docsMenu.hidden = true; if (antMenu) antMenu.hidden = true; };
+  if (docsBtn && docsMenu) {
+    docsBtn.addEventListener('click', (e) => { e.stopPropagation(); const open = docsMenu.hidden; closeFilterMenus(); if (antMenu) antMenu.hidden = true; docsMenu.hidden = !open; });
+    docsMenu.addEventListener('click', (e) => e.stopPropagation());
+  }
+  if (antBtn && antMenu) {
+    antBtn.addEventListener('click', (e) => { e.stopPropagation(); const open = antMenu.hidden; closeFilterMenus(); antMenu.hidden = !open; });
+    antMenu.addEventListener('click', (e) => e.stopPropagation());
+  }
+  { const e = $('#psDocCed'); if (e) e.addEventListener('change', () => { C.docCedula = e.value; refreshDocsBtn(); }); }
+  { const e = $('#psDocRif'); if (e) e.addEventListener('change', () => { C.docRif = e.value; refreshDocsBtn(); }); }
+  { const e = $('#psDocRef'); if (e) e.addEventListener('change', () => { C.docRef = e.value; refreshDocsBtn(); }); }
+  { const e = $('#psAntBucket'); if (e) e.addEventListener('change', () => { C.antBucket = e.value; const r = $('#psAntRange'); if (r) r.hidden = (e.value !== 'custom'); refreshAntBtn(); }); }
+  { const e = $('#psAntFrom'); if (e) e.addEventListener('input', () => { C.antFrom = e.value.trim(); refreshAntBtn(); }); }
+  { const e = $('#psAntTo'); if (e) e.addEventListener('input', () => { C.antTo = e.value.trim(); refreshAntBtn(); }); }
+  { const e = $('#psAntUnit'); if (e) e.addEventListener('change', () => { C.antUnit = e.value; refreshAntBtn(); }); }
+
+  document.addEventListener('click', () => { const em = $('#psExportMenu'); if (em) em.hidden = true; closeFilterMenus(); });
 
   // Filtro en cliente por coma (refina los resultados ya traidos, no busca).
   const filterEl = $('#psFilter');
@@ -540,6 +653,14 @@ function gather() {
   C.subzone = $('#psSubzone').value;
   C.concept = $('#psConcept').value;
   C.status = $('#psStatus').value;
+  // v6.123: documentos + antigüedad
+  { const e = $('#psDocCed'); C.docCedula = e ? e.value : ''; }
+  { const e = $('#psDocRif'); C.docRif = e ? e.value : ''; }
+  { const e = $('#psDocRef'); C.docRef = e ? e.value : ''; }
+  { const e = $('#psAntBucket'); C.antBucket = e ? e.value : ''; }
+  { const e = $('#psAntFrom'); C.antFrom = e ? e.value.trim() : ''; }
+  { const e = $('#psAntTo'); C.antTo = e ? e.value.trim() : ''; }
+  { const e = $('#psAntUnit'); C.antUnit = e ? e.value : 'dias'; }
 }
 
 async function runSearch() {
@@ -560,6 +681,8 @@ async function runSearch() {
     zone: C.zone || null, subzone: C.subzone || null,
     concept: C.concept || null, status: C.status || null,
     photo: C.photo || null,
+    doc_cedula: C.docCedula || null, doc_rif: C.docRif || null, doc_ref: C.docRef || null,
+    ant_min_days: antRangeDays()[0], ant_max_days: antRangeDays()[1],
   });
   SEARCH_ROWS = (r && r.ok) ? (r.rows || []) : [];
   SCOPE_COUNT = (r && r.ok && Number.isFinite(r.scope_count)) ? r.scope_count : 0;

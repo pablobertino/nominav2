@@ -122,8 +122,18 @@ export async function onRequestPost({ request, env }) {
       const ccompany = body.company ? String(body.company) : null;
       // Filtro por presencia de foto: 'with' | 'without' | null (todos).
       const cphoto = (body.photo === 'with' || body.photo === 'without') ? body.photo : null;
-      // cphoto cuenta como filtro: permite listar por foto SIN escribir texto.
-      const hasFilter = !!(gender || ageMin != null || ageMax != null || zone || subzone || concept || cstatus || ctype || ccompany || cphoto);
+      // v6.123: filtros de documentos ('with' | 'without' | null) y antiguedad.
+      const withWithout = v => (v === 'with' || v === 'without') ? v : null;
+      const docCedula = withWithout(body.doc_cedula);
+      const docRif = withWithout(body.doc_rif);
+      const docRef = withWithout(body.doc_ref);
+      const toDaysNum = v => { const n = parseInt(v, 10); return Number.isFinite(n) && n >= 0 ? n : null; };
+      const antMin = toDaysNum(body.ant_min_days);   // antiguedad EN EL GRUPO (dias), tramo continuo
+      const antMax = toDaysNum(body.ant_max_days);
+      const hasDoc = !!(docCedula || docRif || docRef);
+      const hasAnt = antMin != null || antMax != null;
+      // cphoto/docs/antiguedad cuentan como filtro: permiten listar SIN texto.
+      const hasFilter = !!(gender || ageMin != null || ageMax != null || zone || subzone || concept || cstatus || ctype || ccompany || cphoto || hasDoc || hasAnt);
       // Permite buscar por texto (>=2) o solo por filtros.
       if (q.length < 2 && !hasFilter) return json({ ok: true, rows: [], short: true });
       if (admin.codes !== null && !admin.codes.length) return json({ ok: true, rows: [], scope_count: 0 });
@@ -138,6 +148,7 @@ export async function onRequestPost({ request, env }) {
           // superadmin pasa null (sin restriccion).
           p_admin_id: admin.role === 'superadmin' ? null : admin.id,
           p_type: ctype, p_company: ccompany, p_photo: cphoto,
+          p_doc_cedula: docCedula, p_doc_rif: docRif, p_doc_ref: docRef,
         }),
       });
       // Denominador del contador (Forma B): universo del ALCANCE con los
@@ -157,7 +168,32 @@ export async function onRequestPost({ request, env }) {
         });
         scopeCount = Number(sc) || 0;
       } catch (_) { /* si falla, el front oculta el denominador */ }
-      return json({ ok: true, rows: withThumbs(env, rows), scope_count: scopeCount });
+
+      // v6.123: filtro por ANTIGÜEDAD en el grupo (tramo continuo, cont_days).
+      // Se resuelve aqui, en LOTE: se pide get_group_tenure con las cedulas del
+      // resultado y se filtra por [antMin, antMax] en dias. Sin antiguedad
+      // conocida -> queda fuera cuando hay filtro. Se adjunta tenure_days.
+      let outRows = rows || [];
+      if (hasAnt && outRows.length) {
+        const ceds = [...new Set(outRows.map(r => r.id_number).filter(Boolean))];
+        let tenure = [];
+        try {
+          tenure = await sb(env, 'rpc/get_group_tenure', {
+            method: 'POST', body: JSON.stringify({ p_ceds: ceds }),
+          }) || [];
+        } catch (_) { tenure = []; }
+        const daysByCed = new Map(tenure.map(t => [t.id_number, t.cont_days]));
+        outRows = outRows
+          .filter(r => {
+            const d = daysByCed.get(r.id_number);
+            if (d == null) return false;
+            if (antMin != null && d < antMin) return false;
+            if (antMax != null && d > antMax) return false;
+            return true;
+          })
+          .map(r => ({ ...r, tenure_days: daysByCed.get(r.id_number) }));
+      }
+      return json({ ok: true, rows: withThumbs(env, outRows), scope_count: scopeCount });
     }
 
     if (action === 'incomplete') {
