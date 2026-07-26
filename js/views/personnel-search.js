@@ -104,6 +104,32 @@ function icoFicha() {
   return '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="10" r="2"/><path d="M13 9h5M13 13h5M6.5 15.5c.4-1.2 1.4-2 2.5-2s2.1.8 2.5 2"/></svg>';
 }
 
+/* v6.122: chip "Foto: dd/mm/aaaa, h:mm a. m./p. m. · hace X" bajo la sublinea
+   del trabajador. Fuente: photo_uploaded_at (momento en que se SUBIO la foto;
+   en el flujo de tiendas equivale a cuando se tomo). Hora Caracas (UTC-4),
+   formato 12h. Sin foto o sin fecha -> no se pinta nada. */
+function photoStampHtml(w) {
+  const iso = w && w.photo_uploaded_at;
+  if (!iso || !w.thumb_url) return '';
+  const d = new Date(iso); if (isNaN(d)) return '';
+  const c = new Date(d.getTime() - 4 * 3600 * 1000);   // a hora Caracas
+  const z = n => String(n).padStart(2, '0');
+  const fecha = `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${c.getUTCFullYear()}`;
+  let h = c.getUTCHours();
+  const ap = h < 12 ? 'a. m.' : 'p. m.';
+  h = h % 12; if (h === 0) h = 12;
+  const hora = `${h}:${z(c.getUTCMinutes())} ${ap}`;
+  // Relativo compacto respecto de ahora.
+  const min = Math.floor((Date.now() - d.getTime()) / 60000);
+  let rel;
+  if (min < 1) rel = 'recién';
+  else if (min < 60) rel = `hace ${min} min`;
+  else if (min < 1440) rel = `hace ${Math.floor(min / 60)} h`;
+  else rel = `hace ${Math.floor(min / 1440)} d`;
+  const cam = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3z"/><circle cx="12" cy="13" r="3"/></svg>';
+  return `<div class="ps-photo" title="Foto subida el ${esc(fecha)}, ${esc(hora)}">${cam}<span class="pf">Foto: ${esc(fecha)}, ${esc(hora)}</span><span class="rel">· ${esc(rel)}</span></div>`;
+}
+
 let USER = null;
 let FACETS = null;          // { zones, subzones, concepts, statuses, types, companies } cache
 let SCOPE_COUNT = 0;        // universo del alcance con los filtros aplicados (denominador del contador)
@@ -239,6 +265,10 @@ function ensureStyles() {
   .ps-main{flex:0 1 auto;min-width:0;max-width:34%}
   .ps-name{font-weight:600;color:var(--ink);font-size:14px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .ps-sub{color:var(--muted);font-size:12px;margin-top:1px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .ps-photo{display:inline-flex;align-items:center;gap:5px;max-width:100%;margin-top:5px;padding:2px 8px;border:1px solid #cffafe;background:#ecfeff;border-radius:7px;font-size:11.5px;font-weight:600;color:#0e7490;white-space:nowrap;overflow:hidden}
+  .ps-photo svg{width:13px;height:13px;flex:none}
+  .ps-photo .pf{overflow:hidden;text-overflow:ellipsis}
+  .ps-photo .rel{color:var(--faint,#94a3b8);font-weight:600;flex:none}
   .ps-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px;flex:none;text-align:right;max-width:46%;margin-left:auto}
   .ps-emp{font-size:12px;color:var(--brand,#2563eb);font-weight:700;font-family:ui-monospace,Menlo,monospace}
   .ps-emp.link{cursor:pointer;border-bottom:1px dashed transparent}
@@ -626,6 +656,7 @@ function paint() {
       <div class="ps-main">
         <div class="ps-name">${esc(w.full_name)}</div>
         <div class="ps-sub">${subParts.join(' · ')}</div>
+        ${photoStampHtml(w)}
       </div>
       ${acts}
       <div class="ps-right">
