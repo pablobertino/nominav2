@@ -114,6 +114,10 @@ const I = {
   bizreport: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 21h18"/><path d="M5 21V7l5-4v18"/><path d="M19 21V11l-5-4"/><path d="M9 9v0M9 13v0M9 17v0"/></svg>',
   bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>',
   histclock: '<svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l3 3"/></svg>',
+  // v6.121: 'people' (grupo) para el boton Personal de Empresas — comunica
+  // "lista de personal" mejor que la camara (que era por las fichas con foto).
+  people: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>',
+  kebab: '<svg viewBox="0 0 24 24" width="15" height="15" fill="currentColor"><circle cx="12" cy="5" r="1.7"/><circle cx="12" cy="12" r="1.7"/><circle cx="12" cy="19" r="1.7"/></svg>',
   megaphone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-5v12L3 13v-2z"/><path d="M11.6 16.8a3 3 0 1 1-5.8-1.6"/></svg>',
   wallet: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/><path d="M6 12h.01M18 12h.01"/></svg>',
   pin: '<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0 1 18 0z"/><circle cx="12" cy="10" r="3"/></svg>',
@@ -604,7 +608,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.120</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.121</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1502,7 +1506,7 @@ async function viewTiendas(user) {
         <td>${personalCell(c)}</td>
         <td>${statusPill(c.status)}${axModCell(c.axModifiedAt)}</td>
         <td class="${c.hasAccess ? 'ico-ok' : 'ico-no'}">${c.hasAccess ? I.check : I.circle}</td>
-        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" title="Personal / fichas" style="margin-right:4px">${I.photo} Personal</button><button class="btn btn-mini" data-hist-code="${c.code}" data-hist-name="${(c.name||'').replace(/"/g,'')}" title="Historia: concepto y estatus en el tiempo" style="margin-right:4px">${I.histclock} Historia</button>${(canDepartments && NON_STORE_TYPES.has(c.type)) ? `<button class="btn btn-mini" data-dep-code="${c.code}" title="Departamentos" style="margin-right:4px">${I.grid} Deptos${c.deptCount ? ` <span class="dep-count">${c.deptCount}</span>` : ''}</button>` : ''}${canReport ? `<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}" title="Reportar" style="margin-right:4px">${I.bizreport} Reportar</button>` : ''}<button class="btn btn-mini" data-addr-code="${c.code}" data-addr-name="${(c.name||'').replace(/"/g,'')}" title="${canEditCompany ? 'Editar direccion y contacto' : 'Ver direccion y contacto'}">${I.pin} Direcci\u00f3n</button></td>
+        <td style="text-align:right;white-space:nowrap"><button class="btn btn-mini" data-photos-code="${c.code}" data-photos-name="${(c.name||'').replace(/"/g,'')}" title="Personal / fichas" style="margin-right:4px">${I.people} Personal</button>${canReport ? `<button class="btn btn-mini" data-report-code="${c.code}" data-report-name="${(c.name||'').replace(/"/g,'')}" title="Reportar" style="margin-right:4px">${I.bizreport} Reportar</button>` : ''}<button class="btn btn-mini" data-rowmenu="${c.code}" title="M\u00e1s acciones (Historia, Direcci\u00f3n${(canDepartments && NON_STORE_TYPES.has(c.type)) ? ', Departamentos' : ''})" aria-label="M\u00e1s acciones">${I.kebab}</button></td>
       </tr>`;
   }
 
@@ -1533,17 +1537,13 @@ async function viewTiendas(user) {
     const nameEsc = (c.name || '').replace(/"/g, '');
     // Acciones: Personal (principal, con texto) + iconos segun permisos.
     const iconBtns = []
-      .concat([`<button class="btn hc-ib" data-hist-code="${c.code}" data-hist-name="${nameEsc}" title="Historia: concepto y estatus en el tiempo" aria-label="Historia">${I.histclock}</button>`])
       .concat(canReport
         ? [`<button class="btn hc-ib" data-report-code="${c.code}" data-report-name="${nameEsc}" title="Reportar" aria-label="Reportar">${I.bizreport}</button>`]
         : [])
-      .concat((canDepartments && NON_STORE_TYPES.has(c.type))
-        ? [`<button class="btn hc-ib" data-dep-code="${c.code}" title="Departamentos" aria-label="Departamentos">${I.grid}${c.deptCount ? `<span class="dep-count">${c.deptCount}</span>` : ''}</button>`]
-        : [])
-      .concat([`<button class="btn hc-ib" data-addr-code="${c.code}" data-addr-name="${nameEsc}" title="${canEditCompany ? 'Editar direccion y contacto' : 'Ver direccion y contacto'}" aria-label="Direccion">${I.pin}</button>`])
+      .concat([`<button class="btn hc-ib" data-rowmenu="${c.code}" title="Más acciones" aria-label="Más acciones">${I.kebab}</button>`])
       .join('');
     const acts = `<div class="hc-acts">
-      <button class="btn hc-detail" data-photos-code="${c.code}" data-photos-name="${nameEsc}">${I.photo} Personal</button>
+      <button class="btn hc-detail" data-photos-code="${c.code}" data-photos-name="${nameEsc}">${I.people} Personal</button>
       ${iconBtns}
     </div>`;
 
@@ -1602,6 +1602,23 @@ async function viewTiendas(user) {
       b.addEventListener('click', () => {
         const c = CATALOG.companies.find(x => x.code === b.dataset.histCode);
         companyHistoryModal(user, c || { code: b.dataset.histCode, name: b.dataset.histName });
+      }));
+    // v6.121: menú "⋯" de la fila (Historia · Dirección · Departamentos).
+    // Las acciones frecuentes (Personal, Reportar) quedan sueltas; el resto,
+    // menos usado, se agrupa aquí para aligerar la fila.
+    host.querySelectorAll('[data-rowmenu]').forEach(b =>
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const c = CATALOG.companies.find(x => x.code === b.dataset.rowmenu);
+        if (!c) return;
+        const items = [
+          { label: 'Historia', icon: I.histclock, onClick: () => companyHistoryModal(user, c) },
+          { label: canEditCompany ? 'Editar dirección' : 'Ver dirección', icon: I.pin, onClick: () => companyEditModal(user, c, canEditCompany) },
+        ];
+        if (canDepartments && NON_STORE_TYPES.has(c.type)) {
+          items.push({ label: 'Departamentos', icon: I.grid, badge: c.deptCount || null, onClick: () => renderDepartments(user, c, () => { navigate('tiendas', user); }) });
+        }
+        openRowMenu(b, items);
       }));
   }
 
@@ -1720,7 +1737,7 @@ async function exportTiendas(fmt, rows) {
 /* ---------- Historia de la empresa (v6.120) ----------
    Modal con la trayectoria de UNA empresa en el tiempo (concepto + estatus),
    colapsada por cambios reales (rpc get_company_history via /api/catalog).
-   Cada nodo dice que cambio. Tiene "Volver" y ✕. Datos del histórico
+   Cada nodo dice que cambio. Se cierra con "Cerrar" o ✕. Datos del histórico
    (tabla company_history), sincronizado tras el catalogo de empresas. */
 function companyHistoryDur(d) {
   d = Number(d) || 0;
@@ -1776,7 +1793,7 @@ async function companyHistoryModal(user, c) {
     <div class="modal-head"><span>Historia · ${esc(code)}</span><button class="modal-x" id="mX">✕</button></div>
     <div class="chist-sub">${esc(name)} · concepto y estatus en el tiempo</div>
     <div id="chistBody"><div class="pnl-loading" style="padding:18px">Cargando historia…</div></div>
-    <div class="modal-actions"><button class="btn" id="mBack">Volver</button></div>
+    <div class="modal-actions"><button class="btn" id="mBack">Cerrar</button></div>
   `);
   const close = () => closeModal();
   const x = document.getElementById('mX'); if (x) x.addEventListener('click', close);
@@ -2654,6 +2671,59 @@ function openModal(html) {
 function closeModal() {
   const ex = document.getElementById('modalOv');
   if (ex) ex.remove();
+}
+
+/* ---------- helper: menú "⋯" de una fila (v6.121) ----------
+   Popover ligero anclado a un botón (kebab). Se adjunta al <body> para no
+   quedar recortado por el overflow de la tabla; se posiciona bajo el ancla
+   (o encima si no cabe) y se cierra al elegir una opción o al hacer clic
+   afuera. items: [{ label, icon, badge?, onClick }]. */
+function closeRowMenu() {
+  const ex = document.getElementById('rowMenu');
+  if (ex) ex.remove();
+  document.querySelectorAll('.btn.rowmenu-open').forEach(x => x.classList.remove('rowmenu-open'));
+}
+function openRowMenu(anchor, items) {
+  // Toggle: si este mismo botón ya tiene el menú abierto, un segundo clic cierra.
+  const isOpen = document.getElementById('rowMenu') && anchor.classList.contains('rowmenu-open');
+  closeRowMenu();
+  if (isOpen) return;
+  if (!document.getElementById('rowMenuStyles')) {
+    const st = document.createElement('style');
+    st.id = 'rowMenuStyles';
+    st.textContent = `
+      .rowmenu{position:absolute;z-index:1000;background:#fff;border:1px solid var(--border,#e6eaf0);border-radius:11px;box-shadow:0 16px 40px -14px rgba(15,23,42,.4);padding:6px;min-width:196px}
+      .rowmenu-item{display:flex;align-items:center;gap:9px;width:100%;background:none;border:0;border-radius:8px;padding:9px 10px;font:inherit;font-size:13px;font-weight:600;color:var(--soft,#334155);cursor:pointer;text-align:left}
+      .rowmenu-item:hover{background:var(--pri-soft,#eef2ff);color:var(--pri,#4f46e5)}
+      .rowmenu-item svg{width:16px;height:16px;flex:none;opacity:.85}
+      .rowmenu-item .rm-l{flex:1}
+      .rowmenu-badge{background:var(--pri-soft,#eef2ff);color:var(--pri,#4f46e5);border-radius:999px;padding:1px 8px;font-size:11px;font-weight:800;flex:none}
+      .btn.rowmenu-open{background:var(--pri-soft,#eef2ff);border-color:var(--pri-bd,#c7d2fe);color:var(--pri,#4f46e5)}`;
+    document.head.appendChild(st);
+  }
+  const m = document.createElement('div');
+  m.className = 'rowmenu';
+  m.id = 'rowMenu';
+  m.innerHTML = items.map((it, i) =>
+    `<button class="rowmenu-item" data-i="${i}">${it.icon || ''}<span class="rm-l">${it.label}</span>${it.badge ? `<span class="rowmenu-badge">${it.badge}</span>` : ''}</button>`).join('');
+  document.body.appendChild(m);
+  const r = anchor.getBoundingClientRect();
+  let left = r.right - m.offsetWidth + window.scrollX;
+  if (left < 8 + window.scrollX) left = 8 + window.scrollX;
+  let top = r.bottom + 6 + window.scrollY;
+  if (r.bottom + m.offsetHeight + 12 > window.innerHeight) top = r.top - m.offsetHeight - 6 + window.scrollY;
+  m.style.left = `${left}px`;
+  m.style.top = `${top}px`;
+  anchor.classList.add('rowmenu-open');
+  m.querySelectorAll('.rowmenu-item').forEach(b =>
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const it = items[parseInt(b.dataset.i, 10)];
+      closeRowMenu();
+      if (it && it.onClick) it.onClick();
+    }));
+  // Cerrar al hacer clic afuera (en el próximo tick para no capturar este clic).
+  setTimeout(() => document.addEventListener('click', closeRowMenu, { once: true }), 0);
 }
 
 /* ---------- bloque de contraseña reutilizable (modal) ---------- */
