@@ -28,6 +28,8 @@
    quedan solo marcados con el badge hasta que llegue la fecha.
    ===================================================================== */
 import { $ } from '../core/dom.js';
+// v6.132: Exportar unificado (mismo botón/menú de todo el sitio).
+import { ensureExportMenuStyles, exportMenuHtml, wireExportMenu } from '../core/export-menu.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -58,6 +60,7 @@ async function api(user, payload) {
 
 let STYLED = false;
 function ensureStyles() {
+  ensureExportMenuStyles();   // v6.132: estilos del "Exportar ▾" compartido
   if (STYLED) return;
   STYLED = true;
   const css = document.createElement('style');
@@ -263,10 +266,8 @@ export async function renderDoubleEmployment(user) {
         <h2>Doble empleo</h2>
         <p>Personas que figuran trabajando en dos tiendas al mismo tiempo.</p>
       </div>
-      <div style="display:flex;gap:8px">
-        <button class="btn" id="deXlsx">Excel</button>
-        <button class="btn" id="deCsv">CSV</button>
-        <button class="btn" id="deTxt">TXT</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        ${exportMenuHtml('deExp')}
       </div>
     </div>
     <div id="deBody"><div class="de-loading">Revisando el personal…</div></div>
@@ -426,7 +427,10 @@ export async function renderDoubleEmployment(user) {
     });
   });
 
-  $('#deXlsx')?.addEventListener('click', () => expXlsx(visibleRows(rows)));
-  $('#deCsv')?.addEventListener('click', () => expCsv(visibleRows(rows)));
-  $('#deTxt')?.addEventListener('click', () => expTxt(visibleRows(rows)));
+  wireExportMenu('deExp', fmt => {
+    const rs = visibleRows(rows);
+    if (fmt === 'xlsx') expXlsx(rs);
+    else if (fmt === 'csv') expCsv(rs);
+    else expTxt(rs);
+  });
 }

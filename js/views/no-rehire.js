@@ -26,6 +26,10 @@ import { $ } from '../core/dom.js';
 // v5.83: el boton Registro de la tarjeta de Configurar abre el Registro de
 // sincronizaciones directo en el proceso No reempleables.
 import { renderSyncLog } from './sync-log.js';
+// v6.132: Exportar unificado (mismo botón/menú de todo el sitio).
+import { ensureExportMenuStyles, exportMenuHtml, wireExportMenu } from '../core/export-menu.js';
+// v6.132: visor de foto ampliada (lightbox) — el mismo de Buscar/Personal.
+import { openWorkerLightbox } from './worker-photos.js';
 
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
@@ -62,6 +66,11 @@ function initials(name) {
   return (p[0][0] + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
 }
 
+/* Ícono de ficha del portal (mismo trazo que Buscar/Personal). v6.132. */
+function icoFicha() {
+  return '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="10" r="2"/><path d="M13 9h5M13 13h5M6.5 15.5c.4-1.2 1.4-2 2.5-2s2.1.8 2.5 2"/></svg>';
+}
+
 /* Clase de color del chip segun el valor del motivo (m1..m8 del catalogo;
    m0 para valores fuera de rango o desconocidos). v5.76. */
 function motClass(v) {
@@ -80,6 +89,7 @@ async function api(user, payload) {
 
 let STYLED = false;
 function ensureStyles() {
+  ensureExportMenuStyles();   // v6.132: estilos del "Exportar ▾" compartido
   if (STYLED) return;
   STYLED = true;
   const css = document.createElement('style');
@@ -116,6 +126,13 @@ function ensureStyles() {
   .nr-tbl tbody tr.baja td{opacity:.55}
   .nr-who{display:flex;align-items:center;gap:10px;min-width:0}
   .nr-ava{width:38px;height:38px;border-radius:50%;flex:none;object-fit:cover;border:1px solid var(--border)}
+  .nr-ava.zoom{cursor:zoom-in}
+  /* v6.132: acción de ficha por fila (mismo botón iconizado del resto del sitio) */
+  .nr-iconbtn{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;padding:0;
+     border:1px solid var(--border);border-radius:9px;background:var(--surface,#fff);color:var(--muted);cursor:pointer}
+  .nr-iconbtn:hover{background:var(--bg-soft,#f8fafc);color:var(--ink);border-color:#cbd5e1}
+  .nr-act{width:1%;white-space:nowrap;text-align:right}
+  .nr-fic-zoom{cursor:zoom-in}
   .nr-ava-ini{width:38px;height:38px;border-radius:50%;flex:none;display:inline-flex;align-items:center;
      justify-content:center;background:#eef2f7;color:#64748b;font-weight:800;font-size:13px;border:1px solid var(--border)}
   .nr-nm{font-weight:700}
@@ -300,7 +317,7 @@ function openFicha(r) {
   ov.className = 'nr-ov'; ov.id = 'nrOv';
   const ced = (r.ced_kind ? r.ced_kind + '-' : '') + (r.id_number || '');
   const foto = r.thumb_url
-    ? `<img src="${esc(r.thumb_url)}" alt="" onerror="this.outerHTML='&lt;div class=&quot;noimg&quot;&gt;${esc(initials(r.full_name))}&lt;/div&gt;'">`
+    ? `<img class="nr-fic-zoom" data-zoom="1" title="Ampliar foto" src="${esc(r.thumb_url)}" alt="" onerror="this.outerHTML='&lt;div class=&quot;noimg&quot;&gt;${esc(initials(r.full_name))}&lt;/div&gt;'">`
     : `<div class="noimg">${esc(initials(r.full_name))}</div>`;
   const activos = r.activo_en || [];
   ov.innerHTML = `
@@ -327,6 +344,7 @@ function openFicha(r) {
           <div><span class="lbl">Última vez visto</span>${fmtDate(r.last_seen_at)}</div>
           ${r.removed_at ? `<div><span class="lbl">Salió de la lista</span>${fmtDate(r.removed_at)}</div>` : ''}
           ${r.in_master ? `
+            <div><span class="lbl">Empresa</span>${activos.length ? esc(activos.join(' · ')) : 'Sin empresa activa (egresado)'}</div>
             ${r.gender ? `<div><span class="lbl">Sexo</span>${esc(r.gender)}</div>` : ''}
             ${r.birth_date ? `<div><span class="lbl">Nacimiento</span>${fmtDate(r.birth_date)}</div>` : ''}
             ${r.phone ? `<div><span class="lbl">Teléfono</span>${esc(r.phone)}</div>` : ''}
@@ -340,13 +358,18 @@ function openFicha(r) {
   const close = () => ov.remove();
   ov.querySelector('#nrModX').addEventListener('click', close);
   ov.querySelector('#nrModOk').addEventListener('click', close);
+  // v6.132: la foto de la ficha se amplía en el visor del portal.
+  if (r.thumb_url) {
+    ov.querySelector('.nr-fic-zoom')?.addEventListener('click', () =>
+      openWorkerLightbox(r.thumb_url, `${r.full_name || ''} · ${ced}`, `${r.id_number}.jpg`));
+  }
 }
 
 /* ---- fila ---- */
 function rowHtml(r) {
   const ced = (r.ced_kind ? r.ced_kind + '-' : '') + (r.id_number || '');
   const ava = r.thumb_url
-    ? `<img class="nr-ava" src="${esc(r.thumb_url)}" alt="" loading="lazy"
+    ? `<img class="nr-ava zoom" data-zoom="1" title="Ampliar foto" src="${esc(r.thumb_url)}" alt="" loading="lazy"
          onerror="this.outerHTML='&lt;span class=&quot;nr-ava-ini&quot;&gt;${esc(initials(r.full_name))}&lt;/span&gt;'">`
     : `<span class="nr-ava-ini">${esc(initials(r.full_name))}</span>`;
   const activos = r.activo_en || [];
@@ -374,6 +397,7 @@ function rowHtml(r) {
       <td><div class="nr-obs" title="${esc(r.notes || '')}">${esc(r.notes || '—')}</div></td>
       <td style="white-space:nowrap;color:var(--muted);font-size:12px">${fmtDate(r.detected_at)}</td>
       <td>${estado}</td>
+      <td class="nr-act"><button type="button" class="nr-iconbtn" data-ficha="1" title="Ver ficha">${icoFicha()}</button></td>
     </tr>`;
 }
 
@@ -406,11 +430,9 @@ export async function renderNoRehire(user) {
         <h2>No reempleables</h2>
         <p>Personas que el sistema marca como no aptas para recontratar. Se sincroniza a diario.</p>
       </div>
-      <div style="display:flex;gap:8px">
+      <div style="display:flex;gap:8px;align-items:center">
         <button class="btn" id="nrStats"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:-2px"><line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line></svg> Ver estadísticas</button>
-        <button class="btn" id="nrXlsx">Excel</button>
-        <button class="btn" id="nrCsv">CSV</button>
-        <button class="btn" id="nrTxt">TXT</button>
+        ${exportMenuHtml('nrExp')}
       </div>
     </div>
     <div id="nrBody"><div class="nr-loading">Cargando la lista…</div></div>
@@ -508,7 +530,7 @@ export async function renderNoRehire(user) {
         <table class="nr-tbl">
           <thead><tr>
             <th>Colaborador</th><th>Motivo</th><th>Observaciones</th>
-            <th>En la lista desde</th><th>Estado</th>
+            <th>En la lista desde</th><th>Estado</th><th></th>
           </tr></thead>
           <tbody id="nrRows">${rows.map(rowHtml).join('')}</tbody>
         </table>
@@ -524,16 +546,27 @@ export async function renderNoRehire(user) {
       const tr = e.target.closest('tr[data-id]');
       if (!tr) return;
       const row = byId.get(tr.dataset.id);
-      if (row) openFicha(row);
+      if (!row) return;
+      // La foto del avatar amplía (lightbox) sin abrir la ficha. v6.132.
+      if (e.target.closest('[data-zoom]') && row.thumb_url) {
+        e.stopPropagation();
+        const ced = (row.ced_kind ? row.ced_kind + '-' : '') + (row.id_number || '');
+        openWorkerLightbox(row.thumb_url, `${row.full_name || ''} · ${ced}`, `${row.id_number}.jpg`);
+        return;
+      }
+      openFicha(row);
     });
 
     $('#nrQ')?.addEventListener('input', applyFilters);
     $('#nrMot')?.addEventListener('change', applyFilters);
     $('#nrBajas')?.addEventListener('change', applyFilters);
 
-    $('#nrXlsx')?.addEventListener('click', () => expXlsx(visibleRows(rows)));
-    $('#nrCsv')?.addEventListener('click', () => expCsv(visibleRows(rows)));
-    $('#nrTxt')?.addEventListener('click', () => expTxt(visibleRows(rows)));
+    wireExportMenu('nrExp', fmt => {
+      const rs = visibleRows(rows);
+      if (fmt === 'xlsx') expXlsx(rs);
+      else if (fmt === 'csv') expCsv(rs);
+      else expTxt(rs);
+    });
   }
 }
 

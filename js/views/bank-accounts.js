@@ -21,6 +21,8 @@
 
 import { $ } from '../core/dom.js';
 import { attachRefresh } from '../core/refresh.js';
+// v6.132: Exportar unificado (mismo botón/menú de todo el sitio).
+import { ensureExportMenuStyles, exportMenuHtml, wireExportMenu } from '../core/export-menu.js';
 
 let USER = null;
 let F = { q: '', bank: '', has: '', type: '', company: '', zone: '', department: '', ref: '' };
@@ -68,6 +70,7 @@ async function signRefPdf(path) {
 }
 
 function ensureStyles() {
+  ensureExportMenuStyles();   // v6.132: estilos del "Exportar ▾" compartido
   if (document.getElementById('bkacStyles')) return;
   const st = document.createElement('style');
   st.id = 'bkacStyles';
@@ -314,14 +317,7 @@ export async function renderBankAccounts(user) {
       <select id="bkacFComp"><option value="">Empresa: Todas</option></select>
       <select id="bkacFZone"><option value="">Zona: Todas</option></select>` : ''}
       <button class="bkac-btn" id="bkacClear">Limpiar</button>
-      <div class="bkac-expwrap">
-        <button class="bkac-btn pri" id="bkacExpBtn">Exportar ▾</button>
-        <div class="bkac-expmenu" id="bkacExpM">
-          <button data-exp="xlsx"><span class="bkac-expico" style="background:#16a34a">XLS</span><span>Excel (.xlsx)<small>Todo lo filtrado</small></span></button>
-          <button data-exp="csv"><span class="bkac-expico" style="background:#2563eb">CSV</span><span>CSV (;)<small>Separador ; con BOM UTF-8</small></span></button>
-          <button data-exp="txt"><span class="bkac-expico" style="background:#64748b">TXT</span><span>Texto alineado<small>Columnas de ancho fijo</small></span></button>
-        </div>
-      </div>
+      <div style="margin-left:auto">${exportMenuHtml('bkacExp')}</div>
     </div>
 
     <div class="bkac-box">
@@ -366,16 +362,8 @@ export async function renderBankAccounts(user) {
   });
   $('#bkacPrev').addEventListener('click', () => { PAGE.offset = Math.max(0, PAGE.offset - PAGE.limit); load(); });
   $('#bkacNext').addEventListener('click', () => { PAGE.offset += PAGE.limit; load(); });
-  $('#bkacExpBtn').addEventListener('click', () => $('#bkacExpM').classList.toggle('open'));
-  $('#bkacExpM').addEventListener('click', e => {
-    const b = e.target.closest('button[data-exp]');
-    if (!b) return;
-    $('#bkacExpM').classList.remove('open');
-    runExport(b.dataset.exp, $('#bkacExpBtn'));
-  });
-  document.addEventListener('click', e => {
-    if (!e.target.closest('.bkac-expwrap')) { const m = $('#bkacExpM'); if (m) m.classList.remove('open'); }
-  });
+  // v6.132: Exportar unificado (componente compartido del sitio).
+  wireExportMenu('bkacExp', fmt => runExport(fmt, document.getElementById('bkacExpBtn')));
   $('#pnlMain').addEventListener('click', e => {
     const v = e.target.closest('.bkac-refview');
     if (v && v.dataset.path) { signRefPdf(v.dataset.path); return; }
