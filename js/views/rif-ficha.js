@@ -101,14 +101,38 @@ function parseRif(rawText) {
   const mc = text.match(/N[°º]\s*COMPROBANTE:\s*([A-Z0-9]+)/i);
   if (mc) out.nro_comprobante = mc[1];
 
-  const mi = text.match(/FECHA DE INSCRIPCI[ÓO]N:\s*(\d{2}\/\d{2}\/\d{4})/i);
-  if (mi) out.fecha_inscripcion = mi[1];
-
-  const ma = text.match(/[ÚU]LTIMA ACTUALIZACI[ÓO]N:\s*(\d{2}\/\d{2}\/\d{4})/i);
-  if (ma) out.fecha_actualizacion = ma[1];
-
-  const mv = text.match(/FECHA DE VENCIMIENTO:\s*(\d{2}\/\d{2}\/\d{4})/i);
-  if (mv) out.fecha_vencimiento = mv[1];
+  // Fechas: inscripción / actualización / vencimiento. v6.124: el certificado
+  // del SENIAT a veces sale "columnar" — pdfjs devuelve las TRES etiquetas
+  // juntas y luego las TRES fechas juntas (10/07/2026 · 10/07/2026 · 10/07/2029),
+  // así que el match por adyacencia tomaba la 1ª fecha (inscripción) como
+  // vencimiento y marcaba "vencido" por error. Se resuelve por POSICIÓN:
+  //  - si las fechas están intercaladas con sus etiquetas -> la que sigue a c/u;
+  //  - si vienen agrupadas al final -> se mapean por el orden fijo del SENIAT
+  //    (inscripción, actualización, vencimiento).
+  {
+    const posOf = (re) => { const mm = re.exec(text); return mm ? mm.index : -1; };
+    const iIns = posOf(/FECHA DE INSCRIPCI[ÓO]N/i);
+    const iAct = posOf(/[ÚU]LTIMA ACTUALIZACI[ÓO]N/i);
+    const iVen = posOf(/FECHA DE VENCIMIENTO/i);
+    const dates = [];
+    const dre = /\b(\d{2}\/\d{2}\/\d{4})\b/g; let dm;
+    while ((dm = dre.exec(text))) dates.push({ v: dm[1], at: dm.index });
+    const firstAfter = (idx) => (idx < 0 ? null : (dates.find(d => d.at > idx) || null));
+    // Intercaladas: hay una fecha entre INSCRIPCIÓN y ACTUALIZACIÓN.
+    const interleaved = iIns >= 0 && iAct >= 0 && dates.some(d => d.at > iIns && d.at < iAct);
+    if (interleaved) {
+      out.fecha_inscripcion = (firstAfter(iIns) || {}).v || null;
+      out.fecha_actualizacion = (firstAfter(iAct) || {}).v || null;
+      out.fecha_vencimiento = (firstAfter(iVen) || {}).v || null;
+    } else {
+      // Columnar: las fechas van juntas, en el orden de las etiquetas.
+      const trailing = iVen >= 0 ? dates.filter(d => d.at > iVen) : dates;
+      const seq = (trailing.length >= 3 ? trailing : dates).map(d => d.v);
+      out.fecha_inscripcion = seq[0] || null;
+      out.fecha_actualizacion = seq[1] || null;
+      out.fecha_vencimiento = seq[2] || null;
+    }
+  }
 
   return out;
 }
