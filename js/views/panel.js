@@ -23,6 +23,9 @@ import { renderAvisos, gotoAviso as avisosGoto } from './avisos.js';
 import { renderEgressRatify } from './egress-ratify.js';
 import { renderPersonnelSearch } from './personnel-search.js';
 import { renderPersonnelIncomplete } from './personnel-incomplete.js';
+// v6.128: relleno masivo de Dirección Fiscal — reusa el lector de RIF (pdfjs
+// carga lazy dentro de extractText, no engorda el arranque de Sincronización).
+import { parseRif as rifParse, extractText as rifExtract, docApi as rifDocApi, sessUser as rifSessUser } from './rif-ficha.js';
 import { renderDoubleEmployment } from './double-employment.js';
 import { renderNoRehire, mountNoRehireConfigCard } from './no-rehire.js';
 import { renderNoRehireVerify } from './no-rehire-verify.js';
@@ -608,7 +611,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.127</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.128</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5755,6 +5758,50 @@ async function renderPaySyncCard(user) {
   });
 }
 
+/* v6.128: relleno masivo de Dirección Fiscal desde los RIF ya cargados.
+   1) pide al servidor los RIF sin dirección fiscal (con URL firmada 1h);
+   2) re-lee cada PDF con el MISMO lector del RIF y extrae el domicilio;
+   3) manda todo junto para completar workers_master.fiscal_address.
+   No toca la Dirección Personal. Reutilizable si en el futuro hace falta. */
+async function runFiscalBackfill(user, btn, statusEl) {
+  const su = rifSessUser(user);
+  const setS = (t) => { if (statusEl) statusEl.textContent = t; };
+  btn.disabled = true;
+  setS('Buscando RIF sin dirección fiscal…');
+  let pend;
+  try {
+    const r = await rifDocApi({ action: 'fiscal_pending', user: su });
+    pend = (r && r.ok) ? (r.items || []) : null;
+  } catch (_) { pend = null; }
+  if (!pend) { setS('No se pudo obtener la lista. Reintenta en un momento.'); btn.disabled = false; return; }
+  if (!pend.length) { setS('✓ Todos los RIF ya tienen Dirección Fiscal. Nada que rellenar.'); btn.disabled = false; return; }
+
+  const results = []; let done = 0, fail = 0;
+  for (const it of pend) {
+    setS(`Procesando ${done + 1} de ${pend.length}…  (${results.length} leídas · ${fail} sin domicilio)`);
+    try {
+      const resp = await fetch(it.signed_url);
+      const buf = await resp.arrayBuffer();
+      const text = await rifExtract(buf.slice(0));
+      const fields = rifParse(text);
+      if (fields && fields.domicilio_fiscal) results.push({ id_number: it.id_number, fiscal_address: fields.domicilio_fiscal });
+      else fail++;
+    } catch (_) { fail++; }
+    done++;
+  }
+
+  setS(`Guardando ${results.length}…`);
+  let saved = 0;
+  if (results.length) {
+    try {
+      const r = await rifDocApi({ action: 'fiscal_set_bulk', user: su, items: results });
+      saved = (r && r.ok) ? (r.updated || 0) : 0;
+    } catch (_) { saved = 0; }
+  }
+  setS(`Listo: ${saved} completadas · ${fail} sin domicilio detectable (revisar ese PDF) · de ${pend.length} RIF.`);
+  btn.disabled = false;
+}
+
 async function viewSync(user) {
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Sincronización</h1><p>Catálogo de empresas · AX → Supabase</p></div></div>`
@@ -5914,6 +5961,15 @@ async function viewSync(user) {
 
     <div id="norehireCfgCard"></div>
 
+    <!-- v6.128: herramienta de una vez — rellena la Dirección Fiscal de las
+         fichas cuyo RIF ya estaba cargado antes de que leyéramos el domicilio. -->
+    <div class="card" id="fiscalToolCard">
+      <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">Herramientas · Dirección Fiscal</h3></div>
+      <p class="cfg-desc" style="margin:0 0 10px">Rellena la <b>Dirección Fiscal</b> de las fichas cuyo RIF ya estaba cargado pero se subió antes de que leyéramos el domicilio. Re-lee cada PDF del SENIAT y completa el campo. <b>No toca la Dirección Personal.</b></p>
+      <div id="fiscalToolStatus" class="muted" style="font-size:12.5px;margin:0 0 10px">Pulsa para buscar y completar los RIF sin dirección fiscal.</div>
+      <button class="btn btn-primary" id="fiscalToolBtn">Rellenar Dirección Fiscal</button>
+    </div>
+
     <!-- v5.58 — SE SACAN LAS DOS TABLAS DE HISTORIAL (Pablo).
 
          Aca vivian "Ultimas corridas con movimiento" (personal) y "Ultimas
@@ -5929,6 +5985,9 @@ async function viewSync(user) {
 
   wireRunToggles();
   applySyncCooldown(cfg);
+
+  // v6.128: botón "Rellenar Dirección Fiscal".
+  { const fb = $('#fiscalToolBtn'), fs = $('#fiscalToolStatus'); if (fb) fb.addEventListener('click', () => runFiscalBackfill(user, fb, fs)); }
 
   /* ---- v4.56: tarjeta "Personal de tiendas · ingresos y egresos" ---- */
   (function initRosterCard() {

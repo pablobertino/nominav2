@@ -44,14 +44,14 @@ function calcRIF(cedula) {
 }
 
 /* ---------- API ---------- */
-async function docApi(payload) {
+export async function docApi(payload) {
   const res = await fetch('/api/personal-doc', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
   return res.json();
 }
-function sessUser(u) { return { kind: u.kind, id: u.id || null, companyCode: u.companyCode || null }; }
+export function sessUser(u) { return { kind: u.kind, id: u.id || null, companyCode: u.companyCode || null }; }
 
 /* ---------- utilidades ---------- */
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
@@ -81,7 +81,7 @@ function isVencido(dmy) { const d = parseDMY(dmy); return !!d && d < todayLocal(
 function looksLikeRif(text) {
   return /REGISTRO\s+[ÚU]NICO\s+DE\s+INFORMACI[ÓO]N\s+FISCAL|seniat\.gob\.ve|N[°º]\s*COMPROBANTE/i.test(text || '');
 }
-function parseRif(rawText) {
+export function parseRif(rawText) {
   const text = collapse(rawText);
   const out = { es_rif: looksLikeRif(text), rif: null, cedula_rif: null, nombre_pdf: null,
     nro_comprobante: null, fecha_inscripcion: null, fecha_actualizacion: null, fecha_vencimiento: null,
@@ -507,7 +507,7 @@ function sem(kind, txt) {
 }
 
 /* ---------- pdfjs: extraer texto plano ---------- */
-async function extractText(arrayBuffer) {
+export async function extractText(arrayBuffer) {
   const pdfjs = await ensurePdfjs();
   const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise;
   let out = '';

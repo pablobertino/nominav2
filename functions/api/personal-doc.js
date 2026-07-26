@@ -125,7 +125,8 @@ export async function onRequestPost({ request, env }) {
   try { body = await request.json(); } catch { return json({ ok: false, error: 'JSON invalido.' }, 400); }
 
   const action = norm(body.action);
-  const known = (action === 'save' || action === 'annul' || action === 'list' || action === 'sign');
+  const known = (action === 'save' || action === 'annul' || action === 'list' || action === 'sign'
+    || action === 'fiscal_pending' || action === 'fiscal_set_bulk');
   if (!known) return json({ ok: false, error: 'Accion no valida.' }, 400);
 
   const actor = await resolveActor(env, body.user);
@@ -140,6 +141,9 @@ export async function onRequestPost({ request, env }) {
     codes = WRITE_CODE[dt];
   } else if (action === 'annul') {
     codes = REMOVE_CODE;
+  } else if (action === 'fiscal_pending' || action === 'fiscal_set_bulk') {
+    // Relleno masivo de Dirección Fiscal desde los RIF ya cargados (v6.128).
+    codes = WRITE_CODE.rif;
   } else {
     codes = READ_CODE;
   }
@@ -150,6 +154,8 @@ export async function onRequestPost({ request, env }) {
     if (action === 'list')  return await listDocs(env, body);
     if (action === 'sign')  return await signDoc(env, body);
     if (action === 'annul') return await annulDoc(env, body);
+    if (action === 'fiscal_pending')  return await fiscalPending(env, body);
+    if (action === 'fiscal_set_bulk') return await fiscalSetBulk(env, body);
   } catch (e) {
     return json({ ok: false, error: String((e && e.message) || e) }, 500);
   }
@@ -208,6 +214,59 @@ async function saveDoc(env, actor, body) {
 
   const signed = await storageSignedUrl(env, storagePath);
   return json({ ok: true, document: saved, signed_url: signed });
+}
+
+/* ---------- fiscal_pending: RIF activos SIN dirección fiscal (v6.128) ----------
+   Para el relleno masivo. Devuelve, por persona con RIF no anulado cuyo
+   workers_master.fiscal_address está vacío, el RIF MÁS RECIENTE con una URL
+   firmada (1h) para re-leer el PDF en el navegador y extraer el domicilio. */
+async function fiscalPending(env, body) {
+  const rifs = await sb(env,
+    'personal_documents?doc_type=eq.rif&estado=neq.anulada'
+    + '&select=id_number,storage_path,created_at&order=created_at.desc') || [];
+  const latest = new Map();   // id_number -> RIF más reciente con path
+  for (const r of rifs) {
+    if (!r.id_number || !r.storage_path) continue;
+    if (!latest.has(r.id_number)) latest.set(r.id_number, r);
+  }
+  const ids = [...latest.keys()];
+  if (!ids.length) return json({ ok: true, items: [], total: 0 });
+
+  const inList = ids.map(c => `"${c}"`).join(',');
+  const masters = await sb(env,
+    `workers_master?id_number=in.(${inList})&select=id_number,fiscal_address`) || [];
+  const hasFiscal = new Set((masters || [])
+    .filter(m => m.fiscal_address && String(m.fiscal_address).trim())
+    .map(m => m.id_number));
+
+  const picks = ids.filter(id => !hasFiscal.has(id)).map(id => latest.get(id));
+  const items = [];
+  for (const p of picks) {
+    const url = await storageSignedUrl(env, p.storage_path);
+    if (url) items.push({ id_number: p.id_number, signed_url: url });
+  }
+  return json({ ok: true, items, total: picks.length });
+}
+
+/* ---------- fiscal_set_bulk: guarda las direcciones fiscales leídas (v6.128) ----
+   { items: [{ id_number, fiscal_address }] } -> workers_master.fiscal_address.
+   Solo escribe fiscal_address; NO toca la Dirección Personal (address). */
+async function fiscalSetBulk(env, body) {
+  const items = Array.isArray(body.items) ? body.items : [];
+  let updated = 0;
+  for (const it of items) {
+    const ced = cleanDigits(it && it.id_number);
+    const fiscal = norm(it && it.fiscal_address);
+    if (!ced || !fiscal) continue;
+    try {
+      await sb(env, `workers_master?id_number=eq.${encodeURIComponent(ced)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ fiscal_address: fiscal }),
+      });
+      updated++;
+    } catch (_) { /* seguir con los demás */ }
+  }
+  return json({ ok: true, updated });
 }
 
 /* ---------- list: documentos de un trabajador (por tipo si se indica) ---------- */
