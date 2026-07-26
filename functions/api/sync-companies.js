@@ -15,6 +15,17 @@
 import { shadowCan } from './_auth.js';
 
 const AX_API = 'https://api.grupocanaima.com/empresas/status/v1';
+// v6.118: histórico versionado del grupo/concepto/estatus de cada empresa
+// (alias) en el tiempo. Se sincroniza justo después del catálogo.
+const HIST_API = 'https://api.grupocanaima.com/empresas/historico/v1';
+
+// Fecha de AX -> ISO, o null. 1900-01-01 es el dateNull de AX (sin fecha);
+// en el histórico validoHasta=1900-01-01 significa tramo abierto (vigente).
+function axDate(v) {
+  const s = String(v || '').trim();
+  if (!s || s.startsWith('1900-01-01') || isNaN(Date.parse(s))) return null;
+  return new Date(s).toISOString();
+}
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -282,11 +293,54 @@ export async function onRequestPost({ request, env }) {
       });
     } catch (_) { /* limpieza best-effort */ }
 
+    // 5) v6.118: histórico del grupo/concepto/estatus de cada empresa en el
+    //    tiempo (AX /empresas/historico/v1) -> tabla company_history,
+    //    relacionada con companies por company_code (=alias). Best-effort: un
+    //    fallo aquí NO rompe la sincronización del catálogo (ya persistido).
+    //    Solo se guardan aliases presentes en el catálogo para respetar la FK,
+    //    y se deduplica (company_code, valido_desde) para el upsert.
+    let historyCount = 0;
+    try {
+      const hRes = await fetch(HIST_API, {
+        headers: { Accept: 'application/json', 'X-API-Key': env.canaima_apikey },
+      });
+      if (hRes.ok) {
+        let hData = await hRes.json();
+        if (!Array.isArray(hData)) hData = hData.historico || hData.data || hData.items || [];
+        const validCodes = new Set(companyRows.map(r => r.company_code));
+        const seen = new Set();
+        const historyRows = [];
+        for (const h of hData) {
+          const code = h.alias;
+          if (!code || !validCodes.has(code)) continue;   // respeta la FK
+          const desde = axDate(h.validoDesde);
+          if (!desde) continue;                            // sin inicio no se versiona
+          const key = `${code}|${desde}`;
+          if (seen.has(key)) continue;                     // evita doble fila en el lote
+          seen.add(key);
+          const hasta = axDate(h.validoHasta);             // sentinela 1900 -> null (vigente)
+          historyRows.push({
+            company_code: code,
+            concepto: h.descripcionGrupo || null,
+            empresa_nombre: h.nombreEmpresa || null,
+            status: h.status || null,
+            valido_desde: desde,
+            valido_hasta: hasta,
+            vigente: hasta === null,
+            synced_at: new Date().toISOString(),
+          });
+        }
+        await upsert(env, 'company_history', historyRows);
+        historyCount = historyRows.length;
+      }
+    } catch (_) { /* histórico best-effort: no rompe la sync del catálogo */ }
+
     const synced = {
       companies: companyRows.length,
       zones: zones.size,
       subzones: subzones.size,
       concepts: concepts.size,
+      history: historyCount,
     };
     await recordRun(env, { status: 'ok', source, result: synced, duration_ms: Date.now() - started, changes, triggered_by: adminId });
     return json({ ok: true, synced });
