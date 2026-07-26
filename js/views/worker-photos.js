@@ -2032,9 +2032,18 @@ function paintFichaValues(host, w) {
   setVal(host, 'phone', w.phone ? phoneDisplay(w.phone) : '');
   setVal(host, 'email', w.email);
   setVal(host, 'address', w.address);
-  // v6.126: Dirección Fiscal (del RIF) — fila solo si hay dato.
-  setVal(host, 'fiscal_address', w.fiscal_address);
-  { const fr = host.querySelector('#ff_fiscal_row'); if (fr) fr.style.display = w.fiscal_address ? '' : 'none'; }
+  // v6.127: Dirección Fiscal (del RIF) — SIEMPRE visible (no editable). Si aún
+  // no hay RIF cargado, se muestra vacía aclarando que se completa al cargarlo.
+  {
+    const fr = host.querySelector('#ff_fiscal_row');
+    const fv = host.querySelector('[data-v="fiscal_address"]');
+    if (fr) fr.style.display = '';
+    if (fv) {
+      const has = !!(w.fiscal_address && String(w.fiscal_address).trim());
+      fv.textContent = has ? w.fiscal_address : 'Se completa al cargar el RIF';
+      fv.classList.toggle('empty', !has);
+    }
+  }
   setVal(host, 'photo_uploaded_by', w.photo_uploaded_by
     ? `${w.photo_uploaded_by}${w.photo_uploaded_at ? ' · ' + fmtDateTime(w.photo_uploaded_at) : ''}`
     : '');
@@ -2265,8 +2274,9 @@ function wireFicha(host, w) {
       const wrap = q('#e_fiscal_wrap'), box = q('#e_fiscal'), copyBtn = q('#e_copy_fiscal'), addr = q('#e_address');
       if (wrap && box) {
         const fiscal = w.fiscal_address || '';
-        wrap.style.display = fiscal ? '' : 'none';
-        box.textContent = fiscal || '—';
+        wrap.style.display = '';   // v6.127: SIEMPRE visible (no editable)
+        box.textContent = fiscal || 'Se completa al cargar el RIF';
+        box.classList.toggle('empty', !fiscal);
         const refreshCopy = () => { if (copyBtn) copyBtn.style.display = (fiscal && !addr.value.trim()) ? 'inline-block' : 'none'; };
         if (copyBtn && !copyBtn.dataset.bound) {
           copyBtn.dataset.bound = '1';
