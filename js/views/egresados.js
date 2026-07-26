@@ -112,9 +112,10 @@ const TIMES = [
   { v: '90-180', lbl: '3 a 6 meses', min: 90, max: 180 },
   { v: '180-365', lbl: '6 a 12 meses', min: 180, max: 365 },
   { v: '365-', lbl: 'Más de 1 año', min: 365, max: null },
+  { v: 'custom', lbl: 'Personalizado…', min: null, max: null },
 ];
 
-const STATE = { q: '', time: '', minDays: null, maxDays: null, offset: 0, total: 0, rows: [], queried: false };
+const STATE = { q: '', time: '', minDays: null, maxDays: null, custVal: 6, custUnit: 'm', offset: 0, total: 0, rows: [], queried: false };
 
 function rowHtml(r) {
   const ced = cedStr(r);
@@ -215,6 +216,15 @@ export async function renderEgresados(user, opts) {
     <div class="eg-filters">
       <input type="text" id="egQ" placeholder="Buscar por cédula o nombre" value="${esc(STATE.q)}">
       <select class="eg-sel" id="egTime">${TIMES.map(o => `<option value="${o.v}" ${o.v === STATE.time ? 'selected' : ''}>Tiempo de egresado: ${esc(o.lbl)}</option>`).join('')}</select>
+      <span id="egCustom" style="display:${STATE.time === 'custom' ? 'inline-flex' : 'none'};gap:6px;align-items:center">
+        <span style="font-size:12.5px;color:var(--muted)">Últimos</span>
+        <input type="number" id="egCustVal" min="1" max="999" value="${STATE.custVal || 6}" style="width:66px;font:inherit;font-size:12.5px;padding:8px 9px;border:1px solid var(--border);border-radius:9px;background:#fff;color:var(--ink)">
+        <select class="eg-sel" id="egCustUnit" style="min-width:auto">
+          <option value="d" ${STATE.custUnit === 'd' ? 'selected' : ''}>días</option>
+          <option value="m" ${(STATE.custUnit || 'm') === 'm' ? 'selected' : ''}>meses</option>
+          <option value="y" ${STATE.custUnit === 'y' ? 'selected' : ''}>años</option>
+        </select>
+      </span>
       <button class="eg-btn" id="egGo">Consultar</button>
       <span class="eg-count" id="egCount"></span>
     </div>
@@ -225,14 +235,32 @@ export async function renderEgresados(user, opts) {
 
   const run = () => {
     STATE.q = ($('#egQ')?.value || '').trim();
-    const sel = TIMES.find(o => o.v === ($('#egTime')?.value || '')) || TIMES[0];
-    STATE.time = sel.v; STATE.minDays = sel.min; STATE.maxDays = sel.max;
+    const tv = $('#egTime')?.value || '';
+    STATE.time = tv;
+    if (tv === 'custom') {
+      const n = Math.max(1, parseInt($('#egCustVal')?.value, 10) || 1);
+      const u = $('#egCustUnit')?.value || 'm';
+      STATE.custVal = n; STATE.custUnit = u;
+      const mult = u === 'd' ? 1 : (u === 'y' ? 365 : 30);
+      STATE.minDays = 0; STATE.maxDays = n * mult;   // egresados de los últimos N (hacia atrás)
+    } else {
+      const sel = TIMES.find(o => o.v === tv) || TIMES[0];
+      STATE.minDays = sel.min; STATE.maxDays = sel.max;
+    }
     STATE.offset = 0;
     load(user);
   };
+  const toggleCustom = () => {
+    const on = ($('#egTime')?.value === 'custom');
+    const el = $('#egCustom'); if (el) el.style.display = on ? 'inline-flex' : 'none';
+    return on;
+  };
   $('#egGo')?.addEventListener('click', run);
   $('#egQ')?.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
-  $('#egTime')?.addEventListener('change', run);
+  $('#egCustVal')?.addEventListener('keydown', e => { if (e.key === 'Enter') run(); });
+  $('#egCustUnit')?.addEventListener('change', run);
+  // Al pasar a "Personalizado" se muestran los campos y se espera Consultar; los presets corren al instante.
+  $('#egTime')?.addEventListener('change', () => { const on = toggleCustom(); if (!on) run(); });
 
   if (restore) await load(user);
 }
