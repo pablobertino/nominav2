@@ -1,0 +1,210 @@
+/* =====================================================================
+   views/egresados.js — Egresados (v6.135)
+
+   Pantalla de CONSULTA de personas que ya no están activas (fuente:
+   ax_egresos, último egreso de cada quien). Pensada para detectar reempleo:
+   en los análisis de No reempleables los egresados salieron como la fuente
+   natural de recontratación. Solo búsqueda y ficha por ahora — no marca ni
+   reingresa nada. Los NO REEMPLEABLES aparecen marcados con un chip rojo.
+
+   Alcance: el listado respeta el alcance del usuario (lo aplica el
+   endpoint). Gate: view.egresados (Coordinador y Administrador). Al hacer
+   clic se abre la MISMA ficha del no reempleable/egresado (reutilizada de
+   no-rehire.js), con "← Volver" de regreso a esta pantalla.
+   ===================================================================== */
+import { $ } from '../core/dom.js';
+import { renderNoRehireFicha } from './no-rehire.js';
+import { openWorkerLightbox } from './worker-photos.js';
+
+const PAGE = 50;
+
+const esc = s => String(s ?? '').replace(/[&<>"']/g, c => (
+  { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
+));
+
+const fmtDate = d => {
+  if (!d) return '—';
+  const [y, m, dd] = String(d).slice(0, 10).split('-');
+  return (y && m && dd) ? `${dd}/${m}/${y}` : '—';
+};
+
+/* "hace X" a partir de una fecha (para el tiempo egresado). */
+function relSince(d) {
+  if (!d) return '';
+  const t = Date.parse(String(d).slice(0, 10) + 'T00:00:00');
+  if (!Number.isFinite(t)) return '';
+  let days = Math.max(0, Math.floor((Date.now() - t) / 86400000));
+  if (days < 31) return `hace ${days} día${days === 1 ? '' : 's'}`;
+  const y = Math.floor(days / 365), mo = Math.floor((days % 365) / 30);
+  const parts = [];
+  if (y) parts.push(`${y} año${y === 1 ? '' : 's'}`);
+  if (mo) parts.push(`${mo} mes${mo === 1 ? '' : 'es'}`);
+  return 'hace ' + (parts.join(' y ') || `${days} días`);
+}
+
+function initials(name) {
+  const p = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (!p.length) return '?';
+  return (p[0][0] + (p.length > 1 ? p[p.length - 1][0] : '')).toUpperCase();
+}
+
+const cedStr = r => `${Number(r.id_number) >= 80000000 ? 'E' : 'V'}-${r.id_number || ''}`;
+
+async function api(user, payload) {
+  const res = await fetch('/api/egresados', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ ...payload, user }),
+  });
+  return res.json();
+}
+
+let STYLED = false;
+function ensureStyles() {
+  if (STYLED) return;
+  STYLED = true;
+  const css = document.createElement('style');
+  css.textContent = `
+  .eg-head h2{margin:0;font-size:20px;font-weight:700}
+  .eg-head p{margin:3px 0 0;color:var(--muted);font-size:13px;max-width:760px}
+  .eg-filters{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin:15px 0 0}
+  .eg-filters input[type=text]{font:inherit;font-size:13px;padding:8px 11px;border:1px solid var(--border);border-radius:9px;background:var(--surface,#fff);color:var(--ink);width:280px;max-width:100%}
+  .eg-count{font-size:12.5px;color:var(--muted)}
+  .eg-card{background:var(--card,#fff);border:1px solid var(--border);border-radius:13px;margin-top:13px;overflow:hidden}
+  .eg-tbl{width:100%;border-collapse:collapse;font-size:13px}
+  .eg-tbl th{text-align:left;font-size:10.5px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted);font-weight:800;padding:10px 14px;background:#fbfcfe;border-bottom:1px solid var(--border);white-space:nowrap}
+  .eg-tbl td{padding:11px 14px;border-bottom:1px solid var(--border-soft,#eef1f5);vertical-align:middle}
+  .eg-tbl tbody tr:last-child td{border-bottom:none}
+  .eg-tbl tbody tr{cursor:pointer}
+  .eg-tbl tbody tr:hover{background:var(--bg-soft,#f8fafc)}
+  .eg-who{display:flex;align-items:center;gap:10px;min-width:0}
+  .eg-ava{width:38px;height:38px;border-radius:50%;flex:none;object-fit:cover;border:1px solid var(--border);cursor:zoom-in}
+  .eg-ava-ini{width:38px;height:38px;border-radius:50%;flex:none;display:inline-flex;align-items:center;justify-content:center;background:#eef2f7;color:#64748b;font-weight:800;font-size:13px;border:1px solid var(--border)}
+  .eg-nm{font-weight:700}
+  .eg-ced{font-family:ui-monospace,Menlo,monospace;font-size:12px;color:var(--muted)}
+  .eg-role{font-size:11px;color:var(--muted);margin-top:1px}
+  .eg-sub{font-size:11.5px;color:var(--muted);margin-top:1px}
+  .eg-pill{display:inline-block;border-radius:999px;padding:3px 10px;font-size:11px;font-weight:700;white-space:nowrap}
+  .eg-pill.nr{background:#fef2f2;color:#b91c1c;border:1px solid #fca5a5}
+  .eg-daychip{font-size:11px;color:var(--muted)}
+  .eg-empty{padding:48px 20px;text-align:center;color:var(--muted);font-size:13px}
+  .eg-loading{padding:44px;text-align:center;color:var(--muted);font-size:13px}
+  .eg-foot{display:flex;align-items:center;gap:12px;padding:11px 14px;border-top:1px solid var(--border);background:#fbfcfe;font-size:12.5px;color:var(--muted)}
+  .eg-foot .sp{flex:1}
+  .eg-pg{font:inherit;font-size:12.5px;padding:6px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface,#fff);color:var(--ink);cursor:pointer}
+  .eg-pg:disabled{opacity:.5;cursor:default}
+  @media(max-width:760px){
+    .eg-tbl thead{display:none}
+    .eg-tbl td{display:block;border:none;padding:4px 14px}
+    .eg-tbl tbody tr{display:block;border-bottom:1px solid var(--border)!important;padding:11px 0}
+  }`;
+  document.head.appendChild(css);
+}
+
+const STATE = { q: '', offset: 0, total: 0, rows: [] };
+
+function rowHtml(r) {
+  const ced = cedStr(r);
+  const ava = r.thumb_url
+    ? `<img class="eg-ava" data-zoom="1" title="Ampliar foto" src="${esc(r.thumb_url)}" alt="" loading="lazy"
+         onerror="this.outerHTML='&lt;span class=&quot;eg-ava-ini&quot;&gt;${esc(initials(r.full_name))}&lt;/span&gt;'">`
+    : `<span class="eg-ava-ini">${esc(initials(r.full_name))}</span>`;
+  const loc = r.zona ? `${esc(r.zona)}${r.subzona ? ' · ' + esc(r.subzona) : ''}` : 'Sin zona';
+  return `
+    <tr data-ced="${esc(String(r.id_number))}">
+      <td>
+        <div class="eg-who">${ava}
+          <div style="min-width:0">
+            <div class="eg-nm">${esc(r.full_name || 'Sin nombre')}${r.is_no_rehire ? ' <span class="eg-pill nr">No reempleable</span>' : ''}</div>
+            <div class="eg-ced">${esc(ced)}</div>
+            ${r.role ? `<div class="eg-role">${esc(r.role)}</div>` : ''}
+          </div>
+        </div>
+      </td>
+      <td>${esc(r.last_company || '—')}${r.last_company_code ? `<div class="eg-sub">${esc(r.last_company_code)}</div>` : ''}</td>
+      <td>${loc}</td>
+      <td style="white-space:nowrap">${fmtDate(r.last_egreso)}<div class="eg-daychip">${esc(relSince(r.last_egreso))}</div></td>
+      <td style="text-align:center">${r.contratos || 0}</td>
+    </tr>`;
+}
+
+function paint(user) {
+  const body = $('#egBody');
+  if (!body) return;
+  if (!STATE.rows.length) {
+    body.innerHTML = `<div class="eg-card"><div class="eg-empty">${STATE.q ? 'Sin egresados que coincidan con la búsqueda.' : 'No hay egresados en tu alcance.'}</div></div>`;
+    return;
+  }
+  const from = STATE.offset + 1;
+  const to = STATE.offset + STATE.rows.length;
+  body.innerHTML = `
+    <div class="eg-card">
+      <table class="eg-tbl">
+        <thead><tr>
+          <th>Colaborador</th><th>Última empresa</th><th>Zona / subzona</th><th>Egresó</th><th style="text-align:center">Contratos</th>
+        </tr></thead>
+        <tbody id="egRows">${STATE.rows.map(rowHtml).join('')}</tbody>
+      </table>
+      <div class="eg-foot">
+        <span>${from}–${to} de ${STATE.total}</span>
+        <span class="sp"></span>
+        <button class="eg-pg" id="egPrev" ${STATE.offset <= 0 ? 'disabled' : ''}>‹ Anterior</button>
+        <button class="eg-pg" id="egNext" ${to >= STATE.total ? 'disabled' : ''}>Siguiente ›</button>
+      </div>
+    </div>`;
+
+  const byCed = new Map(STATE.rows.map(r => [String(r.id_number), r]));
+  $('#egRows')?.addEventListener('click', e => {
+    const tr = e.target.closest('tr[data-ced]');
+    if (!tr) return;
+    const r = byCed.get(tr.dataset.ced);
+    if (!r) return;
+    if (e.target.closest('[data-zoom]') && r.thumb_url) {
+      e.stopPropagation();
+      openWorkerLightbox(r.thumb_url, `${r.full_name || ''} · ${cedStr(r)}`, `${r.id_number}.jpg`);
+      return;
+    }
+    renderNoRehireFicha(user, r.id_number, () => renderEgresados(user));
+  });
+  $('#egPrev')?.addEventListener('click', () => { STATE.offset = Math.max(0, STATE.offset - PAGE); load(user); });
+  $('#egNext')?.addEventListener('click', () => { STATE.offset += PAGE; load(user); });
+}
+
+async function load(user) {
+  const body = $('#egBody');
+  if (body) body.innerHTML = '<div class="eg-loading">Cargando egresados…</div>';
+  const r = await api(user, { action: 'list', q: STATE.q, offset: STATE.offset, limit: PAGE });
+  if (!$('#egBody')) return;   // navegó a otra vista
+  const cnt = $('#egCount');
+  if (!r || !r.ok) {
+    $('#egBody').innerHTML = `<div class="eg-card"><div class="eg-empty">${esc((r && r.error) || 'No se pudo cargar.')}</div></div>`;
+    if (cnt) cnt.textContent = '';
+    return;
+  }
+  STATE.total = r.total || 0;
+  STATE.rows = r.rows || [];
+  if (cnt) cnt.textContent = `${STATE.total} egresado${STATE.total === 1 ? '' : 's'} en tu alcance`;
+  paint(user);
+}
+
+export async function renderEgresados(user) {
+  ensureStyles();
+  $('#pnlMain').innerHTML = `
+    <div class="eg-head">
+      <h2>Egresados</h2>
+      <p>Personas que ya no están activas, por si sirven para reempleo. Solo consulta: buscá y abrí su ficha con la historia laboral completa. Los <b>no reempleables</b> salen marcados. Respeta tu alcance.</p>
+    </div>
+    <div class="eg-filters">
+      <input type="text" id="egQ" placeholder="Buscar por cédula o nombre" value="${esc(STATE.q)}">
+      <span class="eg-count" id="egCount"></span>
+    </div>
+    <div id="egBody"><div class="eg-loading">Cargando egresados…</div></div>`;
+
+  let t = null;
+  $('#egQ')?.addEventListener('input', e => {
+    clearTimeout(t);
+    const v = e.target.value;
+    t = setTimeout(() => { STATE.q = v.trim(); STATE.offset = 0; load(user); }, 350);
+  });
+
+  await load(user);
+}

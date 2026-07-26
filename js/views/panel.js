@@ -29,6 +29,7 @@ import { parseRif as rifParse, extractText as rifExtract, docApi as rifDocApi, s
 import { renderDoubleEmployment } from './double-employment.js';
 import { renderNoRehire, mountNoRehireConfigCard } from './no-rehire.js';
 import { renderNoRehireVerify } from './no-rehire-verify.js';
+import { renderEgresados } from './egresados.js';   // v6.135
 import { renderMovements } from './movements.js';
 import { renderMovQuincena } from './mov-quincena.js';
 import { renderCambioCargo, renderCambioCargoHist, renderNovedades } from './cambio-cargo.js';
@@ -170,6 +171,7 @@ const NAV_GROUPS = [
     // v5.73: No reempleables. OJO §4 del resumen: agregar el item ACA no
     // alcanza para editor/gestor — cada rol tiene SU array (abajo).
     ['norehire', I.userx, 'No reempleables'],
+    ['egresados', I.userx, 'Egresados'],
     ['norehirecheck', I.usercheck, 'Verificar candidato'],
     // v5.93: Movimientos del periodo (ingresos/egresos/traslados/cambios de
     // cargo), derivados de los cortes quincenales. Permiso propio
@@ -354,6 +356,7 @@ const NAV_EDITOR_GROUPS = [
     ['buscar', I.search, 'Buscar'],
     ['datosincompletos', I.bizreport, 'Datos incompletos'],
     ['norehire', I.userx, 'No reempleables'],
+    ['egresados', I.userx, 'Egresados'],
     ['norehirecheck', I.usercheck, 'Verificar candidato'],
     ['rostersync', I.sync, 'Carga de personal'],
   ] },
@@ -391,6 +394,7 @@ const NAV_GESTOR_GROUPS = [
     ['buscar', I.search, 'Buscar'],
     ['datosincompletos', I.bizreport, 'Datos incompletos'],
     ['norehire', I.userx, 'No reempleables'],
+    ['egresados', I.userx, 'Egresados'],
     ['norehirecheck', I.usercheck, 'Verificar candidato'],
   ] },
   { title: 'Solicitudes', items: [
@@ -611,7 +615,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.134</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.135</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -8102,6 +8106,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'datosincompletos') renderPersonnelIncomplete(user);
   else if (view === 'dobleempleo') renderDoubleEmployment(user);
   else if (view === 'norehire') renderNoRehire(user);
+  else if (view === 'egresados') renderEgresados(user);
   else if (view === 'norehirecheck') renderNoRehireVerify(user);
   else if (view === 'movimientos') renderMovements(user);
   else if (view === 'movquincena') renderMovQuincena(user);
@@ -8469,6 +8474,7 @@ export function renderPanel() {
       datosincompletos: 'view.datosincompletos', egmotivos: 'view.egmotivos',
       dobleempleo: 'view.dobleempleo',
       norehire: 'view.norehire',
+      egresados: 'view.egresados',
       norehirecheck: 'view.norehirecheck',
       movimientos: 'view.movimientos',
       movquincena: 'view.movquincena',

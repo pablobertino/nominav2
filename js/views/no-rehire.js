@@ -827,14 +827,14 @@ async function renderNoRehireStats(user) {
    no reempleable + la trayectoria laboral completa + un resumen. Todo de
    solo lectura: esta pantalla no edita nada (la lista se corrige en el
    sistema). La foto se amplía con el visor del portal. */
-async function renderNoRehireFicha(user, idNumber) {
+export async function renderNoRehireFicha(user, idNumber, onBack) {
   ensureStyles();
   const main = $('#pnlMain');
   if (!main) return;
   main.innerHTML = `
-    <button class="nrs-back" id="nrfBack">← Volver a la lista</button>
+    <button class="nrs-back" id="nrfBack">← Volver</button>
     <div id="nrfBody"><div class="nrf-loading">Cargando la ficha…</div></div>`;
-  $('#nrfBack')?.addEventListener('click', () => renderNoRehire(user));
+  $('#nrfBack')?.addEventListener('click', () => (typeof onBack === 'function' ? onBack() : renderNoRehire(user)));
 
   const r = await api(user, { action: 'ficha', id_number: idNumber });
   const body = $('#nrfBody');
@@ -930,9 +930,9 @@ async function renderNoRehireFicha(user, idNumber) {
           <div class="nrf-nm">${esc(name)}</div>
           <div class="nrf-ced">${esc(ced)}</div>
           <div class="nrf-tags">
-            <span class="nr-pill ${motClass(f.reason_value)}">${esc(f.reason_label || '')}</span>
+            ${f.found ? `<span class="nr-pill ${motClass(f.reason_value)}">${esc(f.reason_label || '')}</span>
             ${f.reason_unknown ? '<span class="nr-pill unk" title="Este motivo no está en el catálogo del portal">motivo sin traducir</span>' : ''}
-            ${estado}
+            ${estado}` : '<span class="nr-pill out">Egresado</span>'}
           </div>
           ${f.notes ? `<div class="nrf-obs"><b>Observaciones:</b> ${esc(f.notes)}</div>` : ''}
         </div>
@@ -950,7 +950,7 @@ async function renderNoRehireFicha(user, idNumber) {
         </div>
       </div>
 
-      <div class="nrf-sec">
+      ${f.found ? `<div class="nrf-sec">
         <div class="nrf-sec-h">No reempleable</div>
         <div class="nrf-kv">
           ${F('Motivo', f.reason_label)}
@@ -958,7 +958,7 @@ async function renderNoRehireFicha(user, idNumber) {
           ${F('Última vez visto', fmtDate(f.last_seen_at))}
           ${f.removed_at ? F('Salió de la lista', fmtDate(f.removed_at)) : ''}
         </div>
-      </div>
+      </div>` : ''}
 
       <div class="nrf-sec">
         <div class="nrf-sec-h">Historia laboral <span style="font-weight:600;text-transform:none;letter-spacing:0;color:var(--muted)">${traj.length} contrato${traj.length === 1 ? '' : 's'}${sm.ultima_empresa ? ` · última: ${esc(sm.ultima_empresa)}` : ''}</span></div>

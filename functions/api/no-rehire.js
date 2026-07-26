@@ -506,13 +506,24 @@ export async function onRequestPost({ request, env }) {
        completa (cada contrato con empresa/zona/subzona/fechas/días) y un
        resumen. Acá solo se agrega la miniatura pública si hay foto. */
     if (action === 'ficha') {
-      if (!can(actor, 'view.norehire')) {
-        return json({ ok: false, error: 'No tienes permiso para ver los no reempleables (view.norehire).' }, 403);
+      // v6.135: la ficha también la abre la pantalla de Egresados. El MOTIVO
+      // de no reempleable solo se revela a quien tiene view.norehire; para el
+      // resto la persona sale marcada como no reempleable pero sin el motivo.
+      const seesReason = can(actor, 'view.norehire');
+      if (!seesReason && !can(actor, 'view.egresados')) {
+        return json({ ok: false, error: 'No tienes permiso para ver esta ficha.' }, 403);
       }
       const ced = cedNorm(body.id_number);
       if (!ced) return json({ ok: false, error: 'Falta la cédula.' }, 400);
       const data = await sb(env, 'rpc/no_rehire_ficha', { method: 'POST', body: JSON.stringify({ p_ced: ced }) });
       if (data && data.master && data.master.photo_key) data.thumb_url = thumbUrl(env, data.master.photo_key);
+      if (data && data.found && !seesReason) {
+        // Marca sí, motivo no.
+        data.reason_label = 'No reempleable';
+        data.reason_value = 0;
+        data.reason_unknown = false;
+        data.notes = null;
+      }
       return json({ ok: true, ficha: data || {} });
     }
 

@@ -63,7 +63,7 @@ Object.entries(IMPLIES).forEach(([u, v]) => { IMPLIED_BY[v] = u; });
 const VIEW_SUBGROUPS = [
   ['Menu principal', ['view.dashboard', 'view.usuarios', 'view.documentos', 'view.calendario']],
   ['Organizacion', ['view.empresas', 'view.estructura']],
-  ['Personal', ['view.buscar', 'view.datosincompletos', 'view.dobleempleo', 'view.movimientos', 'view.egmotivos', 'view.rostersync', 'view.fotos']],
+  ['Personal', ['view.buscar', 'view.datosincompletos', 'view.dobleempleo', 'view.egresados', 'view.movimientos', 'view.egmotivos', 'view.rostersync', 'view.fotos']],
   ['Cargos', ['view.cambiocargo', 'mov.sugerir', 'mov.aprobar']],
   ['Reportes', ['view.historial', 'view.estadisticas', 'view.reportempresas', 'view.estadopago', 'view.misstats']],
   ['Comunicacion', ['view.avisos', 'view.avisosconfig']],
@@ -111,6 +111,9 @@ const MENU_CATALOG = [
     // candidato (consulta sin motivos, apta para tiendas). Ninguna tiene
     // acciones: la lista se mantiene en el sistema, el portal solo consulta.
     { id: 'norehire', lbl: 'No reempleables', view: 'view.norehire', acts: [] },
+    // v6.135: Egresados — consulta con buscador para detectar reempleo,
+    // dentro del alcance. Sin acciones: solo lectura.
+    { id: 'egresados', lbl: 'Egresados', view: 'view.egresados', acts: [] },
     { id: 'norehirecheck', lbl: 'Verificar candidato', view: 'view.norehirecheck', acts: [] },
     // v5.93: Movimientos. Solo consulta (los movimientos se derivan de los
     // cortes quincenales del sistema), por eso sin acciones.
