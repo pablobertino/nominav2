@@ -498,6 +498,24 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, stats: stats || {} });
     }
 
+    /* ---------- ficha (v6.133): ficha completa de solo lectura ----------
+       Mismo gate que la lista. La mayoría de los no reempleables son
+       EGRESADOS: no están en workers_master pero SÍ tienen historia en
+       ax_egresos. La RPC no_rehire_ficha arma todo: datos del maestro (si
+       existe), el registro de no reempleable, la TRAYECTORIA laboral
+       completa (cada contrato con empresa/zona/subzona/fechas/días) y un
+       resumen. Acá solo se agrega la miniatura pública si hay foto. */
+    if (action === 'ficha') {
+      if (!can(actor, 'view.norehire')) {
+        return json({ ok: false, error: 'No tienes permiso para ver los no reempleables (view.norehire).' }, 403);
+      }
+      const ced = cedNorm(body.id_number);
+      if (!ced) return json({ ok: false, error: 'Falta la cédula.' }, 400);
+      const data = await sb(env, 'rpc/no_rehire_ficha', { method: 'POST', body: JSON.stringify({ p_ced: ced }) });
+      if (data && data.master && data.master.photo_key) data.thumb_url = thumbUrl(env, data.master.photo_key);
+      return json({ ok: true, ficha: data || {} });
+    }
+
     if (action === 'get_config') {
       if (actor.role !== 'superadmin') return json({ ok: false, error: 'Solo superadmin.' }, 403);
       const cfg = await sb(env, 'no_rehire_config?id=eq.1&select=*');

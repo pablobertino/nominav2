@@ -59,6 +59,18 @@ function daysSince(d) {
   return Math.max(0, Math.floor((Date.now() - t) / 86400000));
 }
 
+/* Duración amable a partir de días (para "días trabajados"). v6.133. */
+function fmtDur(days) {
+  days = Math.max(0, Math.round(Number(days) || 0));
+  if (days < 31) return `${days} día${days === 1 ? '' : 's'}`;
+  const y = Math.floor(days / 365), rem = days % 365, mo = Math.floor(rem / 30);
+  const parts = [];
+  if (y) parts.push(`${y} año${y === 1 ? '' : 's'}`);
+  if (mo) parts.push(`${mo} mes${mo === 1 ? '' : 'es'}`);
+  if (!parts.length) parts.push(`${days} días`);
+  return parts.join(' y ');
+}
+
 /* Iniciales para el avatar sin foto. */
 function initials(name) {
   const p = String(name || '').trim().split(/\s+/).filter(Boolean);
@@ -250,7 +262,42 @@ function ensureStyles() {
     .nrs-row{grid-template-columns:120px 1fr 28px}
     table.nrs-hm{font-size:11px}
     table.nrs-hm td{width:32px;height:26px}
-  }`;
+  }
+  /* ===== v6.133: ficha completa (solo lectura) del no reempleable/egresado ===== */
+  .nrf-hero{display:flex;gap:16px;align-items:flex-start;background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;padding:16px 18px;margin:2px 0 14px}
+  .nrf-photo{width:92px;height:92px;border-radius:14px;object-fit:cover;border:1px solid var(--border);flex:none;cursor:zoom-in}
+  .nrf-photo.noimg{display:flex;align-items:center;justify-content:center;background:#eef2f7;color:#64748b;font-weight:800;font-size:28px;cursor:default}
+  .nrf-hid{min-width:0;flex:1}
+  .nrf-nm{font-size:19px;font-weight:800;line-height:1.15}
+  .nrf-ced{font-family:ui-monospace,Menlo,monospace;font-size:13px;color:var(--muted);margin-top:2px}
+  .nrf-role{font-size:12.5px;color:var(--soft,#334155);margin-top:2px}
+  .nrf-tags{display:flex;gap:7px;flex-wrap:wrap;margin-top:9px;align-items:center}
+  .nrf-activo{margin:0 0 14px;background:#dc2626;color:#fff;border-radius:11px;padding:11px 14px;font-size:12.5px;font-weight:700}
+  .nrf-grid{display:grid;grid-template-columns:1fr 1fr;gap:14px;align-items:start}
+  @media(max-width:820px){.nrf-grid{grid-template-columns:1fr}}
+  .nrf-card{background:var(--card,#fff);border:1px solid var(--border);border-radius:14px;padding:15px 16px}
+  .nrf-card h3{font-size:12.5px;margin:0 0 12px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--muted);display:flex;align-items:center;justify-content:space-between;gap:10px}
+  .nrf-kv{display:grid;grid-template-columns:1fr 1fr;gap:9px 16px;font-size:12.5px}
+  .nrf-kv .lbl{display:block;font-size:10.5px;text-transform:uppercase;letter-spacing:.04em;color:var(--faint,#94a3b8);font-weight:800}
+  .nrf-kv .one{grid-column:1/-1}
+  .nrf-obs{margin-top:2px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:11px 13px;font-size:12.5px;color:#7f1d1d;line-height:1.5}
+  .nrf-empty{font-size:12.5px;color:var(--muted);line-height:1.55}
+  .nrf-stats{display:flex;gap:10px;flex-wrap:wrap;margin:0 0 14px}
+  .nrf-stat{background:var(--card,#fff);border:1px solid var(--border);border-radius:12px;padding:11px 14px;min-width:118px;flex:1 1 118px}
+  .nrf-stat .l{font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;color:var(--faint,#94a3b8)}
+  .nrf-stat .v{font-size:19px;font-weight:800;margin-top:2px}
+  .nrf-stat .s{font-size:11px;color:var(--muted);margin-top:1px}
+  .nrf-tl{position:relative;margin:2px 0 0;padding-left:18px}
+  .nrf-tl::before{content:'';position:absolute;left:5px;top:4px;bottom:4px;width:2px;background:var(--border)}
+  .nrf-ti{position:relative;padding:0 0 15px 10px}
+  .nrf-ti:last-child{padding-bottom:0}
+  .nrf-ti::before{content:'';position:absolute;left:-16px;top:3px;width:11px;height:11px;border-radius:50%;background:#fff;border:2.5px solid #94a3b8}
+  .nrf-ti.act::before{border-color:#16a34a}
+  .nrf-ti .emp{font-size:13px;font-weight:700;line-height:1.25}
+  .nrf-ti .loc{font-size:11.5px;color:var(--muted);margin-top:1px}
+  .nrf-ti .per{font-size:12px;color:var(--soft,#334155);margin-top:3px;display:flex;gap:8px;flex-wrap:wrap;align-items:center}
+  .nrf-daychip{font-size:10.5px;font-weight:700;background:#eef2ff;color:#3730a3;border-radius:999px;padding:1px 8px}
+  .nrf-loading{padding:44px;text-align:center;color:var(--muted);font-size:13px}`;
   document.head.appendChild(css);
 }
 
@@ -554,7 +601,7 @@ export async function renderNoRehire(user) {
         openWorkerLightbox(row.thumb_url, `${row.full_name || ''} · ${ced}`, `${row.id_number}.jpg`);
         return;
       }
-      openFicha(row);
+      renderNoRehireFicha(user, row.id_number);
     });
 
     $('#nrQ')?.addEventListener('input', applyFilters);
@@ -759,6 +806,125 @@ async function renderNoRehireStats(user) {
   $('#nrsMot')?.addEventListener('click', e => { const row = e.target.closest('.nrs-row[data-mval]'); if (row) showDetail(row.dataset.mval); });
   $('#nrsHm')?.addEventListener('click', e => { const tr = e.target.closest('tr[data-mval]'); if (tr) showDetail(tr.dataset.mval); });
   showDetail(motivos[0].mval);
+}
+
+/* =====================================================================
+   v6.133 — FICHA COMPLETA (solo lectura) del no reempleable / egresado
+   Se abre desde la lista (clic en la fila o en el ícono de ficha) y se
+   vuelve con "← Volver a la lista". La mayoría son EGRESADOS: no están en
+   workers_master, pero su HISTORIA vive en ax_egresos. La acción 'ficha'
+   (RPC no_rehire_ficha) trae datos del maestro si existe + el registro de
+   no reempleable + la trayectoria laboral completa + un resumen. Todo de
+   solo lectura: esta pantalla no edita nada (la lista se corrige en el
+   sistema). La foto se amplía con el visor del portal. */
+async function renderNoRehireFicha(user, idNumber) {
+  ensureStyles();
+  const main = $('#pnlMain');
+  if (!main) return;
+  main.innerHTML = `
+    <button class="nrs-back" id="nrfBack">← Volver a la lista</button>
+    <div id="nrfBody"><div class="nrf-loading">Cargando la ficha…</div></div>`;
+  $('#nrfBack')?.addEventListener('click', () => renderNoRehire(user));
+
+  const r = await api(user, { action: 'ficha', id_number: idNumber });
+  const body = $('#nrfBody');
+  if (!body) return;   // navegó a otra vista mientras cargaba
+  if (!r || !r.ok || !r.ficha) {
+    body.innerHTML = `<div class="nr-card"><div class="nr-loading">${esc((r && r.error) || 'No se pudo cargar la ficha.')}</div></div>`;
+    return;
+  }
+
+  const f = r.ficha;
+  const m = f.master || null;
+  const kind = (m && m.ced_kind) || (Number(f.id_number) >= 80000000 ? 'E' : 'V');
+  const ced = `${kind}-${f.id_number || ''}`;
+  const name = f.full_name || 'Sin nombre';
+  const activos = f.activo_en || [];
+  const traj = f.trajectory || [];
+  const sm = f.summary || {};
+
+  const estado = f.removed_at
+    ? `<span class="nr-pill out">Salió de la lista · ${fmtDate(f.removed_at)}</span>`
+    : (activos.length
+        ? `<span class="nr-pill act">⚠ ACTIVO en ${esc(activos.join(' · '))}</span>`
+        : '<span class="nr-pill vig">Vigente</span>');
+
+  const foto = f.thumb_url
+    ? `<img class="nrf-photo" data-zoom="1" title="Ampliar foto" src="${esc(f.thumb_url)}" alt="">`
+    : `<div class="nrf-photo noimg">${esc(initials(name))}</div>`;
+
+  const persona = m ? `
+    <div class="nrf-kv">
+      ${m.role ? `<div><span class="lbl">Cargo</span>${esc(m.role)}</div>` : ''}
+      ${m.gender ? `<div><span class="lbl">Sexo</span>${esc(m.gender)}</div>` : ''}
+      ${m.birth_date ? `<div><span class="lbl">Nacimiento</span>${fmtDate(m.birth_date)}</div>` : ''}
+      ${m.marital_status ? `<div><span class="lbl">Estado civil</span>${esc(m.marital_status)}</div>` : ''}
+      ${m.phone ? `<div><span class="lbl">Teléfono</span>${esc(m.phone)}</div>` : ''}
+      ${m.email ? `<div><span class="lbl">Correo</span>${esc(m.email)}</div>` : ''}
+      ${m.address ? `<div class="one"><span class="lbl">Dirección</span>${esc(m.address)}</div>` : ''}
+      ${m.fiscal_address ? `<div class="one"><span class="lbl">Dirección fiscal</span>${esc(m.fiscal_address)}</div>` : ''}
+    </div>`
+    : `<div class="nrf-empty">No está en el maestro activo (es un <b>egresado</b>). Sus datos personales no se conservan aquí, pero su <b>historia laboral</b> completa está más abajo.</div>`;
+
+  const statsHtml = traj.length ? `
+    <div class="nrf-stats">
+      <div class="nrf-stat"><div class="l">Contratos</div><div class="v">${sm.contratos || traj.length}</div><div class="s">registros de egreso</div></div>
+      <div class="nrf-stat"><div class="l">Empresas</div><div class="v">${sm.empresas != null ? sm.empresas : '—'}</div><div class="s">distintas</div></div>
+      <div class="nrf-stat"><div class="l">Días trabajados</div><div class="v">${sm.dias_total || 0}</div><div class="s">${esc(fmtDur(sm.dias_total || 0))}</div></div>
+      <div class="nrf-stat"><div class="l">Período</div><div class="v" style="font-size:12.5px">${fmtDate(sm.primer_inicio)} → ${fmtDate(sm.ultimo_fin)}</div><div class="s">del primer al último</div></div>
+    </div>` : '';
+
+  const tl = traj.length ? `<div class="nrf-tl">${traj.map((t, i) => {
+    const loc = t.zona ? `${esc(t.zona)}${t.subzona ? ' · ' + esc(t.subzona) : ''}` : 'Sin zona';
+    const dias = (t.dias != null) ? `<span class="nrf-daychip">${t.dias} día${t.dias === 1 ? '' : 's'}</span>` : '';
+    return `<div class="nrf-ti${i === 0 ? ' act' : ''}">
+      <div class="emp">${esc(t.empresa || t.alias || '—')}${t.alias ? ` <span style="color:var(--faint,#94a3b8);font-weight:600;font-size:11px">${esc(t.alias)}</span>` : ''}</div>
+      <div class="loc">${loc}</div>
+      <div class="per">${fmtDate(t.inicio)} → ${fmtDate(t.fin)} ${dias}</div>
+    </div>`;
+  }).join('')}</div>` : '<div class="nrf-empty">Sin historia laboral registrada en el sistema.</div>';
+
+  body.innerHTML = `
+    <div class="nrf-hero">
+      ${foto}
+      <div class="nrf-hid">
+        <div class="nrf-nm">${esc(name)}</div>
+        <div class="nrf-ced">${esc(ced)}</div>
+        ${m && m.role ? `<div class="nrf-role">${esc(m.role)}</div>` : ''}
+        <div class="nrf-tags">
+          <span class="nr-pill ${motClass(f.reason_value)}">${esc(f.reason_label || '')}</span>
+          ${f.reason_unknown ? '<span class="nr-pill unk" title="Este motivo no está en el catálogo del portal">motivo sin traducir</span>' : ''}
+          ${estado}
+        </div>
+      </div>
+    </div>
+    ${activos.length ? `<div class="nrf-activo">⚠ Actualmente ACTIVO en ${esc(activos.join(' · '))}. Está en la lista de no reempleables y empleado al mismo tiempo.</div>` : ''}
+    <div class="nrf-grid">
+      <div class="nrf-card">
+        <h3>No reempleable</h3>
+        <div class="nrf-kv">
+          <div><span class="lbl">Motivo</span>${esc(f.reason_label || '—')}</div>
+          <div><span class="lbl">En la lista desde</span>${fmtDate(f.detected_at)}</div>
+          <div><span class="lbl">Última vez visto</span>${fmtDate(f.last_seen_at)}</div>
+          ${f.removed_at ? `<div><span class="lbl">Salió de la lista</span>${fmtDate(f.removed_at)}</div>` : ''}
+        </div>
+        ${f.notes ? `<div class="nrf-obs"><b>Observaciones:</b> ${esc(f.notes)}</div>` : ''}
+      </div>
+      <div class="nrf-card">
+        <h3>Datos personales</h3>
+        ${persona}
+      </div>
+    </div>
+    <div class="nrf-card" style="margin-top:14px">
+      <h3>Historia laboral <span style="font-weight:500;text-transform:none;letter-spacing:0;color:var(--muted)">${traj.length} contrato${traj.length === 1 ? '' : 's'}${sm.ultima_empresa ? ` · última: ${esc(sm.ultima_empresa)}` : ''}</span></h3>
+      ${statsHtml}
+      ${tl}
+    </div>`;
+
+  if (f.thumb_url) {
+    body.querySelector('.nrf-photo[data-zoom]')?.addEventListener('click', () =>
+      openWorkerLightbox(f.thumb_url, `${name} · ${ced}`, `${f.id_number}.jpg`));
+  }
 }
 
 /* ===== v5.75: LA CONFIGURACION VIVE EN SINCRONIZACION → CONFIGURAR =====
