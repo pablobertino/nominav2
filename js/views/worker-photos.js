@@ -1984,8 +1984,14 @@ function fichaHtml(w, c) {
           <div class="ff-row"><span class="ff-lbl">Correo <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="email"></span></div>
           <div class="ff-field"><label>Teléfono móvil <span class="opt">(04XX-XXXXXXX)</span></label><input id="e_phone" type="text" inputmode="numeric" placeholder="0414-1234567"><div class="ff-hint" id="h_phone"></div></div>
           <div class="ff-field"><label>Correo <span class="opt">(opcional)</span></label><input id="e_email" type="text" placeholder="nombre@correo.com"><div class="ff-hint" id="h_email"></div></div>
-          <div class="ff-row full"><span class="ff-lbl">Dirección <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="address"></span></div>
-          <div class="ff-field full"><label>Dirección <span class="opt">(opcional)</span></label><input id="e_address" type="text" placeholder="Calle, sector, ciudad"></div>
+          <div class="ff-row full"><span class="ff-lbl">Dirección Personal <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="address"></span></div>
+          <div class="ff-row full" id="ff_fiscal_row" style="display:none"><span class="ff-lbl">Dirección Fiscal <span class="src" title="Leída del RIF"><span class="dot" style="background:#0e7490"></span></span></span><span class="ff-val" data-v="fiscal_address"></span></div>
+          <div class="ff-field full"><label>Dirección Personal <span class="opt">(opcional)</span></label><input id="e_address" type="text" placeholder="Calle, sector, ciudad"></div>
+          <div class="ff-field full" id="e_fiscal_wrap" style="display:none"><label>Dirección Fiscal <span class="opt">(del RIF · no editable)</span></label>
+            <div class="ff-locked" id="e_fiscal" style="padding:9px 11px;border:1px dashed var(--border);border-radius:8px;background:var(--bg-soft,#f8fafc);min-height:20px;color:var(--soft,#334155);font-size:13px"></div>
+            <button type="button" id="e_copy_fiscal" style="display:none;margin-top:8px;font:inherit;font-size:12px;font-weight:700;color:#0e7490;background:#ecfeff;border:1px solid #cffafe;border-radius:8px;padding:6px 11px;cursor:pointer">↑ Copiar a Dirección Personal</button>
+            <div class="ff-hint">Se llena sola al cargar el RIF. Copiala a la Personal solo si es la <b>misma</b> dirección donde vive hoy.</div>
+          </div>
         </div>
 
         <div class="ff-sec">Registro</div>
@@ -2026,6 +2032,9 @@ function paintFichaValues(host, w) {
   setVal(host, 'phone', w.phone ? phoneDisplay(w.phone) : '');
   setVal(host, 'email', w.email);
   setVal(host, 'address', w.address);
+  // v6.126: Dirección Fiscal (del RIF) — fila solo si hay dato.
+  setVal(host, 'fiscal_address', w.fiscal_address);
+  { const fr = host.querySelector('#ff_fiscal_row'); if (fr) fr.style.display = w.fiscal_address ? '' : 'none'; }
   setVal(host, 'photo_uploaded_by', w.photo_uploaded_by
     ? `${w.photo_uploaded_by}${w.photo_uploaded_at ? ' · ' + fmtDateTime(w.photo_uploaded_at) : ''}`
     : '');
@@ -2250,6 +2259,23 @@ function wireFicha(host, w) {
       depLocked.classList.toggle('empty', emptyDep);
     }
     q('#e_email').value = w.email || ''; q('#e_address').value = w.address || '';
+    // v6.126: Dirección Fiscal (no editable) + botón "Copiar" solo si la
+    // Personal está vacía y hay fiscal (uno puede vivir en otra dirección).
+    {
+      const wrap = q('#e_fiscal_wrap'), box = q('#e_fiscal'), copyBtn = q('#e_copy_fiscal'), addr = q('#e_address');
+      if (wrap && box) {
+        const fiscal = w.fiscal_address || '';
+        wrap.style.display = fiscal ? '' : 'none';
+        box.textContent = fiscal || '—';
+        const refreshCopy = () => { if (copyBtn) copyBtn.style.display = (fiscal && !addr.value.trim()) ? 'inline-block' : 'none'; };
+        if (copyBtn && !copyBtn.dataset.bound) {
+          copyBtn.dataset.bound = '1';
+          copyBtn.addEventListener('click', () => { addr.value = fiscal; addr.dispatchEvent(new Event('input')); refreshCopy(); addr.focus(); });
+        }
+        if (addr && !addr.dataset.fiscalBound) { addr.dataset.fiscalBound = '1'; addr.addEventListener('input', refreshCopy); }
+        refreshCopy();
+      }
+    }
     // v4.43: capturar los valores ORIGINALES protegidos al entrar a editar.
     // Regla: un campo que TENIA dato no puede quedar vacio (si estaba vacio,
     // puede seguir vacio o llenarse). Segundo nombre SI se puede vaciar.

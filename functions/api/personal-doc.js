@@ -188,6 +188,24 @@ async function saveDoc(env, actor, body) {
     body: JSON.stringify(row),
   });
   const saved = Array.isArray(ins) ? ins[0] : ins;
+
+  // v6.126: si es un RIF con domicilio, se guarda en workers_master.fiscal_address
+  // (campo "Dirección Fiscal", NO editable). NO toca la Dirección Personal
+  // (address): eso lo decide el usuario con el botón "Copiar de la fiscal".
+  // Best-effort: un fallo aquí no debe romper el guardado del RIF.
+  if (docType === 'rif') {
+    const fiscal = (row.datos && typeof row.datos.domicilio_fiscal === 'string')
+      ? row.datos.domicilio_fiscal.trim() : '';
+    if (fiscal) {
+      try {
+        await sb(env, `workers_master?id_number=eq.${encodeURIComponent(idNumber)}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ fiscal_address: fiscal }),
+        });
+      } catch (_) { /* no romper el guardado del RIF */ }
+    }
+  }
+
   const signed = await storageSignedUrl(env, storagePath);
   return json({ ok: true, document: saved, signed_url: signed });
 }

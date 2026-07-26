@@ -84,7 +84,8 @@ function looksLikeRif(text) {
 function parseRif(rawText) {
   const text = collapse(rawText);
   const out = { es_rif: looksLikeRif(text), rif: null, cedula_rif: null, nombre_pdf: null,
-    nro_comprobante: null, fecha_inscripcion: null, fecha_actualizacion: null, fecha_vencimiento: null };
+    nro_comprobante: null, fecha_inscripcion: null, fecha_actualizacion: null, fecha_vencimiento: null,
+    domicilio_fiscal: null };
 
   // RIF (letra + 9 dígitos). Es el primer V/E/J/P/G + 9 dígitos del documento.
   const mrif = text.match(/\b([VEJPG])\s?-?\s?(\d{9})\b/i);
@@ -108,6 +109,16 @@ function parseRif(rawText) {
   // Nº de comprobante ("N° DE COMPROBANTE:" — el certificado incluye el "DE").
   const mc = text.match(/N[°º]\s*(?:DE\s+)?COMPROBANTE:\s*([A-Z0-9]+)/i);
   if (mc) out.nro_comprobante = mc[1];
+
+  // Domicilio fiscal: tras "DOMICILIO FISCAL" hasta la siguiente sección.
+  // v6.126: alimenta el campo "Dirección Fiscal" de la ficha (no editable).
+  // Se recorta el "(Este contribuyente…)" que a veces queda pegado al final,
+  // pero se respetan paréntesis internos legítimos (p.ej. "(LOS ROBLES)").
+  const md = text.match(/DOMICILIO\s+FISCAL\s+(.+?)\s*(?:\(?\s*Este\s+contribuyente|FECHA\s+DE\b|GERENCIA\b|FIRMA\s+AUTORIZADA|N[°º]\s*(?:DE\s+)?COMPROBANTE)/i);
+  if (md) {
+    const dom = collapse(md[1]).replace(/\s*\(?\s*Este\s+contribuyente.*$/i, '').replace(/\s*\($/, '').trim();
+    if (dom) out.domicilio_fiscal = dom;
+  }
 
   // Fechas: inscripción / actualización / vencimiento. v6.124: el certificado
   // del SENIAT a veces sale "columnar" — pdfjs devuelve las TRES etiquetas
@@ -419,6 +430,8 @@ function openUploadModal(w, STATE, onSaved) {
       !fields.rif ? sem('info', '—') : (ev.digitOk ? sem('ok', 'dígito válido') : sem('warn', 'dígito inválido'))));
     rows.push(row('Vence', esc(fields.fecha_vencimiento || '—'),
       !fields.fecha_vencimiento ? sem('info', 'sin fecha') : (ev.vencido ? sem('warn', 'RIF vencido') : sem('ok', 'vigente'))));
+    rows.push(row('Domicilio fiscal', esc(fields.domicilio_fiscal || '—'),
+      fields.domicilio_fiscal ? sem('ok', 'se guarda en la ficha') : sem('info', 'no detectado')));
 
     body.innerHTML = `
       <div style="font-size:12px;color:#64748b;margin-bottom:8px">Documento detectado: <b>${fields.es_rif ? 'Comprobante RIF (SENIAT)' : 'no parece un RIF del SENIAT'}</b></div>
@@ -458,6 +471,7 @@ function openUploadModal(w, STATE, onSaved) {
           rif: fields.rif, cedula_rif: fields.cedula_rif, nombre_pdf: fields.nombre_pdf,
           nro_comprobante: fields.nro_comprobante, fecha_inscripcion: fields.fecha_inscripcion,
           fecha_actualizacion: fields.fecha_actualizacion, fecha_vencimiento: fields.fecha_vencimiento,
+          domicilio_fiscal: fields.domicilio_fiscal,
         },
         validaciones: ev.validaciones, pdf_base64: pdfB64,
       };
