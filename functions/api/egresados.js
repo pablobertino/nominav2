@@ -86,6 +86,8 @@ export async function onRequestPost({ request, env }) {
       // Tiempo de egresado: días desde el último egreso [min, max).
       const minDays = Number.isFinite(parseInt(body.min_days, 10)) ? parseInt(body.min_days, 10) : null;
       const maxDays = Number.isFinite(parseInt(body.max_days, 10)) ? parseInt(body.max_days, 10) : null;
+      const SORTS = ['egreso_desc', 'egreso_asc', 'nombre', 'contratos_desc', 'dias_desc'];
+      const sort = SORTS.includes(body.sort) ? body.sort : 'egreso_desc';
       const limit = Math.min(Math.max(parseInt(body.limit, 10) || 50, 1), 200);
       const offset = Math.max(parseInt(body.offset, 10) || 0, 0);
 
@@ -93,7 +95,7 @@ export async function onRequestPost({ request, env }) {
         method: 'POST',
         body: JSON.stringify({
           p_codes: codes, p_q: q || null, p_zone: zone, p_subzone: subzone,
-          p_min_days: minDays, p_max_days: maxDays,
+          p_min_days: minDays, p_max_days: maxDays, p_sort: sort,
           p_limit: limit, p_offset: offset,
         }),
       });

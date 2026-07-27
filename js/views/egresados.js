@@ -94,8 +94,14 @@ function ensureStyles() {
   .eg-loading{padding:44px;text-align:center;color:var(--muted);font-size:13px}
   .eg-foot{display:flex;align-items:center;gap:12px;padding:11px 14px;border-top:1px solid var(--border);background:#fbfcfe;font-size:12.5px;color:var(--muted)}
   .eg-foot .sp{flex:1}
-  .eg-pg{font:inherit;font-size:12.5px;padding:6px 11px;border:1px solid var(--border);border-radius:8px;background:var(--surface,#fff);color:var(--ink);cursor:pointer}
-  .eg-pg:disabled{opacity:.5;cursor:default}
+  .eg-pg{font:inherit;font-size:12.5px;min-width:32px;padding:6px 10px;border:1px solid var(--border);border-radius:8px;background:var(--surface,#fff);color:var(--ink);cursor:pointer}
+  .eg-pg:hover:not(:disabled):not(.cur){background:var(--bg-soft,#f1f5f9)}
+  .eg-pg:disabled{opacity:.45;cursor:default}
+  .eg-pg.cur{background:var(--accent,#2563eb);border-color:var(--accent,#2563eb);color:#fff;font-weight:700;cursor:default}
+  .eg-pager{display:inline-flex;gap:4px;align-items:center;flex-wrap:wrap}
+  .eg-gap{color:var(--muted);padding:0 2px}
+  .eg-jump{font-size:12.5px;color:var(--muted);display:inline-flex;gap:6px;align-items:center;margin-left:12px}
+  .eg-jump input{font:inherit;font-size:12.5px;width:58px;padding:5px 7px;border:1px solid var(--border);border-radius:7px;background:var(--surface,#fff);color:var(--ink)}
   @media(max-width:760px){
     .eg-tbl thead{display:none}
     .eg-tbl td{display:block;border:none;padding:4px 14px}
@@ -115,7 +121,15 @@ const TIMES = [
   { v: 'custom', lbl: 'Personalizado…', min: null, max: null },
 ];
 
-const STATE = { q: '', time: '', minDays: null, maxDays: null, custVal: 6, custUnit: 'm', offset: 0, total: 0, rows: [], queried: false };
+const SORTS = [
+  { v: 'egreso_desc', lbl: 'Egreso más reciente' },
+  { v: 'egreso_asc', lbl: 'Egreso más antiguo' },
+  { v: 'nombre', lbl: 'Nombre (A–Z)' },
+  { v: 'contratos_desc', lbl: 'Más contratos' },
+  { v: 'dias_desc', lbl: 'Más días trabajados' },
+];
+
+const STATE = { q: '', time: '', minDays: null, maxDays: null, custVal: 6, custUnit: 'm', sort: 'egreso_desc', offset: 0, total: 0, rows: [], queried: false };
 
 function rowHtml(r) {
   const ced = cedStr(r);
@@ -151,6 +165,8 @@ function paint(user) {
   }
   const from = STATE.offset + 1;
   const to = STATE.offset + STATE.rows.length;
+  const pages = Math.max(1, Math.ceil(STATE.total / PAGE));
+  const cur = Math.min(pages, Math.floor(STATE.offset / PAGE) + 1);
   body.innerHTML = `
     <div class="eg-card">
       <table class="eg-tbl">
@@ -160,10 +176,10 @@ function paint(user) {
         <tbody id="egRows">${STATE.rows.map(rowHtml).join('')}</tbody>
       </table>
       <div class="eg-foot">
-        <span>${from}–${to} de ${STATE.total}</span>
+        <span>${from}–${to} de ${nf(STATE.total)}</span>
         <span class="sp"></span>
-        <button class="eg-pg" id="egPrev" ${STATE.offset <= 0 ? 'disabled' : ''}>‹ Anterior</button>
-        <button class="eg-pg" id="egNext" ${to >= STATE.total ? 'disabled' : ''}>Siguiente ›</button>
+        ${pagerHtml(cur, pages)}
+        ${pages > 1 ? `<span class="eg-jump">Ir a <input type="number" id="egJump" min="1" max="${pages}" value="${cur}"> / ${pages}</span>` : ''}
       </div>
     </div>`;
 
@@ -180,8 +196,35 @@ function paint(user) {
     }
     renderNoRehireFicha(user, r.id_number, () => renderEgresados(user, { restore: true }));
   });
-  $('#egPrev')?.addEventListener('click', () => { STATE.offset = Math.max(0, STATE.offset - PAGE); load(user); });
-  $('#egNext')?.addEventListener('click', () => { STATE.offset += PAGE; load(user); });
+  const goPage = pg => {
+    const p = Math.min(pages, Math.max(1, pg || 1));
+    STATE.offset = (p - 1) * PAGE;
+    load(user);
+  };
+  body.querySelector('.eg-pager')?.addEventListener('click', e => {
+    const b = e.target.closest('button[data-pg]');
+    if (b && !b.disabled) goPage(parseInt(b.dataset.pg, 10));
+  });
+  const jump = $('#egJump');
+  jump?.addEventListener('keydown', e => { if (e.key === 'Enter') goPage(parseInt(jump.value, 10)); });
+  jump?.addEventListener('change', () => goPage(parseInt(jump.value, 10)));
+}
+
+/* Pager con números y saltos: ‹ 1 … c-1 c c+1 … últ › */
+function pagerHtml(cur, pages) {
+  if (pages <= 1) return '';
+  const items = [];
+  items.push(`<button class="eg-pg" data-pg="${cur - 1}" ${cur <= 1 ? 'disabled' : ''}>‹</button>`);
+  const want = new Set([1, 2, cur - 1, cur, cur + 1, pages - 1, pages]);
+  const list = [...want].filter(p => p >= 1 && p <= pages).sort((a, b) => a - b);
+  let prev = 0;
+  list.forEach(p => {
+    if (prev && p - prev > 1) items.push('<span class="eg-gap">…</span>');
+    items.push(`<button class="eg-pg${p === cur ? ' cur' : ''}" data-pg="${p}">${p}</button>`);
+    prev = p;
+  });
+  items.push(`<button class="eg-pg" data-pg="${cur + 1}" ${cur >= pages ? 'disabled' : ''}>›</button>`);
+  return `<div class="eg-pager">${items.join('')}</div>`;
 }
 
 async function load(user) {
@@ -190,7 +233,7 @@ async function load(user) {
   if (body) body.innerHTML = '<div class="eg-loading">Consultando egresados…</div>';
   const r = await api(user, {
     action: 'list', q: STATE.q, min_days: STATE.minDays, max_days: STATE.maxDays,
-    offset: STATE.offset, limit: PAGE,
+    sort: STATE.sort, offset: STATE.offset, limit: PAGE,
   });
   if (!$('#egBody')) return;   // navegó a otra vista
   const cnt = $('#egCount');
@@ -226,6 +269,7 @@ export async function renderEgresados(user, opts) {
         </select>
       </span>
       <button class="eg-btn" id="egGo">Consultar</button>
+      <select class="eg-sel" id="egSort">${SORTS.map(o => `<option value="${o.v}" ${o.v === STATE.sort ? 'selected' : ''}>Ordenar: ${esc(o.lbl)}</option>`).join('')}</select>
       <span class="eg-count" id="egCount"></span>
     </div>
     <div id="egBody">${restore
@@ -261,6 +305,8 @@ export async function renderEgresados(user, opts) {
   $('#egCustUnit')?.addEventListener('change', run);
   // Al pasar a "Personalizado" se muestran los campos y se espera Consultar; los presets corren al instante.
   $('#egTime')?.addEventListener('change', () => { const on = toggleCustom(); if (!on) run(); });
+  // Cambiar el orden re-consulta desde la página 1 (solo si ya se consultó).
+  $('#egSort')?.addEventListener('change', e => { STATE.sort = e.target.value; STATE.offset = 0; if (STATE.queried) load(user); });
 
   if (restore) await load(user);
 }
