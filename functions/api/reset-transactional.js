@@ -114,6 +114,34 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, companies: Array.isArray(companies) ? companies : (companies || []) });
     }
 
+    // Bitácoras: limpieza manual de logs de diagnóstico/sync, uno por uno.
+    // Whitelist validada en la RPC (tablas sin FK entrante). No toca datos.
+    if (action === 'log_counts') {
+      const logs = await sb(env, 'rpc/reset_log_counts', { method: 'POST', body: JSON.stringify({}) });
+      return json({ ok: true, logs: Array.isArray(logs) ? logs : (logs || []) });
+    }
+
+    if (action === 'clear_log') {
+      const logName = String(body.log || '').trim();
+      if (!logName) return json({ ok: false, error: 'Falta la bitácora.' }, 400);
+      let detail;
+      try {
+        detail = await sb(env, 'rpc/reset_clear_log', {
+          method: 'POST', body: JSON.stringify({ p_log: logName }),
+        });
+      } catch (e) {
+        return json({ ok: false, error: 'Bitácora no permitida o error al limpiar.' }, 400);
+      }
+      await sb(env, 'reset_log', {
+        method: 'POST', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({
+          executed_by: su.id, executed_by_name: su.name,
+          category: `bitacora:${logName}`, detail,
+        }),
+      });
+      return json({ ok: true, log: logName, detail, executed_by: su.name, executed_at: new Date().toISOString() });
+    }
+
     if (action === 'run') {
       const category = String(body.category || '').trim();
       const isSel = CAT_SEL.has(category);

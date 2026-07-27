@@ -615,7 +615,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.143</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.144</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -7182,6 +7182,7 @@ async function viewConfig(user) {
         <button class="cfg-side-item" data-tab="cor"><span class="cfg-side-ic">📆</span> Corte y períodos</button>
         <button class="cfg-side-item" data-tab="params"><span class="cfg-side-ic">⚙️</span> Parámetros</button>
         <button class="cfg-side-item" data-tab="int"><span class="cfg-side-ic">🔌</span> Integraciones</button>
+        ${user.role === 'superadmin' ? `<button class="cfg-side-item" data-tab="logs"><span class="cfg-side-ic">🧹</span> Bitácoras</button>` : ''}
       </nav>
       <div class="cfg-panel-wrap" id="cfgBody"></div>
     </div>`;
@@ -7208,6 +7209,59 @@ function cfgRenderTab(user) {
   else if (CFG_TAB === 'cor') cfgRenderCorte(user, body);
   else if (CFG_TAB === 'params') cfgRenderParams(user, body);
   else if (CFG_TAB === 'int') cfgRenderIntegraciones(user, body);
+  else if (CFG_TAB === 'logs') cfgRenderLogs(user, body);
+}
+
+/* v6.144: BITÁCORAS — limpieza manual de logs de diagnóstico/sincronización,
+   uno por uno (solo superadmin). Complementa "Reiniciar datos de prueba":
+   estas bitácoras son globales y no forman parte del reset por empresa.
+   Endpoint /api/reset-transactional (acciones log_counts / clear_log), con
+   whitelist validada en la RPC. No toca datos, personal ni documentos. */
+function cfgResetApi(payload) {
+  return fetch('/api/reset-transactional', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload) }).then(r => r.json());
+}
+async function cfgRenderLogs(user, body) {
+  body.innerHTML = '<div class="pnl-loading">Cargando…</div>';
+  const r = await cfgResetApi({ action: 'log_counts', user });
+  if (!r.ok) { body.innerHTML = `<div class="pnl-loading">Error: ${r.error || 'no se pudo cargar'}</div>`; return; }
+  const escL = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const nf = n => Number(n || 0).toLocaleString('es');
+  const fmtTs = ts => { if (!ts) return '—'; const d = new Date(ts); return isNaN(d) ? '—' : d.toLocaleString('es-VE', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }); };
+  const rows = (r.logs || []).map(l => `
+    <div data-logrow="${escL(l.log)}" style="display:flex;gap:12px;align-items:center;padding:12px 0;border-top:1px solid #eef1f5">
+      <div style="flex:1;min-width:0">
+        <div style="font-weight:700;font-size:13px">${escL(l.label || l.log)}</div>
+        <div class="muted" style="font-size:11px;margin-top:2px">tabla: ${escL(l.log)} · último registro: ${escL(fmtTs(l.last_at))}</div>
+      </div>
+      <div data-logn="${escL(l.log)}" style="min-width:90px;text-align:right;font-weight:700;font-size:14px;color:#334155">${nf(l.n)}<span class="muted" style="font-weight:400;font-size:11px"> reg.</span></div>
+      <button data-logclear="${escL(l.log)}" ${Number(l.n) ? '' : 'disabled'}
+        style="padding:8px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;color:#b91c1c;font-size:13px;font-weight:600;cursor:${Number(l.n) ? 'pointer' : 'not-allowed'};opacity:${Number(l.n) ? '1' : '.5'}">Limpiar</button>
+      <span data-logmsg="${escL(l.log)}" style="font-size:12px;align-self:center;min-width:120px"></span>
+    </div>`).join('');
+  body.innerHTML = `
+    <div class="card">
+      <h3 style="margin:0 0 4px">🧹 Bitácoras del sistema</h3>
+      <p class="muted" style="margin:0 0 6px;font-size:12.5px">Registros de diagnóstico y sincronización. Son globales (no dependen de una empresa) y crecen con cada corrida automática. Puedes vaciarlas de a una sin afectar personal, documentos ni datos: solo se borra el historial del log. La acción no se puede deshacer.</p>
+      ${rows || '<p class="muted">Sin bitácoras.</p>'}
+    </div>`;
+  body.querySelectorAll('[data-logclear]').forEach(btn => btn.addEventListener('click', async () => {
+    const log = btn.dataset.logclear;
+    const label = (r.logs.find(x => x.log === log) || {}).label || log;
+    if (!confirm(`¿Vaciar la bitácora "${label}"?\n\nSe borrará todo su historial. Esta acción no se puede deshacer.\nNo afecta personal, documentos ni datos de reportes.`)) return;
+    const msg = body.querySelector(`[data-logmsg="${log}"]`);
+    btn.disabled = true; msg.textContent = 'Limpiando…'; msg.style.color = '#64748b';
+    const res = await cfgResetApi({ action: 'clear_log', log, user });
+    if (res.ok) {
+      const del = (res.detail && res.detail.deleted) || 0;
+      msg.textContent = `✓ ${Number(del).toLocaleString('es')} borrados`; msg.style.color = '#0e9f6e';
+      const nEl = body.querySelector(`[data-logn="${log}"]`);
+      if (nEl) nEl.innerHTML = `0<span class="muted" style="font-weight:400;font-size:11px"> reg.</span>`;
+      btn.style.opacity = '.5'; btn.style.cursor = 'not-allowed';
+    } else {
+      btn.disabled = false; msg.textContent = `✗ ${res.error || 'Error'}`; msg.style.color = '#b91c1c';
+    }
+  }));
 }
 
 /* v6.25: PARÁMETROS DEL PORTAL (tabla portal_params, endpoint
