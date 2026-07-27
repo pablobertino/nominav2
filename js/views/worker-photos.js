@@ -852,40 +852,51 @@ function paintRosterBar() {
   const activos = (STATE.workers || []).filter(w => isVigente(w)).length;  // v6.15: vigentes a la fecha
   const traslados = (STATE.workers || []).filter(w => !isVigente(w) && w.now_at).length;
 
-  let when = 'sin registro de carga';
-  if (meta && meta.uploaded_at) {
-    const d = new Date(meta.uploaded_at);
+  // v6.142: se muestra la fecha de la última VERIFICACIÓN real de la lista,
+  // no la de la última carga completa. El sistema reconcilia el roster a
+  // diario (auto_refreshed_at) — esa es la fecha "actualizada al …". Solo se
+  // sugiere actualizar si de verdad hace rato que no se verifica; ya no se
+  // alarma a una tienda solo porque no tuvo cambios propios.
+  const asOfIso = (meta && (meta.auto_refreshed_at || meta.uploaded_at)) || null;
+  let when = 'sin registro';
+  if (asOfIso) {
+    const d = new Date(asOfIso);
     if (!isNaN(d)) {
       const c = new Date(d.getTime() - 4 * 3600 * 1000);
       const z = n => String(n).padStart(2, '0');
       when = `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${c.getUTCFullYear()}`;
     }
   }
-  // v6.14: sin nombres técnicos en la leyenda (pedido de Pablo): la carga
-  // que hizo el sistema se dice "automática", no "API AX".
+  // Carga completa del roster (uploaded_at) — queda en el tooltip, como dato.
   const srcName = (meta && meta.source === 'ax_api') ? 'automática'
     : (STATE.mode === 'enterprise' ? 'Reporte AX' : 'Reporte 10');
-
-  // Frescura: refresco automatico reciente (<=2 dias) => el sistema esta
-  // manteniendo la lista y no se invita a cargar nada. Sin refresco
-  // reciente (o modo empresa, sin corrida) => criterio historico por edad.
-  let freshTxt = '';
-  const ref = meta && meta.auto_refreshed_at ? new Date(meta.auto_refreshed_at) : null;
-  const refOk = ref && !isNaN(ref) && (Date.now() - ref.getTime()) <= 2 * 86400000;
-  if (refOk) {
-    freshTxt = `<span class="rb-ok">🔄 al día por la corrida automática (${fmtDateTime(meta.auto_refreshed_at)})</span>`;
-  } else {
-    const age = rosterAgeDays(meta);
-    if (age != null) {
-      if (age <= 7) freshTxt = `<span class="rb-ok">carga de hace ${age} día${age === 1 ? '' : 's'}</span>`;
-      else freshTxt = `<span class="rb-old">⚠ carga de hace ${age} días — conviene actualizar</span>`;
+  let cargaWhen = '';
+  if (meta && meta.uploaded_at) {
+    const d = new Date(meta.uploaded_at);
+    if (!isNaN(d)) {
+      const c = new Date(d.getTime() - 4 * 3600 * 1000);
+      const z = n => String(n).padStart(2, '0');
+      cargaWhen = `${z(c.getUTCDate())}/${z(c.getUTCMonth() + 1)}/${c.getUTCFullYear()}`;
     }
   }
+  const ref = meta && meta.auto_refreshed_at ? new Date(meta.auto_refreshed_at) : null;
+  const refOk = ref && !isNaN(ref) && (Date.now() - ref.getTime()) <= 2 * 86400000;
+  const ageDays = asOfIso ? Math.max(0, Math.floor((Date.now() - new Date(asOfIso).getTime()) / 86400000)) : null;
 
+  let freshTxt = '';
+  if (refOk) {
+    freshTxt = '<span class="rb-ok">✓ al día · el sistema la mantiene a diario</span>';
+  } else if (ageDays != null && ageDays > 7) {
+    freshTxt = `<span class="rb-old">⚠ sin verificarse hace ${ageDays} días — conviene actualizar</span>`;
+  } else if (ageDays != null && ageDays > 1) {
+    freshTxt = `<span class="rb-ok">verificada hace ${ageDays} días</span>`;
+  }
+
+  const cargaTip = cargaWhen ? ` title="Última carga completa del roster (${srcName}): ${cargaWhen}"` : '';
   bar.style.display = 'flex';
   bar.innerHTML = `
     <span class="rb-ic">📋</span>
-    <span><b>${total}</b> en la lista · <b>${activos}</b> activo${activos === 1 ? '' : 's'}${traslados ? ` · ${traslados} traslado${traslados === 1 ? '' : 's'}` : ''}${manual ? ` · ${manual} manual${manual === 1 ? '' : 'es'}` : ''} · última carga: <b>${srcName}</b> el <b>${when}</b></span>
+    <span><b>${total}</b> en la lista · <b>${activos}</b> activo${activos === 1 ? '' : 's'}${traslados ? ` · ${traslados} traslado${traslados === 1 ? '' : 's'}` : ''}${manual ? ` · ${manual} manual${manual === 1 ? '' : 'es'}` : ''} · <b${cargaTip}>lista actualizada al ${when}</b></span>
     ${freshTxt ? `<span class="rb-sep"></span>${freshTxt}` : ''}`;
 }
 
