@@ -346,7 +346,7 @@ export async function onRequestPost({ request, env }) {
       });
       const metaArr = await sb(env,
         `store_roster_meta?company_code=eq.${encodeURIComponent(cc)}`
-        + `&select=uploaded_at,uploaded_by,total_count,active_count,source_file`);
+        + `&select=uploaded_at,uploaded_by,total_count,active_count,source_file,source,auto_refreshed_at`);
       const meta = metaArr && metaArr[0] ? metaArr[0] : null;
       return json({ ok: true, workers: out, meta });
     }

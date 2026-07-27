@@ -208,22 +208,43 @@ export function launchWizard(user, reportDef, onExit) {
 
   function renderRosterStep() {
     const panel = $('#wzPanel');
-    const ageDays = Roster.rosterAgeDays(S.meta);
-    const margin = S.win ? S.win.marginDays : 2;
-    const showWarn = ageDays != null && ageDays > margin;
-    const metaLine = S.meta
-      ? `Lista cargada el ${fmtDate(S.meta.uploaded_at)} · ${S.meta.total_count} trabajadores (${S.meta.active_count} vigentes · ${S.meta.total_count - S.meta.active_count} egresados)`
+    // v6.143: frescura por la VERIFICACIÓN real de AX (auto_refreshed_at), no
+    // por la última carga. La sincronización diaria mantiene la lista; solo se
+    // considera "vieja" si AX no la verifica hace más de 3 días (sync caída).
+    const meta = S.meta;
+    const isSuper = user.kind === 'admin' && user.role === 'superadmin';
+    const ref = meta && meta.auto_refreshed_at ? new Date(meta.auto_refreshed_at) : null;
+    const refOk = !!(ref && !isNaN(ref) && (Date.now() - ref.getTime()) <= 2 * 86400000);
+    const asOfIso = meta ? (meta.auto_refreshed_at || meta.uploaded_at) : null;
+    const verifDays = asOfIso ? Math.max(0, Math.floor((Date.now() - new Date(asOfIso).getTime()) / 86400000)) : null;
+    const whenTxt = asOfIso ? fmtDate(asOfIso) : null;
+    const noList = !meta || !S.roster.length;
+    const staleSync = !refOk && (verifDays == null || verifDays > 3);
+    // Emergencia (solo tiendas): sin lista, sync caída (>3 días sin verificar),
+    // o superadmin (mantenimiento). Solo entonces se ofrece subir Reporte 10.
+    const emergency = !isEnterprise && (isSuper || noList || staleSync);
+    // Aviso: solo cuando de verdad hace falta (sin lista o sync caída).
+    const showWarn = !isEnterprise && (noList || staleSync);
+    const freshTxt = refOk
+      ? '<span style="color:#15803d;font-weight:600;font-size:12px;margin-left:8px">✓ al día · la mantiene el sistema</span>'
+      : (staleSync && verifDays != null
+          ? `<span style="color:#b45309;font-weight:600;font-size:12px;margin-left:8px">⚠ sin verificarse hace ${verifDays} días</span>`
+          : '');
+    const metaLine = meta
+      ? `${meta.total_count} trabajadores (${meta.active_count} vigentes · ${meta.total_count - meta.active_count} egresados)${whenTxt ? ` · actualizada al ${whenTxt}` : ''}`
       : `Esta ${isEnterprise ? 'empresa' : 'tienda'} aún no tiene lista cargada.`;
 
     panel.innerHTML = `
       <h2>Lista de trabajadores de ${entidad}</h2>
       <p class="hint">${isEnterprise ? 'El reporte parte de la lista de personal de la empresa (sincronizada desde AX).' : 'El reporte parte de la lista de personal (Reporte 10 del POS). De aquí salen los trabajadores y los responsables (Gerente / Sub-Gerente).'}</p>
 
-      ${showWarn ? `<div class="warn-banner">⚠ <div>Esta lista se cargó hace <b>${ageDays} días</b> y podría estar desactualizada. Considera subir el <b>Reporte 10</b> más reciente para evitar reportar a alguien que ya egresó.</div></div>` : ''}
+      ${showWarn ? `<div class="warn-banner">⚠ <div>${noList
+          ? `Esta ${isEnterprise ? 'empresa' : 'tienda'} no tiene lista cargada.`
+          : `La sincronización automática no verifica esta lista hace <b>${verifDays} días</b> y podría estar caída.`} Como respaldo de <b>emergencia</b>, podés subir el <b>Reporte 10</b> más reciente.</div></div>` : ''}
 
       <div class="roster-status">
         <span class="rs-ico">📋</span>
-        <div class="rs-main"><div class="rs-title">${S.meta ? `Lista cargada el ${fmtDate(S.meta.uploaded_at)}` : 'Sin lista cargada'}</div>
+        <div class="rs-main"><div class="rs-title">${meta ? `Lista actualizada al ${whenTxt}` : 'Sin lista cargada'}${freshTxt}</div>
           <div class="rs-meta">${metaLine}</div></div>
       </div>
 
@@ -293,10 +314,12 @@ export function launchWizard(user, reportDef, onExit) {
     if ($('#rNext')) $('#rNext').addEventListener('click', goNext);
     if ($('#rNoList')) $('#rNoList').addEventListener('click', goNext);
 
-    // No-tienda: el roster se gestiona desde Personal (Reporte AX / Sync), no
-    // desde aqui. Se oculta la subtab de subir Reporte 10 (que escribiria en
-    // store_workers, tabla equivocada) y se deja solo la vista de la lista.
-    if (isEnterprise) {
+    // v6.143: el roster se mantiene con la sincronización AX diaria, así que el
+    // "subir Reporte 10" queda OCULTO salvo emergencia (sin lista, sync caída
+    // >3 días, o superadmin). En empresas siempre se oculta (escribiría en la
+    // tabla equivocada). La lógica de carga queda intacta, solo no se ofrece
+    // "alegremente". Al ocultarse, queda solo "Ver lista actual".
+    if (!emergency) {
       const upTab = panel.querySelector('#rTabs .subtab[data-tab="upload"]');
       if (upTab) upTab.remove();
       const upPanel = panel.querySelector('[data-tp="upload"]');
