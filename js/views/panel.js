@@ -499,6 +499,49 @@ function roleLabelOf(code) {
   const hit = cat.find(r => r.code === code);
   return (hit && hit.label) || ROLE_LABELS[code] || code;
 }
+/* v6.147: tipo de acceso osTicket de un rol (agent | client | none), del
+   catálogo vivo. Lo usa el alta para saber si crear agente/cliente. */
+function adminRoleKind(code) {
+  const cat = ADMIN_ROLES || ADMIN_ROLES_FALLBACK;
+  const hit = cat.find(r => r.code === code);
+  return (hit && hit.osticket_kind) || 'none';
+}
+/* v6.147: sección osTicket del alta. Según el tipo del rol muestra qué se va
+   a crear (agente/cliente) y la opción de clave distinta para osTicket
+   (por defecto usa la misma del portal). Vacía si el rol no usa osTicket. */
+function auOstSectionHtml(kind) {
+  if (kind !== 'agent' && kind !== 'client') {
+    return '<p class="muted" style="font-size:12px;margin:2px 0 0">Este rol no usa osTicket: solo se crea el acceso al portal.</p>';
+  }
+  const que = kind === 'agent'
+    ? 'un <b>agente</b> de osTicket (panel del staff)'
+    : 'un <b>cliente</b> de osTicket (portal de tickets)';
+  return `
+    <div style="border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:var(--bg-soft,#f9fafb)">
+      <div style="font-size:12.5px;color:var(--soft,#334155)">🎫 También se creará ${que}. <span class="muted">Requiere correo.</span></div>
+      <label class="radio-row" style="margin-top:8px"><input type="radio" name="ostpw" value="same" checked>
+        <span>Misma clave que el portal<br><span class="muted" style="font-size:12px">Una sola clave para ambos accesos</span></span></label>
+      <label class="radio-row"><input type="radio" name="ostpw" value="diff">
+        <span>Clave distinta para osTicket<br><span class="muted" style="font-size:12px">Tú defines otra clave para el sistema de tickets</span></span></label>
+      <div id="ostPwManual" style="display:none;margin-top:4px">
+        <input type="text" id="ostPwInput" placeholder="Mínimo 6 caracteres">
+      </div>
+    </div>`;
+}
+function wireAuOstSection() {
+  document.querySelectorAll('input[name=ostpw]').forEach(r =>
+    r.addEventListener('change', () => {
+      const box = document.getElementById('ostPwManual');
+      if (box) box.style.display =
+        (document.querySelector('input[name=ostpw]:checked') || {}).value === 'diff' ? 'block' : 'none';
+    }));
+}
+function readAuOst() {
+  const sel = document.querySelector('input[name=ostpw]:checked');
+  if (!sel || sel.value !== 'diff') return { ost_separate: false };
+  const inp = document.getElementById('ostPwInput');
+  return { ost_separate: true, ost_password: inp ? inp.value : '' };
+}
 
 /* ---------- shell ---------- */
 function shell(user) {
@@ -615,7 +658,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.146</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.147</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4119,9 +4162,17 @@ function auCreateModal(user) {
     <label class="flabel">Rol</label>
     <select id="auR" style="margin-bottom:14px;width:100%">${adminRoleOptionsHtml('admin', user.role !== 'superadmin')}</select>
     ${pwdBlockHtml()}
+    <div id="auOstSec" style="margin-top:14px"></div>
     <p id="auNewErr" style="color:var(--danger);font-size:12.5px;margin:10px 0 0;display:none"></p>
     <div class="modal-actions"><button class="btn" id="mCancel">Cancelar</button><button class="btn btn-primary" id="mOk">Crear</button></div>`);
   wirePwdBlock();
+  // v6.147: sección osTicket dependiente del rol (crea agente/cliente + clave).
+  const renderAuOst = () => {
+    const sec = $('#auOstSec');
+    if (sec) { sec.innerHTML = auOstSectionHtml(adminRoleKind($('#auR').value)); wireAuOstSection(); }
+  };
+  renderAuOst();
+  $('#auR').addEventListener('change', renderAuOst);
   $('#mX').addEventListener('click', closeModal);
   $('#mCancel').addEventListener('click', closeModal);
   $('#mOk').addEventListener('click', async () => {
@@ -4129,11 +4180,15 @@ function auCreateModal(user) {
     const d = await auApi({ action: 'create', adminId: user.id,
       username: $('#auU').value, name: $('#auN').value, email: $('#auE').value || null,
       phone: $('#auT').value || null,   // v5.07
-      role: $('#auR').value, ...pw });
+      role: $('#auR').value, ...pw, ...readAuOst() });
     if (!d.ok) { modalErrAu('#auNewErr', d.error); return; }
-    /* v5.10: la clave ya NO se muestra con un alert(). Va al modal de
-       credenciales, que la deja copiar (sola o con el usuario y el link) y
-       ofrece mandarsela por WhatsApp. Al cerrar, se repinta Equipo. */
+    // v6.147: resumen de alta con AMBOS accesos (portal + osTicket) para copiar.
+    if (d.id && d.summary) {
+      altaSummaryModal(user, d.summary, () => viewEquipo(user));
+      return;
+    }
+    /* Fallback (rol sin osTicket / respuesta vieja): la clave va al modal de
+       credenciales del portal, como antes. */
     const pwd = d.tempPassword || pw.password;
     if (d.id && pwd) {
       credModal(user, {
@@ -4146,6 +4201,70 @@ function auCreateModal(user) {
     }
     closeModal();
     viewEquipo(user);
+  });
+}
+
+/* v6.147: RESUMEN DE ALTA — muestra los dos accesos (portal + osTicket) del
+   miembro recién creado, con botón Copiar para enviárselos a quien
+   corresponda. Si el acceso osTicket no se pudo crear, muestra el motivo. */
+function altaSummaryModal(user, summary, onClose) {
+  const p = summary.portal || {};
+  const o = summary.osticket || { kind: 'none' };
+  const kindLbl = o.kind === 'agent' ? 'Agente (panel del staff)'
+    : o.kind === 'client' ? 'Cliente (portal de tickets)' : null;
+  const row = (k, v) => `<div style="display:flex;gap:8px;font-size:13px;padding:3px 0"><span class="muted" style="min-width:96px">${k}</span><span style="font-weight:600;word-break:break-all">${esc(v)}</span></div>`;
+  // Bloque osTicket
+  let ostBlock;
+  if (o.kind !== 'agent' && o.kind !== 'client') {
+    ostBlock = `<div class="muted" style="font-size:12.5px;margin-top:10px">Este rol no usa osTicket.</div>`;
+  } else if (o.skipped) {
+    ostBlock = `<div style="margin-top:12px"><div style="font-weight:700;font-size:12.5px;margin-bottom:4px">🎫 osTicket · ${esc(kindLbl)}</div>
+      <div style="font-size:12.5px;color:#b45309;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;padding:8px 10px">⚠ No se creó el acceso osTicket: ${esc(o.skipped)}</div></div>`;
+  } else {
+    ostBlock = `<div style="margin-top:12px"><div style="font-weight:700;font-size:12.5px;margin-bottom:4px">🎫 osTicket · ${esc(kindLbl)}</div>
+      ${row('Usuario', o.username || '—')}
+      ${row('Clave', (o.password || '—') + (o.same_password ? '  (misma del portal)' : ''))}
+      ${o.url ? row('Ingreso', o.url) : ''}</div>`;
+  }
+  // Texto para copiar
+  const lines = [];
+  lines.push('ACCESO AL PORTAL DE NÓMINA');
+  lines.push('Usuario: ' + (p.username || ''));
+  lines.push('Clave: ' + (p.password || ''));
+  if (p.must_change) lines.push('(La clave se cambia al entrar por primera vez)');
+  if (o.kind === 'agent' || o.kind === 'client') {
+    lines.push('');
+    lines.push('ACCESO A OSTICKET — ' + (kindLbl || ''));
+    if (o.skipped) {
+      lines.push('Pendiente: ' + o.skipped);
+    } else {
+      lines.push('Usuario: ' + (o.username || ''));
+      lines.push('Clave: ' + (o.password || '') + (o.same_password ? ' (misma del portal)' : ''));
+      if (o.url) lines.push('Ingreso: ' + o.url);
+    }
+  }
+  const copyText = lines.join('\n');
+  openModal(`
+    <div class="modal-head"><span>Miembro creado</span><button class="modal-x" id="mX">✕</button></div>
+    <p class="muted" style="font-size:12.5px;margin:0 0 12px">Copiá el resumen y envíaselo a ${esc(p.name || p.username || 'la persona')}.</p>
+    <div style="border:1px solid var(--border);border-radius:10px;padding:12px 14px">
+      <div style="font-weight:700;font-size:12.5px;margin-bottom:4px">🔐 Portal de Nómina</div>
+      ${row('Usuario', p.username || '—')}
+      ${row('Clave', p.password || '—')}
+      ${p.must_change ? '<div class="muted" style="font-size:11.5px;margin-top:2px">La cambia al entrar por primera vez.</div>' : ''}
+      ${ostBlock}
+    </div>
+    <p id="auSumMsg" style="font-size:12px;color:#0e9f6e;margin:8px 2px 0;min-height:16px"></p>
+    <div class="modal-actions">
+      <button class="btn" id="auSumCopy">📋 Copiar resumen</button>
+      <button class="btn btn-primary" id="mOk">Listo</button>
+    </div>`);
+  const done = () => { closeModal(); if (typeof onClose === 'function') onClose(); };
+  $('#mX').addEventListener('click', done);
+  $('#mOk').addEventListener('click', done);
+  $('#auSumCopy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText(copyText); $('#auSumMsg').textContent = '✓ Resumen copiado al portapapeles'; }
+    catch { $('#auSumMsg').textContent = 'No se pudo copiar automáticamente; seleccioná y copiá manualmente.'; $('#auSumMsg').style.color = '#b45309'; }
   });
 }
 function auAction(ds, user) {

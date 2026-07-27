@@ -299,7 +299,7 @@ export async function onRequestPost({ request, env }) {
       // Ahora: catalogo vivo + error explicito. superadmin no se asigna desde
       // aqui (se nace superadmin, no se crea desde el modal) y tienda es el
       // login de empresa, no un rol del equipo.
-      const catalog = await sb(env, 'roles?is_active=eq.true&select=code');
+      const catalog = await sb(env, 'roles?is_active=eq.true&select=code,osticket_kind');
       // v6.41: el coordinador tampoco crea pares — 'coordinador' solo lo
       // asigna el superadmin.
       const allowed = (catalog || []).map(x => x.code)
@@ -309,8 +309,25 @@ export async function onRequestPost({ request, env }) {
         return json({ ok: false, error: 'Rol no válido. Roles asignables: ' + allowed.join(', ') + '.' }, 400);
       }
       const r = role;
+      // v6.147: tipo de acceso osTicket del rol (agent | client | none).
+      const roleKind = ((catalog || []).find(x => x.code === r) || {}).osticket_kind || 'none';
+      const usesOst = roleKind === 'agent' || roleKind === 'client';
+      const emailClean = email ? String(email).trim().toLowerCase() : '';
+      // Si el rol usa osTicket, el correo es OBLIGATORIO (el agente/cliente se
+      // crea por correo). Antes era opcional; ahora se exige para poder
+      // provisionar el acceso en el mismo alta.
+      if (usesOst && !emailClean) {
+        return json({ ok: false, error: 'Este rol usa osTicket: el correo es obligatorio para crear su acceso.' }, 400);
+      }
       const pwd = useTemp ? genTempPassword() : password;
       if (!pwd || pwd.length < 6) return json({ ok: false, error: 'Contraseña inválida (mín. 6).' }, 400);
+      // Clave de osTicket: por defecto la MISMA que el portal; se permite una
+      // distinta con ost_separate + ost_password (mín. 6).
+      const ostSeparate = !!body.ost_separate;
+      const ostPwd = ostSeparate ? String(body.ost_password || '') : pwd;
+      if (usesOst && ostSeparate && (!ostPwd || ostPwd.length < 6)) {
+        return json({ ok: false, error: 'La clave de osTicket debe tener al menos 6 caracteres.' }, 400);
+      }
 
       // v5.11: duplicados atajados ACA (usuario y correo son unicos). Antes se
       // dejaba explotar a la base y el 23505 crudo salia a pantalla.
@@ -334,7 +351,56 @@ export async function onRequestPost({ request, env }) {
       // v5.10: el id se devuelve para que el modal de credenciales pueda pedir
       // el preview del mensaje sin tener que recargar toda la vista Equipo.
       const newId = created && created[0] && created[0].id;
-      return json({ ok: true, id: newId, tempPassword: useTemp ? pwd : null });
+
+      // v6.147: provisión de osTicket en el MISMO alta, según el rol, + resumen
+      // de credenciales para enviar. Cliente (gestor/gerente/supervisor) ->
+      // ost_user + login. Agente (admin/coordinador) -> staff (upsert_agent,
+      // depto por defecto, sin alcance: ve solo lo suyo hasta cargar Alcance).
+      // Nada de esto rompe el alta ya hecha: si osTicket falla, va como aviso.
+      const base = usesOst ? await osticketBase(env) : '';
+      const canOst = base && env.osticket_api_key;
+      const summary = {
+        portal: { username, name: name || username, email: emailClean || null, password: pwd, must_change: !!useTemp },
+        osticket: { kind: roleKind, same_password: !ostSeparate },
+      };
+      if (usesOst) {
+        const baseClean = String(base || '').replace(/\/+$/, '');
+        if (!canOst) {
+          summary.osticket.skipped = 'osTicket no está configurado (URL o clave API).';
+        } else {
+          const uObj = { id: newId, username, name: name || username, email: emailClean, role: r };
+          try {
+            if (roleKind === 'client') {
+              const rc = await syncClientOne(env, base, uObj, { username, password: ostPwd });
+              if (rc && rc.ok) {
+                summary.osticket = { kind: 'client', same_password: !ostSeparate, created: !!rc.created,
+                  user_id: rc.user_id, username, password: ostPwd, url: baseClean + '/index.php' };
+              } else {
+                summary.osticket.skipped = (rc && rc.error) || 'No se pudo crear el cliente osTicket.';
+              }
+            } else { // agent
+              const parts = String(name || username).trim().split(/\s+/).filter(Boolean);
+              const firstname = parts.shift() || username;
+              const lastname = parts.join(' ') || firstname;
+              const ra = await gcAgent(env, base, { action: 'upsert_agent', username, firstname, lastname, email: emailClean, password: ostPwd });
+              if (ra && ra.staff_id) {
+                await sb(env, `admin_users?id=eq.${encodeURIComponent(newId)}`, {
+                  method: 'PATCH', headers: { Prefer: 'return=minimal' },
+                  body: JSON.stringify({ osticket_staff_id: ra.staff_id }),
+                });
+                summary.osticket = { kind: 'agent', same_password: !ostSeparate, created: !!ra.created,
+                  staff_id: ra.staff_id, username, password: ostPwd, url: baseClean + '/scp/login.php' };
+              } else {
+                summary.osticket.skipped = 'No se pudo crear el agente osTicket.';
+              }
+            }
+          } catch (e) {
+            summary.osticket.skipped = 'osTicket: ' + String(e.message || e);
+          }
+        }
+      }
+
+      return json({ ok: true, id: newId, tempPassword: useTemp ? pwd : null, summary });
     }
 
     /* v5.07: editar los datos de CONTACTO de un miembro (nombre, correo,
