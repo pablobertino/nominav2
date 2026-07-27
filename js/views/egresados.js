@@ -21,6 +21,7 @@ const PAGE = 50;
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c => (
   { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]
 ));
+const nf = n => Number(n || 0).toLocaleString('es');
 
 const fmtDate = d => {
   if (!d) return '—';
