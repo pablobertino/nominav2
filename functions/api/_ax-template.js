@@ -441,6 +441,15 @@ export function buildReportText(ctx) {
   txt += `Cargo:           ${ctx.cargo || ''}\n`;
   txt += `Teléfono:        ${ctx.telefono || '—'}\n`;
   txt += `Correo:          ${ctx.correoResp || ''}\n`;
+  // GC: si el reporte lo envió un gestor/central (no la propia tienda), se
+  // identifica quién lo envió (con su ROL real) y el departamento, para
+  // ubicarlo mejor en osTicket. Solo aparece cuando hay emisor central.
+  if (ctx.senderName || ctx.department) {
+    txt += `\n── ENVIADO POR (CENTRAL) ${SUB}\n`;
+    if (ctx.senderName) txt += `Gestor:          ${ctx.senderName}${ctx.senderRole ? ' · ' + ctx.senderRole : ''}\n`;
+    if (ctx.senderEmail) txt += `Correo gestor:   ${ctx.senderEmail}\n`;
+    if (ctx.department) txt += `Departamento:    ${ctx.department}\n`;
+  }
   (ctx.registros || []).forEach((reg, i) => {
     txt += `\nRegistro #${i + 1}:\n`;
     reg.forEach(([label, value]) => {

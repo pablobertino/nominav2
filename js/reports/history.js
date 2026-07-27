@@ -77,12 +77,13 @@ function otPill(r, osticketUrl, isAgent) {
 }
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
 function originPill(r) {
-  // Origen: para envios de la central se muestra el ROL guardado con el
-  // reporte (position). Para envios de la empresa, su TIPO (Tienda,
-  // Administrativa, Importadora...) — "Empresa" a secas confunde porque en
-  // el vocabulario del grupo significa lo-que-no-es-tienda.
+  // Origen: para envios de la central se muestra el ROL REAL del emisor
+  // (source_role, del catálogo de Roles: "Gestor de empresa", "Coordinador"…),
+  // NO un genérico "Administrador". Para envios de la empresa, su TIPO
+  // (Tienda, Administrativa, Importadora...) — "Empresa" a secas confunde
+  // porque en el vocabulario del grupo significa lo-que-no-es-tienda.
   return r.source_kind === 'admin'
-    ? `<span class="pill pill-origin-admin">${esc(r.position || 'Administrador')}</span>`
+    ? `<span class="pill pill-origin-admin">${esc(r.source_role || r.position || 'Central')}</span>`
     : `<span class="pill pill-origin-company">${esc(r.company_type || 'Empresa')}</span>`;
 }
 
@@ -317,7 +318,7 @@ export function renderHistory(user) {
           <div><div class="fol">N° ${r.id}</div><div class="ttl">${t.label}</div></div></div></td>
         ${storeTd}
         <td>${fmtSent(r.sent_at)}</td>
-        <td>${r.responsible || '—'}<div style="font-size:11.5px;color:var(--faint)">${r.position || ''}</div></td>
+        <td>${r.responsible || '—'}<div style="font-size:11.5px;color:var(--faint)">${esc(r.source_kind === 'admin' ? (r.source_role || r.position || 'Central') : (r.position || ''))}</div></td>
         <td>${originPill(r)}</td>
         <td style="text-align:center"><b>${r.workers_count}</b></td>
         ${attTd}
@@ -344,7 +345,7 @@ export function renderHistory(user) {
       rows.push(['Tienda', `<b>${r.company_code}</b>${r.company_name ? `<div class="hc-sub">${r.company_name}</div>` : ''}`]);
     }
     rows.push(['Enviado', fmtSent(r.sent_at)]);
-    rows.push(['Responsable', (r.responsible || '\u2014') + (r.position ? `<div class="hc-sub">${r.position}</div>` : '')]);
+    rows.push(['Responsable', (r.responsible || '\u2014') + (() => { const sub = r.source_kind === 'admin' ? (r.source_role || r.position || 'Central') : (r.position || ''); return sub ? `<div class="hc-sub">${esc(sub)}</div>` : ''; })()]);
     rows.push(['Origen', originPill(r)]);
     rows.push(['Trabaj.', `<b>${r.workers_count}</b>`]);
     rows.push(['osTicket', otPill(r, ST.osticketUrl, ST.viewerIsAgent)]);

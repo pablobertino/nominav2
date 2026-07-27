@@ -340,7 +340,7 @@ async function listReports(env, body, scope) {
   const to = from + perPage - 1;
 
   let q = 'reports_log?select=id,company_code,zone_id,subzone_id,topic,sent_at,'
-    + 'responsible,position,workers_count,attention,osticket_id,email_sent,source_kind,'
+    + 'responsible,position,workers_count,attention,osticket_id,email_sent,source_kind,source_admin_id,'
     + 'osticket_sync,attention_at,attention_comment,attention_by';
   q += scopeFilter(scope);
   q += scopeDeptAuthorFilter(scope);   // restriccion fina por depto + autoria
@@ -408,6 +408,26 @@ async function listReports(env, body, scope) {
     (admins || []).forEach(x => { nameByAdmin[x.id] = x.name; });
   }
 
+  // EMISOR CENTRAL: nombre + ROL REAL del admin/gestor que envió (origin
+  // 'admin'). No se hardcodea "Administrador": se toma el rol del usuario y su
+  // etiqueta del catálogo de Roles. En lote para toda la página.
+  const srcIds = [...new Set(rows.map(r => r.source_admin_id).filter(Boolean))];
+  let srcInfoById = {};
+  if (srcIds.length) {
+    const list = srcIds.join(',');
+    const srcAdmins = await sbJson(env, `admin_users?id=in.(${list})&select=id,name,role`);
+    const roleCodes = [...new Set((srcAdmins || []).map(a => a.role).filter(Boolean))];
+    let labelByRole = {};
+    if (roleCodes.length) {
+      const rl = roleCodes.map(c => `"${c}"`).join(',');
+      const roles = await sbJson(env, `roles?code=in.(${rl})&select=code,label`);
+      (roles || []).forEach(r => { labelByRole[r.code] = r.label; });
+    }
+    (srcAdmins || []).forEach(a => {
+      srcInfoById[a.id] = { name: a.name || null, role_label: labelByRole[a.role] || a.role || null };
+    });
+  }
+
   const out = rows.map(r => ({
     id: r.id,
     type: r.topic,
@@ -426,6 +446,9 @@ async function listReports(env, body, scope) {
     attention_by_name: r.attention_by ? (nameByAdmin[r.attention_by] || null) : null,
     email_sent: r.email_sent,
     source_kind: r.source_kind || 'company',
+    source_admin_id: r.source_admin_id || null,
+    source_admin_name: r.source_admin_id ? (srcInfoById[r.source_admin_id]?.name || null) : null,
+    source_role: r.source_admin_id ? (srcInfoById[r.source_admin_id]?.role_label || null) : null,
   }));
 
   // URL base de osTicket (sin barra final) para que el front arme el enlace
@@ -443,7 +466,7 @@ async function detailReport(env, body, scope) {
   if (!id) return json({ ok: false, error: 'Falta report_id' }, 400);
 
   let q = `reports_log?id=eq.${id}&select=id,company_code,zone_id,subzone_id,topic,sent_at,`
-    + 'responsible,position,workers_count,attention,osticket_id,email_sent,notes,source_kind,'
+    + 'responsible,position,workers_count,attention,osticket_id,email_sent,notes,source_kind,source_admin_id,'
     + 'osticket_sync,attention_at,attention_comment,attention_by';
   q += scopeFilter(scope);
   q += scopeDeptAuthorFilter(scope);   // no abrir reportes fuera de depto/autoria
@@ -460,6 +483,20 @@ async function detailReport(env, body, scope) {
   if (r.attention_by) {
     const ab = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(r.attention_by)}&select=name`);
     attentionByName = (ab && ab[0]) ? ab[0].name : null;
+  }
+
+  // Emisor central: nombre + ROL REAL (no hardcode) del gestor/admin que envió.
+  let sourceAdminName = null, sourceRole = null;
+  if (r.source_admin_id) {
+    const sa = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(r.source_admin_id)}&select=name,role`);
+    if (sa && sa[0]) {
+      sourceAdminName = sa[0].name || null;
+      sourceRole = sa[0].role || null;
+      if (sa[0].role) {
+        const rl = await sbJson(env, `roles?code=eq.${encodeURIComponent(sa[0].role)}&select=label`);
+        if (rl && rl[0] && rl[0].label) sourceRole = rl[0].label;
+      }
+    }
   }
 
   // Lineas segun tipo. Por ahora solo marcaje tiene tabla de detalle.
@@ -513,6 +550,9 @@ async function detailReport(env, body, scope) {
       responsible: r.responsible, position: r.position, workers_count: r.workers_count,
       attention: r.attention, osticket_id: r.osticket_id, email_sent: r.email_sent, notes: r.notes,
       source_kind: r.source_kind || 'company',
+      source_admin_id: r.source_admin_id || null,
+      source_admin_name: sourceAdminName,
+      source_role: sourceRole,
       osticket_sync: r.osticket_sync || 'na',
       attention_at: r.attention_at || null,
       attention_comment: r.attention_comment || null,

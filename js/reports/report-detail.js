@@ -63,9 +63,10 @@ function otPill(r, osticketUrl, isAgent) {
 }
 function originPill(r) {
   // Igual que el Historial (history.js): para envios de la central se muestra
-  // el ROL guardado con el reporte (position), no un generico "Administrador".
+  // el ROL REAL del emisor (source_role, del catálogo de Roles), no un
+  // genérico "Administrador".
   return r.source_kind === 'admin'
-    ? `<span class="pill pill-origin-admin">${r.position || 'Administrador'}</span>`
+    ? `<span class="pill pill-origin-admin">${r.source_role || r.position || 'Central'}</span>`
     : `<span class="pill pill-origin-company">${r.company_type || 'Empresa'}</span>`;
 }
 
@@ -196,7 +197,7 @@ export async function showReportDetail({ reportId, user, onBack }) {
       ${statusBand}
       <div class="rd-meta">
         <div><span class="rd-lbl">Tienda</span><span class="rd-val">${r.company_code}${r.company_name ? ' · ' + r.company_name : ''}</span></div>
-        <div><span class="rd-lbl">Responsable</span><span class="rd-val">${r.responsible || '—'}${r.position ? ' · ' + r.position : ''}</span></div>
+        <div><span class="rd-lbl">Responsable</span><span class="rd-val">${r.responsible || '—'}${(() => { const sub = r.source_kind === 'admin' ? (r.source_role || r.position) : r.position; return sub ? ' · ' + sub : ''; })()}</span></div>
         <div><span class="rd-lbl">Origen</span><span class="rd-val">${originPill(r)}</span></div>
         <div><span class="rd-lbl">Trabajadores</span><span class="rd-val">${r.workers_count}</span></div>
       </div>

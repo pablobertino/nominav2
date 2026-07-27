@@ -199,6 +199,49 @@ async function commonDepartment(env, cc, ceds) {
   } catch { return null; }
 }
 
+// Nombre de un departamento por id (para el cuerpo del ticket). '' si no.
+async function deptNameById(env, id) {
+  if (!id) return '';
+  try {
+    const d = await sb(env, `departments?id=eq.${encodeURIComponent(id)}&select=name`);
+    return (d && d[0] && d[0].name) ? d[0].name : '';
+  } catch { return ''; }
+}
+
+// GC v3: identidad del EMISOR CENTRAL (gestor/admin) que envió el reporte,
+// para adjuntarla al ticket de osTicket. Cuando el origen es la propia
+// tienda (sourceKind !== 'admin'), no hay emisor central (sender = null) y
+// solo viaja el departamento. Devuelve:
+//   body: campos para buildReportText (senderName/Email/Role + department)
+//   link: campos para gc-report.json (sender_* + department; el
+//         sender_user_id = admin_users.osticket_user_id -> colaborador)
+// Nunca aborta: ante cualquier fallo devuelve lo que pudo resolver.
+async function gcSenderCtx(env, sourceKind, sourceAdminId, reportDeptId) {
+  const dept = await deptNameById(env, reportDeptId);
+  let s = null;
+  if (sourceKind === 'admin' && sourceAdminId) {
+    try {
+      const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(sourceAdminId)}&select=name,email,role,osticket_user_id`);
+      if (a && a.length) {
+        const u = a[0];
+        let roleLabel = u.role || '';
+        try {
+          const r = await sb(env, `roles?code=eq.${encodeURIComponent(u.role || '')}&select=label`);
+          if (r && r.length && r[0].label) roleLabel = r[0].label;
+        } catch { /* usa el code */ }
+        s = { ost_user_id: u.osticket_user_id || null, name: u.name || '', email: u.email || '', role: roleLabel };
+      }
+    } catch { /* sin emisor */ }
+  }
+  const body = s
+    ? { senderName: s.name, senderEmail: s.email, senderRole: s.role, department: dept || '' }
+    : { department: dept || '' };
+  const link = s
+    ? { sender_user_id: s.ost_user_id || undefined, sender_name: s.name || undefined, sender_email: s.email || undefined, sender_role: s.role || undefined, department: dept || undefined }
+    : (dept ? { department: dept } : {});
+  return { body, link, dept, sender: s };
+}
+
 // Construye un adjunto en el formato que ESPERA la API de osTicket:
 //   { "nombre.ext": "data:MIME;base64,XXXX" }
 // (objeto con la clave = nombre de archivo). NO {name,data,...}.
@@ -475,6 +518,7 @@ async function submitMarcaje(env, body) {
   // horas como HORA (vacias en Descanso), Tipo de dia L/D y Causa legible.
   // ───────────────────────────────────────────────────────────────────
   const code = reportCode(reportId);
+  const gcx = await gcSenderCtx(env, sourceKind, sourceAdminId, reportDeptId);
   const base = await osticketBase(env);
   const topicId = parseInt(await getSetting(env, 'osticket_topic_marcaje', '19'), 10) || 19;
   const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
@@ -516,6 +560,7 @@ async function submitMarcaje(env, body) {
       return campos;
     });
     const plaBody = buildReportText({
+      ...gcx.body,
       pieceLabel: 'PLANTILLA', reportCode: code, piece: 1, totalPieces,
       topicLabel: 'Marcaje Manual',
       fecha: dmy(today), hora: nowHHMM,
@@ -572,6 +617,7 @@ async function submitMarcaje(env, body) {
       result.osticket_pla = plaNum;
       result.tickets_ok++;
       await gcReportLink(env, base, {
+        ...gcx.link,
         report_code: code, ticket_number: plaNum, kind: 'PLA',
         company: cc, report_type: 'marcaje', doc_total: 0,
       });
@@ -873,6 +919,7 @@ async function submitAusencia(env, body) {
   // Si un DOC falla, NO se aborta el resto: se acumula en ticketErrors.
   // ───────────────────────────────────────────────────────────────────
   const code = reportCode(reportId);
+  const gcx = await gcSenderCtx(env, sourceKind, sourceAdminId, reportDeptId);
   const base = await osticketBase(env);
   const topicId = parseInt(await getSetting(env, 'osticket_topic_ausencia', '20'), 10) || 20;
   const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
@@ -919,6 +966,7 @@ async function submitAusencia(env, body) {
       return campos;
     });
     const plaBody = buildReportText({
+      ...gcx.body,
       pieceLabel: 'PLANTILLA', reportCode: code, piece: 1, totalPieces,
       topicLabel: `Período de Ausencia — ${atype.label}`,
       fecha: dmy(today), hora: nowHHMM,
@@ -977,6 +1025,7 @@ async function submitAusencia(env, body) {
       result.tickets_ok++;
       // Registrar relacion del PLA.
       await gcReportLink(env, base, {
+        ...gcx.link,
         report_code: code, ticket_number: plaNum, kind: 'PLA',
         company: cc, report_type: 'ausencia', doc_total: nDocs,
       });
@@ -995,6 +1044,7 @@ async function submitAusencia(env, body) {
       const piece = i + 2;   // el PLA ocupo la pieza 1
       const periodo = l.date_from === l.date_to ? dmy(l.date_from) : `${dmy(l.date_from)} a ${dmy(l.date_to)}`;
       const docBody = buildReportText({
+        ...gcx.body,
         pieceLabel: 'DOCUMENTO', reportCode: code, piece, totalPieces,
         topicLabel: `Período de Ausencia — ${atype.label}`,
         fecha: dmy(today), hora: nowHHMM,
@@ -1024,6 +1074,7 @@ async function submitAusencia(env, body) {
         });
         result.tickets_ok++;
         await gcReportLink(env, base, {
+          ...gcx.link,
           report_code: code, ticket_number: docNum, kind: 'DOC',
           company: cc, report_type: 'ausencia',
           worker_id: ced, worker_name: l.worker_name,
@@ -1363,6 +1414,7 @@ async function submitEgreso(env, body) {
   // documento por persona (adjunto / causa).
   // ───────────────────────────────────────────────────────────────────
   const code = reportCode(reportId);
+  const gcx = await gcSenderCtx(env, sourceKind, sourceAdminId, reportDeptId);
   const base = await osticketBase(env);
   const topicId = parseInt(await getSetting(env, 'osticket_topic_egreso', '33'), 10) || 33;
   const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
@@ -1411,6 +1463,7 @@ async function submitEgreso(env, body) {
       return campos;
     });
     const plaBody = buildReportText({
+      ...gcx.body,
       pieceLabel: 'PLANTILLA', reportCode: code, piece: 1, totalPieces,
       topicLabel: 'Egreso',
       fecha: dmy(today), hora: nowHHMM,
@@ -1471,6 +1524,7 @@ async function submitEgreso(env, body) {
       result.osticket_pla = plaNum;
       result.tickets_ok++;
       await gcReportLink(env, base, {
+        ...gcx.link,
         report_code: code, ticket_number: plaNum, kind: 'PLA',
         company: cc, report_type: 'egreso', doc_total: nDocs,
       });
@@ -1486,6 +1540,7 @@ async function submitEgreso(env, body) {
       const fname = l._fileName || `carta_renuncia_${ced}`;
       const piece = i + 2;   // el PLA ocupo la pieza 1
       const docBody = buildReportText({
+        ...gcx.body,
         pieceLabel: 'DOCUMENTO', reportCode: code, piece, totalPieces,
         topicLabel: 'Egreso',
         fecha: dmy(today), hora: nowHHMM,
@@ -1516,6 +1571,7 @@ async function submitEgreso(env, body) {
         });
         result.tickets_ok++;
         await gcReportLink(env, base, {
+          ...gcx.link,
           report_code: code, ticket_number: docNum, kind: 'DOC',
           company: cc, report_type: 'egreso',
           worker_id: ced, worker_name: l.worker_name,
@@ -1929,6 +1985,7 @@ async function submitIngreso(env, body) {
   // no generan ticket; quedan registrados en ingreso_report_docs.
   // El telefono se muestra en nacional en el cuerpo; al Excel va el +58.
   const code = reportCode(reportId);
+  const gcx = await gcSenderCtx(env, sourceKind, sourceAdminId, reportDeptId);
   // v6.108: base y topico salen del batch de settings ya leido (sin 2 subrequests mas).
   const base = String(g('osticket_url', '') || '').replace(/\/+$/, '');
   const topicId = parseInt(g('osticket_topic_ingreso', '31'), 10) || 31;
@@ -1985,6 +2042,7 @@ async function submitIngreso(env, body) {
       ['Direccion', l.address || '—'],
     ]));
     const plaBody = buildReportText({
+      ...gcx.body,
       pieceLabel: 'PLANTILLA', reportCode: code, piece: 1, totalPieces,
       topicLabel: 'Ingreso',
       fecha: dmy(today), hora: nowHHMM,
@@ -2049,6 +2107,7 @@ async function submitIngreso(env, body) {
       result.osticket_pla = plaNum;
       result.tickets_ok++;
       await gcReportLink(env, base, {
+        ...gcx.link,
         report_code: code, ticket_number: plaNum, kind: 'PLA',
         company: cc, report_type: 'ingreso', doc_total: nDocs,
       });
@@ -2061,7 +2120,7 @@ async function submitIngreso(env, body) {
     // Se envian aqui hasta DOC_FIRST; el resto queda en pendingDocs para las
     // tandas del cliente (send_ingreso_docs). El contexto del cuerpo se pasa
     // en ctx (mismo para todas las piezas del reporte).
-    const ctx = { code, base, topicId, cc, compBusinessName, mallZona, marcaName, compEmail, compPhone, fromEmail, fromName, responsible, position, today, nowHHMM, totalPieces };
+    const ctx = { code, base, topicId, cc, compBusinessName, mallZona, marcaName, compEmail, compPhone, fromEmail, fromName, responsible, position, today, nowHHMM, totalPieces, gcBody: gcx.body, gcLink: gcx.link };
     for (let i = 0; i < docPieces.length; i++) {
       const { line: l, doc: d } = docPieces[i];
       const piece = i + 2;   // el PLA ocupo la pieza 1
@@ -2113,6 +2172,7 @@ async function submitIngreso(env, body) {
    result.tickets_ok/fail/ticket_errors. No lanza. */
 async function ingresoDocTicket(env, ctx, dp, result) {
   const docBody = buildReportText({
+    ...(ctx.gcBody||{}),
     pieceLabel: 'DOCUMENTO', reportCode: ctx.code, piece: dp.piece, totalPieces: ctx.totalPieces,
     topicLabel: `Ingreso — ${dp.doc_name}`,
     fecha: dmy(ctx.today), hora: ctx.nowHHMM,
@@ -2136,6 +2196,7 @@ async function ingresoDocTicket(env, ctx, dp, result) {
     });
     result.tickets_ok++;
     await gcReportLink(env, ctx.base, {
+      ...(ctx.gcLink||{}),
       report_code: ctx.code, ticket_number: docNum, kind: 'DOC',
       company: ctx.cc, report_type: 'ingreso',
       worker_id: dp.worker_id, worker_name: dp.worker_name,
@@ -2160,11 +2221,15 @@ async function sendIngresoDocs(env, body) {
   const result = { tickets_ok: 0, tickets_fail: 0, ticket_errors: [] };
   if (!docs.length) return json({ ok: true, tickets_ok: 0, tickets_fail: 0, errors: [] });
 
-  const rep = await sb(env, `reports_log?id=eq.${reportId}&select=company_code,responsible,position`);
+  const rep = await sb(env, `reports_log?id=eq.${reportId}&select=company_code,responsible,position,source_kind,source_admin_id,department_id`);
   const r0 = rep && rep[0];
   if (!r0) return json({ ok: false, error: 'Reporte no encontrado.' }, 404);
   const cc = r0.company_code;
   const code = reportCode(reportId);
+  // GC v3: emisor central + depto reconstruidos desde reports_log, para que
+  // los DOC de recaudos de ingreso (tandas) también identifiquen al gestor
+  // y lo sumen como colaborador (via ...(ctx.gcBody/gcLink) en ingresoDocTicket).
+  const gcx = await gcSenderCtx(env, r0.source_kind, r0.source_admin_id, r0.department_id);
   const g = await getSettings(env, ['osticket_url', 'osticket_topic_ingreso']);
   const base = String(g('osticket_url', '') || '').replace(/\/+$/, '');
   const topicId = parseInt(g('osticket_topic_ingreso', '31'), 10) || 31;
@@ -2184,6 +2249,7 @@ async function sendIngresoDocs(env, body) {
     fromEmail: c0.email || 'portal-nomina@grupocanaima.com', fromName: `${cc} - ${compBusinessName || cc}`,
     responsible: r0.responsible || '', position: r0.position || '',
     today, nowHHMM, totalPieces: parseInt(body.total_pieces, 10) || (docs.length + 1),
+    gcBody: gcx.body, gcLink: gcx.link,
   };
   for (const d of docs) {
     if (!d || !d.file_b64) { result.tickets_fail++; result.ticket_errors.push(`DOC ${(d && d.worker_id) || '?'}: sin archivo.`); continue; }
@@ -2533,6 +2599,7 @@ async function submitModificacion(env, body) {
   // de ingreso/egreso van vacias (no se modifican aqui).
   // ───────────────────────────────────────────────────────────────────
   const code = reportCode(reportId);
+  const gcx = await gcSenderCtx(env, sourceKind, sourceAdminId, reportDeptId);
   const base = await osticketBase(env);
   const topicId = parseInt(await getSetting(env, 'osticket_topic_modificacion', '32'), 10) || 32;
   const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
@@ -2589,6 +2656,7 @@ async function submitModificacion(env, body) {
       return campos;
     });
     const plaBody = buildReportText({
+      ...gcx.body,
       pieceLabel: 'PLANTILLA', reportCode: code, piece: 1, totalPieces,
       topicLabel: 'Modificación de Datos',
       fecha: dmy(today), hora: nowHHMM,
@@ -2660,6 +2728,7 @@ async function submitModificacion(env, body) {
       result.osticket_pla = plaNum;
       result.tickets_ok++;
       await gcReportLink(env, base, {
+        ...gcx.link,
         report_code: code, ticket_number: plaNum, kind: 'PLA',
         company: cc, report_type: 'modificacion', doc_total: 0,
       });
@@ -2819,6 +2888,7 @@ async function submitTraslado(env, body) {
 
   // --- osTicket: 1 PLA con la plantilla de 2 filas (B+A) por persona ---
   const repCode = reportCode(reportId);
+  const gcx = await gcSenderCtx(env, sourceKind, sourceAdminId, reportDeptId);
   const base = await osticketBase(env);
   const topicId = parseInt(await getSetting(env, 'osticket_topic_traslado', '34'), 10) || 34;
   const fromEmail = compEmail || 'portal-nomina@grupocanaima.com';
@@ -2872,6 +2942,7 @@ async function submitTraslado(env, body) {
       return campos;
     });
     const plaBody = buildReportText({
+      ...gcx.body,
       pieceLabel: 'PLANTILLA', reportCode: repCode, piece: 1, totalPieces: 1,
       topicLabel: 'Traslado', fecha: dmy(today), hora: nowHHMM,
       alias: cc, razon: compBusinessName, zona: mallZona, marca: marcaName, correoTienda: compEmail,
@@ -2893,7 +2964,7 @@ async function submitTraslado(env, body) {
         ...(plaAttachments ? { attachments: plaAttachments } : {}),
       });
       result.osticket_pla = plaNum; result.tickets_ok++;
-      await gcReportLink(env, base, { report_code: repCode, ticket_number: plaNum, kind: 'PLA', company: cc, report_type: 'traslado', doc_total: 0 });
+      await gcReportLink(env, base, { ...gcx.link, report_code: repCode, ticket_number: plaNum, kind: 'PLA', company: cc, report_type: 'traslado', doc_total: 0 });
     } catch (e) { result.tickets_fail++; result.ticket_errors.push(`PLA: ${String(e.message || e)}`); }
 
     if (result.osticket_pla) {
