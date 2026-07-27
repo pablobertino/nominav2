@@ -63,6 +63,7 @@ function ensureStyles() {
   .av-title{font-weight:650;font-size:14px;color:var(--ink)}
   .av-text{font-size:12.5px;color:var(--ink-soft,#334155);margin-top:3px;line-height:1.5}
   .av-meta{font-size:11px;color:var(--faint,#94a3b8);margin-top:6px;display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+  .av-by{display:inline-flex;align-items:center;gap:3px;font-weight:600;color:var(--ink-soft,#475569)}
   .av-tag{display:inline-block;font-size:10px;font-weight:700;border-radius:999px;padding:2px 8px}
   .tag-auto{color:#1e40af;background:#dbeafe}.tag-man{color:#6b21a8;background:#f3e8ff}
   .tag-today{color:#9a3412;background:#ffedd5}.tag-off{color:#64748b;background:#e5e7eb}
@@ -186,7 +187,7 @@ function autoRow(a) {
     <div class="av-body">
       <div class="av-title">${esc(a.title)} ${today}</div>
       <div class="av-text">${esc(a.body)}</div>
-      <div class="av-meta"><span>\u{1F4C5} ${esc(a.date || '')}</span></div>
+      <div class="av-meta"><span>\u{1F4C5} ${esc(a.date || '')}</span><span class="av-by">\u{1F464} ${esc(a.author || 'Portal')}</span></div>
     </div>
   </div>`;
 }
@@ -206,7 +207,7 @@ function manualRow(m, admin) {
     <div class="av-body">
       <div class="av-title">${esc(m.title)} ${today} ${off}</div>
       <div class="av-text">${esc(m.body || '')}</div>
-      <div class="av-meta">${audTag}<span>${date}</span></div>
+      <div class="av-meta">${audTag}<span>${date}</span><span class="av-by">\u{1F464} ${esc(m.author || 'Portal')}</span></div>
     </div>
     <div class="av-actions">${actions}</div>
   </div>`;
