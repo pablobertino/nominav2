@@ -138,7 +138,11 @@ export async function resolveActor(env, user) {
     const readonlyScope = roleMeta ? !!roleMeta.readonly_scope : false;
     const permSet = isSystem ? null : await loadRolePerms(env, role);
 
-    return { kind: 'admin', actor, role, isSystem, readonlyScope, permSet };
+    // id: se incluye para los endpoints que resuelven alcance con actor.id
+    // (p. ej. sync-pending -> allowedCompanies). Antes faltaba y, como
+    // `actor` es el username (no el id), actor.id quedaba undefined: cualquier
+    // no-superadmin caía a alcance vacío (veía "no hay sincronización").
+    return { kind: 'admin', id: a[0].id, actor, role, isSystem, readonlyScope, permSet };
   }
 
   return null;
