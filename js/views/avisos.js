@@ -72,6 +72,17 @@ function ensureStyles() {
   .av-iconbtn:hover{background:var(--border-soft,#eef0f3)}
   .av-empty{background:var(--surface);border:1px dashed var(--border);border-radius:14px;padding:18px;text-align:center;color:var(--muted);font-size:13px}
   .av-sub{margin:22px 2px 2px;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--faint,#94a3b8)}
+  /* v6.152: bloque plegable de Novedades de empresas (cerrado por defecto). */
+  .av-fold{margin-top:22px}
+  .av-foldsum{list-style:none;cursor:pointer;display:flex;align-items:center;gap:8px;margin:0 2px;
+    font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--faint,#94a3b8);
+    user-select:none;padding:6px 0}
+  .av-foldsum::-webkit-details-marker{display:none}
+  .av-foldsum::before{content:'\\25B8';font-size:11px;transition:transform .15s ease;color:var(--muted)}
+  .av-fold[open] .av-foldsum::before{transform:rotate(90deg)}
+  .av-foldn{display:inline-flex;align-items:center;justify-content:center;min-width:20px;height:18px;padding:0 6px;
+    border-radius:999px;background:var(--bg-soft,#eef2f7);color:var(--soft,#475569);font-size:11px;font-weight:700;letter-spacing:0}
+  .av-foldsum:hover{color:var(--soft,#475569)}
 
   @keyframes avFlash{0%,100%{background:transparent}25%,75%{background:#fef9c3}}
   .av-flash{animation:avFlash .8s ease-in-out 3}
@@ -253,14 +264,19 @@ function renderUser() {
   const auto = (AV_FEED.auto || []);
   const manual = (AV_FEED.manual || []);
   let html = '';
-  if (AV_CHANGES.length) {
-    html += `<div class="av-sub">Novedades de empresas</div><div class="av-card">${AV_CHANGES.map(changeRow).join('')}</div>`;
+  // v6.152: orden por importancia. Los COMUNICADOS (lo que la administraci\u00f3n
+  // quiere comunicar) van arriba; el per\u00edodo de n\u00f3mina en medio; y las
+  // NOVEDADES DE EMPRESAS (altas/cambios de estatus, informativas y que se
+  // acumulan) van al final y PLEGADAS por defecto, para que no tapen lo dem\u00e1s.
+  if (manual.length) {
+    html += `<div class="av-sub">Comunicados</div><div class="av-card">${manual.map(m => manualRow(m, false)).join('')}</div>`;
   }
   if (auto.length) {
     html += `<div class="av-sub">Per\u00edodo de n\u00f3mina</div><div class="av-card">${auto.map(autoRow).join('')}</div>`;
   }
-  if (manual.length) {
-    html += `<div class="av-sub">Comunicados</div><div class="av-card">${manual.map(m => manualRow(m, false)).join('')}</div>`;
+  if (AV_CHANGES.length) {
+    html += `<details class="av-fold"><summary class="av-foldsum">Novedades de empresas <span class="av-foldn">${AV_CHANGES.length}</span></summary>`
+      + `<div class="av-card" style="margin-top:8px">${AV_CHANGES.map(changeRow).join('')}</div></details>`;
   }
   if (!html) html = `<div class="av-empty">No hay avisos en este momento.</div>`;
   $('#avBody').innerHTML = html;
