@@ -3,9 +3,10 @@
    SOLO superadmin). v2 (v4.17), mockup aprobado: reset_mockup.html v0-mock2.
 
    DOS MODOS:
-     - SELECTIVO (por empresas): tildar empresas; borra SOLO Reportes y
-       Constancias (con sus PDFs) de esas empresas. Numeracion intacta.
-       Palabra: REINICIAR.
+     - SELECTIVO (por empresas): tildar empresas; borra Reportes,
+       Constancias (con sus PDFs), Cambios de cargo y sus TICKETS de
+       osTicket (v6.153, via gc-reset.php) de esas empresas.
+       Numeracion intacta. Palabra: REINICIAR.
      - TOTAL (hard reset): todo lo transaccional + numeracion a cero (el
        proximo reporte sera el N 1, la proxima solicitud la 1).
        Palabra: REINICIAR TODO.
@@ -90,7 +91,7 @@ function ensureStyles() {
   .rst-card ul li::before{content:"\\2013  ";color:var(--faint,#94a3b8)}
   .rst-card .offnote{margin-top:9px;font-size:11px;color:var(--muted);font-style:italic}
   .rst-ic{width:30px;height:30px;border-radius:8px;display:inline-flex;align-items:center;justify-content:center;font-size:15px;flex:none}
-  .rst-ic-rep{background:#dbeafe}.rst-ic-avi{background:#fef3c7}.rst-ic-sin{background:#f3e8ff}.rst-ic-con{background:#dcfce7}
+  .rst-ic-rep{background:#dbeafe}.rst-ic-avi{background:#fef3c7}.rst-ic-sin{background:#f3e8ff}.rst-ic-con{background:#dcfce7}.rst-ic-tck{background:#ffe4e6}
   .rst-zero{display:flex;gap:10px;align-items:flex-start;margin-top:14px;padding:12px 15px;border:1px solid #f5d0fe;background:#fdf4ff;border-radius:11px;font-size:12.5px;color:#86198f;line-height:1.5}
   .rst-keeps{background:var(--surface);border:1px dashed var(--border);border-radius:13px;padding:14px 18px;margin-top:14px;font-size:12.5px;color:var(--muted);line-height:1.6}
   .rst-keeps b{color:var(--ink)}
@@ -137,18 +138,19 @@ function derivedTotal() {
   };
 }
 function derivedSel() {
-  let repN = 0, repLineas = 0, coSolic = 0, coTablas = 0, coPdfs = 0;
+  let repN = 0, repLineas = 0, coSolic = 0, coTablas = 0, coPdfs = 0, tickets = 0, cambios = 0;
   for (const s of STATS) {
     if (!SEL.has(s.company_code)) continue;
     repN += s.reportes || 0; repLineas += s.rep_lineas || 0;
     coSolic += s.solicitudes || 0; coTablas += s.cons_filas || 0; coPdfs += s.pdfs || 0;
+    tickets += s.tickets || 0; cambios += s.cambios || 0;
   }
-  return { repN, repLineas, coSolic, coTablas, coPdfs };
+  return { repN, repLineas, coSolic, coTablas, coPdfs, tickets, cambios };
 }
 function hasWork() {
   if (MODE === 'sel') {
     const d = derivedSel();
-    return SEL.size > 0 && (d.repN + d.repLineas + d.coTablas + d.coPdfs) > 0;
+    return SEL.size > 0 && (d.repN + d.repLineas + d.coTablas + d.coPdfs + d.tickets + d.cambios) > 0;
   }
   const d = derivedTotal();
   return (d.repN + d.repLineas + d.avN + d.avMarcas + d.siTotal + d.coTablas + d.coPdfs) > 0;
@@ -188,9 +190,10 @@ function paint() {
       <div class="rst-mode" id="rstMSel">
         <span class="radio"></span>
         <h3>\u{1F3AF} Por empresas (selectivo)</h3>
-        <p>Borra <b>solo Reportes y Constancias</b> de las empresas que marques. Controlado: el resto del portal no se toca y la numeraci\u00f3n sigue igual.</p>
+        <p>Borra <b>Reportes, Constancias, Cambios de cargo y sus Tickets de osTicket</b> de las empresas que marques. Controlado: el resto del portal no se toca y la numeraci\u00f3n sigue igual.</p>
         <div class="tagz">
           <span class="rst-tg rst-tg-in">Reportes</span><span class="rst-tg rst-tg-in">Constancias + PDFs</span>
+          <span class="rst-tg rst-tg-in">Tickets osTicket</span><span class="rst-tg rst-tg-in">Cambios de cargo</span>
           <span class="rst-tg rst-tg-out">Avisos no</span><span class="rst-tg rst-tg-out">Sincronizaciones no</span>
         </div>
       </div>
@@ -202,6 +205,7 @@ function paint() {
           <span class="rst-tg rst-tg-in">Reportes</span><span class="rst-tg rst-tg-in">Avisos</span>
           <span class="rst-tg rst-tg-in">Sincronizaciones</span><span class="rst-tg rst-tg-in">Constancias + PDFs</span>
           <span class="rst-tg rst-tg-zero">Numeraci\u00f3n \u2192 0</span>
+          <span class="rst-tg rst-tg-out">Tickets osTicket no</span>
         </div>
       </div>
     </div>
@@ -241,6 +245,14 @@ function paint() {
         <h3><span class="rst-ic rst-ic-sin">\u{1F504}</span> Sincronizaciones <span class="n" id="rstNSin">\u2014</span></h3>
         <ul><li>Bit\u00e1coras de fichas, personal y empresas</li></ul>
         <div class="offnote" id="rstOSin">Solo en el reinicio total.</div>
+      </div>
+      <div class="rst-card" id="rstCTck">
+        <h3><span class="rst-ic rst-ic-tck">\u{1F3AB}</span> Tickets y cambios <span class="n" id="rstNTck">\u2014</span></h3>
+        <ul>
+          <li>Tickets en osTicket (de reportes y cambios de cargo)</li>
+          <li>Solicitudes de cambio de cargo del portal</li>
+        </ul>
+        <div class="offnote" id="rstOTck">Solo en el modo selectivo (el reinicio total a\u00fan no toca osTicket).</div>
       </div>
     </div>
 
@@ -310,8 +322,10 @@ function setMode(m) {
   $('#rstPicker').style.display = sel ? '' : 'none';
   $('#rstCAvi').classList.toggle('off', sel);
   $('#rstCSin').classList.toggle('off', sel);
+  $('#rstCTck').classList.toggle('off', !sel);
   $('#rstOAvi').style.display = sel ? '' : 'none';
   $('#rstOSin').style.display = sel ? '' : 'none';
+  $('#rstOTck').style.display = sel ? 'none' : '';
   $('#rstZero').style.display = sel ? 'none' : '';
   syncUI();
 }
@@ -324,6 +338,8 @@ function syncUI() {
   const d = MODE === 'sel' ? derivedSel() : t;
   const nRep = $('#rstNRep'); if (nRep) nRep.textContent = `${fmtN(d.repN)} reportes \u00b7 ${fmtN(d.repLineas)} l\u00edneas`;
   const nCon = $('#rstNCon'); if (nCon) nCon.textContent = `${fmtN(d.coSolic)} solicitudes \u00b7 ${fmtN(d.coPdfs)} PDF`;
+  const nTck = $('#rstNTck'); if (nTck) nTck.textContent = MODE === 'sel'
+    ? `${fmtN(d.tickets)} tickets \u00b7 ${fmtN(d.cambios)} cambios` : '\u2014';
   const pn = $('#rstPickN'); if (pn) pn.textContent = `${SEL.size} seleccionada${SEL.size === 1 ? '' : 's'}`;
   const go = $('#rstGo');
   if (go) {
@@ -350,10 +366,12 @@ function openSummary() {
       <h3>Limpiar ${codes.length} empresa${codes.length === 1 ? '' : 's'}</h3>
       <p>Se eliminar\u00e1 <b>definitivamente</b> lo siguiente de <b>${esc(shown)}</b>:</p>
       <div class="rst-sum">
+        <div class="r"><span>Tickets en osTicket (reportes y cambios)</span><b>${fmtN(d.tickets)}</b></div>
         <div class="r"><span>Reportes (con l\u00edneas y checklists)</span><b>${fmtN(d.repN)} + ${fmtN(d.repLineas)}</b></div>
         <div class="r"><span>Constancias (solicitudes, auditor\u00eda y PDFs)</span><b>${fmtN(d.coTablas)} + ${fmtN(d.coPdfs)} PDF</b></div>
+        <div class="r"><span>Cambios de cargo (solicitudes del portal)</span><b>${fmtN(d.cambios)}</b></div>
       </div>
-      <div class="rst-box rst-box-danger">No se puede deshacer. Las dem\u00e1s empresas, los avisos, las sincronizaciones y la numeraci\u00f3n quedan intactos.</div>`;
+      <div class="rst-box rst-box-danger">No se puede deshacer (los tickets se borran tambi\u00e9n en osTicket). Las dem\u00e1s empresas, los avisos, las sincronizaciones y la numeraci\u00f3n quedan intactos.</div>`;
   } else {
     const d = derivedTotal();
     inner = `
@@ -422,12 +440,15 @@ const STEPS_TOTAL = [
   { key: 'constancias_pdfs',  label: 'Constancias (PDFs)\u2026' },
   { key: 'numeracion',        label: 'Numeraci\u00f3n a cero\u2026' },
 ];
-// OJO orden: los PDFs selectivos ANTES de borrar las lineas (la lista de
-// archivos sale de cert_request_lines de esas empresas).
+// OJO orden: los tickets PRIMERO (los numeros salen de reports_log y
+// personnel_movement_requests, que luego se borran) y los PDFs selectivos
+// ANTES de borrar las lineas (la lista sale de cert_request_lines).
 const STEPS_SEL = [
+  { key: 'sel_tickets',          label: 'Tickets de osTicket\u2026' },
   { key: 'sel_reportes',         label: 'Reportes\u2026' },
   { key: 'sel_constancias_pdfs', label: 'Constancias (PDFs)\u2026' },
   { key: 'sel_constancias',      label: 'Constancias (tablas)\u2026' },
+  { key: 'sel_cambio_cargo',     label: 'Cambios de cargo\u2026' },
 ];
 
 async function runReset() {
@@ -455,7 +476,7 @@ async function runReset() {
   const closeB = wrap.querySelector('#rstPClose');
   // Se cierra SOLO con su boton (aparece al terminar).
 
-  let filas = 0, archivos = 0, numeracion = false, quien = '', cuando = '';
+  let filas = 0, archivos = 0, tickets = 0, numeracion = false, quien = '', cuando = '';
   const errores = [];
 
   for (let i = 0; i < steps.length; i++) {
@@ -469,6 +490,7 @@ async function runReset() {
     } else {
       const det = r.detail || {};
       if (s.key.endsWith('constancias_pdfs')) archivos += (det.archivos || 0);
+      else if (s.key === 'sel_tickets') tickets += (det.tickets || 0);
       else if (s.key === 'numeracion') numeracion = true;
       else filas += Object.entries(det).reduce((a, [k, n]) => k === 'companies' ? a : a + (Number(n) || 0), 0);
       quien = r.executed_by || quien;
@@ -485,11 +507,11 @@ async function runReset() {
   if (errores.length) {
     wrap.querySelector('#rstPTitle').textContent = isSel ? 'Limpieza con errores' : 'Reinicio con errores';
     errB.style.display = 'block';
-    errB.innerHTML = `\u26A0 ${fmtN(filas)} registros y ${fmtN(archivos)} archivos s\u00ed se eliminaron${esc(empTxt)}, pero fall\u00f3:<br>${errores.map(esc).join('<br>')}<br>Puedes volver a ejecutar: lo ya borrado no reaparece.`;
+    errB.innerHTML = `\u26A0 ${fmtN(filas)} registros, ${fmtN(archivos)} archivos y ${fmtN(tickets)} tickets s\u00ed se eliminaron${esc(empTxt)}, pero fall\u00f3:<br>${errores.map(esc).join('<br>')}<br>Puedes volver a ejecutar: lo ya borrado no reaparece.`;
   } else {
     wrap.querySelector('#rstPTitle').textContent = isSel ? 'Limpieza completada' : 'Reinicio completado';
     doneB.style.display = 'block';
-    doneB.innerHTML = `\u2713 <b>${fmtN(filas)}</b> registros y <b>${fmtN(archivos)}</b> archivos eliminados${esc(empTxt)}.`
+    doneB.innerHTML = `\u2713 <b>${fmtN(filas)}</b> registros, <b>${fmtN(archivos)}</b> archivos y <b>${fmtN(tickets)}</b> tickets eliminados${esc(empTxt)}.`
       + (numeracion ? `<br>\u{1F501} Numeraci\u00f3n reiniciada: el pr\u00f3ximo reporte ser\u00e1 el <b>N\u00b0 1</b>.` : '')
       + (quien ? `<br>Registrado: <b>${esc(quien)}</b>${fecha ? ' \u00b7 ' + esc(fecha) : ''}` : '');
   }

@@ -23,10 +23,18 @@
      - run       : { category, confirm, company_codes? } ejecuta UN paso.
         * Totales   : reportes | avisos | sincronizaciones | constancias |
                       constancias_pdfs | numeracion       (REINICIAR TODO)
-        * Selectivos: sel_reportes | sel_constancias | sel_constancias_pdfs
+        * Selectivos: sel_tickets | sel_reportes | sel_constancias |
+                      sel_constancias_pdfs | sel_cambio_cargo
                       + company_codes[]                    (REINICIAR)
-        OJO orden selectivo: sel_constancias_pdfs ANTES de sel_constancias
-        (la lista de PDFs sale de las lineas que luego se borran).
+        OJO orden selectivo: sel_tickets PRIMERO (los numeros salen de
+        reports_log y personnel_movement_requests, que luego se borran) y
+        sel_constancias_pdfs ANTES de sel_constancias (la lista de PDFs
+        sale de las lineas que luego se borran).
+        v6.153: sel_tickets purga en osTicket TODOS los tickets de las
+        empresas via {osticket_url}/gc_purge_company.php v2 (keep_users=1,
+        excluye tickets cruzados con empresas fuera de la seleccion);
+        sel_cambio_cargo borra personnel_movement_requests (empresa
+        origen o destino).
 
    SEGURIDAD: SOLO superadmin (admin_users); palabra validada TAMBIEN aqui,
    distinta por modo (imposible disparar el hard reset creyendo que era una
@@ -37,7 +45,7 @@
    ===================================================================== */
 
 const CAT_TOTAL = new Set(['reportes', 'avisos', 'sincronizaciones', 'constancias', 'constancias_pdfs', 'numeracion']);
-const CAT_SEL = new Set(['sel_reportes', 'sel_constancias', 'sel_constancias_pdfs']);
+const CAT_SEL = new Set(['sel_tickets', 'sel_reportes', 'sel_constancias', 'sel_constancias_pdfs', 'sel_cambio_cargo']);
 const WORD_SEL = 'REINICIAR';
 const WORD_TOTAL = 'REINICIAR TODO';
 const CERT_BUCKET = 'cert-docs';
@@ -60,6 +68,34 @@ async function sb(env, path, opts = {}) {
   if (!res.ok) throw new Error(`Supabase ${res.status}: ${await res.text()}`);
   const t = await res.text();
   return t ? JSON.parse(t) : null;
+}
+
+/* Valor de app_settings (misma convencion que reports.js). */
+async function getSetting(env, key, def = '') {
+  const r = await sb(env, `app_settings?key=eq.${encodeURIComponent(key)}&select=value`);
+  return (r && r[0] && r[0].value != null && r[0].value !== '') ? r[0].value : def;
+}
+
+/* v6.153: borra en osTicket TODOS los tickets de las empresas indicadas via
+   gc_purge_company.php v2 (keep_users=1: el usuario-tienda y su clave se
+   conservan; excluye tickets cruzados con empresas fuera de la seleccion).
+   Transaccional del lado de osTicket (COMMIT/ROLLBACK). */
+async function osticketPurgeCompanies(env, companies) {
+  const base = String((await getSetting(env, 'osticket_url', '')) || '').replace(/\/+$/, '');
+  if (!base || !env.osticket_api_key) throw new Error('osTicket no configurado (url o api key).');
+  const res = await fetch(`${base}/gc_purge_company.php`, {
+    method: 'POST',
+    headers: { 'X-API-Key': env.osticket_api_key, 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      companies, go: 1, keep_users: 1, format: 'json', confirm: 'BORRAR',
+    }),
+  });
+  const text = await res.text();
+  let js = null; try { js = text ? JSON.parse(text) : null; } catch { /* no json */ }
+  if (!res.ok || !js || !js.ok) {
+    throw new Error(`osTicket purge ${res.status}: ${((js && js.error) || text || 'sin detalle').slice(0, 300)}`);
+  }
+  return js; // {ok, tickets, gc_report_link, excluidos_otras_empresas, ...}
 }
 
 /* Borra objetos del bucket de constancias (Storage API real). */
@@ -176,7 +212,19 @@ export async function onRequestPost({ request, env }) {
         const list = Array.isArray(names) ? names.filter(Boolean) : [];
         if (list.length) await storageRemove(env, list);
         detail = { bucket: CERT_BUCKET, archivos: list.length };
-      } else if (category === 'sel_reportes' || category === 'sel_constancias') {
+      } else if (category === 'sel_tickets') {
+        // v6.153: purga en osTicket TODOS los tickets de esas empresas via
+        // gc_purge_company.php v2 (por empresa, no por numero: cubre tambien
+        // envios que quedaron sin osticket_id). keep_users=1: el usuario-
+        // tienda conserva sus credenciales. Corre PRIMERO por prolijidad,
+        // aunque no depende de las filas de Supabase.
+        const pr = await osticketPurgeCompanies(env, companies);
+        detail = {
+          tickets: Number(pr.tickets || 0),
+          enlaces: Number(pr.gc_report_link || 0),
+          excluidos: Number(pr.excluidos_otras_empresas || 0),
+        };
+      } else if (category === 'sel_reportes' || category === 'sel_constancias' || category === 'sel_cambio_cargo') {
         detail = await sb(env, 'rpc/reset_selective', {
           method: 'POST',
           body: JSON.stringify({ p_category: category.replace('sel_', ''), p_companies: companies }),
