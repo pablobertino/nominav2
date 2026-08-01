@@ -65,6 +65,20 @@ const OPENERS = [
   '¡Manos a la obra{q}! 💪',
   '¡Al día{q}! Registrado ✅',
   '¡Naguará{q}, rapidito! 😄 Recibido.',
+  '¡Recibido{q}! 📥',
+  '¡Perfecto{q}! ✅ Ya quedó.',
+  '¡Buenísimo{q}! 🙌 Anotado.',
+  '¡Excelente{q}! ✨ Lo tengo.',
+  '¡Listo{q}! 👍 Registrado.',
+  '¡Anotado{q}! 📝',
+  '¡Confirmado{q}! ✅',
+  '¡Va que va{q}! 🚀 Recibido.',
+  '¡Gracias por avisar{q}! 🙏',
+  '¡Bien ahí{q}! 👏 Tomo nota.',
+  '¡Súper{q}! 🌟 Ya lo tengo.',
+  '¡Clarísimo{q}! 👌 Anotado.',
+  '¡De lujo{q}! 😄 Registrado.',
+  '¡Todo en orden{q}! ✅ Recibido.',
 ];
 
 /* OJO: la firma es SIEMPRE "Capital Humano", nunca "Nómina" (regla del
@@ -81,6 +95,21 @@ const CLOSERS = [
   'Listo pues, ¡gracias por reportar! 💚',
   '¡Dale que vamos bien! 🎯',
   'Eso quedó volando bajito. ✅',
+  'Capital Humano ya lo está viendo. 👀',
+  'Queda en nuestras manos. 🤝',
+  'Lo tomamos desde acá. 💚',
+  'Ya entró al sistema. ✅',
+  'Gracias por reportar a tiempo. ⏱️',
+  'Seguimos con eso. 👍',
+  'Cualquier novedad les avisamos. 📣',
+  'Quedó en la cola de Capital Humano. 📋',
+  'Con esto seguimos adelante. 🚀',
+  'Todo claro por acá. ✅',
+  'Lo revisamos y les contamos. 🔎',
+  'Gracias, así da gusto trabajar. 💚',
+  'Quedamos atentos. 👀',
+  'Capital Humano toma el relevo. 🤝',
+  'Registrado y en marcha. ⚙️',
 ];
 
 async function sb(env, path, opts = {}) {
@@ -111,11 +140,23 @@ function firstName(full) {
   return w.charAt(0).toUpperCase() + w.slice(1).toLowerCase();
 }
 
-/* La rotacion NO usa Math.random(): se deriva del id del reporte. Como el id
-   siempre sube, la apertura avanza de a 1 y el cierre de a 7 sobre 10
-   opciones (7 y 10 son coprimos), asi que DOS reportes seguidos nunca
-   comparten el mismo duo apertura+cierre. Sin estado que guardar y, de
-   yapa, el mismo reporte siempre arma el mismo texto (reintentos idempotentes). */
+/* La rotacion NO usa Math.random(): se deriva del id del reporte, asi el
+   mismo reporte siempre arma el mismo texto (reintentos idempotentes) y no
+   hay estado que guardar.
+
+   v6.157 — POR QUE CAMBIARON LOS NUMEROS. La version anterior tenia 10
+   aperturas y 10 cierres, y elegia apertura = id % 10, cierre = (id*7) % 10.
+   Parecian 100 combinaciones, pero eran 10: los DOS indices salian de
+   `id mod 10`, asi que el par quedaba determinado por el ultimo digito del id
+   y se repetia cada 10 reportes. Con ~54 avisos por dia, el mismo duo salia
+   5 veces al dia. Multiplicar por 7 cambiaba el cierre, no el periodo.
+
+   La correccion no es solo "mas frases": es que los dos tamanos sean
+   COPRIMOS. Con 24 aperturas y 25 cierres, el par depende de
+   (id mod 24, id mod 25), que por el teorema chino del resto equivale a
+   id mod 600: hay 600 combinaciones reales y recien se repiten a los 600
+   reportes (~11 dias al ritmo de hoy). Los pasos 11 y 7 son coprimos con su
+   tamano, asi que cada lista se recorre entera saltando, sin quedar en orden. */
 export function naimaText(ctx) {
   const t = NAIMA_TYPES[ctx.kind] || { emoji: '📌', label: ctx.kind || 'Reporte' };
   const seed = Math.abs(Number(ctx.reportId) || 0);
@@ -124,7 +165,7 @@ export function naimaText(ctx) {
   const role = String(ctx.roleLabel || '').trim();
   const q = name ? `, ${name}${role ? ` (${role})` : ''}` : '';
 
-  const open  = OPENERS[seed % OPENERS.length].replace('{q}', q);
+  const open  = OPENERS[(seed * 11) % OPENERS.length].replace('{q}', q);
   const close = CLOSERS[(seed * 7) % CLOSERS.length];
 
   const store = [ctx.companyName, ctx.companyCode ? `(${ctx.companyCode})` : '']
