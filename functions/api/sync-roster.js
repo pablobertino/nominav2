@@ -355,7 +355,7 @@ async function processStore(env, cc) {
 
     // Roster actual de la tienda.
     const cur = await sb(env,
-      `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,is_active,end_date`) || [];
+      `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,is_active,end_date,role`) || [];
     const curByCed = new Map(cur.map(w => [digits(w.id_number), w]));
     const activos = cur.filter(w => w.is_active !== false && !w.end_date);
 
@@ -672,6 +672,7 @@ async function processStore(env, cc) {
        =================================================================== */
     const toFill = [];
     const toDiff = [];      // v5.35: fichas con diferencia (se marcan, no se tocan)
+    const toRole = [];      // v6.156: cargos que cambiaron en el sistema (ced -> cargo)
     if (vig.size) {
       // Solo se piden las fichas de la gente VIGENTE de esta tienda (acotado:
       // no se trae el maestro entero, que es lo que reventaba el backfill).
@@ -839,7 +840,39 @@ async function processStore(env, cc) {
         rellenar('marital_status', m.marital_status, maritalCode(r.estadoCivil));
         rellenar('todo_ticket',    m.todo_ticket,    todoTicketCode(r.todoTicket));
         rellenar('data_id',        m.data_id,        clean(r.dataArea));
-        rellenar('role',           m.role,           upperOrNull(r.idCargo));
+        /* v6.156 — EL CARGO SIGUE AL SISTEMA, no se rellena y listo.
+
+           Antes el cargo pasaba por rellenar(), o sea: se escribia solo si la
+           ficha lo tenia VACIO. Esa regla es la correcta para genero, estado
+           civil o tipo de cedula, que NO CAMBIAN. Pero el cargo cambia — de eso
+           se trata "Cambio de Cargo" — y con la regla vieja el cambio no
+           entraba nunca: la ficha se quedaba con el cargo del primer dia, para
+           siempre, y sin siquiera marcarse como diferencia (el cargo tampoco
+           pasaba por revisar()). Asi es como JOXIMAR BARRIOS (V-31187100) siguio
+           figurando GERENTE en el portal despues de reingresar como CAJERA:
+           su ficha ya existia, el insert traia el cargo nuevo pero se ignoraba
+           por ser duplicado, y el relleno no la tocaba por no estar vacia.
+
+           Por que se PISA y no se marca como conflicto (que es lo que se hace
+           con cuenta/telefono/correo): porque el cargo no es un dato del
+           portal. Nadie lo edita aca — cambio-cargo.js registra la solicitud y
+           emite el reporte, pero el cambio se hace en el sistema y vuelve por
+           esta misma sincronizacion. No hay dos versiones de la verdad que un
+           humano tenga que desempatar: el sistema es la unica fuente. Marcarlo
+           como conflicto seria pedirle a alguien que decida algo que ya esta
+           decidido.
+
+           Como se compara contra el valor que ya esta guardado, en una corrida
+           normal esto no escribe nada: solo cuesta un PATCH el dia que la
+           persona efectivamente cambia de cargo. */
+        const cargoAx = upperOrNull(r.idCargo);
+        if (cargoAx && cargoAx !== upperOrNull(m.role)) {
+          patch.role = cargoAx;
+          // El roster de la tienda tambien lo muestra: si no, la ficha diria
+          // CAJEROS y la lista de Personal seguiria diciendo GERENTE.
+          const w = curByCed.get(ced);
+          if (w && upperOrNull(w.role) !== cargoAx) toRole.push([ced, cargoAx]);
+        }
         rellenar('first_lastname', m.first_lastname, upperOrNull(r.primerApellido));
         rellenar('ced_kind',       m.ced_kind,       cedKind(ced));
 
@@ -881,6 +914,21 @@ async function processStore(env, cc) {
     if (toFill.length) {
       out.filled = toFill.length;
       out.detail.filled = toFill.map(([c]) => c);
+    }
+
+    /* v6.156: el cargo nuevo, tambien en la fila del roster de esta tienda (la
+       ficha ya se actualiza arriba, en el mismo PATCH de toFill). Se hace solo
+       cuando el cargo REALMENTE cambio, asi que en una corrida normal este
+       bucle no ejecuta ni una vuelta. */
+    for (const [ced, cargo] of toRole) {
+      await sb(env, `store_workers?company_code=eq.${encodeURIComponent(cc)}&id_number=eq.${encodeURIComponent(ced)}`, {
+        method: 'PATCH', headers: { Prefer: 'return=minimal' },
+        body: JSON.stringify({ role: cargo }),
+      });
+    }
+    if (toRole.length) {
+      out.role_changed = toRole.length;
+      out.detail.role_changed = toRole.map(([c, cargo]) => `${c}: ${cargo}`);
     }
 
     /* v5.35: marcar (o limpiar) las diferencias. Esto NO toca el dato: solo
