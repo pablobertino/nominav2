@@ -710,6 +710,10 @@ export async function renderWaSend(user) {
       /* v6.159: el acuse de lectura. Solo se avisa cuando el portal lo acaba
          de corregir; si ya estaba bien no se dice nada (no es informacion que
          el usuario necesite ver todos los dias). */
+      if (r.typing_fixed) {
+        el.insertAdjacentHTML('afterend',
+          `<span class="wa-inst ok" style="margin-left:6px" title="La línea no mostraba el indicador «escribiendo…» antes de publicar. El portal lo activó; aplica en ~5 minutos.">⌨️ «Escribiendo…» activado</span>`);
+      }
       if (r.read_fixed) {
         el.insertAdjacentHTML('afterend',
           `<span class="wa-inst ok" style="margin-left:6px" title="La línea no marcaba como leídos los mensajes de los grupos donde responde. El portal lo activó; aplica en ~5 minutos.">👀 Acuse de lectura activado</span>`);

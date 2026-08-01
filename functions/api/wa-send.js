@@ -75,12 +75,17 @@ const PREVIEW_LIMIT = 1000;
    senal de automatizacion; 15s es la recomendacion de Green-API. */
 const LINE_DELAY_MIN_MS = 15000;
 const LINE_DELAY_SET_MS = 15000;
-/* v6.159 ACUSE DE LECTURA ("las dos rayitas azules"). Hasta ahora la linea
-   NUNCA marcaba leido: publicaba y se iba, y todo lo que le escribian las
-   tiendas quedaba en "entregado" para siempre. Un numero que escribe todos
-   los dias y jamas lee nada es una firma de bot bastante clara.
+/* v6.159 ACUSE DE LECTURA ("las dos rayitas azules").
 
-   De las dos opciones que da el proveedor se elige la MENOS delatora:
+   v6.160 CORRECCION: la version anterior de este comentario afirmaba que la
+   linea "nunca marcaba leido". Era falso. Se dedujo del codigo del portal (que
+   efectivamente no marca nada) sin mirar la instancia, y en la consola del
+   proveedor markIncomingMessagesReadedOnReply YA estaba en 'yes', puesto a
+   mano. O sea que este guardian no lo ACTIVA: lo SOSTIENE, que igual es util
+   (si alguien lo apaga desde la consola, el portal lo repone). Leccion: el
+   estado de la linea vive en la instancia, no en el repositorio.
+
+   De las dos opciones que da el proveedor se mantiene la MENOS delatora:
      markIncomingMessagesReaded         -> marca TODO lo entrante al instante.
                                            Barrido constante, cero criterio:
                                            es MAS robotico, no menos.
@@ -95,6 +100,30 @@ const LINE_DELAY_SET_MS = 15000;
    otra se IGNORA; y los mensajes recibidos ANTES de aplicar el ajuste se
    quedan en "entregado" para siempre. Aplica de aca en adelante. */
 const READ_ON_REPLY = 'yes';
+/* v6.160 "ESCRIBIENDO…". autoTyping es un ajuste de instancia: el proveedor
+   muestra el indicador ANTES de cada mensaje saliente, y calcula cuanto dura
+   segun el LARGO del mensaje. Sale gratis la variacion: no hay que programar
+   ninguna espera.
+
+   El valor es la velocidad de tecleo, de 1 (5 caracteres por segundo) a 10
+   (50 c/s); 0 lo apaga. Se elige 3 (15 c/s):
+
+     Los avisos de Naima miden 145-179 caracteres (159 en promedio), asi que
+     con 3 el "escribiendo..." dura ~11 s. Hoy, SIN esto, el mensaje sale a los
+     ~2 s: son ~80 caracteres por segundo, el doble de lo que el propio
+     proveedor admite como maximo y muy por encima de cualquier humano (una
+     persona rapida en el telefono hace 3-6 c/s). O sea que esto no es
+     maquillaje: corrige una senal que hoy se esta dando.
+
+     Con 1 (5 c/s) el indicador duraria ~32 s: mas realista, pero el acuse
+     dejaria de ser oportuno. 3 es el punto donde sigue leyendose como alguien
+     que contesta al toque pero que igual tuvo que teclear.
+
+   OJO: la doc del proveedor describe el chatId de forma generica y no aclara
+   si el indicador se ve en GRUPOS. En chats individuales es seguro; en grupos
+   hay que verificarlo en vivo (mirar el grupo cuando entre el proximo
+   reporte). Si no aparece, se pone en 0 y no se pierde nada. */
+const AUTO_TYPING = 3;
 
 /* ===================== v5.15: ESTADO DE LA LINEA EN CRISTIANO =====================
    El proveedor devuelve el estado de la linea como un codigo en ingles
@@ -350,10 +379,12 @@ export async function onRequestPost({ request, env }) {
       // v4.98: guardian del delay de linea (ver constantes arriba).
       let delayMs = null, delayFixed = false, delayErr = null;
       let readMode = null, readFixed = false;
+      let typingSpeed = null, typingFixed = false;
       try {
         const cfg = await ga.getSettings();
         delayMs = Number(cfg && cfg.delaySendMessagesMilliseconds) || 0;
         readMode = String((cfg && cfg.markIncomingMessagesReadedOnReply) || '').toLowerCase() || null;
+        typingSpeed = Number((cfg && cfg.autoTyping) || 0);
 
         /* Los dos arreglos viajan en UNA sola llamada: setSettings REINICIA la
            instancia (doc: aplica en ~5 min), asi que dos llamadas serian dos
@@ -362,11 +393,13 @@ export async function onRequestPost({ request, env }) {
         const patch = {};
         if (delayMs < LINE_DELAY_MIN_MS) patch.delaySendMessagesMilliseconds = LINE_DELAY_SET_MS;
         if (readMode !== READ_ON_REPLY) patch.markIncomingMessagesReadedOnReply = READ_ON_REPLY;
+        if (typingSpeed !== AUTO_TYPING) patch.autoTyping = AUTO_TYPING;
 
         if (Object.keys(patch).length) {
           await ga.setSettings(patch);
           if (patch.delaySendMessagesMilliseconds) { delayMs = LINE_DELAY_SET_MS; delayFixed = true; }
           if (patch.markIncomingMessagesReadedOnReply) { readMode = READ_ON_REPLY; readFixed = true; }
+          if (patch.autoTyping !== undefined) { typingSpeed = AUTO_TYPING; typingFixed = true; }
         }
       } catch (e) {
         delayErr = String(e && e.message ? e.message : e).slice(0, 200);
@@ -379,6 +412,8 @@ export async function onRequestPost({ request, env }) {
         // v6.159: estado del acuse de lectura ('yes' = la linea marca leido
         // los chats donde responde).
         read_mode: readMode, read_fixed: readFixed,
+        // v6.160: velocidad del "escribiendo..." (0 = apagado).
+        typing_speed: typingSpeed, typing_fixed: typingFixed,
       });
     }
 
