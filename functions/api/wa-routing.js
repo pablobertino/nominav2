@@ -1,5 +1,5 @@
 /* =====================================================================
-   functions/api/wa-routing.js  →  POST /api/wa-routing   (v6.154)
+   functions/api/wa-routing.js  →  POST /api/wa-routing   (v6.155)
    RUTEO DE LOS AVISOS DE NAIMA: que grupo de WhatsApp le toca a cada zona,
    y que avisos estan prendidos.
 
@@ -10,19 +10,21 @@
      - wa_zone_group                          : zona -> grupo (NULL = sin grupo)
 
    Acciones (POST { action, user, ... }):
-     load {}                                   gate: view.whatsapp
+     load {}                                   gate: view.wa.routing
        -> { zones[], groups[], routes{}, enabled, types[], catalog[] }
-     save { routes[], enabled, types[] }       gate: SOLO superadmin
+     save { routes[], enabled, types[] }       gate: view.wa.routing
        -> { ok, saved }
 
-   Por que 'save' es solo superadmin: es gobernanza de la linea, igual que el
-   catalogo de Grupos (wa-groups.js). Un admin con view.whatsapp puede MIRAR
-   como esta ruteado, pero no cambiar a que grupo le habla el portal.
+   v6.155: la pantalla se gobierna con SU permiso (view.wa.routing), no con
+   el rol. Antes era view.whatsapp + un 'superonly' clavado en el menu de
+   panel.js, que le ganaba a cualquier permiso concedido desde Roles. Ahora
+   quien tenga el permiso ve y guarda; el superadmin lo tiene siempre porque
+   can() le devuelve true a todo.
 
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
-import { resolveActor, can, isSuperadmin } from './_auth.js';
+import { resolveActor, can } from './_auth.js';
 import { NAIMA_TYPES } from './_naima.js';
 
 const SETTING_ENABLED = 'wa_naima_reports_enabled';
@@ -74,11 +76,11 @@ export async function onRequestPost({ request, env }) {
   try {
     const actor = await resolveActor(env, body.user);
     if (!actor) return json({ ok: false, error: 'Sesión no válida.' }, 403);
-    if (!can(actor, 'view.whatsapp')) {
-      return json({ ok: false, error: 'No tienes permiso para esta pantalla (view.whatsapp).' }, 403);
+    /* v6.155: permiso propio (antes: view.whatsapp + superonly clavado en el
+       menu). can() ya devuelve true para superadmin. */
+    if (!can(actor, 'view.wa.routing')) {
+      return json({ ok: false, error: 'No tienes permiso para el ruteo de avisos (view.wa.routing).' }, 403);
     }
-    const superOk = isSuperadmin(actor);
-
     /* ---------------- load ---------------- */
     if (action === 'load') {
       const [zones, groups, routes, settings, comps] = await Promise.all([
@@ -107,7 +109,7 @@ export async function onRequestPost({ request, env }) {
 
       return json({
         ok: true,
-        can_edit: superOk,
+        can_edit: true,   // llegar hasta aca ya implica el permiso de gestion
         enabled: String(byKey[SETTING_ENABLED] || 'false').toLowerCase() === 'true',
         types: String(byKey[SETTING_TYPES] == null ? DEFAULT_TYPES : byKey[SETTING_TYPES])
           .split(',').map(s => s.trim()).filter(Boolean),
@@ -120,11 +122,8 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
-    /* ---------------- save (solo superadmin) ---------------- */
+    /* ---------------- save ---------------- */
     if (action === 'save') {
-      if (!superOk) {
-        return json({ ok: false, error: 'Solo el superadministrador puede cambiar el ruteo de los avisos.' }, 403);
-      }
       const who = String(actor.actor || '');
       const now = new Date().toISOString();
 

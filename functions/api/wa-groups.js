@@ -22,7 +22,7 @@
      revoke     { group_id, admin_id }     gate: SOLO superadmin
    ===================================================================== */
 
-import { resolveActor, can, isSuperadmin } from './_auth.js';
+import { resolveActor, can } from './_auth.js';
 import { gaClient, groupMemberCount } from './_greenapi.js';
 
 function json(data, status = 200) {
@@ -61,7 +61,14 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: false, error: 'No tienes permiso para esta pantalla (view.whatsapp).' }, 403);
     }
     const actorName = String(actor.actor || '');
-    const superOk = isSuperadmin(actor);
+    /* v6.155: gobernar el catalogo (sincronizar, renombrar, habilitar,
+       asignar) dejo de ser "ser superadmin" y paso a ser el permiso
+       view.wa.groups. can() devuelve true para superadmin, asi que el
+       superadmin conserva todo sin necesitar la fila en role_permissions.
+       OJO: la puerta de entrada del endpoint sigue siendo view.whatsapp
+       porque el action 'list' alimenta el combo de grupos de Difusion: un
+       admin que solo difunde tiene que poder listar SUS grupos. */
+    const superOk = can(actor, 'view.wa.groups');
 
     /* ---------------- list (scoped por actor) ---------------- */
     if (action === 'list') {

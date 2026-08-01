@@ -106,8 +106,11 @@ export async function onRequestPost({ request, env }) {
   try {
     const actor = await resolveActor(env, body.user);
     if (!actor) return json({ ok: false, error: 'Sesión no válida.' }, 403);
-    if (!can(actor, 'view.whatsapp')) {
-      return json({ ok: false, error: 'No tienes permiso para WhatsApp (view.whatsapp).' }, 403);
+    /* v6.155: Encuestas tiene permiso propio (antes compartia view.whatsapp
+       con Difusion, Historial, Grupos y Ruteo, asi que no habia forma de dar
+       una sin dar las otras). can() ya devuelve true para superadmin. */
+    if (!can(actor, 'view.wa.polls')) {
+      return json({ ok: false, error: 'No tienes permiso para ver las encuestas (view.wa.polls).' }, 403);
     }
     const actorName = String(actor.actor || '');
     const superOk = isSuperadmin(actor);

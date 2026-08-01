@@ -64,13 +64,13 @@ const VIEW_SUBGROUPS = [
   ['Menu principal', ['view.dashboard', 'view.usuarios', 'view.documentos', 'view.calendario']],
   ['Organizacion', ['view.empresas', 'view.estructura']],
   ['Personal', ['view.buscar', 'view.datosincompletos', 'view.dobleempleo', 'view.egresados', 'view.movimientos', 'view.egmotivos', 'view.rostersync', 'view.fotos']],
-  ['Cargos', ['view.cambiocargo', 'mov.sugerir', 'mov.aprobar']],
+  ['Cargos', ['view.cambiocargo', 'view.cargohistorial', 'mov.sugerir', 'mov.aprobar']],
   ['Reportes', ['view.historial', 'view.estadisticas', 'view.reportempresas', 'view.estadopago', 'view.misstats']],
   ['Comunicacion', ['view.avisos', 'view.avisosconfig']],
   ['Solicitudes', ['view.solicitudes', 'view.firmantes']],
   ['Sincronizacion', ['view.synclog', 'view.syncpend', 'view.sync', 'view.syncreview', 'view.axhistory', 'view.axcompare', 'view.erpquery']],
   ['Datos bancarios', ['view.bankstats', 'view.banksync', 'view.bankhist', 'view.bankaccounts']],
-  ['WhatsApp', ['view.whatsapp']],
+  ['WhatsApp', ['view.whatsapp', 'view.wa.templates', 'view.wa.polls', 'view.wa.history', 'view.wa.groups', 'view.wa.routing']],
   ['Administracion', ['view.equipo', 'view.permisos', 'view.config', 'view.roles', 'view.resetdata']],
   ['Empresa (tienda)', ['view.miempresa', 'view.novedades']],
   ['Ver pestañas de Configuracion', ['view.cfg.referencias', 'view.cfg.cargos', 'view.cfg.incidencias', 'view.cfg.calendario', 'view.cfg.sincronizacion', 'view.cfg.osticket', 'view.cfg.ajustes']],
@@ -128,6 +128,9 @@ const MENU_CATALOG = [
     // v6.106: Cambio de Cargo (wizard) y Aprobaciones comparten view.cambiocargo;
     // las acciones son sugerir y aprobar/ejecutar.
     { id: 'cambiocargo', lbl: 'Cambio de Cargo', view: 'view.cambiocargo', acts: ['mov.sugerir', 'mov.aprobar', 'mov.anular'] },
+    /* v6.155: Aprobaciones sale del paraguas de view.cambiocargo y tiene su
+       propio permiso: se puede dar el wizard sin dar la cola de aprobacion. */
+    { id: 'cargohistorial', lbl: 'Aprobaciones', view: 'view.cargohistorial', acts: ['mov.aprobar', 'mov.anular'] },
   ] },
   { g: 'Reportes', items: [
     { id: 'historial', lbl: 'Historial', view: 'view.historial', acts: ['report.attention'] },
@@ -201,6 +204,15 @@ const MENU_CATALOG = [
   // NO se ofrece: es gobernanza exclusiva de superadmin.
   { g: 'WhatsApp', items: [
     { id: 'wadifusion', lbl: 'Difusión', view: 'view.whatsapp', acts: ['wa.send'] },
+    /* v6.155: las otras cuatro pantallas de WhatsApp dejaron de compartir
+       view.whatsapp y tienen permiso propio. Antes Grupos y Ruteo ademas
+       estaban clavadas como superonly en panel.js, asi que conceder el
+       permiso no alcanzaba: ahora manda el permiso. */
+    { id: 'wamensajes', lbl: 'Mensajes', view: 'view.wa.templates', acts: ['wa.templates', 'wa.send'] },
+    { id: 'waencuestas', lbl: 'Encuestas', view: 'view.wa.polls', acts: ['wa.send'] },
+    { id: 'wahistorial', lbl: 'Historial', view: 'view.wa.history', acts: [] },
+    { id: 'wagrupos', lbl: 'Grupos', view: 'view.wa.groups', acts: [] },
+    { id: 'waruteo', lbl: 'Ruteo de avisos', view: 'view.wa.routing', acts: [] },
   ] },
   { g: 'Administracion', items: [
     { id: 'equipo', lbl: 'Equipo', view: 'view.equipo', acts: ['team.create', 'team.reset', 'team.toggle', 'team.role', 'team.scope', 'team.osticket', 'team.scope_override'] },

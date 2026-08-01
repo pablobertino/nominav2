@@ -87,8 +87,10 @@ export async function onRequestPost({ request, env }) {
   try {
     const actor = await resolveActor(env, body.user);
     if (!actor) return json({ ok: false, error: 'Sesión no válida.' }, 403);
-    if (!can(actor, 'view.whatsapp')) {
-      return json({ ok: false, error: 'No tienes permiso para esta pantalla (view.whatsapp).' }, 403);
+    /* v6.155: Historial tiene permiso propio (antes compartia view.whatsapp).
+       can() ya devuelve true para superadmin. */
+    if (!can(actor, 'view.wa.history')) {
+      return json({ ok: false, error: 'No tienes permiso para ver el historial (view.wa.history).' }, 403);
     }
 
     /* ---------------- list: corridas con su resumen ---------------- */

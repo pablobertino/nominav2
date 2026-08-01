@@ -151,6 +151,11 @@ export async function onRequestPost({ request, env }) {
     const mySugerir = can(actor, 'mov.sugerir');
     const myAprobar = can(actor, 'mov.aprobar');
     const myView = can(actor, 'view.cambiocargo') || mySugerir || myAprobar;
+    /* v6.155: la COLA de aprobaciones (action 'list') salio del paraguas de
+       view.cambiocargo y tiene permiso propio. Se le suman aprobar/anular
+       porque esas acciones refrescan la cola al terminar: quien puede
+       aprobar tiene que poder leerla, aunque no tenga la vista concedida. */
+    const myCola = can(actor, 'view.cargohistorial') || myAprobar || can(actor, 'mov.anular');
 
     // v6.104: NOVEDADES de una tienda — cambios (aprobados y con aviso
     // liberado) que la afectan aunque no los haya hecho ella. Accesible por el
@@ -282,7 +287,7 @@ export async function onRequestPost({ request, env }) {
     }
 
     if (action === 'list') {
-      if (!myView) return json({ ok: false, error: 'No tienes permiso para ver Cambio de Cargo.' }, 403);
+      if (!myCola) return json({ ok: false, error: 'No tienes permiso para ver las aprobaciones de cargo (view.cargohistorial).' }, 403);
       const codes = await scopeCodes(env, actor, body.user);
       if (codes !== null && !codes.length) return json({ ok: true, rows: [] });
 

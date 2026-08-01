@@ -288,11 +288,11 @@ const NAV_GROUPS = [
     ['wamensajes', I.pencil, 'Mensajes'],
     ['waencuestas', I.chart, 'Encuestas'],
     ['wahistorial', I.history, 'Historial'],
-    ['wagrupos', I.team, 'Grupos', 'superonly'],
+    ['wagrupos', I.team, 'Grupos'],
     /* v6.154: ruteo de los avisos de Naima (zona -> grupo) + los
        interruptores (maestro y por tipo). Superonly como Grupos: es
        gobernanza de la linea, no se delega. */
-    ['waruteo', I.pin, 'Ruteo de avisos', 'superonly'],
+    ['waruteo', I.pin, 'Ruteo de avisos'],
   ] },
   { title: 'Administración', items: [
     ['equipo', I.team, 'Equipo'],
@@ -663,7 +663,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.154</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.155</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -8658,7 +8658,7 @@ export function renderPanel() {
       movimientos: 'view.movimientos',
       movquincena: 'view.movquincena',
       cambiocargo: 'view.cambiocargo',
-      cargohistorial: 'view.cambiocargo',
+      cargohistorial: 'view.cargohistorial',   // v6.155: permiso propio
       novedades: 'view.novedades',
       rostersync: 'view.rostersync',
       historial: 'view.historial', estadisticas: 'view.estadisticas',
@@ -8675,12 +8675,16 @@ export function renderPanel() {
       syncpend: 'view.synclog',
       bankstats: 'view.bankstats', banksync: 'view.banksync', bankhist: 'view.bankhist',
       bankaccounts: 'view.bankaccounts',
+      /* v6.155: cada pantalla de WhatsApp con SU permiso. Antes las cuatro
+         colgaban de view.whatsapp, asi que la matriz de Roles solo podia
+         mostrar una fila ("Difusion") y no habia forma de dar Historial sin
+         dar todo lo demas. */
       wadifusion: 'view.whatsapp',
       wamensajes: 'view.wa.templates',
-      waencuestas: 'view.whatsapp',
-      wahistorial: 'view.whatsapp',
-      wagrupos: 'view.whatsapp',
-      waruteo: 'view.whatsapp',
+      waencuestas: 'view.wa.polls',
+      wahistorial: 'view.wa.history',
+      wagrupos: 'view.wa.groups',
+      waruteo: 'view.wa.routing',
       equipo: 'view.equipo',
     };
     try {
