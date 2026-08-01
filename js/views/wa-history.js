@@ -32,6 +32,15 @@ let TEMPLATES = {};    // code -> label de mensaje
 let EXPANDED = new Set();   // ids de corridas con el detalle abierto
 let DETAILS = {};      // batch_id -> detalle cargado (cache en memoria)
 let FILTERS = { origin: 'all', from: '', to: '' };
+let DAYS_OPEN = new Set();   // v6.158: dias de Naima desplegados
+
+/* v6.158: emoji + nombre de cada tipo de aviso (espejo de _naima.js; aca es
+   solo presentacion). */
+const NAIMA_TIPO = {
+  ingreso: ['🟢', 'Ingreso'], egreso: ['🔴', 'Egreso'], marcaje: ['🕐', 'Marcaje'],
+  ausencia: ['🟠', 'Ausencia'], modificacion: ['✏️', 'Modificación'],
+  traslado: ['🔁', 'Traslado'], constancia: ['📜', 'Constancia'],
+};
 let HUSER = null;
 
 async function api(user, payload) {
@@ -75,6 +84,23 @@ function ensureStyles() {
   .wh-badge.broadcast{background:#f0fdf4;color:#15803d;border:1px solid #bbf7d0}
   .wh-badge.cred{background:#faf5ff;color:#7c3aed;border:1px solid #e9d5ff}
   .wh-badge.other{background:#f1f5f9;color:#64748b;border:1px solid var(--border)}
+  .wh-badge.naima{background:#e9fbf0;color:#0f5f55;border:1px solid #9ad9c5}
+  /* v6.158: chips de origen (reemplazan al desplegable) */
+  .wh-chips{display:flex;gap:7px;flex-wrap:wrap;margin:0 0 12px}
+  .wh-chip{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;padding:6px 12px;border-radius:999px;
+    border:1px solid var(--border);background:var(--surface,#fff);color:var(--ink-soft,#475569);cursor:pointer}
+  .wh-chip .n{font-size:11px;font-weight:800;opacity:.65}
+  .wh-chip.on{background:#128c7e;border-color:#128c7e;color:#fff;font-weight:600}
+  .wh-chip.on .n{opacity:.9}
+  /* fila de "avisos de Naima del dia" */
+  .wh-nlist{padding:2px 0 6px}
+  .wh-nrow{display:flex;align-items:center;gap:10px;padding:7px 14px;border-top:1px solid var(--border);font-size:12.5px}
+  .wh-nrow:first-child{border-top:none}
+  .wh-nrow .h{color:var(--muted);flex:0 0 76px;font-variant-numeric:tabular-nums}
+  .wh-nrow .t{flex:1 1 auto;min-width:0;color:var(--ink)}
+  .wh-nrow .g{color:var(--muted);flex:0 0 auto;max-width:230px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wh-nrow .s{flex:0 0 auto}
+  @media(max-width:720px){ .wh-nrow{flex-wrap:wrap} .wh-nrow .g{flex-basis:100%;max-width:none} }
   .wh-org .by{font-size:12px;color:var(--muted)}
   .wh-prev{font-size:12.5px;color:var(--ink-soft,#475569);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:100%}
   .wh-kpis{flex:none;display:flex;gap:7px;align-items:center}
@@ -119,8 +145,23 @@ function fmtWhen(iso) {
   return { dia, hora };
 }
 
+/* Fecha (AAAA-MM-DD) de una corrida en hora de Caracas. */
+function ymdCaracas(ts) {
+  const c = new Date(new Date(ts).getTime() - 4 * 3600 * 1000);
+  return `${c.getUTCFullYear()}-${String(c.getUTCMonth() + 1).padStart(2, '0')}-${String(c.getUTCDate()).padStart(2, '0')}`;
+}
+
+/* v6.158: "🔴 Egreso · DD MGTA 2022 (BA01)" a partir del bloque naima. */
+function naimaQue(n) {
+  if (!n) return '';
+  const t = NAIMA_TIPO[n.type] || ['📌', n.type || 'Aviso'];
+  const tienda = [n.company_name, n.company ? `(${n.company})` : ''].filter(Boolean).join(' ');
+  return `${t[0]} ${t[1]}${tienda ? ' · ' + tienda : ''}`;
+}
+
 /* Etiqueta + clase del origen de una corrida. */
 function originInfo(r) {
+  if (r.origin_kind === 'naima') return { cls: 'naima', txt: '🌿 Naima' };
   if (r.origin_kind === 'rule') {
     const lbl = TEMPLATES[r.rule_code] || r.rule_code || 'Mensaje';
     return { cls: 'rule', txt: '💬 ' + lbl };
@@ -176,7 +217,9 @@ function rowHtml(r) {
       <div class="wh-when"><b>${w.dia}</b><small>${w.hora}</small></div>
       <div class="wh-mid">
         <div class="wh-org"><span class="wh-badge ${o.cls}">${esc(o.txt)}</span>${by}</div>
-        <div class="wh-prev">${esc(preview(r.message))}</div>
+        <div class="wh-prev">${r.origin_kind === 'naima'
+          ? esc(naimaQue(r.naima) + (r.naima && r.naima.group ? '  →  ' + r.naima.group : ''))
+          : esc(preview(r.message))}</div>
       </div>
       <div class="wh-kpis">${kpisHtml(r)}</div>
       <svg class="wh-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
@@ -249,9 +292,77 @@ async function toggleDetail(user, batchId) {
   paintDetail(batchId, d);
 }
 
+/* v6.158 — UNA FILA POR DIA PARA LOS AVISOS DE NAIMA.
+
+   Naima manda ~54 avisos por dia. Uno por fila, en dos dias tapaba TODO el
+   historial (la lista trae las ultimas 100 corridas: lo viejo se caia de la
+   pagina). Por eso, en la vista "Todos" los avisos del mismo dia se juntan en
+   una sola fila desplegable; el resto de las corridas queda intacto y visible.
+   Con el chip "Naima" se ven uno por uno, como cualquier otra corrida. */
+function dayRowHtml(g) {
+  const rows = g.rows;
+  const open = DAYS_OPEN.has(g.day);
+  const w = fmtWhen(rows[0].created_at);
+  const ok = rows.reduce((a, r) => a + (r.sent_ok || 0), 0);
+  const err = rows.reduce((a, r) => a + (r.sent_error || 0), 0);
+  const tiendas = new Set(rows.map(r => r.naima && r.naima.company).filter(Boolean)).size;
+  const grupos = new Set(rows.map(r => r.naima && r.naima.group).filter(Boolean)).size;
+  const desde = fmtWhen(rows[rows.length - 1].created_at).hora;
+  const hasta = fmtWhen(rows[0].created_at).hora;
+  const kpis = (ok ? `<span class="wh-pill ok">✓ ${nf(ok)}</span>` : '')
+             + (err ? `<span class="wh-pill err">✕ ${nf(err)}</span>` : '');
+  const detalle = rows.map(r => {
+    const h = fmtWhen(r.created_at).hora;
+    const est = r.sent_error ? '<span class="wh-pill err">✕</span>' : '<span class="wh-pill ok">✓</span>';
+    return `<div class="wh-nrow">
+      <div class="h">${esc(h)}</div>
+      <div class="t">${esc(naimaQue(r.naima))}</div>
+      <div class="g">→ ${esc((r.naima && r.naima.group) || '—')}</div>
+      <div class="s">${est}</div>
+    </div>`;
+  }).join('');
+  return `<div class="wh-card${open ? ' open' : ''}">
+    <div class="wh-row" data-dtoggle="${esc(g.day)}">
+      <div class="wh-when"><b>${w.dia}</b><small>${nf(rows.length)} aviso${rows.length === 1 ? '' : 's'}</small></div>
+      <div class="wh-mid">
+        <div class="wh-org"><span class="wh-badge naima">🌿 Naima · avisos del día</span></div>
+        <div class="wh-prev">De ${esc(desde)} a ${esc(hasta)} · ${nf(tiendas)} tienda${tiendas === 1 ? '' : 's'} · ${nf(grupos)} grupo${grupos === 1 ? '' : 's'}</div>
+      </div>
+      <div class="wh-kpis">${kpis}</div>
+      <svg class="wh-chev" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>
+    </div>
+    <div class="wh-detail"><div class="wh-nlist">${detalle}</div></div>
+  </div>`;
+}
+
+/* Chips de origen, con el conteo de cada uno. Los conteos respetan el filtro
+   de fechas (si no, el numero del chip no cuadraria con lo que se ve). */
+function paintChips() {
+  const host = $('#whChips');
+  if (!host) return;
+  const base = ROWS.filter(r => {
+    const saved = FILTERS.origin; FILTERS.origin = 'all';
+    const ok = passFilters(r); FILTERS.origin = saved; return ok;
+  });
+  const n = k => base.filter(r => r.origin_kind === k).length;
+  const defs = [
+    ['all', 'Todos', base.length],
+    ['naima', '🌿 Naima', n('naima')],
+    ['broadcast', '📣 Difusión', n('broadcast')],
+    ['rule', '💬 Mensajes', n('rule')],
+    ['cred', '🔑 Credenciales', n('cred')],
+    ['other', 'Otro', n('other')],
+  ].filter(d => d[0] === 'all' || d[2] > 0 || d[0] === FILTERS.origin);
+  host.innerHTML = defs.map(([k, lbl, c]) =>
+    `<button type="button" class="wh-chip${FILTERS.origin === k ? ' on' : ''}" data-chip="${k}">${esc(lbl)} <span class="n">${nf(c)}</span></button>`).join('');
+  host.querySelectorAll('[data-chip]').forEach(b =>
+    b.addEventListener('click', () => { FILTERS.origin = b.dataset.chip; renderList(); }));
+}
+
 function renderList() {
   const host = $('#whList');
   if (!host) return;
+  paintChips();
   const rows = ROWS.filter(passFilters);
   $('#whCount').textContent = rows.length === ROWS.length
     ? `${nf(rows.length)} corrida${rows.length === 1 ? '' : 's'}`
@@ -260,10 +371,35 @@ function renderList() {
     host.innerHTML = `<div class="wh-empty">No hay corridas que coincidan con los filtros.</div>`;
     return;
   }
-  host.innerHTML = rows.map(rowHtml).join('');
+  /* En "Todos", los avisos de Naima se juntan por dia. Con el chip de Naima
+     puesto, se listan uno por uno (ahi si se quiere el detalle). */
+  let items;
+  if (FILTERS.origin === 'all') {
+    const byDay = new Map();
+    items = [];
+    rows.forEach(r => {
+      if (r.origin_kind !== 'naima') { items.push({ t: 'row', r }); return; }
+      const d = ymdCaracas(r.created_at);
+      let g = byDay.get(d);
+      if (!g) { g = { t: 'day', day: d, rows: [] }; byDay.set(d, g); items.push(g); }
+      g.rows.push(r);
+    });
+    // Un solo aviso en el dia: no vale la pena agruparlo.
+    items = items.map(it => (it.t === 'day' && it.rows.length === 1) ? { t: 'row', r: it.rows[0] } : it);
+  } else {
+    items = rows.map(r => ({ t: 'row', r }));
+  }
+
+  host.innerHTML = items.map(it => it.t === 'day' ? dayRowHtml(it) : rowHtml(it.r)).join('');
   // Cablear el toggle de cada fila. Si estaba expandida, repintar su detalle.
   host.querySelectorAll('[data-toggle]').forEach(el =>
     el.addEventListener('click', () => toggleDetail(HUSER, el.dataset.toggle)));
+  host.querySelectorAll('[data-dtoggle]').forEach(el =>
+    el.addEventListener('click', () => {
+      const d = el.dataset.dtoggle;
+      if (DAYS_OPEN.has(d)) DAYS_OPEN.delete(d); else DAYS_OPEN.add(d);
+      renderList();
+    }));
   rows.forEach(r => {
     if (EXPANDED.has(r.id) && DETAILS[r.id]) paintDetail(r.id, DETAILS[r.id]);
   });
@@ -274,6 +410,8 @@ export async function renderWaHistory(user) {
   HUSER = user;
   EXPANDED = new Set();
   DETAILS = {};
+  DAYS_OPEN = new Set();
+  FILTERS = { origin: 'all', from: '', to: '' };
   const main = document.getElementById('pnlMain');
   main.innerHTML = `<div class="wh-wrap">
     <div class="wh-head">
@@ -284,16 +422,11 @@ export async function renderWaHistory(user) {
       </div>
     </div>
 
+    <!-- v6.158: el origen se elige con chips (un clic y con el conteo a la
+         vista); el desplegable de Origen se retira. -->
+    <div class="wh-chips" id="whChips"></div>
+
     <div class="wh-filters">
-      <div class="fld">
-        <label>Origen</label>
-        <select id="whOrigin">
-          <option value="all">Todos</option>
-          <option value="rule">Mensajes (reglas)</option>
-          <option value="broadcast">Difusión</option>
-          <option value="cred">Credenciales</option>
-        </select>
-      </div>
       <div class="fld">
         <label>Desde</label>
         <input type="date" id="whFrom">
@@ -310,13 +443,13 @@ export async function renderWaHistory(user) {
     <div class="wh-list" id="whList"><div class="wh-dload">Cargando historial…</div></div>
   </div>`;
 
-  // Listeners de filtros.
-  $('#whOrigin').addEventListener('change', () => { FILTERS.origin = $('#whOrigin').value; renderList(); });
+  // Listeners de filtros (los chips se cablean en cada paintChips).
   $('#whFrom').addEventListener('change', () => { FILTERS.from = $('#whFrom').value; renderList(); });
   $('#whTo').addEventListener('change', () => { FILTERS.to = $('#whTo').value; renderList(); });
   $('#whClear').addEventListener('click', () => {
     FILTERS = { origin: 'all', from: '', to: '' };
-    $('#whOrigin').value = 'all'; $('#whFrom').value = ''; $('#whTo').value = '';
+    DAYS_OPEN = new Set();
+    $('#whFrom').value = ''; $('#whTo').value = '';
     renderList();
   });
 

@@ -19,10 +19,13 @@
                            (descontinuado en v6.55). filters.kind='portal'.
      - formato viejo (filters.group + filters.group_id) -> difusion antigua
                            a un solo grupo.
+     - v6.158 source='naima' -> acuse automatico de Naima por un reporte.
+                           Trae el tipo, la tienda y el reporte; el grupo sale
+                           de wa_outbox.full_name (el aviso tiene un destino).
 
    Acciones (POST { action, user, ... }):
-     list   { limit?, offset? }   gate: view.whatsapp
-     detail { batch_id }          gate: view.whatsapp
+     list   { limit?, offset? }   gate: view.wa.history
+     detail { batch_id }          gate: view.wa.history
    ===================================================================== */
 
 import { resolveActor, can } from './_auth.js';
@@ -66,6 +69,20 @@ function bucketOf(status) {
    etiqueta del mensaje si la tiene a mano. */
 function originOf(filters) {
   const f = filters || {};
+  /* v6.158: los avisos de Naima (_naima.js) marcan filters.source='naima' y
+     traen de que reporte salieron. Antes caian en 'other' ("Otro"), sin forma
+     de filtrarlos ni de saber a que tienda correspondian. */
+  if (f.source === 'naima') {
+    return {
+      kind: 'naima', rule: null, label: null,
+      naima: {
+        type: f.kind || null,          // ingreso | egreso | marcaje | ...
+        company: f.company || null,    // codigo de la tienda que reporto
+        zone: f.zone || null,
+        report_id: f.report_id || null,
+      },
+    };
+  }
   if (f.target === 'groups') {
     // Vino de Mensajes (regla con code) o de una Difusion suelta a grupos.
     if (f.rule) return { kind: 'rule', rule: String(f.rule), label: null };
@@ -110,12 +127,16 @@ export async function onRequestPost({ request, env }) {
       // agrego en memoria (evita N consultas de conteo).
       const ids = rows.map(b => b.id);
       const inList = ids.map(id => `"${id}"`).join(',');
+      // v6.158: se pide tambien full_name (el nombre del destino). En los
+      // avisos de Naima el destino es UNO y es el grupo, asi que la lista puede
+      // mostrar a que grupo se publico sin una consulta extra.
       const ob = await sb(env,
-        `wa_outbox?select=batch_id,status&batch_id=in.(${inList})`);
-      const agg = {};   // batch_id -> { ok, error, pending, total }
+        `wa_outbox?select=batch_id,status,full_name&batch_id=in.(${inList})`);
+      const agg = {};   // batch_id -> { ok, error, pending, total, name }
       (ob || []).forEach(o => {
-        const a = agg[o.batch_id] || (agg[o.batch_id] = { ok: 0, error: 0, pending: 0, total: 0 });
+        const a = agg[o.batch_id] || (agg[o.batch_id] = { ok: 0, error: 0, pending: 0, total: 0, name: null });
         a[bucketOf(o.status)]++; a.total++;
+        if (!a.name && o.full_name) a.name = o.full_name;
       });
 
       // Etiquetas de los mensajes (message_templates) para las corridas que
@@ -130,6 +151,19 @@ export async function onRequestPost({ request, env }) {
         (tpls || []).forEach(t => { templates[t.code] = t.label || t.code; });
       }
 
+      /* v6.158: los avisos de Naima guardan el CODIGO de la tienda; para la
+         lista hace falta el nombre. Una sola consulta con los codigos que
+         aparezcan (en un dia son un punado de tiendas repetidas). */
+      const naimaCodes = [...new Set(rows
+        .map(b => originOf(b.filters).naima)
+        .filter(Boolean).map(n => n.company).filter(Boolean))];
+      const compNames = {};
+      if (naimaCodes.length) {
+        const inComp = naimaCodes.map(c => `"${String(c).replace(/"/g, '')}"`).join(',');
+        const cs = await sb(env, `companies?select=company_code,business_name&company_code=in.(${inComp})`);
+        (cs || []).forEach(c => { compNames[c.company_code] = c.business_name || c.company_code; });
+      }
+
       const out = rows.map(b => {
         const o = originOf(b.filters);
         const a = agg[b.id] || { ok: 0, error: 0, pending: 0, total: 0 };
@@ -138,10 +172,14 @@ export async function onRequestPost({ request, env }) {
           created_at: b.created_at,
           created_by: b.created_by || null,
           message: b.message || '',
-          origin_kind: o.kind,          // 'rule' | 'broadcast' | 'cred' | 'other'
+          origin_kind: o.kind,          // 'rule' | 'broadcast' | 'cred' | 'naima' | 'other'
           rule_code: o.rule,            // code del mensaje (si aplica)
           origin_label: o.label,        // etiqueta suelta (cred/difusion vieja)
           group_ids: (b.filters && b.filters.group_ids) || null,
+          // v6.158: de que tienda fue el aviso y a que grupo se publico.
+          naima: o.naima
+            ? { ...o.naima, company_name: compNames[o.naima.company] || null, group: a.name || null }
+            : null,
           total: b.total || 0,
           with_phone: b.with_phone || 0,
           // Resumen del resultado real (del outbox):
