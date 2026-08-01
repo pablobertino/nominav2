@@ -46,6 +46,7 @@ import { renderWaGroups } from './wa-groups.js';
 import { renderWaTemplates } from './wa-templates.js';
 import { renderWaPolls } from './wa-polls.js';
 import { renderWaHistory } from './wa-history.js';
+import { renderWaRouting } from './wa-routing.js';
 import { renderErpQuery } from './erp-query.js';
 import { renderSyncLog, renderSyncRun } from './sync-log.js';
 import { renderSyncPending } from './sync-pending.js';   // v5.40
@@ -288,6 +289,10 @@ const NAV_GROUPS = [
     ['waencuestas', I.chart, 'Encuestas'],
     ['wahistorial', I.history, 'Historial'],
     ['wagrupos', I.team, 'Grupos', 'superonly'],
+    /* v6.154: ruteo de los avisos de Naima (zona -> grupo) + los
+       interruptores (maestro y por tipo). Superonly como Grupos: es
+       gobernanza de la linea, no se delega. */
+    ['waruteo', I.pin, 'Ruteo de avisos', 'superonly'],
   ] },
   { title: 'Administración', items: [
     ['equipo', I.team, 'Equipo'],
@@ -658,7 +663,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.152</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.154</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -8252,6 +8257,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'waencuestas') renderWaPolls(user);
   else if (view === 'wahistorial') renderWaHistory(user);
   else if (view === 'wagrupos') renderWaGroups(user);
+  else if (view === 'waruteo') renderWaRouting(user);
   else if (view === 'erpquery') renderErpQuery(user);
   else if (view === 'synclog') renderSyncLog(user);
   /* v5.58 — EL DETALLE ES UNA PAGINA, NO UN DESPLEGABLE.
@@ -8674,6 +8680,7 @@ export function renderPanel() {
       waencuestas: 'view.whatsapp',
       wahistorial: 'view.whatsapp',
       wagrupos: 'view.whatsapp',
+      waruteo: 'view.whatsapp',
       equipo: 'view.equipo',
     };
     try {

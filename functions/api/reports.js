@@ -28,6 +28,7 @@
 
 import { buildReportText, buildAxWorkbookBase64 } from './_ax-template.js';
 import { resolveActor, can } from './_auth.js';
+import { naimaNotify } from './_naima.js';
 
 // Mapa accion -> code de permiso (uno por tipo de reporte). 'window' no
 // lleva code: es informacion de ventana reportable, sin permiso especial.
@@ -636,6 +637,19 @@ async function submitMarcaje(env, body) {
     }
   }
 
+  /* v6.154 - AVISO DE NAIMA en el grupo de la zona de la tienda. Best-effort:
+     naimaNotify NUNCA lanza (el reporte ya quedo guardado y con su ticket) y
+     el aviso solo sale si estan abiertas sus tres llaves (interruptor
+     maestro + tipo prendido + zona con grupo asignado). Solo cuando reporta
+     la TIENDA: un reporte cargado por Central no genera acuse en el grupo. */
+  if (sourceKind !== 'admin') {
+    await naimaNotify(env, {
+      kind: 'marcaje', zoneId: zone_id, companyCode: cc, companyName: compBusinessName,
+      reportId, reportCode: code, ticket: result.osticket_pla,
+      responsible, roleLabel: position, workers: clean.length,
+    });
+  }
+
   // Cuantos recaudos quedaron pendientes (sin archivo) en todo el reporte.
   const pendingDocs = clean.reduce((acc, l) =>
     acc + (l._docs || []).filter(d => !d._b64).length, 0);
@@ -1095,6 +1109,19 @@ async function submitAusencia(env, body) {
         });
       } catch { /* el reporte ya esta en BD; el envio se reintenta luego */ }
     }
+  }
+
+  /* v6.154 - AVISO DE NAIMA en el grupo de la zona de la tienda. Best-effort:
+     naimaNotify NUNCA lanza (el reporte ya quedo guardado y con su ticket) y
+     el aviso solo sale si estan abiertas sus tres llaves (interruptor
+     maestro + tipo prendido + zona con grupo asignado). Solo cuando reporta
+     la TIENDA: un reporte cargado por Central no genera acuse en el grupo. */
+  if (sourceKind !== 'admin') {
+    await naimaNotify(env, {
+      kind: 'ausencia', zoneId: zone_id, companyCode: cc, companyName: compBusinessName,
+      reportId, reportCode: code, ticket: result.osticket_pla,
+      responsible, roleLabel: position, workers: clean.length,
+    });
   }
 
   // Cuantos quedaron debiendo documento (para feedback al usuario).
@@ -1591,6 +1618,19 @@ async function submitEgreso(env, body) {
         });
       } catch { /* el reporte ya esta en BD */ }
     }
+  }
+
+  /* v6.154 - AVISO DE NAIMA en el grupo de la zona de la tienda. Best-effort:
+     naimaNotify NUNCA lanza (el reporte ya quedo guardado y con su ticket) y
+     el aviso solo sale si estan abiertas sus tres llaves (interruptor
+     maestro + tipo prendido + zona con grupo asignado). Solo cuando reporta
+     la TIENDA: un reporte cargado por Central no genera acuse en el grupo. */
+  if (sourceKind !== 'admin') {
+    await naimaNotify(env, {
+      kind: 'egreso', zoneId: zone_id, companyCode: cc, companyName: compBusinessName,
+      reportId, reportCode: code, ticket: result.osticket_pla,
+      responsible, roleLabel: position, workers: clean.length,
+    });
   }
 
   // Cuantos quedaron debiendo carta (sin adjunto y sin causa que exima).
@@ -2145,6 +2185,19 @@ async function submitIngreso(env, body) {
         });
       } catch { /* el reporte ya esta en BD */ }
     }
+  }
+
+  /* v6.154 - AVISO DE NAIMA en el grupo de la zona de la tienda. Best-effort:
+     naimaNotify NUNCA lanza (el reporte ya quedo guardado y con su ticket) y
+     el aviso solo sale si estan abiertas sus tres llaves (interruptor
+     maestro + tipo prendido + zona con grupo asignado). Solo cuando reporta
+     la TIENDA: un reporte cargado por Central no genera acuse en el grupo. */
+  if (sourceKind !== 'admin') {
+    await naimaNotify(env, {
+      kind: 'ingreso', zoneId: zone_id, companyCode: cc, companyName: compBusinessName,
+      reportId, reportCode: code, ticket: result.osticket_pla,
+      responsible, roleLabel: position, workers: clean.length,
+    });
   }
 
   return json({
@@ -2747,6 +2800,19 @@ async function submitModificacion(env, body) {
     }
   }
 
+  /* v6.154 - AVISO DE NAIMA en el grupo de la zona de la tienda. Best-effort:
+     naimaNotify NUNCA lanza (el reporte ya quedo guardado y con su ticket) y
+     el aviso solo sale si estan abiertas sus tres llaves (interruptor
+     maestro + tipo prendido + zona con grupo asignado). Solo cuando reporta
+     la TIENDA: un reporte cargado por Central no genera acuse en el grupo. */
+  if (sourceKind !== 'admin') {
+    await naimaNotify(env, {
+      kind: 'modificacion', zoneId: zone_id, companyCode: cc, companyName: compBusinessName,
+      reportId, reportCode: code, ticket: result.osticket_pla,
+      responsible, roleLabel: position, workers: clean.length,
+    });
+  }
+
   return json({
     ok: true,
     report_id: reportId,
@@ -2970,6 +3036,19 @@ async function submitTraslado(env, body) {
     if (result.osticket_pla) {
       try { await sb(env, `reports_log?id=eq.${reportId}`, { method: 'PATCH', body: JSON.stringify({ osticket_id: result.osticket_pla, email_sent: true }) }); } catch (_) { /* el reporte ya esta en BD */ }
     }
+  }
+
+  /* v6.154 - AVISO DE NAIMA en el grupo de la zona de la tienda. Best-effort:
+     naimaNotify NUNCA lanza (el reporte ya quedo guardado y con su ticket) y
+     el aviso solo sale si estan abiertas sus tres llaves (interruptor
+     maestro + tipo prendido + zona con grupo asignado). Solo cuando reporta
+     la TIENDA: un reporte cargado por Central no genera acuse en el grupo. */
+  if (sourceKind !== 'admin') {
+    await naimaNotify(env, {
+      kind: 'traslado', zoneId: zone_id, companyCode: cc, companyName: compBusinessName,
+      reportId, reportCode: repCode, ticket: result.osticket_pla,
+      responsible, roleLabel: position, workers: clean.length,
+    });
   }
 
   return json({

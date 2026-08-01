@@ -49,6 +49,7 @@ function json(b, s = 200) {
 // resolveActor (alcance por empresas), por eso el actor de la MATRIZ de
 // permisos se importa con alias (authResolveActor/authCan).
 import { shadowCan, resolveActor as authResolveActor, can as authCan } from './_auth.js';
+import { naimaNotify } from './_naima.js';
 
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
@@ -142,11 +143,12 @@ async function listCompanies(env, act) {
 async function companySnapshot(env, cc) {
   const r = await sb(env,
     `companies?company_code=eq.${encodeURIComponent(cc)}`
-    + `&select=business_name,tax_id,address,city,state,phone,phone2,email`);
+    + `&select=business_name,tax_id,address,city,state,phone,phone2,email,zone_id`);
   const c = (r && r[0]) || {};
   const phones = [c.phone, c.phone2].filter(Boolean).join(' / ');
   return {
     name: c.business_name || '',
+    zone: c.zone_id || null,          // v6.154: ruteo del aviso de Naima
     rif: c.tax_id || '',
     addr: c.address || '',
     city: c.city || '',
@@ -362,6 +364,22 @@ export async function onRequestPost({ request, env }) {
           actor_kind: act.kind, actor_id: requesterId(act), detail: detalle,
         }));
         await sb(env, 'cert_line_audit', { method: 'POST', body: JSON.stringify(audit) }).catch(() => {});
+      }
+
+      /* v6.154 - AVISO DE NAIMA en el grupo de la zona. Best-effort:
+         naimaNotify NUNCA lanza (la solicitud ya quedo creada) y solo sale si
+         estan abiertas sus tres llaves (interruptor maestro + tipo
+         'constancia' prendido + zona con grupo). Solo cuando la pide la
+         TIENDA: una solicitud iniciada por un admin no avisa al grupo.
+         La constancia no pasa por osTicket, asi que va sin N° de ticket y
+         sin nombre de responsable (el solicitante es la tienda). */
+      if (!viaAdmin) {
+        await naimaNotify(env, {
+          kind: 'constancia', zoneId: snap.zone || null,
+          companyCode: cc, companyName: snap.name,
+          reportId: reqId, reportCode: String(reqId).padStart(4, '0'), ticket: null,
+          responsible: '', roleLabel: '', workers: ceds.length,
+        });
       }
 
       return json({ ok: true, request_id: reqId, lines: (insLines || []).length });
