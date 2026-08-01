@@ -32,7 +32,9 @@
      status   { batch_id }                -> conteos + errores del lote
                 gate: view.whatsapp
      state    {}                          -> getStateInstance (diagnostico)
-                gate: wa.send
+                gate: wa.send. Ademas hace de GUARDIAN de la linea: verifica
+                el ritmo de envio y el acuse de lectura, y los corrige si
+                alguien los cambio en la consola del proveedor.
 
    Regla 1 del estandar (sin rafagas): tandas cortas con pausa de ~450ms
    por mensaje; el "Message sending delay" de la consola Green-API es la
@@ -73,6 +75,26 @@ const PREVIEW_LIMIT = 1000;
    senal de automatizacion; 15s es la recomendacion de Green-API. */
 const LINE_DELAY_MIN_MS = 15000;
 const LINE_DELAY_SET_MS = 15000;
+/* v6.159 ACUSE DE LECTURA ("las dos rayitas azules"). Hasta ahora la linea
+   NUNCA marcaba leido: publicaba y se iba, y todo lo que le escribian las
+   tiendas quedaba en "entregado" para siempre. Un numero que escribe todos
+   los dias y jamas lee nada es una firma de bot bastante clara.
+
+   De las dos opciones que da el proveedor se elige la MENOS delatora:
+     markIncomingMessagesReaded         -> marca TODO lo entrante al instante.
+                                           Barrido constante, cero criterio:
+                                           es MAS robotico, no menos.
+     markIncomingMessagesReadedOnReply  -> marca leido SOLO el chat donde la
+                                           API efectivamente responde.  <-- esta
+   Con la segunda, el leido queda pegado a una accion real: Naima lee el grupo
+   donde acaba de publicar un acuse, ~2 s despues del reporte. Es exactamente
+   lo que haria una persona que abre el grupo, ve el reporte y contesta. Y en
+   los grupos donde no responde nada, no marca nada, que tambien es humano.
+
+   OJO (doc del proveedor): si markIncomingMessagesReadedOnReply es 'yes', la
+   otra se IGNORA; y los mensajes recibidos ANTES de aplicar el ajuste se
+   quedan en "entregado" para siempre. Aplica de aca en adelante. */
+const READ_ON_REPLY = 'yes';
 
 /* ===================== v5.15: ESTADO DE LA LINEA EN CRISTIANO =====================
    El proveedor devuelve el estado de la linea como un codigo en ingles
@@ -327,13 +349,24 @@ export async function onRequestPost({ request, env }) {
       const st = await ga.state();
       // v4.98: guardian del delay de linea (ver constantes arriba).
       let delayMs = null, delayFixed = false, delayErr = null;
+      let readMode = null, readFixed = false;
       try {
         const cfg = await ga.getSettings();
         delayMs = Number(cfg && cfg.delaySendMessagesMilliseconds) || 0;
-        if (delayMs < LINE_DELAY_MIN_MS) {
-          await ga.setSettings({ delaySendMessagesMilliseconds: LINE_DELAY_SET_MS });
-          delayMs = LINE_DELAY_SET_MS;
-          delayFixed = true;
+        readMode = String((cfg && cfg.markIncomingMessagesReadedOnReply) || '').toLowerCase() || null;
+
+        /* Los dos arreglos viajan en UNA sola llamada: setSettings REINICIA la
+           instancia (doc: aplica en ~5 min), asi que dos llamadas serian dos
+           reinicios. Idempotente: si ya estan bien, no se llama y no se
+           reinicia nada. */
+        const patch = {};
+        if (delayMs < LINE_DELAY_MIN_MS) patch.delaySendMessagesMilliseconds = LINE_DELAY_SET_MS;
+        if (readMode !== READ_ON_REPLY) patch.markIncomingMessagesReadedOnReply = READ_ON_REPLY;
+
+        if (Object.keys(patch).length) {
+          await ga.setSettings(patch);
+          if (patch.delaySendMessagesMilliseconds) { delayMs = LINE_DELAY_SET_MS; delayFixed = true; }
+          if (patch.markIncomingMessagesReadedOnReply) { readMode = READ_ON_REPLY; readFixed = true; }
         }
       } catch (e) {
         delayErr = String(e && e.message ? e.message : e).slice(0, 200);
@@ -343,6 +376,9 @@ export async function onRequestPost({ request, env }) {
         // v5.15: estado ya traducido (el front no interpreta codigos).
         line: lineStatus(st),
         delay_ms: delayMs, delay_fixed: delayFixed, delay_error: delayErr,
+        // v6.159: estado del acuse de lectura ('yes' = la linea marca leido
+        // los chats donde responde).
+        read_mode: readMode, read_fixed: readFixed,
       });
     }
 

@@ -699,10 +699,22 @@ export async function renderWaSend(user) {
       if (r.delay_ms) {
         el.title = `${L.hint} Ritmo: 1 mensaje cada ${(r.delay_ms / 1000).toLocaleString('es-VE')} s`;
       }
+      /* v6.159: la etiqueta decia "3,5s" fijo, pero el objetivo subio a 15 s
+         en la v6.73 y nadie actualizo el texto: mostraba un numero falso. Ahora
+         sale el valor real que quedo aplicado. */
       if (r.delay_fixed) {
+        const seg = (Number(r.delay_ms || 0) / 1000).toLocaleString('es-VE');
         el.insertAdjacentHTML('afterend',
-          `<span class="wa-inst ok" style="margin-left:6px" title="El ritmo de la línea estaba por debajo del mínimo seguro y el portal lo corrigió automáticamente. Aplica en ~5 minutos.">🛡️ Ritmo ajustado a 3,5s</span>`);
-      } else if (r.delay_error) {
+          `<span class="wa-inst ok" style="margin-left:6px" title="El ritmo de la línea estaba por debajo del mínimo seguro y el portal lo corrigió automáticamente. Aplica en ~5 minutos.">🛡️ Ritmo ajustado a ${esc(seg)}s</span>`);
+      }
+      /* v6.159: el acuse de lectura. Solo se avisa cuando el portal lo acaba
+         de corregir; si ya estaba bien no se dice nada (no es informacion que
+         el usuario necesite ver todos los dias). */
+      if (r.read_fixed) {
+        el.insertAdjacentHTML('afterend',
+          `<span class="wa-inst ok" style="margin-left:6px" title="La línea no marcaba como leídos los mensajes de los grupos donde responde. El portal lo activó; aplica en ~5 minutos.">👀 Acuse de lectura activado</span>`);
+      }
+      if (!r.delay_fixed && r.delay_error) {
         el.title = 'No se pudo verificar el ritmo de línea: ' + r.delay_error;
       }
       return;
