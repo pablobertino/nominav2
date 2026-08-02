@@ -46,6 +46,30 @@ function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
 
+/* v6.164 ANTIGUEDAD en cristiano: '1 año 1 mes', '5 meses', '23 dias'.
+   Se calcula por CALENDARIO (no dividiendo dias entre 30), que es como la
+   cuenta una persona: del 18/06 al 18/07 es "1 mes", tenga 30 o 31 dias.
+   La base es la fecha REAL de egreso, la misma que usa snap_tenure_days en
+   egress_report_lines: si el ticket dijera una antiguedad y el tablero de
+   rotacion otra, no habria forma de saber cual creer.
+   Devuelve '' si falta un dato o si las fechas estan invertidas. */
+function tenureLabel(fromYmd, toYmd) {
+  const a = new Date(String(fromYmd || '').slice(0, 10) + 'T00:00:00Z');
+  const b = new Date(String(toYmd || '').slice(0, 10) + 'T00:00:00Z');
+  if (isNaN(a.getTime()) || isNaN(b.getTime()) || b < a) return '';
+  let months = (b.getUTCFullYear() - a.getUTCFullYear()) * 12 + (b.getUTCMonth() - a.getUTCMonth());
+  if (b.getUTCDate() < a.getUTCDate()) months--;   // el mes no se cumplio todavia
+  if (months < 1) {
+    const days = Math.round((b.getTime() - a.getTime()) / 86400000);
+    return `${days} día${days === 1 ? '' : 's'}`;
+  }
+  const y = Math.floor(months / 12), m = months % 12;
+  return [
+    y ? `${y} año${y === 1 ? '' : 's'}` : '',
+    m ? `${m} mes${m === 1 ? '' : 'es'}` : '',
+  ].filter(Boolean).join(' ');
+}
+
 // 'YYYY-MM-DD' -> 'DD/MM/YYYY' (para el cuerpo de texto del ticket)
 function dmy(ymd) {
   if (!ymd) return '';
@@ -1520,6 +1544,9 @@ async function submitEgreso(env, body) {
         ['Fecha de egreso', dmy(l.report_date)],
       ];
       if (l._adjusted) campos.push(['Fecha real de egreso', dmy(l.real_date)]);
+      // v6.164: cierra la historia (ingreso -> egreso -> cuanto duro).
+      const antig = tenureLabel(ingresoDe(l.worker_id_number), l.real_date);
+      if (antig) campos.push(['Antigüedad', antig]);
       campos.push(['Motivo', l._reasonLabel || l.reason_code]);
       if (l.reason_comment) campos.push(['Comentario', l.reason_comment]);
       if (l.has_document) {
@@ -1623,6 +1650,7 @@ async function submitEgreso(env, body) {
           ['Tipo', 'Baja (B)'],
           ['Fecha de ingreso', dmy(ingresoDe(ced)) || '—'],   // v6.162
           ['Fecha de egreso', dmy(l.report_date)],
+          ['Antigüedad', tenureLabel(ingresoDe(ced), l.real_date) || '—'],   // v6.164
           ['Documento', 'Carta de renuncia'],
         ]],
       });
