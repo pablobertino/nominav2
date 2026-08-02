@@ -69,6 +69,7 @@ function windowOf(t) {
     pastWindowDays: pastDays,
     pastUsesCutoff: usesCutoff,
     futureWindowDays: t ? t.future_window_days : 0,
+    futureMinDays: t ? (t.future_min_days || 0) : 0,   // v6.161
     cutoffTime: CUTOFF_TIME,
   });
 }
@@ -238,8 +239,11 @@ function refreshTypeHeader(ctx) {
   const back = (effPastDays == null)
     ? 'sin límite hacia atrás'
     : `hasta ${effPastDays} día(s) atrás${t.past_uses_cutoff ? ` (el más antiguo solo hasta las ${CUTOFF_TIME})` : ''}`;
+  const lead = (t.future_min_days > 0)
+    ? `con ${t.future_min_days} día(s) de anticipación mínima, `
+    : '';
   const fwd = (t.future_window_days > 0)
-    ? `hasta ${t.future_window_days} día(s) a futuro`
+    ? `${lead}hasta ${t.future_window_days} día(s) a futuro`
     : 'sin fechas futuras';
   hint += ` Fechas: ${back}, ${fwd}.`;
   $('#azHint').innerHTML = hint;

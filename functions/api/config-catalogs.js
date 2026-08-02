@@ -17,6 +17,9 @@
      - El limite hacia atras lo manda el corte global cuando
        past_uses_cutoff = true (no se guarda numero propio).
      - future_window_days: 0 = sin futuro; >0 = tope de dias.
+     - future_min_days (v6.161): ANTICIPACION MINIMA. La fecha Desde no puede
+       ser anterior a hoy + N. 0 = sin exigencia. Es un piso, no un techo: la
+       ventana util queda [hoy+future_min_days, hoy+future_window_days].
      - allows_future se mantiene en sync (= future_window_days > 0).
      - El documento del tipo vive en required_docs (0 o 1 por absence_code):
        name, enforcement (block|warn|optional), is_required.
@@ -85,7 +88,7 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------------- TIPOS DE AUSENCIA ---------------- */
     if (action === 'absence_list') {
-      const types = await sb(env, 'absence_types?select=code,label,ax_code,note,is_active,sort_order,past_window_days,past_uses_cutoff,future_window_days,allows_future&order=sort_order');
+      const types = await sb(env, 'absence_types?select=code,label,ax_code,note,is_active,sort_order,past_window_days,past_uses_cutoff,future_window_days,future_min_days,allows_future&order=sort_order');
       const docs = await sb(env, 'required_docs?absence_code=not.is.null&select=id,absence_code,name,note,enforcement,is_required,is_active&order=sort_order');
       const docByCode = {};
       (docs || []).forEach(d => { if (!docByCode[d.absence_code]) docByCode[d.absence_code] = d; });
@@ -95,6 +98,7 @@ export async function onRequestPost({ request, env }) {
         past_uses_cutoff: !!t.past_uses_cutoff,
         past_window_days: t.past_window_days,
         future_window_days: t.future_window_days || 0,
+        future_min_days: t.future_min_days || 0,
         doc: docByCode[t.code]
           ? { id: docByCode[t.code].id, name: docByCode[t.code].name, note: docByCode[t.code].note || '',
               enforcement: docByCode[t.code].enforcement || 'warn', is_required: docByCode[t.code].is_required !== false,
@@ -128,6 +132,12 @@ export async function onRequestPost({ request, env }) {
         pastWindowDays = (m && m[0] && parseInt(m[0].value, 10)) || 2;
       }
       const futureDays = Math.max(0, parseInt(t.future_window_days, 10) || 0);
+      /* v6.161: la anticipacion no puede superar la ventana a futuro; si lo
+         hiciera, no quedaria ninguna fecha valida y el tipo seria inusable. */
+      const leadDays = Math.max(0, parseInt(t.future_min_days, 10) || 0);
+      if (leadDays > futureDays) {
+        return json({ ok: false, error: `La anticipación mínima (${leadDays} días) no puede ser mayor que los días a futuro (${futureDays}): no quedaría ninguna fecha válida.` }, 400);
+      }
 
       const row = {
         code, label, ax_code: axCode,
@@ -136,6 +146,7 @@ export async function onRequestPost({ request, env }) {
         past_uses_cutoff: pastUsesCutoff,
         past_window_days: pastWindowDays,
         future_window_days: futureDays,
+        future_min_days: leadDays,
         allows_future: futureDays > 0,
       };
 

@@ -151,7 +151,7 @@ export function startClock(elId) {
    Devuelve los limites 'YYYY-MM-DD' para acotar los inputs date y
    validar. El egreso lo aplica quien llame (es por trabajador).
    ===================================================================== */
-export function typeWindow({ pastWindowDays = null, pastUsesCutoff = false, futureWindowDays = 0, cutoffTime = '14:00' } = {}) {
+export function typeWindow({ pastWindowDays = null, pastUsesCutoff = false, futureWindowDays = 0, futureMinDays = 0, cutoffTime = '14:00' } = {}) {
   const { ymd: today, hhmm: nowHHMM } = nowVE();
   // Limite inferior (min) segun dias hacia atras.
   let minDate = null; // null = sin limite
@@ -167,10 +167,18 @@ export function typeWindow({ pastWindowDays = null, pastUsesCutoff = false, futu
       minDate = oldestDay;
     }
   }
+  /* v6.161 ANTICIPACION MINIMA (piso). Pisa al limite de atras: si el tipo
+     exige 15 dias, la fecha mas temprana es hoy+15 aunque la ventana pasada
+     permita reportar hacia atras. Se devuelve leadMinDate aparte para que el
+     mensaje de error pueda hablar de la REGLA y no solo de la fecha. */
+  const lead = Math.max(0, futureMinDays || 0);
+  const leadMinDate = lead > 0 ? addDays(today, lead) : null;
+  if (leadMinDate && (minDate === null || leadMinDate > minDate)) minDate = leadMinDate;
+
   // Limite superior (max) segun dias hacia el futuro.
   const fwd = futureWindowDays || 0;
   const maxDate = fwd > 0 ? addDays(today, fwd) : today;
-  return { today, nowHHMM, minDate, maxDate, oldestDay, pastCutoff, cutoffTime, futureWindowDays: fwd };
+  return { today, nowHHMM, minDate, maxDate, oldestDay, pastCutoff, cutoffTime, futureWindowDays: fwd, futureMinDays: lead, leadMinDate };
 }
 
 /* Valida un rango [from,to] de ausencia contra la ventana del tipo y el
@@ -183,6 +191,10 @@ export function typeRangeError(from, to, win, endDate = null) {
     return win.futureWindowDays > 0
       ? `No puede ser posterior al ${fmtDate(win.maxDate)} (máx. ${win.futureWindowDays} días a futuro para este tipo).`
       : 'Este tipo no admite fechas futuras.';
+  }
+  // v6.161: la anticipacion minima se explica como regla, no como fecha suelta.
+  if (win.leadMinDate && from < win.leadMinDate) {
+    return `Debe solicitarse con al menos ${win.futureMinDays} días de anticipación: la fecha Desde más temprana es el ${fmtDate(win.leadMinDate)}.`;
   }
   // Pasado
   if (win.minDate && from < win.minDate) {

@@ -663,7 +663,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.160</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.161</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -7576,7 +7576,13 @@ function cfgRenderAusencia(user, body) {
     : '<span class="pill pill-warn2">advierte</span>';
   const rows = CFG_DATA.types.map(t => {
     const atras = t.past_uses_cutoff ? 'corte global' : (t.past_window_days == null ? 'sin límite' : `${t.past_window_days} días`);
-    const fut = (t.future_window_days > 0) ? `${t.future_window_days} días` : '—';
+    /* v6.161: la ventana a futuro se muestra junto con la anticipacion
+       minima, que es lo que de verdad define el rango util. */
+    const fut = (t.future_window_days > 0)
+      ? (t.future_min_days > 0
+          ? `${t.future_min_days} a ${t.future_window_days} días`
+          : `${t.future_window_days} días`)
+      : '—';
     const doc = t.doc ? t.doc.name : '<span style="color:var(--muted)">—</span>';
     const enf = t.doc ? enfPill(t.doc.enforcement) : '<span class="pill pill-opt">—</span>';
     const estado = t.is_active ? '<span class="pill pill-open">activo</span>' : '<span class="pill pill-closed">inactivo</span>';
@@ -7627,7 +7633,11 @@ function cfgAusModal(user, t) {
       <div><label class="flabel">Días atrás (si no respeta)</label><input id="au_past" type="number" min="0" value="${t && !t.past_uses_cutoff && t.past_window_days != null ? t.past_window_days : ''}" placeholder="vacío = sin límite"></div>
       <div><label class="flabel">Días a futuro</label><input id="au_fut" type="number" min="0" value="${t ? (t.future_window_days||0) : 0}"></div>
     </div>
-    <p class="muted" style="font-size:11.5px;margin:8px 0 0">Con "respeta corte global = Sí", el límite hacia atrás lo manda el Corte (no el número). 0 días a futuro = no permite fechas futuras.</p>
+    <div class="cfg-grid3" style="margin-top:12px">
+      <div><label class="flabel">Anticipación mínima (días)</label><input id="au_lead" type="number" min="0" value="${t ? (t.future_min_days||0) : 0}"></div>
+      <div></div><div></div>
+    </div>
+    <p class="muted" style="font-size:11.5px;margin:8px 0 0">Con "respeta corte global = Sí", el límite hacia atrás lo manda el Corte (no el número). 0 días a futuro = no permite fechas futuras.<br><b>Anticipación mínima:</b> la fecha Desde no puede estar a menos de esos días (0 = sin exigencia). Ej.: Vacaciones con 15 y 30 días a futuro solo admite fechas entre hoy+15 y hoy+30.</p>
     <div class="cfg-grid2" style="margin-top:14px">
       <div><label class="flabel">Código (interno)</label><input id="au_code" value="${t ? t.code : ''}" ${t ? 'readonly' : ''} placeholder="REP" style="font-family:monospace;text-transform:uppercase"></div>
       <div><label class="flabel">Estado</label>
@@ -7663,6 +7673,7 @@ function cfgAusModal(user, t) {
         past_uses_cutoff: usesCutoff,
         past_window_days: usesCutoff ? null : ($('#au_past').value === '' ? null : $('#au_past').value),
         future_window_days: $('#au_fut').value,
+        future_min_days: $('#au_lead').value,
         doc: docName ? { name: docName, enforcement: $('#au_enf').value, is_required: true } : null,
       },
     };

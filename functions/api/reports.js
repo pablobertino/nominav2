@@ -681,6 +681,11 @@ async function submitMarcaje(env, body) {
      - Hacia atras: past_window_days (null = sin limite) y, si
        past_uses_cutoff, el dia mas antiguo solo cuenta hasta la hora tope.
      - Hacia el futuro: future_window_days (0 = sin futuro).
+     - v6.161 ANTICIPACION MINIMA: future_min_days (0 = sin exigencia). La
+       fecha Desde no puede ser anterior a hoy + N. Es un PISO, al reves de
+       los otros tres campos que son techos. Nace para Vacaciones, donde la
+       regla ("15 dias de anticipacion") vivia como texto en note y no la
+       hacia cumplir nadie.
      - Nunca posterior al egreso del trabajador.
    Documento (segun required_docs.enforcement del tipo):
      - block    -> si falta el archivo, ERROR 422 (no se registra).
@@ -720,7 +725,7 @@ async function submitAusencia(env, body) {
 
   // --- Tipo de ausencia: debe existir y estar activo ---
   const types = await sb(env,
-    `absence_types?code=eq.${encodeURIComponent(absenceCode)}&is_active=eq.true&select=code,label,ax_code,past_window_days,past_uses_cutoff,future_window_days`);
+    `absence_types?code=eq.${encodeURIComponent(absenceCode)}&is_active=eq.true&select=code,label,ax_code,past_window_days,past_uses_cutoff,future_window_days,future_min_days`);
   if (!types || !types.length) {
     return json({ ok: false, error: 'El tipo de ausencia no es valido o esta inactivo.' }, 400);
   }
@@ -759,8 +764,23 @@ async function submitAusencia(env, body) {
       minDate = oldestDay;
     }
   }
+  /* v6.161 ANTICIPACION MINIMA. El piso pisa al limite de atras: si el tipo
+     exige 15 dias, no importa que la ventana pasada permita 2 dias atras — la
+     fecha mas temprana valida es hoy+15. Se guarda aparte (leadMinDate) para
+     poder dar un mensaje de error que explique la REGLA y no solo la fecha. */
+  const leadDays = Math.max(0, Number(atype.future_min_days || 0));
+  const leadMinDate = leadDays > 0 ? addDays(today, leadDays) : null;
+  if (leadMinDate && (minDate === null || leadMinDate > minDate)) minDate = leadMinDate;
+
   // Limite superior (maxDate).
   const maxDate = futureDays > 0 ? addDays(today, futureDays) : today;
+
+  /* Configuracion incoherente: se exige mas anticipacion que la ventana a
+     futuro disponible. No hay fecha posible; se corta aca con un mensaje
+     claro en vez de rechazar cada linea con "fecha invalida". */
+  if (leadMinDate && leadMinDate > maxDate) {
+    return json({ ok: false, error: `El tipo ${atype.label} esta mal configurado: exige ${leadDays} dias de anticipacion pero solo admite ${futureDays} dias a futuro. Avisa a Capital Humano.` }, 422);
+  }
 
   // --- Documento del tipo (0 o 1) ---
   const docs = await sb(env,
@@ -799,6 +819,12 @@ async function submitAusencia(env, body) {
       errors.push(futureDays > 0
         ? `${tag}: la fecha no puede ser posterior al ${maxDate} (maximo ${futureDays} dias a futuro para ${atype.label}).`
         : `${tag}: este tipo (${atype.label}) no admite fechas futuras.`);
+      return;
+    }
+    // v6.161: si el piso de anticipacion es el que manda, el error explica la
+    // REGLA ("15 dias de anticipacion") y no solo la fecha limite.
+    if (leadMinDate && from < leadMinDate) {
+      errors.push(`${tag}: ${atype.label} debe solicitarse con al menos ${leadDays} dias de anticipacion (la fecha Desde mas temprana es el ${leadMinDate}).`);
       return;
     }
     if (minDate && from < minDate) {
