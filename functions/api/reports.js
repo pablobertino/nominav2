@@ -1459,6 +1459,19 @@ async function submitEgreso(env, body) {
   });
   await sb(env, 'egress_report_lines', { method: 'POST', body: JSON.stringify(payload) });
 
+  /* v6.162: la FECHA DE INGRESO en el ticket y en la plantilla AX. El dato ya
+     se consultaba para el snapshot de rotacion (profByCed -> start_date); lo
+     unico que faltaba era mostrarlo. En la plantilla no se agrega ninguna
+     columna: 'Fecha inicial de Empleo' YA existe en el formato de 18 columnas
+     y en el egreso viajaba vacia. Traslado, que tambien es una baja, ya la
+     llenaba — esto lo empareja. */
+  const ingresoDe = (ced) => {
+    const p = profByCed[ced];
+    const d = p && p.start_date ? String(p.start_date).slice(0, 10) : '';
+    // Centinela 1900 = "sin dato" en el ERP; no se muestra como fecha real.
+    return (d && d > '1900-01-01') ? d : '';
+  };
+
   // ───────────────────────────────────────────────────────────────────
   // ENVIO A OSTICKET. Igual que ausencia: 1 PLA (resumen + Excel accion B)
   // + 1 DOC por persona que adjunte carta de renuncia. Topic 33. El Excel
@@ -1502,6 +1515,8 @@ async function submitEgreso(env, body) {
         ['Trabajador', l.worker_name],
         ['Cédula', l.worker_id_number],
         ['Tipo', 'Baja (B)'],
+        // v6.162: ingreso antes que egreso, que es como se lee la historia.
+        ['Fecha de ingreso', dmy(ingresoDe(l.worker_id_number)) || '—'],
         ['Fecha de egreso', dmy(l.report_date)],
       ];
       if (l._adjusted) campos.push(['Fecha real de egreso', dmy(l.real_date)]);
@@ -1545,6 +1560,8 @@ async function submitEgreso(env, body) {
             id_number: l.worker_id_number,
             nombre,           // todo menos la ultima palabra
             apellidos,        // ultima palabra
+            // v6.162: 'Fecha inicial de Empleo' (columna ya existente, iba vacia).
+            fechaIni: ingresoDe(l.worker_id_number),
             fechaFin: l.report_date,
           };
         }),
@@ -1604,6 +1621,7 @@ async function submitEgreso(env, body) {
           ['Trabajador', l.worker_name],
           ['Cédula', ced],
           ['Tipo', 'Baja (B)'],
+          ['Fecha de ingreso', dmy(ingresoDe(ced)) || '—'],   // v6.162
           ['Fecha de egreso', dmy(l.report_date)],
           ['Documento', 'Carta de renuncia'],
         ]],
