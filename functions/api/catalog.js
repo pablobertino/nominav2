@@ -149,7 +149,7 @@ export async function onRequestPost({ request, env }) {
 
     // --- Catalogo de tipos de ausencia + documentos requeridos (wizard de ausencia) ---
     if (body.action === 'absence_types') {
-      const types = await sb(env, 'absence_types?is_active=eq.true&select=code,label,ax_code,allows_future,note,past_window_days,past_uses_cutoff,future_window_days&order=sort_order');
+      const types = await sb(env, 'absence_types?is_active=eq.true&select=code,label,ax_code,allows_future,note,past_window_days,past_uses_cutoff,future_window_days,future_min_days&order=sort_order');
       // Documentos requeridos por tipo (uno por absence_code, normalmente 0 o 1).
       const docs = await sb(env, 'required_docs?is_active=eq.true&absence_code=not.is.null&select=id,absence_code,name,note,enforcement,is_required&order=sort_order');
       // Hora limite y margen global del corte (para los tipos con past_uses_cutoff).
@@ -173,6 +173,15 @@ export async function onRequestPost({ request, env }) {
         past_window_days: (t.past_window_days === null || t.past_window_days === undefined) ? null : t.past_window_days,
         past_uses_cutoff: !!t.past_uses_cutoff,
         future_window_days: t.future_window_days || 0,
+        /* v6.163: la anticipacion minima TIENE que viajar hasta el wizard. En
+           la v6.161 se agrego la columna, la validacion del servidor y el uso
+           en el asistente, pero se paso por alto que los tipos que consume el
+           wizard salen de ACA (catalog.js), no de config-catalogs.js (que es
+           la pantalla de configuracion). Resultado: el asistente recibia
+           future_min_days undefined, no limitaba el selector de fecha y ni
+           siquiera mencionaba la regla en el texto de ayuda; el bloqueo solo
+           aparecia al enviar, desde el servidor. */
+        future_min_days: t.future_min_days || 0,
         docs: docsByCode[t.code] || [],
       }));
       return json({ ok: true, types: out, cutoff_time: cutoffTime, global_margin: globalMargin });

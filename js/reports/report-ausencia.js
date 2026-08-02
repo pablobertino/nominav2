@@ -239,13 +239,19 @@ function refreshTypeHeader(ctx) {
   const back = (effPastDays == null)
     ? 'sin límite hacia atrás'
     : `hasta ${effPastDays} día(s) atrás${t.past_uses_cutoff ? ` (el más antiguo solo hasta las ${CUTOFF_TIME})` : ''}`;
-  const lead = (t.future_min_days > 0)
-    ? `con ${t.future_min_days} día(s) de anticipación mínima, `
-    : '';
-  const fwd = (t.future_window_days > 0)
-    ? `${lead}hasta ${t.future_window_days} día(s) a futuro`
-    : 'sin fechas futuras';
-  hint += ` Fechas: ${back}, ${fwd}.`;
+  /* v6.163: con anticipación mínima, hablar de "días atrás" es MENTIRA — el
+     piso pisa la ventana pasada y la fecha más temprana es hoy+N. Se describe
+     el rango real y punto, sin mezclar las dos cosas. */
+  const leadDays = t.future_min_days || 0;
+  if (leadDays > 0) {
+    hint += ` Fechas: desde ${leadDays} día(s) de anticipación`
+          + (t.future_window_days > 0 ? ` y hasta ${t.future_window_days} día(s) a futuro.` : '.');
+  } else {
+    const fwd = (t.future_window_days > 0)
+      ? `hasta ${t.future_window_days} día(s) a futuro`
+      : 'sin fechas futuras';
+    hint += ` Fechas: ${back}, ${fwd}.`;
+  }
   $('#azHint').innerHTML = hint;
 
   const coord = $('#azCoord');
