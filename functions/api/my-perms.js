@@ -28,7 +28,11 @@ export async function onRequestPost({ request, env }) {
   const actor = await resolveActor(env, body.user || null);
   if (!actor) return json({ ok: false, error: 'Sesion no valida.' }, 403);
 
-  const codes = Array.isArray(body.codes) ? body.codes.slice(0, 40) : [];
+  /* v6.165 - El tope era 40 y el menu ya mandaba 45 codes. Los que pasaban
+     se descartaban EN SILENCIO y el menu los leia como "sin permiso": asi
+     desaparecio el grupo Administracion (view.equipo quedo fuera del corte).
+     120 deja aire; cada code es un lookup en un Set ya cargado. */
+  const codes = Array.isArray(body.codes) ? body.codes.slice(0, 120) : [];
   const perms = {};
   for (const c of codes) {
     const code = String(c || '').trim();

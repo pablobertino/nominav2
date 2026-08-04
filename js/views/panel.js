@@ -663,7 +663,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.164</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.165</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -8708,7 +8708,12 @@ export function renderPanel() {
       // (matriz vacia o backend caido). Mejor menu completo que vacio.
       if (!Object.values(r.perms || {}).some(Boolean)) return;
       Object.entries(MAP).forEach(([view, code]) => {
-        if (r.perms && r.perms[code]) return;
+        /* v6.165 ANTI-BLOQUEO: si el servidor NO respondio por ese code, no
+           se esconde nada. Un code ausente de `perms` se leia igual que
+           "denegado" y el item desaparecia sin dejar rastro. Ausencia de
+           respuesta no es una negativa; el endpoint sigue decidiendo. */
+        if (!r.perms || !(code in r.perms)) return;
+        if (r.perms[code]) return;
         document.querySelectorAll(`.pnl-side [data-view="${view}"]`).forEach(btn => { btn.style.display = 'none'; });
       });
       // Ocultar grupos que quedaron sin items visibles.
