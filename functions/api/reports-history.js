@@ -38,7 +38,7 @@
 
 import { buildReportText, buildAxWorkbookBase64 } from './_ax-template.js';
 import { resolveActor, can } from './_auth.js';
-import { axInsertMarcaje, dayTypeToAx, axKey } from './_axmarcajes.js';
+import { axPublicarMarcajes, dayTypeToAx, axKey } from './_axmarcajes.js';
 
 // Mapa accion -> code. list/detail/ticket_* son lectura del Historial
 // (view.historial). set_attention/sync_osticket/resend_* son gestion del
@@ -351,7 +351,7 @@ async function listReports(env, body, scope) {
 
   let q = 'reports_log?select=id,company_code,zone_id,subzone_id,topic,sent_at,'
     + 'responsible,position,workers_count,attention,osticket_id,email_sent,source_kind,source_admin_id,'
-    + 'osticket_sync,attention_at,attention_comment,attention_by';
+    + 'osticket_sync,attention_at,attention_comment,attention_by,ax_published_at';
   q += scopeFilter(scope);
   q += scopeDeptAuthorFilter(scope);   // restriccion fina por depto + autoria
 
@@ -459,6 +459,9 @@ async function listReports(env, body, scope) {
     source_admin_id: r.source_admin_id || null,
     source_admin_name: r.source_admin_id ? (srcInfoById[r.source_admin_id]?.name || null) : null,
     source_role: r.source_admin_id ? (srcInfoById[r.source_admin_id]?.role_label || null) : null,
+    // v6.168: sello de publicacion en AX. Si viene, el reporte esta cerrado
+    // para siempre: la UI muestra el candado y esconde el selector de estado.
+    ax_published_at: r.ax_published_at || null,
   }));
 
   // URL base de osTicket (sin barra final) para que el front arme el enlace
@@ -477,7 +480,7 @@ async function detailReport(env, body, scope) {
 
   let q = `reports_log?id=eq.${id}&select=id,company_code,zone_id,subzone_id,topic,sent_at,`
     + 'responsible,position,workers_count,attention,osticket_id,email_sent,notes,source_kind,source_admin_id,'
-    + 'osticket_sync,attention_at,attention_comment,attention_by';
+    + 'osticket_sync,attention_at,attention_comment,attention_by,ax_published_at,ax_published_by';
   q += scopeFilter(scope);
   q += scopeDeptAuthorFilter(scope);   // no abrir reportes fuera de depto/autoria
   const head = await sbJson(env, q);
@@ -493,6 +496,19 @@ async function detailReport(env, body, scope) {
   if (r.attention_by) {
     const ab = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(r.attention_by)}&select=name`);
     attentionByName = (ab && ab[0]) ? ab[0].name : null;
+  }
+
+  // v6.168: quien publico en AX. Suele ser el mismo que cerro el reporte,
+  // pero se resuelve aparte porque el sello es lo que traba el estado y la
+  // pantalla lo muestra con nombre y fecha.
+  let axPublishedByName = null;
+  if (r.ax_published_by) {
+    if (r.ax_published_by === r.attention_by) {
+      axPublishedByName = attentionByName;
+    } else {
+      const pb = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(r.ax_published_by)}&select=name`);
+      axPublishedByName = (pb && pb[0]) ? pb[0].name : null;
+    }
   }
 
   // Emisor central: nombre + ROL REAL (no hardcode) del gestor/admin que envió.
@@ -567,6 +583,8 @@ async function detailReport(env, body, scope) {
       attention_at: r.attention_at || null,
       attention_comment: r.attention_comment || null,
       attention_by_name: attentionByName,
+      ax_published_at: r.ax_published_at || null,
+      ax_published_by_name: axPublishedByName,
       lines,
     },
   });
@@ -1772,16 +1790,16 @@ async function resendOsticket(env, body, scope) {
 }
 
 /* =====================================================================
-   publish_ax  (v6.167) — PUBLICAR EN AX un reporte de Marcaje Manual.
+   publish_ax  (v6.168) — PUBLICAR EN AX un reporte de Marcaje Manual.
 
-   Que hace, en criollo: agarra las lineas del reporte (mark_report_lines),
-   le manda a AX 2012 UNA llamada por linea, y deja constancia de cada una
+   Que hace, en criollo: agarra las lineas del reporte (mark_report_lines)
+   y se las manda a AX 2012 EN UN SOLO LOTE. Deja constancia de cada linea
    en ax_marcajes_log. Si entraron TODAS, cierra el reporte y su ticket de
-   osTicket, y le pone el sello ax_published_at: de ahi no vuelve atras.
-   Si alguna fallo, el reporte SIGUE ABIERTO y la respuesta dice cuales
+   osTicket y le pone el sello ax_published_at: de ahi no vuelve atras. Si
+   alguna fallo, el reporte SIGUE ABIERTO y la respuesta dice cuales
    entraron y cuales no, con el payload exacto que se le mando a cada una.
 
-   LAS CUATRO REGLAS QUE HAY QUE TENER EN LA CABEZA:
+   LAS CINCO REGLAS QUE HAY QUE TENER EN LA CABEZA:
 
    1) IDEMPOTENTE. Si el reporte ya tiene ax_published_at, responde ok con
       already:true. Un segundo clic (o un doble clic nervioso) no es un
@@ -1793,15 +1811,21 @@ async function resendOsticket(env, body, scope) {
       CORRECCION (mismo trabajador, mismo dia, horario distinto) y hay que
       mandarla, porque AX actualiza el registro si ya existe.
 
-   3) TODO O NADA PARA CERRAR. El cierre es un solo PATCH que pone el
+   3) NO SE CONFIA DEL "Exito" DE AX. AX contesta HTTP 200 y status
+      "Exito" aunque una linea no haya entrado (comprobado el 05/08/2026).
+      Quien decide es la aritmetica de los contadores, y de eso se encarga
+      _axmarcajes.js: si la cuenta no cuadra, reintenta linea por linea
+      hasta saber exactamente cual fallo.
+
+   4) TODO O NADA PARA CERRAR. El cierre es un solo PATCH que pone el
       estado, la auditoria y el sello juntos. El trigger de la base
       (reports_log_ax_lock) lo deja pasar porque compara contra
       OLD.ax_published_at, que en ese momento todavia es NULL.
 
-   4) EL LOG MANDA. Si AX acepto la linea pero no pudimos escribirla en
-      ax_marcajes_log, la linea cuenta como FALLIDA. Preferimos dejar el
-      reporte abierto y que se reintente (AX actualiza, no duplica) antes
-      que cerrarlo sin rastro de lo que se publico.
+   5) EL LOG MANDA. Si AX acepto las lineas pero no pudimos escribirlas en
+      ax_marcajes_log, cuentan como FALLIDAS. Preferimos dejar el reporte
+      abierto y que se reintente (AX omite lo que ya esta) antes que
+      cerrarlo para siempre sin rastro de lo que se publico.
 
    Body: { action:'publish_ax', user, report_id, comment? }
    ===================================================================== */
@@ -1840,11 +1864,17 @@ async function publishAx(env, body, scope) {
 
   // 3) Ya publicado: no es error, es un "ya esta". Sin efectos.
   if (rep.ax_published_at) {
+    let byName = null;
+    if (rep.ax_published_by) {
+      const p = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(rep.ax_published_by)}&select=name`);
+      byName = (p && p[0]) ? p[0].name : null;
+    }
     return json({
       ok: true, already: true, report_id: id, company_code: rep.company_code,
       closed: rep.attention === 'closed', attention: rep.attention,
-      published_at: rep.ax_published_at,
-      error: null,
+      published_at: rep.ax_published_at, published_by_name: byName,
+      total: 0, publicadas: 0, fallidas: 0, omitidas: 0,
+      osticket: { synced: 0, failed: 0 }, lineas: [],
     });
   }
 
@@ -1857,6 +1887,24 @@ async function publishAx(env, body, scope) {
     return json({ ok: false, error: 'El reporte no tiene lineas de marcaje.' }, 400);
   }
 
+  // 4b) DOS LINEAS PARA LA MISMA PERSONA EL MISMO DIA no se pueden publicar:
+  //     en AX son UN solo registro (la clave es tienda+cedula+fecha), asi que
+  //     una pisaria a la otra y nadie sabria cual quedo. Mejor decirlo claro
+  //     antes de escribir nada que dejar el resultado librado al orden.
+  const porClave = new Map();
+  for (const l of lines) {
+    const k = `${l.worker_id_number}|${String(l.mark_date || '').slice(0, 10)}`;
+    porClave.set(k, (porClave.get(k) || 0) + 1);
+  }
+  const repetidas = [...porClave.entries()].filter(([, n]) => n > 1).map(([k]) => k.replace('|', ' el '));
+  if (repetidas.length) {
+    return json({
+      ok: false,
+      error: 'El reporte tiene mas de una linea para la misma persona el mismo dia, y en AX eso es un solo registro. '
+        + 'Hay que corregirlo antes de publicar: ' + repetidas.join('; ') + '.',
+    }, 409);
+  }
+
   // 5) Lo que YA entro en un intento anterior DE ESTE reporte. Se compara
   //    por line_id: una fila del log de otro reporte es una correccion y
   //    debe volver a mandarse (regla 2 del encabezado).
@@ -1864,91 +1912,112 @@ async function publishAx(env, body, scope) {
     `ax_marcajes_log?report_id=eq.${id}&status=eq.ok&select=line_id`) || [];
   const yaEntraron = new Set(prev.map(x => x.line_id).filter(v => v != null));
 
-  // 6) Publicacion, linea por linea.
+  const pendientes = lines.filter(l => !yaEntraron.has(l.id));
+  const omitidas = lines.length - pendientes.length;
+
   const nowIso = new Date().toISOString();
-  const lineas = [];
-  let publicadas = 0, fallidas = 0, omitidas = 0;
+  const lineaBase = (l, extra) => ({
+    line_id: l.id,
+    worker_id_number: l.worker_id_number,
+    worker_name: l.worker_name || null,
+    mark_date: String(l.mark_date || '').slice(0, 10),
+    day_type: l.day_type || 'L',
+    time_in: (l.time_in || '').slice(0, 5),
+    time_out: (l.time_out || '').slice(0, 5),
+    ...extra,
+  });
 
-  for (const l of lines) {
-    const mark = String(l.mark_date || '').slice(0, 10);
-    const base = {
-      line_id: l.id,
-      worker_id_number: l.worker_id_number,
-      worker_name: l.worker_name || null,
-      mark_date: mark,
-      day_type: l.day_type || 'L',
-      time_in: (l.time_in || '').slice(0, 5),
-      time_out: (l.time_out || '').slice(0, 5),
-    };
+  // Todo ya estaba publicado en un intento anterior: no hay nada que mandar,
+  // pero SI hay que cerrar el reporte (quedo a medio camino la vez pasada).
+  const lineas = lines
+    .filter(l => yaEntraron.has(l.id))
+    .map(l => lineaBase(l, {
+      status: 'omitida', mensaje: 'Ya se habia publicado en un intento anterior.',
+      error: null, payload: null,
+    }));
 
-    if (yaEntraron.has(l.id)) {
-      omitidas++;
-      lineas.push({ ...base, status: 'omitida', mensaje: 'Ya se habia publicado en un intento anterior.', error: null, payload: null });
-      continue;
-    }
+  let publicadas = 0, fallidas = 0;
+  let axResumen = null;
 
-    const r = await axInsertMarcaje(env, {
+  if (pendientes.length) {
+    // 6) EL LOTE. Una sola llamada; si la cuenta no cuadra, el modulo
+    //    reintenta linea por linea y nos dice exactamente cual fallo.
+    const res = await axPublicarMarcajes(env, pendientes.map(l => ({
       alias: rep.company_code,                 // alias, NO data_area
       personnelNumber: l.worker_id_number,
-      transDate: mark,
+      transDate: String(l.mark_date || '').slice(0, 10),
       dayType: dayTypeToAx(l.day_type),        // 'L'|'D' -> Workday|RestDay
       timeEntry: l.time_in,                    // 'HH:MM:SS' -> segundos (lo hace el modulo)
       timeExit: l.time_out,
-    });
+    })));
 
-    // Rastro en ax_marcajes_log. UPSERT por (tienda, cedula, fecha): si ya
-    // habia una fila de otro reporte, se pisa con este intento.
-    // created_at NO va en el payload a proposito: asi conserva la fecha del
-    // PRIMER intento mientras sent_at guarda la del ultimo.
+    axResumen = {
+      llamadas: res.llamadas,
+      aislado: res.aislado,
+      mensaje: res.lote ? res.lote.mensaje : null,
+      contadores: res.lote ? res.lote.counters : null,
+    };
+
+    // 7) Rastro en ax_marcajes_log, en UN SOLO upsert para todas las lineas.
+    //    Antes era un INSERT por linea: con un reporte grande eso solo ya se
+    //    comia el presupuesto de subrequests de Cloudflare.
+    //    UPSERT por (tienda, cedula, fecha): si habia una fila de otro
+    //    reporte, se pisa con este intento.
+    //    created_at NO va en el payload a proposito: asi conserva la fecha
+    //    del PRIMER intento mientras sent_at guarda la del ultimo.
     let logOk = true, logErr = null;
     try {
       await sb(env, 'ax_marcajes_log?on_conflict=company_code,worker_id_number,mark_date', {
         method: 'POST',
         headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-        body: JSON.stringify({
-          report_id: id,
-          line_id: l.id,
-          company_code: rep.company_code,
-          worker_id_number: l.worker_id_number,
-          mark_date: mark,
-          day_type: l.day_type || 'L',
-          time_in: l.time_in || null,
-          time_out: l.time_out || null,
-          status: r.ok ? 'ok' : 'error',
-          ax_message: r.mensaje ? String(r.mensaje).slice(0, 500) : null,
-          ax_error: r.ok ? null : String(r.error || '').slice(0, 500),
-          sent_at: nowIso,
-          sent_by: user.id,
-        }),
+        body: JSON.stringify(pendientes.map((l, i) => {
+          const r = res.resultados[i];
+          return {
+            report_id: id,
+            line_id: l.id,
+            company_code: rep.company_code,
+            worker_id_number: l.worker_id_number,
+            mark_date: String(l.mark_date || '').slice(0, 10),
+            day_type: l.day_type || 'L',
+            time_in: l.time_in || null,
+            time_out: l.time_out || null,
+            status: r.ok ? 'ok' : 'error',
+            ax_message: r.mensaje ? String(r.mensaje).slice(0, 500) : null,
+            ax_error: r.ok ? null : String(r.error || '').slice(0, 500),
+            sent_at: nowIso,
+            sent_by: user.id,
+          };
+        })),
       });
     } catch (e) {
       logOk = false;
       logErr = String((e && e.message) || e).slice(0, 300);
     }
 
-    if (r.ok && logOk) {
-      publicadas++;
-      lineas.push({ ...base, status: 'ok', mensaje: r.mensaje, error: null, payload: r.payload });
-    } else {
-      fallidas++;
-      lineas.push({
-        ...base,
-        status: 'error',
-        mensaje: r.ok ? 'AX acepto el marcaje pero no se pudo dejar constancia en la bitacora.' : null,
-        error: r.ok ? `Bitacora: ${logErr}` : r.error,
+    pendientes.forEach((l, i) => {
+      const r = res.resultados[i];
+      const ok = r.ok && logOk;
+      if (ok) publicadas++; else fallidas++;
+      lineas.push(lineaBase(l, {
+        status: ok ? 'ok' : 'error',
+        mensaje: r.ok ? r.mensaje : null,
+        error: r.ok
+          ? (logOk ? null : `AX aceptó el marcaje pero no se pudo dejar constancia en la bitácora: ${logErr}`)
+          : r.error,
         detalles_ax: r.detalles_ax || null,
         xml: r.xml || null,
         payload: r.payload,
-      });
-    }
+        via: r.via,
+      }));
+    });
   }
 
-  // 7) TODO O NADA. Solo si no fallo ninguna se cierra el reporte, con
-  //    estado + auditoria + sello en un solo PATCH (regla 3).
+  // 8) TODO O NADA. Solo si no fallo ninguna se cierra el reporte, con
+  //    estado + auditoria + sello en un solo PATCH (regla 4).
   const comment = body.comment != null && String(body.comment).trim()
     ? String(body.comment).trim().slice(0, 300)
-    : `Publicado en AX 2012 desde el Portal (${publicadas} marcaje${publicadas === 1 ? '' : 's'}` +
-      `${omitidas ? `, ${omitidas} ya publicado${omitidas === 1 ? '' : 's'}` : ''}).`;
+    : `Publicado en AX 2012 desde el Portal (${publicadas} marcaje${publicadas === 1 ? '' : 's'}`
+      + `${omitidas ? `, ${omitidas} ya publicado${omitidas === 1 ? '' : 's'}` : ''}).`;
 
   let closed = false;
   let attention = rep.attention;
@@ -1973,13 +2042,13 @@ async function publishAx(env, body, scope) {
     attention = 'closed';
     publishedAt = nowIso;
 
-    // 8) Y ahora el ticket. Va DESPUES del sello: el trigger no se queja
+    // 9) Y ahora el ticket. Va DESPUES del sello: el trigger no se queja
     //    porque estos PATCH no tocan attention.
     if (rep.osticket_id) {
       let osBase = '';
       try { osBase = await osticketBase(env); } catch { osBase = ''; }
-      const res = await pushStatusToOsticket(env, osBase, [rep], 'closed', comment, nowIso);
-      osSynced = res.synced; osFailed = res.failed;
+      const resOs = await pushStatusToOsticket(env, osBase, [rep], 'closed', comment, nowIso);
+      osSynced = resOs.synced; osFailed = resOs.failed;
     }
   }
 
@@ -1994,9 +2063,11 @@ async function publishAx(env, body, scope) {
     closed,
     attention,
     published_at: publishedAt,
+    published_by_name: closed ? (a[0].name || null) : null,
     attention_by_name: closed ? (a[0].name || null) : null,
     attention_comment: closed ? comment : null,
     osticket: { synced: osSynced, failed: osFailed },
+    ax: axResumen,
     lineas,
   }, fallidas === 0 ? 200 : 207);
 }

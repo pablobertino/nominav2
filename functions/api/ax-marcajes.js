@@ -1,5 +1,5 @@
 /* =====================================================================
-   functions/api/ax-marcajes.js  ->  POST /api/ax-marcajes        (v6.167)
+   functions/api/ax-marcajes.js  ->  POST /api/ax-marcajes        (v6.168)
    MARCAJE MANUAL: HERRAMIENTA DE DIAGNOSTICO contra AX 2012.
 
    OJO, LEER ESTO PRIMERO: esta ruta YA NO es el camino de la publicacion.
@@ -36,6 +36,10 @@
         mismo permiso que la publicacion (report.publish.marcaje) y no el
         de sincronizacion: escribir un marcaje es escribir un marcaje,
         venga de un reporte o de esta pantalla de pruebas.
+
+   v6.168: el middleware ahora recibe un ARRAY de marcajes. Esta ruta sigue
+   hablando de a uno porque es lo comodo para depurar; el modulo se encarga
+   de envolverlo en un lote de uno.
 
    Env vars: canaima_apikey (o ax_api_key), ax_marcajes_url (opcional).
    ===================================================================== */

@@ -26,6 +26,18 @@ export function attPill(a) {
   return `<span class="pill ${s.cls}">${s.label}</span>`;
 }
 
+/* v6.168 — Pildora del reporte YA PUBLICADO EN AX. Reemplaza al selector de
+   estado: un reporte publicado no vuelve a ningun estado anterior (lo impide
+   el trigger reports_log_ax_lock en la base, no solo la pantalla). El candado
+   no es decorativo: le dice al usuario por que no puede tocar nada. */
+export function axPublishedPill(iso) {
+  const cuando = iso ? fmtStamp(iso) : '';
+  const t = cuando
+    ? `Publicado en AX el ${cuando}. Un reporte publicado ya no cambia de estado.`
+    : 'Publicado en AX. Un reporte publicado ya no cambia de estado.';
+  return `<span class="pill att-closed ax-pub" title="${t}">\u{1F512} Cerrado · Publicado en AX</span>`;
+}
+
 /* Indicador de sincronizacion con osTicket. na -> nada; synced -> ok;
    failed -> no se pudo (hover muestra el detalle); pending -> en curso. */
 export function syncPill(s) {
@@ -103,6 +115,19 @@ export async function postSyncOsticket(user, { reportIds, mode } = {}) {
   return fetch('/api/reports-history', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
+  }).then(r => r.json()).catch(() => null);
+}
+
+/* v6.168 — Publica en AX 2012 los marcajes de un reporte de Marcaje Manual.
+   ESCRIBE EN AX Y CIERRA EL REPORTE PARA SIEMPRE si entran todas las lineas.
+   Devuelve el JSON crudo: { ok, total, publicadas, fallidas, omitidas,
+   closed, published_at, lineas:[...] } o { ok:true, already:true }.
+   Nota: el backend responde 207 cuando algo fallo, asi que NO se puede usar
+   response.ok para decidir; hay que mirar el cuerpo. */
+export async function postPublishAx(user, reportId, comment) {
+  return fetch('/api/reports-history', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'publish_ax', user, report_id: reportId, comment: comment || null }),
   }).then(r => r.json()).catch(() => null);
 }
 

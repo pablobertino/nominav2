@@ -15,11 +15,37 @@
 
 import { $ } from '../core/dom.js';
 import { openResendModal } from './shared/resend-modal.js';
+import { openPublishAxModal } from './shared/publish-ax.js';
 import {
-  ATT_STATES, ATT_ORDER, attPill, syncDot, attAuditText, fmtStamp,
+  ATT_STATES, ATT_ORDER, attPill, axPublishedPill, syncDot, attAuditText, fmtStamp,
   fetchTicketText, fetchTicketExcel, postSetAttention, postSyncOsticket,
   copyText, downloadText, downloadBase64, showAttHelpModal, noticeModal,
 } from './shared/ticket-actions.js';
+
+/* v6.168 — Permisos del Detalle por la MATRIZ, no por el rol (mismo arreglo
+   que en el Historial: un coordinador con report.attention concedido no veia
+   el selector de estado). Cacheado en module scope; permisivo si falla la
+   red, porque el endpoint valida el permiso igual. */
+const RD_CODES = ['report.attention', 'report.publish.marcaje'];
+let RD_PERMS = null;
+
+async function ensureDetailPerms(user) {
+  if (RD_PERMS) return RD_PERMS;
+  const todos = (v) => { RD_PERMS = {}; RD_CODES.forEach(c => { RD_PERMS[c] = v; }); return RD_PERMS; };
+  if (user.kind !== 'admin') return todos(false);
+  if (user.role === 'superadmin') return todos(true);
+  try {
+    const r = await fetch('/api/my-perms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: { kind: user.kind, id: user.id || null }, codes: RD_CODES }),
+    }).then(x => x.json());
+    if (!r || !r.ok) return todos(true);
+    if (r.super) return todos(true);
+    RD_PERMS = {};
+    RD_CODES.forEach(c => { RD_PERMS[c] = !!(r.perms && r.perms[c]); });
+    return RD_PERMS;
+  } catch (_) { return todos(true); }
+}
 
 const TYPES = {
   marcaje:      { label: 'Marcaje Manual', icon: '🕐' },
@@ -121,8 +147,11 @@ export async function showReportDetail({ reportId, user, onBack }) {
   const host = $('#pnlMain');
   host.innerHTML = `<div class="pnl-loading">Cargando reporte…</div>`;
 
-  // Solo admin/superadmin pueden cambiar el estado de atencion.
-  const canManage = user.kind === 'admin' && (user.role === 'admin' || user.role === 'superadmin');
+  // Quien puede cambiar el estado y quien puede publicar en AX: lo decide la
+  // matriz de Roles, no el nombre del rol.
+  const perms = await ensureDetailPerms(user);
+  const canManage = !!perms['report.attention'];
+  const canPublishAx = !!perms['report.publish.marcaje'];
 
   const res = await fetch('/api/reports-history', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -150,8 +179,19 @@ export async function showReportDetail({ reportId, user, onBack }) {
   const commentHtml = r.attention_comment
     ? `<div class="sb-audit" style="font-style:italic">“${r.attention_comment}”</div>` : '';
 
+  // v6.168 \u2014 Publicado en AX: el estado queda sellado. Va la pildora con
+  // candado y NO el selector; el trigger de la base rechazaria el cambio de
+  // todas formas, y un desplegable que siempre falla es peor que ninguno.
+  const publicado = !!r.ax_published_at;
+  const pubHtml = publicado
+    ? `<div class="sb-audit">Publicado en AX${r.ax_published_by_name ? ` por ${r.ax_published_by_name}` : ''}
+        ${r.ax_published_at ? ` \u00B7 ${fmtStamp(r.ax_published_at)}` : ''}</div>`
+    : '';
+
   let attControls;
-  if (canManage) {
+  if (publicado) {
+    attControls = `<div class="sb-row">${axPublishedPill(r.ax_published_at)}${syncDot(r.osticket_sync)}</div>${pubHtml}${auditHtml}${commentHtml}`;
+  } else if (canManage) {
     const syncBtn = r.osticket_id
       ? `<button class="icon-btn att-syncbtn" id="rdSync" title="Reenviar a osTicket el estado actual de este reporte">\u21BB</button>`
       : '';
@@ -163,6 +203,9 @@ export async function showReportDetail({ reportId, user, onBack }) {
   } else {
     attControls = `<div class="sb-row">${attPill(r.attention)}</div>${auditHtml}${commentHtml}`;
   }
+
+  // Boton "Publicar en AX": solo Marcaje Manual, con permiso y sin publicar.
+  const showPubBtn = (r.type === 'marcaje') && canPublishAx && !publicado;
 
   const statusBand = `
     <div class="statusband">
@@ -188,6 +231,7 @@ export async function showReportDetail({ reportId, user, onBack }) {
         <button class="icon-btn" id="rdCopy" title="Copiar el texto del ticket">\u29C9</button>
         <button class="icon-btn" id="rdTxt" title="Descargar el texto del ticket (.txt)">\u2913</button>
         <button class="icon-btn" id="rdXls" title="Descargar la plantilla de Excel del ticket (.xlsx)">\u{1F4C4}</button>
+        ${showPubBtn ? `<button class="btn btn-ax" id="rdPubAx" style="margin-left:8px" title="Cargar estos marcajes en AX 2012. Si entran todos, el reporte queda cerrado para siempre.">↑ Publicar en AX</button>` : ''}
         ${canResend ? `<button class="btn btn-send" id="rdResend" style="margin-left:8px">Enviar a osTicket</button>` : ''}
       </div>
     </div>
@@ -286,6 +330,24 @@ export async function showReportDetail({ reportId, user, onBack }) {
       }
       // Recargar el detalle para reflejar el nuevo osticket_sync.
       showReportDetail({ reportId: r.id, user, onBack });
+    });
+  }
+
+  // --- Publicar en AX (v6.168) ---
+  // Al terminar se recarga el detalle para que se vea ya con su candado.
+  if (showPubBtn && $('#rdPubAx')) {
+    $('#rdPubAx').addEventListener('click', async () => {
+      const b = $('#rdPubAx');
+      b.disabled = true;
+      await openPublishAxModal({
+        user,
+        report: {
+          id: r.id, company_code: r.company_code, company_name: r.company_name,
+          workers_count: r.workers_count,
+        },
+        onDone: () => showReportDetail({ reportId: r.id, user, onBack }),
+      });
+      b.disabled = false;
     });
   }
 

@@ -9,8 +9,9 @@ import { $ } from '../core/dom.js';
 import { attachRefresh } from '../core/refresh.js';
 import { showReportDetail } from './report-detail.js';
 import { openResendModal } from './shared/resend-modal.js';
+import { openPublishAxModal } from './shared/publish-ax.js';
 import {
-  ATT_STATES, ATT_ORDER, attPill, syncDot, attAuditText,
+  ATT_STATES, ATT_ORDER, attPill, axPublishedPill, syncDot, attAuditText,
   fetchTicketText, fetchTicketExcel, postSetAttention, postSyncOsticket,
   copyText, downloadText, downloadBase64, showAttHelpModal,
   confirmModal, noticeModal,
@@ -101,13 +102,50 @@ function flashBtn(b, ok) {
   setTimeout(() => { b.classList.remove('is-ok', 'is-err'); b.disabled = false; }, 1200);
 }
 
-export function renderHistory(user) {
+/* v6.168 — Permisos del Historial resueltos por la MATRIZ, no por el rol.
+   Antes canManage estaba clavado a (role==='admin' || role==='superadmin'),
+   asi que un coordinador con report.attention concedido en Roles igual no
+   veia el selector de estado: la matriz decia que si y la pantalla que no.
+   Mismo patron que ensureReportPerms en panel.js: una consulta a my-perms
+   por sesion, cacheada en module scope.
+   Ante fallo de red se es PERMISIVO en la pantalla — el endpoint valida el
+   permiso igual, asi que nadie hace nada que no pueda por un error pasajero. */
+const HIST_CODES = ['report.attention', 'report.publish.marcaje'];
+let HIST_PERMS = null;
+
+async function ensureHistoryPerms(user) {
+  if (HIST_PERMS) return HIST_PERMS;
+  const todos = (v) => { HIST_PERMS = {}; HIST_CODES.forEach(c => { HIST_PERMS[c] = v; }); return HIST_PERMS; };
+  // La tienda nunca gestiona estados ni publica: no hace falta preguntar.
+  if (user.kind !== 'admin') return todos(false);
+  if (user.role === 'superadmin') return todos(true);
+  try {
+    const r = await fetch('/api/my-perms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: { kind: user.kind, id: user.id || null }, codes: HIST_CODES }),
+    }).then(x => x.json());
+    if (!r || !r.ok) return todos(true);
+    if (r.super) return todos(true);
+    HIST_PERMS = {};
+    HIST_CODES.forEach(c => { HIST_PERMS[c] = !!(r.perms && r.perms[c]); });
+    return HIST_PERMS;
+  } catch (_) { return todos(true); }
+}
+
+export async function renderHistory(user) {
   const isCompany = user.kind === 'company';
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   const showStore = !isCompany; // admin y superadmin ven columna/filtro tienda
-  // Solo admin/superadmin (NO editor_personal, NO tienda) pueden cambiar el
-  // estado de atencion. Habilita la columna de seleccion + barra de acciones.
-  const canManage = user.kind === 'admin' && (user.role === 'admin' || user.role === 'superadmin');
+  // Quien puede cambiar el estado de atencion (columna de seleccion + barra
+  // de acciones) y quien puede publicar marcajes en AX. Los dos salen de la
+  // matriz de Roles, no del nombre del rol.
+  // Se pinta un "Cargando" antes de esperar los permisos para no dejar en
+  // pantalla la vista anterior mientras responde my-perms (la primera vez;
+  // despues sale del cache y es instantaneo).
+  $('#pnlMain').innerHTML = '<div class="pnl-loading">Cargando…</div>';
+  const perms = await ensureHistoryPerms(user);
+  const canManage = !!perms['report.attention'];
+  const canPublishAx = !!perms['report.publish.marcaje'];
 
   // estado de la vista
   const ST = {
@@ -290,15 +328,27 @@ export function renderHistory(user) {
         ? `<td><div class="store-cell">${r.company_code}<div class="sub2">${r.company_name || ''}</div></div></td>` : '';
       const resend = !r.osticket_id
         ? `<button class="btn btn-sm btn-send" data-resend="${r.id}">Enviar a osTicket</button>` : '';
+      // Los publicados en AX no se pueden seleccionar: no hay cambio de estado
+      // posible para ellos, asi que meterlos en una accion masiva solo
+      // produciria un error a medias.
       const checkTd = canManage
-        ? `<td><input type="checkbox" class="chk hrow-chk" data-pick="${r.id}" ${ST.selected.has(r.id) ? 'checked' : ''}></td>` : '';
+        ? (r.ax_published_at
+          ? `<td><span class="ax-lock" title="Publicado en AX: su estado ya no se puede cambiar.">\u{1F512}</span></td>`
+          : `<td><input type="checkbox" class="chk hrow-chk" data-pick="${r.id}" ${ST.selected.has(r.id) ? 'checked' : ''}></td>`)
+        : '';
       // Celda de atencion: el pill + (si canManage) un selector inline para
       // cambiar SOLO esa fila, + el indicador de sincronizacion con osTicket,
       // + la auditoria (quien/cuando) del ultimo cambio.
       const audit = attAuditText(r);
       const auditHtml = audit ? `<div class="att-audit">${audit}</div>` : '';
       let attTd;
-      if (canManage) {
+      if (r.ax_published_at) {
+        // v6.168 — Publicado en AX: NO va el selector. El estado ya no se
+        // puede cambiar (lo impide el trigger de la base, no solo la
+        // pantalla), y ofrecer un desplegable que siempre falla es peor que
+        // no ofrecerlo.
+        attTd = `<td>${axPublishedPill(r.ax_published_at)}${auditHtml}</td>`;
+      } else if (canManage) {
         // Boton de re-sincronizar SIEMPRE disponible cuando el reporte tiene
         // ticket (el estado pudo cambiar en osTicket por otra via). Compacto:
         // selector de estado + punto de sync + boton refrescar en UNA linea.
@@ -328,9 +378,20 @@ export function renderHistory(user) {
           <button class="icon-btn" data-copytxt="${r.id}" title="Copiar el texto del ticket">\u29C9</button>
           <button class="icon-btn" data-dltxt="${r.id}" title="Descargar el texto del ticket (.txt)">\u2913</button>
           <button class="icon-btn" data-dlxls="${r.id}" title="Descargar la plantilla de Excel del ticket (.xlsx)">\u{1F4C4}</button>
+          ${publishBtn(r)}
           ${resend}
         </td>
       </tr>`;
+  }
+
+  /* v6.168 — Boton "Publicar en AX". Solo para Marcaje Manual, solo si el rol
+     tiene report.publish.marcaje, y solo si el reporte NO esta publicado.
+     Los otros tipos de reporte no tienen a donde publicarse todavia: su carga
+     en AX sigue siendo manual con la plantilla de Excel. */
+  function publishBtn(r) {
+    if (r.type !== 'marcaje' || !canPublishAx || r.ax_published_at) return '';
+    return `<button class="btn btn-sm btn-ax" data-pubax="${r.id}"
+      title="Cargar estos marcajes en AX 2012. Si entran todos, el reporte queda cerrado para siempre.">↑ Publicar en AX</button>`;
   }
 
   // ---- Tarjeta MOVIL (<div>) ----
@@ -351,12 +412,15 @@ export function renderHistory(user) {
     rows.push(['osTicket', otPill(r, ST.osticketUrl, ST.viewerIsAgent)]);
     const grid = rows.map(([k, v]) => `<span class="hc-k">${k}</span><span class="hc-v">${v}</span>`).join('');
 
-    const headPill = canManage ? '' : attPill(r.attention);
-    const checkbox = canManage
+    // Publicado en AX manda sobre todo lo demas: se muestra la pildora con
+    // candado en la cabecera y no se pinta el selector de estado.
+    const publicado = !!r.ax_published_at;
+    const headPill = publicado ? axPublishedPill(r.ax_published_at) : (canManage ? '' : attPill(r.attention));
+    const checkbox = canManage && !publicado
       ? `<input type="checkbox" class="chk hrow-chk hc-check" data-pick="${r.id}" ${ST.selected.has(r.id) ? 'checked' : ''} title="Seleccionar">` : '';
 
     let manageBlock = '';
-    if (canManage) {
+    if (canManage && !publicado) {
       const audit = attAuditText(r);
       const auditHtml = audit ? `<div class="att-audit">${audit}</div>` : '';
       const syncBtn = r.osticket_id
@@ -378,7 +442,7 @@ export function renderHistory(user) {
       <button class="icon-btn hc-ib" data-copytxt="${r.id}" title="Copiar el texto del ticket">\u29C9</button>
       <button class="icon-btn hc-ib" data-dltxt="${r.id}" title="Descargar el texto del ticket (.txt)">\u2913</button>
       <button class="icon-btn hc-ib" data-dlxls="${r.id}" title="Descargar la plantilla de Excel (.xlsx)">\u{1F4C4}</button>
-    </div>${resend}`;
+    </div>${publishBtn(r) ? `<div class="hc-acts hc-acts2">${publishBtn(r)}</div>` : ''}${resend}`;
 
     return `<div class="hist-card" data-open="${r.id}">
       <div class="hc-top">
@@ -399,7 +463,7 @@ export function renderHistory(user) {
   function wireRows(host) {
     host.querySelectorAll('[data-open]').forEach(el => el.addEventListener('click', e => {
       // No abrir el detalle si el clic viene de un control interno.
-      if (e.target.closest('[data-copytxt],[data-dltxt],[data-dlxls],[data-resend],[data-attsel],[data-syncone],[data-pick],[data-otlink]')) return;
+      if (e.target.closest('[data-copytxt],[data-dltxt],[data-dlxls],[data-resend],[data-attsel],[data-syncone],[data-pick],[data-otlink],[data-pubax]')) return;
       // Si es el contenedor (fila/tarjeta) y el clic cayo en el boton interno
       // "Ver detalle", dejar que lo maneje el boton (evita doble apertura).
       if (el.matches('.hist-card, tr') && e.target.closest('[data-open]') !== el) return;
@@ -451,7 +515,25 @@ export function renderHistory(user) {
       downloadBase64(r.base64, r.filename, r.mime);
       flashBtn(b, true);
     }));
-    // ---- Gestion de estado de atencion (solo admin/superadmin) ----
+    // ---- Publicar en AX (v6.168) ----
+    // El modal se encarga del aviso, de la espera y de mostrar el resultado
+    // linea por linea. Aca solo se abre y, si publico algo, se recarga la
+    // pagina para que el reporte aparezca ya con su candado.
+    host.querySelectorAll('[data-pubax]').forEach(b => b.addEventListener('click', async e => {
+      e.stopPropagation();
+      const id = parseInt(b.dataset.pubax, 10);
+      const row = ST.rows.find(x => x.id === id) || { id };
+      await openPublishAxModal({
+        user,
+        report: {
+          id, company_code: row.company_code, company_name: row.company_name,
+          workers_count: row.workers_count,
+        },
+        onDone: () => load(),
+      });
+    }));
+
+    // ---- Gestion de estado de atencion (solo con report.attention) ----
     if (canManage) {
       host.querySelectorAll('[data-pick]').forEach(c => c.addEventListener('click', e => {
         e.stopPropagation();
@@ -507,11 +589,21 @@ export function renderHistory(user) {
       noticeModal({ title: 'No se pudo cambiar el estado', message: (d && d.error) || 'Error de red.', tone: 'error' });
       return;
     }
+    // v6.168: algunos pueden haber quedado fuera por estar publicados en AX.
+    // No es un error (los demas si cambiaron), pero hay que decirlo o el
+    // usuario se queda pensando que se aplico a todos.
+    if (d.locked) {
+      noticeModal({
+        title: 'Algunos reportes no cambiaron',
+        message: `${d.locked} reporte(s) ya estan publicados en AX y su estado no se puede cambiar. `
+          + `Los otros ${d.updated} si se actualizaron.`,
+      });
+    }
     // Actualizar en memoria las filas afectadas (estado + auditoria del
     // response) y limpiar seleccion, para reflejar quien/cuando sin recargar.
     const idset = new Set(ids);
     ST.rows.forEach(r => {
-      if (idset.has(r.id)) {
+      if (idset.has(r.id) && !r.ax_published_at) {
         r.attention = status;
         r.attention_at = d.attention_at || r.attention_at;
         r.attention_by_name = d.attention_by_name || r.attention_by_name;
