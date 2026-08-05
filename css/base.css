@@ -232,12 +232,15 @@ a.ot-link:hover { filter: brightness(0.95); text-decoration: underline; }
    resultado. Reusa .modal-ov / .modal-box / .dtl-table del panel.
    ===================================================================== */
 
-/* Boton de la accion. Ambar a proposito: no es "guardar", es una carga al
-   ERP que cierra el reporte para siempre. Tiene que distinguirse de los
-   botones neutros de la fila sin gritar como uno de borrado. */
-.btn-ax { color: #92400e; border-color: #f0d08a; background: #fffbeb; }
-.btn-ax:hover { background: #fef3c7; border-color: #e3b95f; }
-.btn-ax:disabled { opacity: .55; cursor: default; }
+/* Boton de la accion. MISMOS colores que el "Publicar" de Sincronizacion
+   (.axr-btn-pub en js/views/ax-review.js): en el portal, ambar = "esto sale
+   del portal y entra a AX". Que las dos publicaciones se vean iguales no es
+   capricho: es la misma accion mental para el usuario, aunque una publique
+   fichas y la otra marcajes. */
+.btn-ax { background: var(--warn-bg, #fff7ed); border-color: var(--warn-bd, #fed7aa); color: var(--warn, #c2410c); }
+.btn-ax:hover:not(:disabled) { background: #ffedd5; }
+.btn-ax:disabled { opacity: .5; cursor: default; }
+.btn-ax svg { width: 14px; height: 14px; flex: none; }
 
 /* Reporte ya publicado: candado en lugar del checkbox de seleccion. */
 .ax-lock { color: var(--faint); font-size: 13px; cursor: help; }

@@ -9,7 +9,7 @@ import { $ } from '../core/dom.js';
 import { attachRefresh } from '../core/refresh.js';
 import { showReportDetail } from './report-detail.js';
 import { openResendModal } from './shared/resend-modal.js';
-import { openPublishAxModal } from './shared/publish-ax.js';
+import { openPublishAxModal, AX_ARROW } from './shared/publish-ax.js';
 import {
   ATT_STATES, ATT_ORDER, attPill, axPublishedPill, syncDot, attAuditText,
   fetchTicketText, fetchTicketExcel, postSetAttention, postSyncOsticket,
@@ -390,8 +390,11 @@ export async function renderHistory(user) {
      en AX sigue siendo manual con la plantilla de Excel. */
   function publishBtn(r) {
     if (r.type !== 'marcaje' || !canPublishAx || r.ax_published_at) return '';
+    // Misma flecha y mismos colores que el "Publicar" de Sincronizacion: para
+    // el usuario es la misma accion (sacar algo del portal y meterlo en AX).
     return `<button class="btn btn-sm btn-ax" data-pubax="${r.id}"
-      title="Cargar estos marcajes en AX 2012. Si entran todos, el reporte queda cerrado para siempre.">↑ Publicar en AX</button>`;
+      title="Cargar estos marcajes en AX 2012. Si entran todos, el reporte queda cerrado para siempre."
+      >${AX_ARROW} Publicar en AX</button>`;
   }
 
   // ---- Tarjeta MOVIL (<div>) ----
