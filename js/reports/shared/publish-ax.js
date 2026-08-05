@@ -132,8 +132,12 @@ export function openPublishAxModal({ user, report, onDone }) {
           </div>
         </div>`;
       wire();
+      // preventScroll NO es opcional: .modal-box tiene overflow-y auto y
+      // .modal-head es sticky (v6.148). Un focus() normal desplaza la caja
+      // para traer el boton a la vista, y ese desplazamiento esconde el
+      // primer parrafo debajo de la cabecera. Se enfoca sin mover nada.
       const go = ov.querySelector('[data-act="go"]');
-      if (go) go.focus();
+      if (go) go.focus({ preventScroll: true });
     };
 
     // ---------- 2) EN CURSO ----------
