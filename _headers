@@ -9,3 +9,6 @@
 
 /js/*
   Cache-Control: no-cache, no-store, must-revalidate
+
+/css/*
+  Cache-Control: no-cache, no-store, must-revalidate

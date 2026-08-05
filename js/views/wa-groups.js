@@ -423,10 +423,25 @@ export async function renderWaGroups(user) {
   });
 
   const r = await api(user, { action: 'list' });
-  GROUPS = (r && r.ok && r.groups) || [];
-  ASSIGN = (r && r.ok && r.assign) || [];
-  ADMINS = (r && r.ok && r.admins) || [];
-  if (r && r.ok && r.phone) {
+
+  /* v6.179 — Si el endpoint RECHAZA, decirlo. Antes cualquier respuesta que
+     no fuera ok caia en `|| []` y la pantalla mostraba "Aun no hay grupos",
+     que es el vacio normal. Un coordinador sin el permiso de entrada veia
+     exactamente lo mismo que si la linea no estuviera en ningun grupo, y no
+     habia forma de distinguir "no tenes permiso" de "no hay nada". */
+  if (!r || !r.ok) {
+    const box = $('#wgBody');
+    if (box) {
+      box.innerHTML = `<div class="wg-fb wg-err" style="margin:0">
+        ${(r && r.error) || 'No se pudo cargar la lista de grupos.'}</div>`;
+    }
+    return;
+  }
+
+  GROUPS = r.groups || [];
+  ASSIGN = r.assign || [];
+  ADMINS = r.admins || [];
+  if (r.phone) {
     const sp = $('#wgPhone');
     if (sp) sp.textContent = ' (' + r.phone + ')';
   }
