@@ -9,7 +9,7 @@ import { $ } from '../core/dom.js';
 import { attachRefresh } from '../core/refresh.js';
 import { showReportDetail } from './report-detail.js';
 import { openResendModal } from './shared/resend-modal.js';
-import { openPublishAxModal, AX_ARROW } from './shared/publish-ax.js';
+import { openPublishAxModal, openPublishAxQueueModal, motivoNoPublicable, AX_ARROW } from './shared/publish-ax.js';
 import {
   ATT_STATES, ATT_ORDER, attPill, axPublishedPill, syncDot, attAuditText,
   fetchTicketText, fetchTicketExcel, postSetAttention, postSyncOsticket,
@@ -146,6 +146,13 @@ export async function renderHistory(user) {
   const perms = await ensureHistoryPerms(user);
   const canManage = !!perms['report.attention'];
   const canPublishAx = !!perms['report.publish.marcaje'];
+  /* v6.176 — La columna de seleccion y la barra de acciones son de QUIEN
+     TENGA ALGO QUE HACER CON VARIOS REPORTES A LA VEZ, no solo de quien
+     cambia estados. Si dependieran de report.attention, un rol con permiso
+     para publicar pero sin el de atencion se quedaria sin la cola y sin
+     ninguna pista de por que. Dentro de la barra, cada control sigue
+     pidiendo SU permiso. */
+  const canSelect = canManage || canPublishAx;
 
   // estado de la vista
   const ST = {
@@ -199,22 +206,23 @@ export async function renderHistory(user) {
       <button class="chip" data-chip="unsent">Sin osTicket</button>
     </div>
 
-    ${canManage ? `<div class="hsel-bar" id="hSelBar" style="display:none">
+    ${canSelect ? `<div class="hsel-bar" id="hSelBar" style="display:none">
       <b><span id="hSelCount">0</span></b> reporte(s) seleccionado(s)
       <span style="flex:1"></span>
-      <label style="font-size:12px;color:var(--muted)">Marcar como:</label>
+      ${canManage ? `<label style="font-size:12px;color:var(--muted)">Marcar como:</label>
       <select id="hSelStatus">
         ${ATT_ORDER.map(k => `<option value="${k}">${ATT_STATES[k].label}</option>`).join('')}
       </select>
       <input id="hSelComment" placeholder="Comentario (opcional)" style="flex:0 1 220px">
       <button class="btn btn-sm btn-primary" id="hSelApply">Aplicar</button>
-      <button class="btn btn-sm" id="hSelSync" title="Reenviar a osTicket el estado actual de los reportes seleccionados">\u21BB Sincronizar</button>
+      <button class="btn btn-sm" id="hSelSync" title="Reenviar a osTicket el estado actual de los reportes seleccionados">\u21BB Sincronizar</button>` : ''}
+      ${canPublishAx ? `<button class="btn btn-sm btn-ax" id="hSelPub" title="Publicar en AX los reportes de Marcaje Manual seleccionados, uno detr\u00E1s de otro">${AX_ARROW} Publicar</button>` : ''}
       <button class="btn btn-sm" id="hSelClear">Limpiar</button>
     </div>` : ''}
 
     <div class="tablebox">
       <table><thead><tr>
-        ${canManage ? '<th style="width:30px"><input type="checkbox" class="chk" id="hAll"></th>' : ''}
+        ${canSelect ? '<th style="width:30px"><input type="checkbox" class="chk" id="hAll"></th>' : ''}
         <th>Tipo / N°</th>
         ${showStore ? '<th>Tienda</th>' : ''}
         <th>Fecha de envío</th>
@@ -238,7 +246,7 @@ export async function renderHistory(user) {
       <div class="pages" id="hPages"></div>
     </div>`;
 
-  const ncols = (showStore ? 9 : 8) + (canManage ? 1 : 0);
+  const ncols = (showStore ? 9 : 8) + (canSelect ? 1 : 0);
 
   // ---- catalogo (admin/super): tiendas + zonas + subzonas + conceptos ----
   async function loadCompanies() {
@@ -331,7 +339,7 @@ export async function renderHistory(user) {
       // Los publicados en AX no se pueden seleccionar: no hay cambio de estado
       // posible para ellos, asi que meterlos en una accion masiva solo
       // produciria un error a medias.
-      const checkTd = canManage
+      const checkTd = canSelect
         ? (r.ax_published_at
           ? `<td><span class="ax-lock" title="Publicado en AX: su estado ya no se puede cambiar.">\u{1F512}</span></td>`
           : `<td><input type="checkbox" class="chk hrow-chk" data-pick="${r.id}" ${ST.selected.has(r.id) ? 'checked' : ''}></td>`)
@@ -389,16 +397,10 @@ export async function renderHistory(user) {
      Los otros tipos de reporte no tienen a donde publicarse todavia: su carga
      en AX sigue siendo manual con la plantilla de Excel. */
   function publishBtn(r) {
-    if (r.type !== 'marcaje' || !canPublishAx || r.ax_published_at) return '';
-    /* v6.175 — Un reporte CERRADO no se publica. "Cerrado" significa, por
-       definicion del propio portal, "ya cargado en AX": alguien lo dio por
-       hecho a mano. Publicar encima no solo contradice ese estado, puede
-       PISAR una correccion: si al cargarlo el analista ajusto una hora, AX
-       tiene 08:30 y el reporte dice 08:00, y publicar lo actualizaria de
-       vuelta a 08:00 sin que nadie se entere.
-       No es un callejon sin salida: como todavia no tiene el sello, se le
-       puede devolver el estado a Abierto o Atendido y el boton reaparece. */
-    if (r.attention === 'closed') return '';
+    // Quien decide si se puede publicar es motivoNoPublicable, compartida con
+    // la cola: si el boton y la cola opinaran distinto, el usuario veria un
+    // reporte con boton que la cola saltea, o al reves.
+    if (!canPublishAx || motivoNoPublicable(r)) return '';
     // Misma flecha, mismos colores y MISMA PALABRA que el "Publicar" de
     // Sincronizacion. En el portal "Publicar" ya significa una sola cosa
     // -mandarlo a AX-, asi que aclararlo en la etiqueta sobra. El destino se
@@ -430,7 +432,7 @@ export async function renderHistory(user) {
     // candado en la cabecera y no se pinta el selector de estado.
     const publicado = !!r.ax_published_at;
     const headPill = publicado ? axPublishedPill(r.ax_published_at) : (canManage ? '' : attPill(r.attention));
-    const checkbox = canManage && !publicado
+    const checkbox = canSelect && !publicado
       ? `<input type="checkbox" class="chk hrow-chk hc-check" data-pick="${r.id}" ${ST.selected.has(r.id) ? 'checked' : ''} title="Seleccionar">` : '';
 
     let manageBlock = '';
@@ -547,14 +549,18 @@ export async function renderHistory(user) {
       });
     }));
 
-    // ---- Gestion de estado de atencion (solo con report.attention) ----
-    if (canManage) {
+    // ---- Seleccion multiple: de quien pueda hacer algo en masa ----
+    if (canSelect) {
       host.querySelectorAll('[data-pick]').forEach(c => c.addEventListener('click', e => {
         e.stopPropagation();
         const id = parseInt(c.dataset.pick, 10);
         if (c.checked) ST.selected.add(id); else ST.selected.delete(id);
         updateSelBar();
       }));
+    }
+
+    // ---- Gestion de estado de atencion (solo con report.attention) ----
+    if (canManage) {
       host.querySelectorAll('[data-attsel]').forEach(s => {
         s.addEventListener('click', e => e.stopPropagation());
         s.addEventListener('change', async e => {
@@ -575,7 +581,7 @@ export async function renderHistory(user) {
 
   // Actualiza la barra de seleccion multiple (contador + visibilidad).
   function updateSelBar() {
-    if (!canManage) return;
+    if (!canSelect) return;
     const bar = $('#hSelBar'); if (!bar) return;
     const n = ST.selected.size;
     bar.style.display = n ? 'flex' : 'none';
@@ -719,18 +725,41 @@ export async function renderHistory(user) {
   // se muestra siempre en la cabecera, no solo a quienes pueden gestionar).
   if ($('#hAttHelp')) $('#hAttHelp').addEventListener('click', showAttHelpModal);
 
-  // ---- gestion de estado (solo admin/superadmin) ----
-  if (canManage) {
-    // Filtro de atencion.
-    if ($('#hAtt')) $('#hAtt').addEventListener('change', () => {
-      ST.filters.attention = $('#hAtt').value;
-      ST.page = 1; load();
-    });
+  // ---- controles de la seleccion, comunes a cualquier accion en masa ----
+  if (canSelect) {
     // Checkbox "todos" (de la pagina actual).
     if ($('#hAll')) $('#hAll').addEventListener('change', e => {
       if (e.target.checked) ST.rows.forEach(r => ST.selected.add(r.id));
       else ST.rows.forEach(r => ST.selected.delete(r.id));
       paintRows(); updateSelBar();
+    });
+    // Barra: limpiar seleccion.
+    if ($('#hSelClear')) $('#hSelClear').addEventListener('click', () => {
+      ST.selected.clear(); paintRows(); updateSelBar();
+    });
+    // Barra: publicar en AX la seleccion, encolada (v6.176).
+    // La seleccion sobrevive al cambio de pagina, pero ST.rows solo tiene la
+    // pagina actual: de los ids que no estan a la vista no se conoce ni el
+    // tipo ni el estado, asi que no se puede decidir si son publicables. Se
+    // cuentan aparte y se avisan como salteados, en vez de mandarlos a ciegas.
+    if ($('#hSelPub')) $('#hSelPub').addEventListener('click', async () => {
+      const ids = [...ST.selected];
+      if (!ids.length) return;
+      const visibles = ST.rows.filter(r => ST.selected.has(r.id));
+      const faltantes = ids.length - visibles.length;
+      await openPublishAxQueueModal({
+        user, reports: visibles, faltantes,
+        onDone: () => { ST.selected.clear(); load(); updateSelBar(); },
+      });
+    });
+  }
+
+  // ---- gestion de estado (solo con report.attention) ----
+  if (canManage) {
+    // Filtro de atencion.
+    if ($('#hAtt')) $('#hAtt').addEventListener('change', () => {
+      ST.filters.attention = $('#hAtt').value;
+      ST.page = 1; load();
     });
     // Barra: aplicar el estado elegido a la seleccion.
     if ($('#hSelApply')) $('#hSelApply').addEventListener('click', async () => {
@@ -740,10 +769,6 @@ export async function renderHistory(user) {
       const comment = $('#hSelComment') ? $('#hSelComment').value.trim() : '';
       await applyAttention(ids, status, comment, $('#hSelApply'));
       if ($('#hSelComment')) $('#hSelComment').value = '';
-    });
-    // Barra: limpiar seleccion.
-    if ($('#hSelClear')) $('#hSelClear').addEventListener('click', () => {
-      ST.selected.clear(); paintRows(); updateSelBar();
     });
     // Barra: sincronizar la seleccion con osTicket (reenvia su estado actual).
     if ($('#hSelSync')) $('#hSelSync').addEventListener('click', async () => {
