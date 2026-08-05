@@ -2293,3 +2293,24 @@ input.needfill:focus, select.needfill:focus {
 /* Fila en curso: un toque ambar para encontrarla de un vistazo en una tabla
    larga (el auto-scroll la centra, pero el color la confirma). */
 .pax-table tr:has(.pill.att-attended) td { background:var(--warn-bg); }
+
+/* =====================================================================
+   v6.178 — El modal de Publicar NO usa cabecera pegajosa.
+   Historia corta: el usuario paso cuatro versiones sin poder leer la
+   primera linea de este modal. La cabecera sticky de .modal-head se le
+   montaba encima, y cada arreglo dependia de que el CSS nuevo llegara al
+   navegador... que era justamente lo que no pasaba (los <link> iban sin
+   ?v= y el archivo quedaba cacheado).
+   Aca se corta por lo sano: sin position:sticky no hay forma de que la
+   cabecera tape nada, pase lo que pase con los margenes, con el soporte
+   de :has() o con el cache. Se pierde que el titulo quede fijo al hacer
+   scroll, que en estos modales no aporta casi nada: el de un reporte es
+   corto, y el de la cola tiene su propio encabezado de tabla pegajoso.
+   Correccion > adorno.
+   ===================================================================== */
+.pax-box .modal-head { position:static; margin-top:0; }
+
+/* Y el modal, mas alto y con scroll cuando de verdad haga falta (pedido
+   del 05/08/2026). El de la cola con muchos reportes es el que lo usa. */
+.pax-box { max-height:88vh; }
+.pax-box .pax-tablewrap { max-height:min(52vh, 460px); }
