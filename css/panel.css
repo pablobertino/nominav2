@@ -352,14 +352,33 @@
   width:100%; max-width:460px; box-shadow:var(--shadow-lg); animation:modalpop .18s ease;
   max-height:90vh; overflow-y:auto; }
 @keyframes modalpop { from { transform:scale(.97); opacity:0; } to { transform:scale(1); opacity:1; } }
+
+/* v6.173 — El relleno SUPERIOR lo pone la cabecera, no la caja.
+   Ver el porque en el bloque de .modal-head, justo debajo. Si el modal no
+   trae cabecera, la caja conserva su padding de siempre. */
+.modal-box:has(> .modal-head) { padding-top:0; }
+
 .modal-head { display:flex; justify-content:space-between; align-items:center;
   font-size:16.5px; font-weight:650; letter-spacing:-.01em;
   /* v6.148: cabecera fija al hacer scroll dentro del modal (solo el título).
      Se pega al tope del .modal-box, con fondo sólido para que el contenido
-     pase por debajo. Los márgenes negativos la extienden a los bordes del
-     modal (padding 22/24) y el padding propio recompone el espacio. */
+     pase por debajo. El padding propio le da el aire al título y los márgenes
+     laterales negativos la extienden a los bordes del modal.
+
+     v6.173 — SE QUITO EL MARGEN SUPERIOR NEGATIVO (-22px). Con el, la
+     cabecera quedaba 22px POR ENCIMA del borde del scrollport (que empieza
+     en la caja de relleno del .modal-box). Como sticky nunca deja al
+     elemento pasar de su umbral top:0, el navegador la empujaba hacia abajo
+     hasta el borde; pero el flujo ya habia reservado el hueco arriba, y como
+     un elemento sticky no corre a sus hermanos, la cabecera terminaba
+     TAPANDO los primeros 14px del contenido (22 del margen menos 8 del
+     margen inferior). Medido en vivo: scrollTop 0, sin desbordamiento, y
+     14.0px de solape exactos. Pasaba en TODOS los modales del portal desde
+     la v6.148; se notaba solo cuando la primera linea era texto largo.
+     Ahora la cabecera arranca justo en el borde: su posicion de flujo
+     coincide con el umbral y sticky no la mueve. NO devolver el -22px. */
   position:sticky; top:0; z-index:3; background:var(--surface);
-  margin:-22px -24px 8px; padding:18px 24px 10px; border-bottom:1px solid var(--border-soft); }
+  margin:0 -24px 8px; padding:18px 24px 10px; border-bottom:1px solid var(--border-soft); }
 .modal-x { background:none; border:0; color:var(--faint); cursor:pointer; padding:4px;
   border-radius:6px; display:flex; font-size:16px; }
 .modal-x:hover { color:var(--ink); background:var(--border-soft); }

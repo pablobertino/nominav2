@@ -299,9 +299,9 @@ export function confirmModal(opts = {}) {
     ov.querySelectorAll('[data-act]').forEach(b =>
       b.addEventListener('click', () => finish(b.dataset.act === 'ok')));
     document.addEventListener('keydown', onKey);
-    // Foco inicial en el boton principal. preventScroll: .modal-box scrollea y
-    // .modal-head es sticky (v6.148), asi que un focus() normal desplaza la
-    // caja y esconde las primeras lineas del mensaje bajo la cabecera.
+    // Foco inicial en el boton principal. preventScroll: si el contenido
+    // desborda, un focus() normal abriria el modal ya scrolleado hasta el
+    // boton y el usuario no leeria el mensaje.
     const okBtn = ov.querySelector('[data-act="ok"]');
     if (okBtn) okBtn.focus({ preventScroll: true });
   });
