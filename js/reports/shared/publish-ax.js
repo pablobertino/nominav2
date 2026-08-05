@@ -112,7 +112,7 @@ export function openPublishAxModal({ user, report, onDone }) {
       ov.innerHTML = `
         <div class="modal-box pax-box" role="dialog" aria-modal="true">
           <div class="modal-head">
-            <span>Publicar en AX — Reporte N° ${report.id}</span>
+            <span>Publicar — Reporte N° ${report.id}</span>
             <button class="modal-x" data-act="close" aria-label="Cerrar">✕</button>
           </div>
           <div class="pax-body">
@@ -128,7 +128,7 @@ export function openPublishAxModal({ user, report, onDone }) {
           </div>
           <div class="modal-actions">
             <button class="btn" data-act="close">Cancelar</button>
-            <button class="btn btn-ax" data-act="go">${AX_ARROW} Publicar en AX</button>
+            <button class="btn btn-ax" data-act="go">${AX_ARROW} Publicar</button>
           </div>
         </div>`;
       wire();
@@ -140,7 +140,7 @@ export function openPublishAxModal({ user, report, onDone }) {
     const pintarEnCurso = () => {
       ov.innerHTML = `
         <div class="modal-box pax-box" role="dialog" aria-modal="true">
-          <div class="modal-head"><span>Publicando en AX…</span></div>
+          <div class="modal-head"><span>Publicando…</span></div>
           <div class="pax-body pax-working">
             <div class="pax-bar"><span></span></div>
             <p class="confirm-msg">Enviando los marcajes a AX 2012. Puede tardar unos segundos.</p>
@@ -210,7 +210,7 @@ export function openPublishAxModal({ user, report, onDone }) {
       ov.innerHTML = `
         <div class="modal-box pax-box pax-wide ${bien ? 'notice-success' : 'notice-error'}" role="dialog" aria-modal="true">
           <div class="modal-head">
-            <span>${bien ? 'Publicado en AX' : 'Publicación incompleta'} — Reporte N° ${d.report_id}</span>
+            <span>${bien ? 'Publicado' : 'Publicación incompleta'} — Reporte N° ${d.report_id}</span>
             <button class="modal-x" data-act="close" aria-label="Cerrar">✕</button>
           </div>
           <div class="pax-body">

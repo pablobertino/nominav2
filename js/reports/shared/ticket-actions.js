@@ -32,10 +32,13 @@ export function attPill(a) {
    no es decorativo: le dice al usuario por que no puede tocar nada. */
 export function axPublishedPill(iso) {
   const cuando = iso ? fmtStamp(iso) : '';
+  // La etiqueta dice solo "Publicado": en el portal esa palabra ya significa
+  // "cargado en AX" (misma terminologia que Sincronizacion). El sistema de
+  // destino se nombra en el tooltip, que es donde se explica.
   const t = cuando
     ? `Publicado en AX el ${cuando}. Un reporte publicado ya no cambia de estado.`
     : 'Publicado en AX. Un reporte publicado ya no cambia de estado.';
-  return `<span class="pill att-closed ax-pub" title="${t}">\u{1F512} Cerrado · Publicado en AX</span>`;
+  return `<span class="pill att-closed ax-pub" title="${t}">\u{1F512} Cerrado · Publicado</span>`;
 }
 
 /* Indicador de sincronizacion con osTicket. na -> nada; synced -> ok;

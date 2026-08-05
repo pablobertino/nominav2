@@ -390,11 +390,13 @@ export async function renderHistory(user) {
      en AX sigue siendo manual con la plantilla de Excel. */
   function publishBtn(r) {
     if (r.type !== 'marcaje' || !canPublishAx || r.ax_published_at) return '';
-    // Misma flecha y mismos colores que el "Publicar" de Sincronizacion: para
-    // el usuario es la misma accion (sacar algo del portal y meterlo en AX).
+    // Misma flecha, mismos colores y MISMA PALABRA que el "Publicar" de
+    // Sincronizacion. En el portal "Publicar" ya significa una sola cosa
+    // -mandarlo a AX-, asi que aclararlo en la etiqueta sobra. El destino se
+    // explica en el tooltip y en el aviso del modal, que es donde hace falta.
     return `<button class="btn btn-sm btn-ax" data-pubax="${r.id}"
       title="Cargar estos marcajes en AX 2012. Si entran todos, el reporte queda cerrado para siempre."
-      >${AX_ARROW} Publicar en AX</button>`;
+      >${AX_ARROW} Publicar</button>`;
   }
 
   // ---- Tarjeta MOVIL (<div>) ----

@@ -184,7 +184,7 @@ export async function showReportDetail({ reportId, user, onBack }) {
   // todas formas, y un desplegable que siempre falla es peor que ninguno.
   const publicado = !!r.ax_published_at;
   const pubHtml = publicado
-    ? `<div class="sb-audit">Publicado en AX${r.ax_published_by_name ? ` por ${r.ax_published_by_name}` : ''}
+    ? `<div class="sb-audit">Publicado${r.ax_published_by_name ? ` por ${r.ax_published_by_name}` : ''}
         ${r.ax_published_at ? ` \u00B7 ${fmtStamp(r.ax_published_at)}` : ''}</div>`
     : '';
 
@@ -231,7 +231,7 @@ export async function showReportDetail({ reportId, user, onBack }) {
         <button class="icon-btn" id="rdCopy" title="Copiar el texto del ticket">\u29C9</button>
         <button class="icon-btn" id="rdTxt" title="Descargar el texto del ticket (.txt)">\u2913</button>
         <button class="icon-btn" id="rdXls" title="Descargar la plantilla de Excel del ticket (.xlsx)">\u{1F4C4}</button>
-        ${showPubBtn ? `<button class="btn btn-ax" id="rdPubAx" style="margin-left:8px" title="Cargar estos marcajes en AX 2012. Si entran todos, el reporte queda cerrado para siempre.">${AX_ARROW} Publicar en AX</button>` : ''}
+        ${showPubBtn ? `<button class="btn btn-ax" id="rdPubAx" style="margin-left:8px" title="Cargar estos marcajes en AX 2012. Si entran todos, el reporte queda cerrado para siempre.">${AX_ARROW} Publicar</button>` : ''}
         ${canResend ? `<button class="btn btn-send" id="rdResend" style="margin-left:8px">Enviar a osTicket</button>` : ''}
       </div>
     </div>
