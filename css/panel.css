@@ -2182,3 +2182,72 @@ input.needfill:focus, select.needfill:focus {
 
 
 
+
+/* =====================================================================
+   v6.170 — Publicar en AX (Marcaje Manual)
+   Boton de la accion, candado del reporte ya publicado y modal de
+   resultado.
+
+   POR QUE ESTA EN panel.css Y NO EN base.css:
+   en la v6.168 este bloque se escribio en base.css y el color del boton
+   NUNCA se vio. index.html carga base.css (linea 8) ANTES que panel.css
+   (linea 10), y panel.css define  .btn { background:var(--surface);
+   color:var(--ink-soft) }  con la MISMA especificidad que .btn-ax, asi
+   que ganaba el que se carga despues. Lo mismo le pasaba al fondo del
+   encabezado pegajoso de la tabla, que competia con .dtl-table th.
+   Por eso .btn-primary y .btn-send tambien viven aca, debajo de .btn:
+   toda variante de .btn tiene que ir DESPUES de .btn, y eso hoy
+   significa panel.css. No mover a base.css.
+   ===================================================================== */
+
+/* Boton de la accion. MISMOS colores que el "Publicar" de Sincronizacion
+   (.axr-btn-pub en js/views/ax-review.js): en el portal, ambar = "esto sale
+   del portal y entra a AX". Que las dos publicaciones se vean iguales no es
+   capricho: es la misma accion mental para el usuario, aunque una publique
+   fichas y la otra marcajes. */
+.btn-ax { background: var(--warn-bg, #fff7ed); border-color: var(--warn-bd, #fed7aa); color: var(--warn, #c2410c); }
+.btn-ax:hover:not(:disabled) { background: #ffedd5; }
+.btn-ax:disabled { opacity: .5; cursor: default; }
+.btn-ax svg { width: 14px; height: 14px; flex: none; }
+
+/* Reporte ya publicado: candado en lugar del checkbox de seleccion. */
+.ax-lock { color: var(--faint); font-size: 13px; cursor: help; }
+.pill.ax-pub { cursor: help; }
+
+/* ---- Modal de publicacion ---- */
+.pax-box { max-width: 560px; }
+.pax-box.pax-wide { max-width: 860px; }
+.pax-body { margin: 4px 0 14px; }
+
+/* Aviso de "esto no se deshace". Franja ambar con borde a la izquierda:
+   se lee como advertencia sin parecer un error que ya ocurrio. */
+.pax-warn { background: var(--warn-bg); color: #8a5a00; border-left: 3px solid var(--warn);
+  border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.5; margin-top: 10px; }
+.pax-warn-soft { color: #a06a10; font-size: 12.5px; margin-top: 6px; }
+.pax-ok { background: var(--success-bg); color: #15803d; border-left: 3px solid #22c55e;
+  border-radius: 8px; padding: 10px 12px; font-size: 13px; line-height: 1.5; margin-top: 10px; }
+
+/* Espera. Barra indeterminada: el backend manda todo en un lote, asi que no
+   hay progreso real que mostrar y seria mentira dibujar un porcentaje. */
+.pax-working { text-align: center; padding: 8px 0 4px; }
+.pax-bar { height: 4px; border-radius: 3px; background: var(--border-soft);
+  overflow: hidden; margin: 6px 0 14px; }
+.pax-bar span { display: block; height: 100%; width: 38%; border-radius: 3px;
+  background: var(--brand); animation: paxslide 1.1s ease-in-out infinite; }
+@keyframes paxslide { 0% { transform: translateX(-100%); } 100% { transform: translateX(320%); } }
+
+/* Resultado linea por linea. */
+.pax-tablewrap { max-height: 46vh; overflow-y: auto; margin-top: 14px;
+  border: 1px solid var(--border); border-radius: 8px; }
+.pax-table { width: 100%; font-size: 12.5px; }
+.pax-table th { position: sticky; top: 0; background: #fbfcfe; z-index: 1; }
+.pax-ced { font-size: 11px; color: var(--faint); }
+.pax-msg { color: var(--muted); font-size: 11.5px; line-height: 1.4; max-width: 260px; }
+.pax-table tr.pax-error .pax-msg { color: #b91c1c; }
+.pax-table tr.pax-error td { background: var(--danger-bg); }
+
+@media (max-width: 768px) {
+  .pax-box, .pax-box.pax-wide { max-width: 100%; }
+  .pax-msg { max-width: none; }
+  .hc-acts2 .btn-ax { width: 100%; }
+}
