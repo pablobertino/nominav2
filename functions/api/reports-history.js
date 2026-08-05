@@ -1830,6 +1830,7 @@ async function resendOsticket(env, body, scope) {
    Body: { action:'publish_ax', user, report_id, comment? }
    ===================================================================== */
 async function publishAx(env, body, scope) {
+  const t0 = Date.now();
   // 1) Autorizacion. Igual que set_attention: solo usuarios administrativos
   //    (la tienda nunca), y entre ellos decide la MATRIZ, no el rol.
   const user = body.user || {};
@@ -2051,6 +2052,52 @@ async function publishAx(env, body, scope) {
       osSynced = resOs.synced; osFailed = resOs.failed;
     }
   }
+
+  /* 10) BITACORA DEL EVENTO (v6.174). ax_marcajes_log guarda el resultado de
+     cada MARCAJE; esta guarda el del CLIC completo, y existe para contestar
+     una sola pregunta: ¿esto se podria publicar solo, sin que nadie mire?
+
+     Por eso el dato que vale no es quien publico, sino si salio limpio al
+     PRIMER intento. 'aislado' es la columna clave: true significa que la
+     cuenta de AX no cuadro y hubo que reintentar linea por linea. Un evento
+     con aislado=false y fallidas=0 es un evento que no necesito a nadie.
+
+     Y 'errores' guarda los motivos concatenados: agrupando por ahi se ve QUE
+     clase de problema impide automatizar (una cedula que no existe se
+     resuelve distinto que la regla de antiguedad de AX).
+
+     Best-effort a proposito: la bitacora JAMAS puede tumbar una publicacion
+     que ya ocurrio. Si falla el insert, se pierde la fila y no el trabajo. */
+  try {
+    const motivos = lineas
+      .filter(l => l.status === 'error')
+      .map(l => `${l.worker_id_number}: ${l.error || 'sin detalle'}`)
+      .join(' | ');
+    const c = (axResumen && axResumen.contadores) || null;
+    await sb(env, 'ax_publish_log', {
+      method: 'POST', headers: { Prefer: 'return=minimal' },
+      body: JSON.stringify({
+        report_id: id,
+        company_code: rep.company_code,
+        published_by: user.id,
+        source: 'portal',
+        total: lines.length,
+        publicadas, fallidas, omitidas,
+        ok: fallidas === 0,
+        closed,
+        aislado: !!(axResumen && axResumen.aislado),
+        llamadas: (axResumen && axResumen.llamadas) || 0,
+        ax_insertados: c ? c.insertados : null,
+        ax_actualizados: c ? c.actualizados : null,
+        ax_omitidos: c ? c.omitidos : null,
+        ax_mensaje: (axResumen && axResumen.mensaje) ? String(axResumen.mensaje).slice(0, 1000) : null,
+        errores: motivos ? motivos.slice(0, 2000) : null,
+        osticket_synced: osSynced,
+        osticket_failed: osFailed,
+        duracion_ms: Date.now() - t0,
+      }),
+    });
+  } catch (_) { /* la bitacora no rompe nada */ }
 
   return json({
     ok: fallidas === 0,
