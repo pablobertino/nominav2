@@ -326,7 +326,9 @@ export async function renderHistory(user) {
     }
     host.innerHTML = ST.rows.map(r => mobile ? mobileCard(r) : desktopRow(r)).join('');
     wireRows(host);
-    syncHeaderCheckbox();
+    // Recalcula tambien el contador del boton Publicar: al cambiar de pagina
+    // o de filtro cambian las filas visibles y con ellas cuantos son aptos.
+    updateSelBar();
   }
 
   // ---- Fila de ESCRITORIO (<tr>) ----
@@ -586,6 +588,19 @@ export async function renderHistory(user) {
     const n = ST.selected.size;
     bar.style.display = n ? 'flex' : 'none';
     if ($('#hSelCount')) $('#hSelCount').textContent = n;
+    /* v6.177 — El boton dice cuantos de los marcados se pueden publicar de
+       verdad. Marcando 20 reportes de todo tipo, "Publicar (8)" evita la
+       sorpresa de que el modal proponga muchos menos.
+       Si no hay ninguno se deja igual habilitado a proposito: el modal
+       explica el motivo de cada uno, y un boton muerto no explica nada. */
+    const pb = $('#hSelPub');
+    if (pb) {
+      const pubN = ST.rows.filter(r => ST.selected.has(r.id) && !motivoNoPublicable(r)).length;
+      pb.innerHTML = `${AX_ARROW} Publicar${pubN ? ` (${pubN})` : ''}`;
+      pb.title = pubN
+        ? `Publicar en AX ${pubN} reporte(s) de Marcaje Manual, uno detrás de otro`
+        : 'Ninguno de los reportes marcados se puede publicar todavía';
+    }
     syncHeaderCheckbox();
   }
 

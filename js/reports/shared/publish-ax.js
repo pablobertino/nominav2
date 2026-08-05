@@ -389,6 +389,11 @@ export function openPublishAxQueueModal({ user, reports, faltantes = 0, onDone }
                 se muestra el detalle de cada uno.</div>
             </div>
             ${salteadosHtml}
+            <!-- Barra DETERMINADA: aca si se sabe cuantos son, asi que el
+                 porcentaje es real. (La del modal de un solo reporte es
+                 indeterminada porque el backend manda todo en un lote y no
+                 hay avance parcial que informar.) -->
+            <div class="paxq-barwrap" id="paxqBar" style="display:none"><span id="paxqFill"></span></div>
             <div class="pax-tablewrap"><table class="dtl-table pax-table"><thead><tr>
               <th>Reporte</th><th>Tienda</th><th style="text-align:center">Trab.</th><th>Estado</th><th>Detalle</th>
             </tr></thead><tbody>
@@ -406,7 +411,7 @@ export function openPublishAxQueueModal({ user, reports, faltantes = 0, onDone }
     };
 
     // ---------- 2) LA COLA ----------
-    const setFila = (id, estado, msg) => {
+    const setFila = (id, estado, msg, seguir) => {
       const tr = ov.querySelector(`#paxq-${id}`);
       if (!tr) return;
       const st = tr.querySelector('.paxq-st');
@@ -415,6 +420,24 @@ export function openPublishAxQueueModal({ user, reports, faltantes = 0, onDone }
         const m = tr.querySelector('.paxq-msg');
         if (m) m.textContent = msg;
       }
+      /* Con muchos reportes la tabla scrollea, y el que se esta publicando
+         puede quedar fuera de la vista. Se lo centra en su contenedor a mano
+         (no con scrollIntoView, que ademas arrastraria el modal entero). */
+      if (seguir) {
+        const wrap = ov.querySelector('.pax-tablewrap');
+        if (wrap) {
+          const w = wrap.getBoundingClientRect(), t = tr.getBoundingClientRect();
+          wrap.scrollTop += (t.top - w.top) - (w.height / 2 - t.height / 2);
+        }
+      }
+    };
+
+    // Barra de avance: aca SI es determinada, porque se sabe cuantos son.
+    const setAvance = (hechos, total) => {
+      const fill = ov.querySelector('#paxqFill');
+      if (fill) fill.style.width = `${Math.round((hechos / total) * 100)}%`;
+      const pr = ov.querySelector('#paxqProg');
+      if (pr) pr.textContent = `${hechos} de ${total}`;
     };
 
     // Resumen de una publicacion, en una linea, para la columna Detalle.
@@ -444,10 +467,14 @@ export function openPublishAxQueueModal({ user, reports, faltantes = 0, onDone }
         });
       }
 
+      const barra = ov.querySelector('#paxqBar');
+      if (barra) barra.style.display = '';
+      setAvance(0, aptos.length);
+
       let hechos = 0;
       for (const r of aptos) {
         if (cancelar) { setFila(r.id, QST.skip, 'Cancelado antes de empezar.'); continue; }
-        setFila(r.id, QST.going, '');
+        setFila(r.id, QST.going, '', true);
         const d = await postPublishAx(user, r.id, null);
         hubo = true;
         resultados.push({ r, d });
@@ -456,8 +483,7 @@ export function openPublishAxQueueModal({ user, reports, faltantes = 0, onDone }
             : (d.lineas && d.lineas.length) ? QST.parc : QST.err;
         setFila(r.id, estado, resumenLinea(d));
         hechos++;
-        const pr = ov.querySelector('#paxqProg');
-        if (pr) pr.textContent = `${hechos} de ${aptos.length}`;
+        setAvance(hechos, aptos.length);
       }
 
       corriendo = false;

@@ -2282,3 +2282,14 @@ input.needfill:focus, select.needfill:focus {
   font-size:12.5px; color:var(--muted); margin-top:10px; line-height:1.5; }
 .pax-skip ul { margin:5px 0 0; padding-left:18px; }
 .pax-skip li { margin:2px 0; }
+
+/* Barra de avance de la cola. Determinada: se sabe cuantos reportes son.
+   La otra (.pax-bar, del modal de un solo reporte) es indeterminada porque
+   el backend manda todo en un lote y no hay avance parcial que informar. */
+.paxq-barwrap { height:6px; border-radius:4px; background:var(--border-soft);
+  overflow:hidden; margin:12px 0 4px; }
+.paxq-barwrap span { display:block; height:100%; width:0; border-radius:4px;
+  background:var(--warn); transition:width .25s ease; }
+/* Fila en curso: un toque ambar para encontrarla de un vistazo en una tabla
+   larga (el auto-scroll la centra, pero el color la confirma). */
+.pax-table tr:has(.pill.att-attended) td { background:var(--warn-bg); }
