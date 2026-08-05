@@ -27,12 +27,18 @@
                 sincroniza el estado en osTicket.
                 { action:'set_attention', user, report_ids:[...], status,
                   comment?, sync_osticket? }
+     - publish_ax : (v6.167) publica en AX 2012 los marcajes de un reporte
+                de Marcaje Manual, linea por linea. Si entran TODAS, el
+                reporte queda Cerrado, su ticket tambien, y ya no vuelve a
+                ningun estado anterior. Solo topic 'marcaje'.
+                { action:'publish_ax', user, report_id, comment? }
 
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
 import { buildReportText, buildAxWorkbookBase64 } from './_ax-template.js';
 import { resolveActor, can } from './_auth.js';
+import { axInsertMarcaje, dayTypeToAx, axKey } from './_axmarcajes.js';
 
 // Mapa accion -> code. list/detail/ticket_* son lectura del Historial
 // (view.historial). set_attention/sync_osticket/resend_* son gestion del
@@ -46,6 +52,9 @@ const RH_CODE_BY_ACTION = {
   sync_osticket: 'report.attention',
   resend_info: 'report.attention',
   resend_osticket: 'report.attention',
+  // Publicar en AX es una accion aparte: escribe en el ERP y cierra el
+  // reporte para siempre. No se hereda de report.attention.
+  publish_ax: 'report.publish.marcaje',
 };
 
 function json(b, s = 200) {
@@ -273,6 +282,7 @@ export async function onRequestPost({ request, env }) {
     if (body.action === 'sync_osticket') return await syncOsticket(env, body, scope);
     if (body.action === 'resend_info') return await resendInfo(env, body, scope);
     if (body.action === 'resend_osticket') return await resendOsticket(env, body, scope);
+    if (body.action === 'publish_ax') return await publishAx(env, body, scope);
     return json({ ok: false, error: 'Accion no reconocida' }, 400);
   } catch (e) {
     return json({ ok: false, error: String(e.message || e) }, 500);
@@ -1037,14 +1047,31 @@ async function setAttention(env, body, scope) {
   // 3) Filtrar a los reportes que existen Y estan en el alcance del usuario
   //    (defensa extra ademas de scopeFilter). Solo se actualizan esos.
   const idList = ids.join(',');
-  let q = `reports_log?id=in.(${idList})&select=id,company_code,osticket_id`;
+  let q = `reports_log?id=in.(${idList})&select=id,company_code,osticket_id,ax_published_at`;
   q += scopeFilter(scope);
   q += scopeDeptAuthorFilter(scope);
-  const allowed = await sbJson(env, q) || [];
-  const allowedIds = allowed.map(r => r.id);
-  if (!allowedIds.length) {
+  const allowedAll = await sbJson(env, q) || [];
+  if (!allowedAll.length) {
     return json({ ok: false, error: 'Ninguno de los reportes esta en tu alcance.' }, 403);
   }
+
+  // 3b) CANDADO DE PUBLICACION (v6.167). Un reporte con ax_published_at ya
+  //     esta en AX: su estado no vuelve atras. El trigger de la base
+  //     (reports_log_ax_lock) tambien lo impide, pero ahi el usuario veria
+  //     un error crudo de Postgres. Aca se separan antes y se explica.
+  const locked = allowedAll.filter(r => r.ax_published_at);
+  const allowed = allowedAll.filter(r => !r.ax_published_at);
+  if (!allowed.length) {
+    return json({
+      ok: false,
+      locked: locked.length,
+      locked_ids: locked.map(r => r.id),
+      error: locked.length === 1
+        ? `El reporte ${reportCode(locked[0].id)} ya fue publicado en AX: su estado no se puede cambiar.`
+        : `Los ${locked.length} reportes ya fueron publicados en AX: su estado no se puede cambiar.`,
+    }, 409);
+  }
+  const allowedIds = allowed.map(r => r.id);
 
   // 4) Estado de sincronizacion con osTicket. Si el reporte tiene tickets
   //    (osticket_id no nulo) se empuja el estado a osTicket; si no, queda
@@ -1092,6 +1119,10 @@ async function setAttention(env, body, scope) {
     ok: true,
     updated: allowedIds.length,
     skipped: ids.length - allowedIds.length,
+    // Cuantos quedaron fuera por estar publicados en AX (no son un error:
+    // el resto si se actualizo). El front los puede avisar aparte.
+    locked: locked.length,
+    locked_ids: locked.map(r => r.id),
     status,
     // auditoria del cambio (para que el front la muestre sin recargar)
     attention_at: nowIso,
@@ -1738,4 +1769,234 @@ async function resendOsticket(env, body, scope) {
     tickets_fail: result.tickets_fail,
     errors: result.ticket_errors,
   });
+}
+
+/* =====================================================================
+   publish_ax  (v6.167) — PUBLICAR EN AX un reporte de Marcaje Manual.
+
+   Que hace, en criollo: agarra las lineas del reporte (mark_report_lines),
+   le manda a AX 2012 UNA llamada por linea, y deja constancia de cada una
+   en ax_marcajes_log. Si entraron TODAS, cierra el reporte y su ticket de
+   osTicket, y le pone el sello ax_published_at: de ahi no vuelve atras.
+   Si alguna fallo, el reporte SIGUE ABIERTO y la respuesta dice cuales
+   entraron y cuales no, con el payload exacto que se le mando a cada una.
+
+   LAS CUATRO REGLAS QUE HAY QUE TENER EN LA CABEZA:
+
+   1) IDEMPOTENTE. Si el reporte ya tiene ax_published_at, responde ok con
+      already:true. Un segundo clic (o un doble clic nervioso) no es un
+      error: es alguien preguntando "¿ya se publico?".
+
+   2) NO REENVIA LO QUE YA ENTRO. Antes de mandar, se leen las filas 'ok'
+      de ax_marcajes_log DE ESTE MISMO reporte y esas lineas se saltan. Si
+      la fila del log pertenece a OTRO reporte, NO se salta: eso es una
+      CORRECCION (mismo trabajador, mismo dia, horario distinto) y hay que
+      mandarla, porque AX actualiza el registro si ya existe.
+
+   3) TODO O NADA PARA CERRAR. El cierre es un solo PATCH que pone el
+      estado, la auditoria y el sello juntos. El trigger de la base
+      (reports_log_ax_lock) lo deja pasar porque compara contra
+      OLD.ax_published_at, que en ese momento todavia es NULL.
+
+   4) EL LOG MANDA. Si AX acepto la linea pero no pudimos escribirla en
+      ax_marcajes_log, la linea cuenta como FALLIDA. Preferimos dejar el
+      reporte abierto y que se reintente (AX actualiza, no duplica) antes
+      que cerrarlo sin rastro de lo que se publico.
+
+   Body: { action:'publish_ax', user, report_id, comment? }
+   ===================================================================== */
+async function publishAx(env, body, scope) {
+  // 1) Autorizacion. Igual que set_attention: solo usuarios administrativos
+  //    (la tienda nunca), y entre ellos decide la MATRIZ, no el rol.
+  const user = body.user || {};
+  if (user.kind !== 'admin' || !user.id) {
+    return json({ ok: false, error: 'Solo un administrador puede publicar marcajes en AX.' }, 403);
+  }
+  const a = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role,name`);
+  if (!a || !a.length) return json({ ok: false, error: 'Administrador no valido.' }, 403);
+  const actor = await resolveActor(env, user);
+  if (!actor || !can(actor, 'report.publish.marcaje')) {
+    return json({ ok: false, error: 'No tienes permiso para publicar marcajes en AX.' }, 403);
+  }
+  // Sin la X-API-Key no tiene sentido empezar: cortamos antes de tocar nada.
+  if (!axKey(env)) {
+    return json({ ok: false, error: 'Falta el secret canaima_apikey (o ax_api_key) en las variables del proyecto.' }, 500);
+  }
+
+  // 2) El reporte, dentro del alcance del usuario (misma doble reja que el
+  //    resto del Historial: empresa + departamento/autoria).
+  const id = parseInt(body.report_id, 10);
+  if (!id) return json({ ok: false, error: 'Falta report_id' }, 400);
+  let q = `reports_log?id=eq.${id}&select=id,company_code,topic,attention,osticket_id,ax_published_at,ax_published_by`;
+  q += scopeFilter(scope);
+  q += scopeDeptAuthorFilter(scope);
+  const head = await sbJson(env, q);
+  if (!head || !head.length) return json({ ok: false, error: 'Reporte no encontrado o sin acceso.' }, 404);
+  const rep = head[0];
+
+  if (rep.topic !== 'marcaje') {
+    return json({ ok: false, error: 'Solo los reportes de Marcaje Manual se publican en AX.' }, 400);
+  }
+
+  // 3) Ya publicado: no es error, es un "ya esta". Sin efectos.
+  if (rep.ax_published_at) {
+    return json({
+      ok: true, already: true, report_id: id, company_code: rep.company_code,
+      closed: rep.attention === 'closed', attention: rep.attention,
+      published_at: rep.ax_published_at,
+      error: null,
+    });
+  }
+
+  // 4) Las lineas del reporte.
+  const lines = await sbJson(env,
+    `mark_report_lines?report_id=eq.${id}`
+    + `&select=id,worker_id_number,worker_name,mark_date,day_type,time_in,time_out`
+    + `&order=id.asc`) || [];
+  if (!lines.length) {
+    return json({ ok: false, error: 'El reporte no tiene lineas de marcaje.' }, 400);
+  }
+
+  // 5) Lo que YA entro en un intento anterior DE ESTE reporte. Se compara
+  //    por line_id: una fila del log de otro reporte es una correccion y
+  //    debe volver a mandarse (regla 2 del encabezado).
+  const prev = await sbJson(env,
+    `ax_marcajes_log?report_id=eq.${id}&status=eq.ok&select=line_id`) || [];
+  const yaEntraron = new Set(prev.map(x => x.line_id).filter(v => v != null));
+
+  // 6) Publicacion, linea por linea.
+  const nowIso = new Date().toISOString();
+  const lineas = [];
+  let publicadas = 0, fallidas = 0, omitidas = 0;
+
+  for (const l of lines) {
+    const mark = String(l.mark_date || '').slice(0, 10);
+    const base = {
+      line_id: l.id,
+      worker_id_number: l.worker_id_number,
+      worker_name: l.worker_name || null,
+      mark_date: mark,
+      day_type: l.day_type || 'L',
+      time_in: (l.time_in || '').slice(0, 5),
+      time_out: (l.time_out || '').slice(0, 5),
+    };
+
+    if (yaEntraron.has(l.id)) {
+      omitidas++;
+      lineas.push({ ...base, status: 'omitida', mensaje: 'Ya se habia publicado en un intento anterior.', error: null, payload: null });
+      continue;
+    }
+
+    const r = await axInsertMarcaje(env, {
+      alias: rep.company_code,                 // alias, NO data_area
+      personnelNumber: l.worker_id_number,
+      transDate: mark,
+      dayType: dayTypeToAx(l.day_type),        // 'L'|'D' -> Workday|RestDay
+      timeEntry: l.time_in,                    // 'HH:MM:SS' -> segundos (lo hace el modulo)
+      timeExit: l.time_out,
+    });
+
+    // Rastro en ax_marcajes_log. UPSERT por (tienda, cedula, fecha): si ya
+    // habia una fila de otro reporte, se pisa con este intento.
+    // created_at NO va en el payload a proposito: asi conserva la fecha del
+    // PRIMER intento mientras sent_at guarda la del ultimo.
+    let logOk = true, logErr = null;
+    try {
+      await sb(env, 'ax_marcajes_log?on_conflict=company_code,worker_id_number,mark_date', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify({
+          report_id: id,
+          line_id: l.id,
+          company_code: rep.company_code,
+          worker_id_number: l.worker_id_number,
+          mark_date: mark,
+          day_type: l.day_type || 'L',
+          time_in: l.time_in || null,
+          time_out: l.time_out || null,
+          status: r.ok ? 'ok' : 'error',
+          ax_message: r.mensaje ? String(r.mensaje).slice(0, 500) : null,
+          ax_error: r.ok ? null : String(r.error || '').slice(0, 500),
+          sent_at: nowIso,
+          sent_by: user.id,
+        }),
+      });
+    } catch (e) {
+      logOk = false;
+      logErr = String((e && e.message) || e).slice(0, 300);
+    }
+
+    if (r.ok && logOk) {
+      publicadas++;
+      lineas.push({ ...base, status: 'ok', mensaje: r.mensaje, error: null, payload: r.payload });
+    } else {
+      fallidas++;
+      lineas.push({
+        ...base,
+        status: 'error',
+        mensaje: r.ok ? 'AX acepto el marcaje pero no se pudo dejar constancia en la bitacora.' : null,
+        error: r.ok ? `Bitacora: ${logErr}` : r.error,
+        detalles_ax: r.detalles_ax || null,
+        xml: r.xml || null,
+        payload: r.payload,
+      });
+    }
+  }
+
+  // 7) TODO O NADA. Solo si no fallo ninguna se cierra el reporte, con
+  //    estado + auditoria + sello en un solo PATCH (regla 3).
+  const comment = body.comment != null && String(body.comment).trim()
+    ? String(body.comment).trim().slice(0, 300)
+    : `Publicado en AX 2012 desde el Portal (${publicadas} marcaje${publicadas === 1 ? '' : 's'}` +
+      `${omitidas ? `, ${omitidas} ya publicado${omitidas === 1 ? '' : 's'}` : ''}).`;
+
+  let closed = false;
+  let attention = rep.attention;
+  let publishedAt = null;
+  let osSynced = 0, osFailed = 0;
+
+  if (!fallidas) {
+    await sb(env, `reports_log?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({
+        attention: 'closed',
+        attention_comment: comment,
+        attention_by: user.id,
+        attention_at: nowIso,
+        ax_published_at: nowIso,
+        ax_published_by: user.id,
+        osticket_sync: rep.osticket_id ? 'pending' : 'na',
+        osticket_sync_error: null,
+      }),
+    });
+    closed = true;
+    attention = 'closed';
+    publishedAt = nowIso;
+
+    // 8) Y ahora el ticket. Va DESPUES del sello: el trigger no se queja
+    //    porque estos PATCH no tocan attention.
+    if (rep.osticket_id) {
+      let osBase = '';
+      try { osBase = await osticketBase(env); } catch { osBase = ''; }
+      const res = await pushStatusToOsticket(env, osBase, [rep], 'closed', comment, nowIso);
+      osSynced = res.synced; osFailed = res.failed;
+    }
+  }
+
+  return json({
+    ok: fallidas === 0,
+    report_id: id,
+    company_code: rep.company_code,
+    total: lines.length,
+    publicadas,
+    fallidas,
+    omitidas,
+    closed,
+    attention,
+    published_at: publishedAt,
+    attention_by_name: closed ? (a[0].name || null) : null,
+    attention_comment: closed ? comment : null,
+    osticket: { synced: osSynced, failed: osFailed },
+    lineas,
+  }, fallidas === 0 ? 200 : 207);
 }
