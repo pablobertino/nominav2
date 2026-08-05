@@ -1879,6 +1879,23 @@ async function publishAx(env, body, scope) {
     });
   }
 
+  /* 3b) CERRADO A MANO NO SE PUBLICA (v6.175). "Cerrado" significa, por
+     definicion del portal, "ya cargado en AX". Si llego a ese estado SIN el
+     sello ax_published_at, es que alguien lo cargo a mano con la plantilla.
+     Publicar encima puede PISAR una correccion: si al cargarlo se ajusto una
+     hora, AX tiene el valor bueno y el reporte el viejo, y AX actualiza el
+     registro existente sin avisar. Se exige devolver el estado primero, cosa
+     que todavia se puede porque no hay sello que lo trabe. */
+  if (rep.attention === 'closed') {
+    return json({
+      ok: false,
+      needs_reopen: true,
+      error: 'Este reporte figura como Cerrado, que en el portal significa que ya se cargo en AX a mano. '
+        + 'Publicar ahora podria pisar una correccion hecha al cargarlo. Si igual hay que publicarlo, '
+        + 'devolvele antes el estado a Abierto o Atendido.',
+    }, 409);
+  }
+
   // 4) Las lineas del reporte.
   const lines = await sbJson(env,
     `mark_report_lines?report_id=eq.${id}`

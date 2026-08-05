@@ -390,6 +390,15 @@ export async function renderHistory(user) {
      en AX sigue siendo manual con la plantilla de Excel. */
   function publishBtn(r) {
     if (r.type !== 'marcaje' || !canPublishAx || r.ax_published_at) return '';
+    /* v6.175 — Un reporte CERRADO no se publica. "Cerrado" significa, por
+       definicion del propio portal, "ya cargado en AX": alguien lo dio por
+       hecho a mano. Publicar encima no solo contradice ese estado, puede
+       PISAR una correccion: si al cargarlo el analista ajusto una hora, AX
+       tiene 08:30 y el reporte dice 08:00, y publicar lo actualizaria de
+       vuelta a 08:00 sin que nadie se entere.
+       No es un callejon sin salida: como todavia no tiene el sello, se le
+       puede devolver el estado a Abierto o Atendido y el boton reaparece. */
+    if (r.attention === 'closed') return '';
     // Misma flecha, mismos colores y MISMA PALABRA que el "Publicar" de
     // Sincronizacion. En el portal "Publicar" ya significa una sola cosa
     // -mandarlo a AX-, asi que aclararlo en la etiqueta sobra. El destino se

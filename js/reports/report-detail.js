@@ -204,8 +204,13 @@ export async function showReportDetail({ reportId, user, onBack }) {
     attControls = `<div class="sb-row">${attPill(r.attention)}</div>${auditHtml}${commentHtml}`;
   }
 
-  // Boton "Publicar en AX": solo Marcaje Manual, con permiso y sin publicar.
-  const showPubBtn = (r.type === 'marcaje') && canPublishAx && !publicado;
+  /* Boton "Publicar": solo Marcaje Manual, con permiso, sin sello, y NO
+     cerrado. v6.175 — "Cerrado" ya significa "cargado en AX" a mano;
+     publicar encima podria pisar una correccion hecha al cargarlo (AX
+     actualiza el registro existente). Para publicarlo hay que devolverle
+     antes el estado a Abierto o Atendido, cosa que aun se puede porque no
+     tiene el sello. */
+  const showPubBtn = (r.type === 'marcaje') && canPublishAx && !publicado && r.attention !== 'closed';
 
   const statusBand = `
     <div class="statusband">
