@@ -18,6 +18,10 @@
    ===================================================================== */
 
 import { shadowCan } from './_auth.js';
+/* v6.184 — Los validadores viven en un solo sitio. Antes estaban sueltos
+   dentro de sync-roster.js (tiendas) y este archivo (empresas) ni los
+   tenia: por eso las empresas quedaban sin telefono ni correo. */
+import { cleanPhone, cleanEmail } from './_contacto.js';
 
 const AX_EMPLEADOS_API = 'https://api2.grupocanaima.com/empleados/datos/v1';
 
@@ -136,6 +140,14 @@ function mapApiEmployee(e) {
     marital_status: maritalCode(e.estadoCivil),
     account_number,
     bank_code: account_number ? account_number.slice(0, 4) : null,
+    /* v6.184 — LA API SI LOS TRAE. Este mapeo no los extraia y el comentario
+       de mas abajo afirmaba lo contrario, asi que el dato llegaba y se
+       tiraba. Comprobado con la respuesta real de /empleados/datos/v1 para
+       la ficha 26778085: "telefono":"04248912698", "correo":"...@gmail.co".
+       Medido el 06/08/2026: 73% de las tiendas tenian telefono contra 18%
+       de las empresas, y la diferencia era exactamente esto. */
+    phone: cleanPhone(e.telefono),
+    email: cleanEmail(e.correo),
     todo_ticket: todoTicketCode(e.todoTicket),
     start_date: dateOrNull(e.inicioContrato),
     end_date: endDateOrNull(e.finContrato),
@@ -191,6 +203,63 @@ async function upsertWorkersMaster(env, cc, rows) {
   });
   if (!res.ok) throw new Error(`workers_master ${res.status}: ${await res.text()}`);
   return payload.length;
+}
+
+/* =====================================================================
+   rellenarContactoMaster — v6.184
+
+   POR QUE NO ALCANZA CON AGREGAR DOS COLUMNAS A upsertWorkersMaster:
+   esa funcion usa resolution=merge-duplicates, o sea que PISA. Si se le
+   agregara phone/email, una persona cuyo telefono la API no trae recibiria
+   un null y se le BORRARIA el que alguien cargo a mano en la ficha. Por eso
+   el comentario original las excluia — la exclusion estaba bien, lo que
+   estaba mal era no tener ninguna otra via.
+
+   Esta es esa via, con la misma regla que ya usan las tiendas:
+
+     el campo esta VACIO en el maestro  ->  se rellena con lo de AX
+     el campo TIENE algo                ->  no se toca, es dato de alguien
+
+   Se lee primero y se reescribe el valor que ya estaba cuando no hay que
+   rellenar, asi el merge no puede borrar nada. Cuesta una lectura y una
+   escritura por corrida, no una por persona.
+
+   OJO — LO QUE ESTO NO HACE: si AX CAMBIA un dato que el portal ya tiene,
+   no lo actualiza. Queda para la bandeja de diferencias. Es deliberado: el
+   portal no pisa lo que puede haber escrito una persona.
+   ===================================================================== */
+async function rellenarContactoMaster(env, rows) {
+  const conDato = (rows || []).filter(r => r.phone || r.email);
+  if (!conDato.length) return { phone: 0, email: 0 };
+
+  const inList = conDato.map(r => `"${r.id_number}"`).join(',');
+  const master = await sb(env,
+    `workers_master?id_number=in.(${inList})&select=id_number,phone,email`) || [];
+  const byCed = new Map(master.map(m => [m.id_number, m]));
+
+  const payload = [];
+  let fp = 0, fe = 0;
+  for (const r of conDato) {
+    const m = byCed.get(r.id_number);
+    /* Si todavia no esta en el maestro se saltea: este upsert lleva solo tres
+       columnas y crearia una fila sin nombre. La creacion es cosa de
+       upsertWorkersMaster, que corre antes. */
+    if (!m) continue;
+    const phone = m.phone || r.phone || null;
+    const email = m.email || r.email || null;
+    if (phone === (m.phone || null) && email === (m.email || null)) continue;
+    if (!m.phone && r.phone) fp++;
+    if (!m.email && r.email) fe++;
+    payload.push({ id_number: r.id_number, phone, email });
+  }
+  if (!payload.length) return { phone: 0, email: 0 };
+
+  await sb(env, 'workers_master?on_conflict=id_number', {
+    method: 'POST',
+    headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+    body: JSON.stringify(payload),
+  });
+  return { phone: fp, email: fe };
 }
 
 // Devuelve el id del departamento "Retail" de una TIENDA (todo el personal de
@@ -423,6 +492,11 @@ export async function onRequestPost({ request, env }) {
         data_id: r.data_id,
         is_active: !r.end_date,
         has_biometric: true,
+        // v6.184: el telefono y el correo de la API. Antes no se escribian y
+        // la fila del roster nacia vacia; el maestro se salvaba solo porque
+        // sync-roster.js hace su propia pasada de relleno despues.
+        phone: r.phone || null,
+        email: r.email || null,
         // La API NO trae departamento -> conservar el previo; si no tenia,
         // entra a Retail (regla del negocio para tiendas):
         department_id: deptByCed[r.id_number] || retailId || null,
@@ -475,9 +549,12 @@ export async function onRequestPost({ request, env }) {
           data_id: r.data_id,
           is_active: !r.end_date,
           has_biometric: true,
-          // La API no los trae -> conservar previos:
-          phone: prev.phone || null,
-          email: prev.email || null,
+          /* v6.184 — Se RELLENA EL HUECO: si el roster ya tiene el dato se
+             conserva (puede haberlo puesto una persona); si esta vacio, se
+             usa el de la API. Nunca al reves. La direccion sigue sin venir
+             de la API, esa si se conserva y punto. */
+          phone: prev.phone || r.phone || null,
+          email: prev.email || r.email || null,
           address: prev.address || null,
           department_id: prev.department_id || null,
           source: 'ax_api',
@@ -490,6 +567,12 @@ export async function onRequestPost({ request, env }) {
     let masterSynced = 0;
     try { masterSynced = await upsertWorkersMaster(env, cc, valid); }
     catch (e) { warnings.push('Directorio (workers_master) no sincronizado: ' + String(e.message || e)); }
+
+    /* v6.184 — Relleno de telefono y correo. Va DESPUES del upsert porque
+       ese es el que crea las fichas nuevas; esto solo completa huecos. */
+    let contactoLleno = { phone: 0, email: 0 };
+    try { contactoLleno = await rellenarContactoMaster(env, valid); }
+    catch (e) { warnings.push('Telefono/correo no rellenados: ' + String(e.message || e)); }
 
     // FIX v4.15: el pull limpia ax_pending en el maestro (el ultimo reporte
     // manda), asi que los change_set pendientes de estas fichas quedan
@@ -538,6 +621,13 @@ export async function onRequestPost({ request, env }) {
       terminated: egresados.length,
       with_account: valid.filter(r => r.account_number).length,
       with_role: valid.filter(r => r.role).length,
+      // v6.184: cuantos llegaron con contacto y cuantos huecos se llenaron.
+      // Los dos numeros juntos: si vienen 200 con telefono y se llenan 3, es
+      // que el resto ya lo tenia — no que la API no lo trajo.
+      with_phone: valid.filter(r => r.phone).length,
+      with_email: valid.filter(r => r.email).length,
+      filled_phone: contactoLleno.phone,
+      filled_email: contactoLleno.email,
       master_synced: masterSynced,
       target: table,
       source: 'ax_api',

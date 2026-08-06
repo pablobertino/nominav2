@@ -58,6 +58,7 @@
    ===================================================================== */
 
 import { shadowCan } from './_auth.js';
+import { cleanPhone, cleanEmail } from './_contacto.js';
 
 const HCM_API = 'https://api2.grupocanaima.com/empleados/datos/v1';
 const TIME_BUDGET_MS = 90000;   // presupuesto total de corrida
@@ -199,33 +200,11 @@ const cleanAccount = (v) => {
    funcionan en la base): 0412 0414 0416 0422 0424 0426.
    ⚠ OJO: 0422 SI EXISTE — hay 81 numeros +58422 andando. Casi lo descarto por
    asumir que era un error de carga. */
-const VE_PREFIXES = new Set(['0412', '0414', '0416', '0422', '0424', '0426']);
-const cleanPhone = (v) => {
-  const s = clean(v);
-  if (!s) return null;
-  let d = s.replace(/\D/g, '');
-  if (d.startsWith('58') && d.length === 12) d = '0' + d.slice(2);   // +584121234567
-  if (d.length === 10) d = '0' + d;                                   // 4121234567 (sin el 0)
-  if (d.length !== 11) return null;                                   // no es un movil VE
-  if (!VE_PREFIXES.has(d.slice(0, 4))) return null;                   // operadora inexistente
-  return d;
-};
-
-/* CORREO: tiene que parecer un correo. Nada mas que eso.
-   El motivo real: AX esta devolviendo correos SIN la arroba ni los puntos
-   ("erickmontanezgrupocanaimanet" en vez de "erick.montanez@grupocanaima.net").
-   No se sabe todavia si el dato esta asi en AX o si algo lo rompe en el camino
-   — pero en cualquier caso NO se guarda: quedaria como si fuera un correo
-   valido y nadie lo notaria hasta que un envio falle.
-   Se reporta y se arregla en AX. */
-const cleanEmail = (v) => {
-  const s = clean(v);
-  if (!s) return null;
-  const e = s.toLowerCase();
-  // Minimo indispensable: algo@algo.algo, sin espacios.
-  if (!/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(e)) return null;
-  return e;
-};
+/* v6.184 — cleanPhone y cleanEmail se mudaron a _contacto.js y ahora los
+   importan TANTO este archivo (tiendas) COMO ax-roster.js (empresas). Vivian
+   solo aca, y por eso el camino de empresas nunca valido ni guardo telefono
+   ni correo: no era un olvido puntual, era el mismo conocimiento escrito en
+   un solo lado y usado en dos. */
 
 /* ===== TIPO DE CEDULA + LOS DEMAS CAMPOS QUE AX SI MANDA (v5.53 / v5.57) =====
 
