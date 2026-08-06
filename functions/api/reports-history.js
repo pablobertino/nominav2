@@ -1832,6 +1832,13 @@ async function resendOsticket(env, body, scope) {
    ===================================================================== */
 async function publishAx(env, body, scope) {
   const t0 = Date.now();
+  /* Un solo instante para todo el evento: el sello del reporte, las filas de
+     la bitacora y el empujon a osTicket. Si cada pieza tomara su propia hora,
+     un mismo hecho quedaria registrado con tres marcas distintas.
+     v6.182: ademas estaba declarado dentro del bloque que la v6.181 extrajo a
+     publicarLineasMarcaje, asi que el tronco se quedo sin el y el cierre
+     reventaba con "nowIso is not defined" DESPUES de haber escrito en AX. */
+  const nowIso = new Date().toISOString();
   // 1) Autorizacion. Igual que set_attention: solo usuarios administrativos
   //    (la tienda nunca), y entre ellos decide la MATRIZ, no el rol.
   const user = body.user || {};
@@ -1921,8 +1928,8 @@ async function publishAx(env, body, scope) {
      Todo lo que sigue -cerrar, sellar, avisar a osTicket, la bitacora- es
      comun a los dos y no se duplica. */
   const proc = rep.topic === 'ausencia'
-    ? await publicarLineasAusencia(env, id, rep, user, body, actor)
-    : await publicarLineasMarcaje(env, id, rep, user);
+    ? await publicarLineasAusencia(env, id, rep, user, body, actor, nowIso)
+    : await publicarLineasMarcaje(env, id, rep, user, nowIso);
   if (proc.rechazo) return json(proc.rechazo.cuerpo, proc.rechazo.status);
 
   const { lineas, publicadas, fallidas, omitidas, total, axResumen } = proc;
@@ -2042,8 +2049,7 @@ async function publishAx(env, body, scope) {
    Devuelve { lineas, publicadas, fallidas, omitidas, total, axResumen }
    o { rechazo: { cuerpo, status } } si hay que cortar antes de enviar.
    ===================================================================== */
-async function publicarLineasMarcaje(env, id, rep, user) {
-  const nowIso = new Date().toISOString();
+async function publicarLineasMarcaje(env, id, rep, user, nowIso) {
     // 4) Las lineas del reporte.
     const lines = await sbJson(env,
       `mark_report_lines?report_id=eq.${id}`
@@ -2205,8 +2211,7 @@ async function publicarLineasMarcaje(env, id, rep, user) {
       se puede defender. Se permite forzarlo, pero solo de a un reporte,
       solo preguntando, y solo a quien tenga report.publish.forzar.
    ===================================================================== */
-async function publicarLineasAusencia(env, id, rep, user, body, actor) {
-  const nowIso = new Date().toISOString();
+async function publicarLineasAusencia(env, id, rep, user, body, actor, nowIso) {
 
   // Las lineas, con su documento (si el tipo lo pide).
   const lines = await sbJson(env,
