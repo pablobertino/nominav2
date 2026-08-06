@@ -590,8 +590,15 @@ async function renderAdminDash(user) {
   const mov = d.movimientos || { ingresos: [], egresos: [] };
   const ingList = movListHtml(mov.ingresos, 'Sin ingresos recientes.');
   const egrList = movListHtml(mov.egresos, 'Sin egresos recientes.');
-  // Totalizadores (no se promedia: solo se cuenta) de la ventana de dias.
-  const movWin = mov.window_days || days;
+  /* Totalizadores (no se promedia: solo se cuenta) de la ventana de dias.
+     v6.183 — Antes decia `mov.window_days || days`, y `days` NO EXISTE en
+     este archivo. En la practica nunca reventaba porque la RPC
+     dashboard_movements siempre devuelve window_days... pero justamente el
+     fallback de arriba ({ ingresos: [], egresos: [] }) esta puesto para
+     cuando la RPC falla, y en ese caso esta linea lanzaba un ReferenceError
+     y se caia el Inicio ENTERO en vez de degradar. El paracaidas estaba roto.
+     Lo encontro eslint con no-undef; node --check no lo ve. */
+  const movWin = mov.window_days || 30;
   const ingCount = fmt(mov.ingresos_count || 0);
   const egrCount = fmt(mov.egresos_count || 0);
 

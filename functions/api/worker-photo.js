@@ -484,7 +484,7 @@ async function directory(env, cc, table, deptScope, canAnt) {
     const master = await sb(env,
       `workers_master?id_number=in.(${inList})`
       + `&select=id_number,first_name,second_name,last_names,full_name,role,birth_date,gender,marital_status,`
-      + `account_number,bank_code,phone,email,address,fiscal_address,data_id,`
+      + `account_number,bank_code,phone,email,address,fiscal_address,data_id,shirt_size,`
       + `ax_pending,ax_pending_fields,ax_synced_at,`
       + `photo_key,photo_thumb_path,photo_full_path,photo_uploaded_by,photo_uploaded_at,updated_at,`
       + `profile_updated_by,profile_updated_at`);
@@ -628,6 +628,9 @@ async function directory(env, cc, table, deptScope, canAnt) {
       birth_date: pick('birth_date'),
       gender: pick('gender'),
       marital_status: pick('marital_status'),
+      // v6.183 — Talla de franela. Dato propio del portal: no existe en el
+      // roster de AX, asi que sale directo del maestro y no por pick().
+      shirt_size: (m && m.shirt_size) || null,
       start_date: w.start_date || null,
       account_number: pick('account_number'),
       bank_code: pick('bank_code'),
@@ -920,6 +923,11 @@ async function saveProfile(env, cc, body, table, deptScope) {
   //   S=Soltero/a C=Casado/a D=Divorciado/a V=Viudo/a O=Cohabitando R=Asociacion registrada
   if (p.marital_status && !['S', 'C', 'D', 'V', 'O', 'R'].includes(p.marital_status)) return json({ ok: false, error: 'Estado civil invalido.' }, 400);
   if (p.email && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(p.email)) return json({ ok: false, error: 'Correo invalido.' }, 400);
+  // v6.183: talla de franela. Se guarda solo la letra; las equivalencias
+  // EU/US son ayuda de pantalla, no dato.
+  if (p.shirt_size && !['S', 'M', 'L', 'XL'].includes(p.shirt_size)) {
+    return json({ ok: false, error: 'Talla de franela invalida (S, M, L o XL).' }, 400);
+  }
   // v4.45: la fecha de nacimiento solo se acepta en ISO (YYYY-MM-DD). El
   // input type=date del front ya garantiza ese formato (lo que el usuario VE
   // es la presentacion regional dd/mm/aaaa del navegador); esto blinda contra
@@ -977,6 +985,11 @@ async function saveProfile(env, cc, body, table, deptScope) {
     phone: phone,
     email: p.email ? String(p.email).trim().toLowerCase() : null,   // v4.38: siempre minusculas
     address: p.address || null,
+    /* v6.183 — Talla de franela. NO entra en AX_FIELDS: el dato no viaja a AX
+       (por ahora no se sincroniza) y no debe marcar el registro como pendiente
+       de enviar. Tampoco entra en PROTECTED: si alguien cargo la talla
+       equivocada tiene que poder dejarla en blanco y volver a empezar. */
+    shirt_size: p.shirt_size || null,
     last_source_company: cc,
     // v4.20: sello de QUIEN edito la ficha y CUANDO (etiqueta pre-armada).
     profile_updated_by: await actorLabel(env, body.user, cc),

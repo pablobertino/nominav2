@@ -585,6 +585,9 @@ let STATE = null;   // { user, cc, onExit, workers, q, company, banks, bankMap, 
    Reporte AX). En modo enterprise la carga de lista usa /api/enterprise-roster
    (solo admin/superadmin) y se manda el adminId. La foto y la ficha van igual
    a /api/worker-photo (workers_master por cedula), que ya es tabla-aware. */
+/* v6.183 — Etiquetas de la talla de franela. */
+const SHIRT_LBL = { S: 'S – Chica', M: 'M – Mediana', L: 'L – Grande', XL: 'XL – Extra grande' };
+
 export async function renderWorkerPhotos(user, companyCode, onExit, opts) {
   const mode = (opts && opts.mode) === 'enterprise' ? 'enterprise' : 'store';
   const adminId = user && user.kind === 'admin' ? (user.id || null) : null;
@@ -1976,6 +1979,23 @@ function fichaHtml(w, c) {
           <div class="ff-row"><span class="ff-lbl">Estado civil <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="marital_status"></span></div>
           <div class="ff-field"><label>Género</label><select id="e_gender"><option value="">— Seleccionar —</option><option value="M">M – Masculino</option><option value="F">F – Femenino</option></select></div>
           <div class="ff-field"><label>Estado civil</label><select id="e_marital"><option value="">— Seleccionar —</option><option value="S">S – Soltero/a</option><option value="C">C – Casado/a</option><option value="D">D – Divorciado/a</option><option value="V">V – Viudo/a</option><option value="O">O – Conviviente</option><option value="R">R – Unión Registrada</option></select></div>
+
+          <!-- v6.183 — Talla de franela. Dato del portal, no viene de AX ni
+               viaja a AX: por eso lleva el punto de "manual" como el resto de
+               lo que se carga a mano. Sirve al ingresar, al reponer y al
+               trasladar a otro concepto (otra marca, otra franela). -->
+          <div class="ff-row"><span class="ff-lbl">Talla de franela <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="shirt_size"></span></div>
+          <div class="ff-row"></div>
+          <div class="ff-field"><label>Talla de franela</label>
+            <select id="e_shirt"><option value="">— Sin registrar —</option>
+              <option value="S">S – Chica</option>
+              <option value="M">M – Mediana</option>
+              <option value="L">L – Grande</option>
+              <option value="XL">XL – Extra grande</option>
+            </select>
+            <div class="ff-hint">S: 36 EU · 28-30 US &nbsp;|&nbsp; M: 38-40 EU · 32-34 US<br>L: 42-44 EU · 36 US &nbsp;|&nbsp; XL: 46-48 EU · 38-40 US</div>
+          </div>
+          <div class="ff-field"></div>
         </div>
 
         <div class="ff-sec">Cargo y departamento</div>
@@ -2045,6 +2065,7 @@ function paintFichaValues(host, w) {
   setVal(host, 'age', age != null ? `${age} años` : '');
   setVal(host, 'gender', w.gender ? (GEN[w.gender] || w.gender) : '');
   setVal(host, 'marital_status', w.marital_status ? (CIV[w.marital_status] || w.marital_status) : '');
+  setVal(host, 'shirt_size', w.shirt_size ? (SHIRT_LBL[w.shirt_size] || w.shirt_size) : '');
   setVal(host, 'role', w.role);
   setVal(host, 'department', w.department_name);
   setVal(host, 'account_number', w.account_number ? `${w.account_number}${bankName(w.account_number) ? ' · ' + bankName(w.account_number) : ''}` : '');
@@ -2269,6 +2290,7 @@ function wireFicha(host, w) {
     host.querySelector('#ffDel').style.display = (w.thumb_url && STATE.can.photo) ? '' : 'none';
     q('#e_first').value = w.first_name || ''; q('#e_second').value = w.second_name || ''; q('#e_last').value = w.last_names || '';
     q('#e_birth').value = w.birth_date || ''; q('#e_gender').value = w.gender || ''; q('#e_marital').value = w.marital_status || '';
+    if (q('#e_shirt')) q('#e_shirt').value = w.shirt_size || '';
     q('#e_account').value = w.account_number || ''; q('#e_phone').value = phoneNat(w.phone);
     // Cargo: SIEMPRE solo-lectura (nadie lo edita desde la ficha; solo cambia
     // por la sincronizacion de personal desde AX). Se muestra el valor actual.
@@ -2348,6 +2370,9 @@ function wireFicha(host, w) {
       birth_date: birth || null,
       gender: q('#e_gender').value || null,
       marital_status: q('#e_marital').value || null,
+      // v6.183: la talla NO entra en el bloqueo de vaciado — si se cargo la
+      // equivocada hay que poder dejarla en blanco y volver a empezar.
+      shirt_size: (q('#e_shirt') && q('#e_shirt').value) || null,
       account_number: accRaw || null,
       bank_code: accRaw ? accRaw.slice(0, 4) : null,
       phone: phRaw ? '+58' + phRaw.slice(1) : null,
