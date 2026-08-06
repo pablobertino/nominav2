@@ -160,6 +160,23 @@ function ensureStyles() {
   .wa-msgfoot{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:11.5px;color:var(--muted);flex-wrap:wrap;gap:6px}
   .wa-msgfoot code{background:#f1f5f9;border-radius:4px;padding:1px 5px}
   .wa-sendrow{display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+  /* v6.180 — lista de grupos con casillas + vista previa por grupo */
+  .wa-grplist{display:flex;flex-direction:column;gap:2px;border:1px solid var(--border,#e2e8f0);border-radius:9px;
+    padding:6px;background:#fff;max-height:190px;overflow-y:auto}
+  .wa-grp{display:flex;align-items:center;gap:9px;padding:6px 8px;border-radius:7px;cursor:pointer;font-size:13px}
+  .wa-grp:hover{background:#f8fafc}
+  .wa-grp input{width:15px;height:15px;accent-color:#2563eb;flex:none;cursor:pointer}
+  .wa-grp-n{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wa-grp-z{font-size:11px;color:#94a3b8;white-space:nowrap}
+  .wa-zsw{display:block;margin-top:9px;font-size:12.5px;color:#334155;cursor:pointer;font-weight:500}
+  .wa-zsw input{width:14px;height:14px;accent-color:#2563eb;vertical-align:-2px;margin-right:5px}
+  .wa-zhint{display:block;font-size:11px;color:#94a3b8;font-weight:400;margin:2px 0 0 19px}
+  .wa-zoneprev{margin-top:12px;border-top:1px solid #eef2f7;padding-top:12px}
+  .wa-zp-h{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:#94a3b8;margin-bottom:8px}
+  .wa-zp{background:#f0f7f2;border:1px solid #d6e9dc;border-radius:10px;padding:9px 12px;margin-bottom:7px}
+  .wa-zp-n{font-size:11.5px;color:#64748b;margin-bottom:5px;font-weight:600}
+  .wa-zp-s{font-weight:400;color:#94a3b8}
+  .wa-zp-b{font-size:13px;color:#0f172a;line-height:1.5;white-space:pre-wrap;word-break:break-word}
   .wa-note{margin-right:auto;font-size:11.5px;color:#92400e;background:var(--warn-bg,#fffbeb);border:1px solid #fde68a;border-radius:9px;padding:7px 11px}
   .wa-confirm{display:flex;gap:9px;align-items:center;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:9px 13px;font-size:12.5px;color:#991b1b;font-weight:600}
   .wa-prog{border:1px solid #bbf1d2;background:#e9fbf0;border-radius:11px;padding:13px 15px;margin-top:12px}
@@ -234,9 +251,28 @@ function syncSubzones() {
 /* v6.51 SOLO GRUPOS: el único destino es un grupo habilitado. Se quitaron
    los modos empresas/personas/numero directo (el backend ya los rechaza). */
 function currentFilters() {
-  const grpSel = $('#waFGroup');
-  const grp = grpSel ? grpSel.value : '';
-  return { group_id: Number(grp || 0) };
+  return {
+    group_ids: gruposMarcados(),
+    zone_greeting: !!($('#waZoneGreet') && $('#waZoneGreet').checked),
+  };
+}
+
+/* v6.180 — Los grupos marcados en la lista de casillas. */
+function gruposMarcados() {
+  return Array.from(document.querySelectorAll('#waGrpList input[type=checkbox]:checked'))
+    .map(c => Number(c.value)).filter(Boolean);
+}
+
+/* Zonas de un grupo, tal como las devolvio el backend. */
+const ZONAS_GRUPO = new Map();
+
+/* Saludo con las zonas — MISMA regla que armarMensaje() en wa-send.js.
+   Se repite aca solo para la vista previa; la que manda es la del backend. */
+function saludoZonasVista(zonas) {
+  if (!zonas || !zonas.length) return '';
+  const b = zonas.map(z => `*${z}*`);
+  const t = b.length === 1 ? b[0] : b.slice(0, -1).join(', ') + ' y ' + b[b.length - 1];
+  return `Equipo${zonas.length > 1 ? 's' : ''} de ${t}:`;
 }
 
 /* ===================== v5.05: EXCLUIR DESTINATARIOS =====================
@@ -262,8 +298,7 @@ function grossMsgs() { return sendableRows().reduce((a, r) => a + rowMsgs(r), 0)
    tiene sentido excluirlos (para eso se limpia el campo). */
 function excludable() {
   if (!PREVIEW) return false;
-  const grp = $('#waFGroup');
-  if (grp && grp.value) return false;
+  if (gruposMarcados().length) return false;
   if ($('#waFTel') && $('#waFTel').value.trim()) return false;
   return true;
 }
@@ -556,11 +591,45 @@ function setTarget(t) {
   invalidatePreview();
 }
 
+/* v6.180 — Vista previa por grupo. Es la pieza que hace confiable al saludo:
+   antes de mandar nada se ve, textual, lo que va a leer cada grupo. Sin esto,
+   "encabezar con la zona" es un interruptor a ciegas. */
+function pintarPrevioZonas() {
+  const box = $('#waZonePrev');
+  if (!box) return;
+  const ids = gruposMarcados();
+  const con = !!($('#waZoneGreet') && $('#waZoneGreet').checked);
+  const base = ($('#waMsg') && $('#waMsg').value.trim()) || '';
+  if (!ids.length) { box.style.display = 'none'; box.innerHTML = ''; return; }
+
+  box.style.display = '';
+  box.innerHTML = `<div class="wa-zp-h">Así se va a ver en cada grupo (${ids.length})</div>`
+    + ids.map(id => {
+        const zonas = ZONAS_GRUPO.get(id) || [];
+        const sal = con ? saludoZonasVista(zonas) : '';
+        const inp = document.querySelector(`#waGrpList input[value="${id}"]`);
+        const nom = inp ? inp.parentElement.querySelector('.wa-grp-n').textContent : '';
+        const cuerpo = base || '(escribí el mensaje arriba)';
+        return `<div class="wa-zp">
+          <div class="wa-zp-n">${esc(nom)}${zonas.length ? '' : ' <span class="wa-zp-s">· sin zona, va sin encabezado</span>'}</div>
+          <div class="wa-zp-b">${sal ? `<b>${esc(sal)}</b><br><br>` : ''}${esc(cuerpo).replace(/\n/g, '<br>')}</div>
+        </div>`;
+      }).join('');
+}
+
+/* Pausa entre grupos: 8 a 15 segundos AL AZAR. El azar no es capricho —
+   un ritmo metronomico es tan delator como no tener pausa. */
+const pausaGrupo = () => 8000 + Math.floor(Math.random() * 7000);
+const dormir = ms => new Promise(r => setTimeout(r, ms));
+
 async function runBatch(user, batchId, totalToSend) {
   const prog = $('#waProg');
   prog.style.display = '';
   const bar = $('#waPbarFill'), meta = $('#waPmeta');
   let sent = 0, errors = 0, remaining = true, safety = 0;
+  /* v6.180: con VARIOS grupos el backend manda de a uno y no duerme; la pausa
+     la pone este bucle. Con uno solo se comporta como siempre. */
+  const multi = totalToSend > 1;
   while (remaining && safety < 2000) {
     safety++;
     const r = await api(user, { action: 'process', batch_id: batchId });
@@ -569,8 +638,21 @@ async function runBatch(user, batchId, totalToSend) {
     remaining = !!r.remaining;
     const done = sent + errors;
     bar.style.width = `${Math.min(100, Math.round(done / Math.max(totalToSend, 1) * 100))}%`;
-    meta.innerHTML = `<span>${nf(sent)} de ${nf(totalToSend)} enviados${errors ? ` · ${nf(errors)} error${errors === 1 ? '' : 'es'}` : ''}</span>
+    const ult = (r.enviados && r.enviados.length) ? r.enviados[r.enviados.length - 1] : '';
+    meta.innerHTML = `<span>${nf(sent)} de ${nf(totalToSend)} enviados${errors ? ` · ${nf(errors)} error${errors === 1 ? '' : 'es'}` : ''}${ult ? ` · último: ${esc(ult)}` : ''}</span>
       <span>${remaining ? 'enviando…' : 'completado'}</span>`;
+
+    // Pausa con cuenta regresiva a la vista: que se entienda que la espera es
+    // a proposito y que nadie cierre la pestaña pensando que se colgo.
+    if (remaining && multi) {
+      let resta = Math.round(pausaGrupo() / 1000);
+      while (resta > 0) {
+        meta.innerHTML = `<span>${nf(sent)} de ${nf(totalToSend)} enviados${errors ? ` · ${nf(errors)} error${errors === 1 ? '' : 'es'}` : ''}</span>
+          <span>siguiente grupo en ${resta}s…</span>`;
+        await dormir(1000);
+        resta--;
+      }
+    }
   }
   bar.style.width = '100%';
   $('#waProgTitle').innerHTML = errors
@@ -631,7 +713,13 @@ export async function renderWaSend(user) {
       <div class="wa-orsep" id="waOrsep">Grupo donde se va a publicar</div>
       <div class="wa-frow">
         <div id="waTelBox" style="display:none"><label>Número directo (pruebas / fuera de nómina)</label><input id="waFTel" placeholder="Ej: 0414-1234567"></div>
-        <div id="waGrpBox" style="flex:2"><label>Grupo habilitado (un solo mensaje al grupo)</label><select id="waFGroup"><option value="">— Ninguno —</option></select></div>
+        <div id="waGrpBox" style="flex:2"><label>Grupos habilitados (uno o varios)</label>
+          <div id="waGrpList" class="wa-grplist"><span class="wa-note">Cargando grupos…</span></div>
+          <label class="wa-zsw"><input type="checkbox" id="waZoneGreet" checked>
+            Encabezar cada mensaje con la zona del grupo
+            <span class="wa-zhint">El grupo de Margarita recibe "Equipo de *Margarita*:". Los grupos sin zona no llevan encabezado.</span>
+          </label>
+        </div>
         <button class="wa-btn pri" id="waPreview">Ver destinatario</button>
         <button class="wa-btn" id="waClear">Limpiar</button>
       </div>
@@ -650,12 +738,13 @@ export async function renderWaSend(user) {
         <span><button class="wa-emoji-btn" id="waEmojiBtn" type="button" title="Insertar emoji">😊 Emojis</button>Formato: <code>*negrita*</code> <code>_cursiva_</code> <code>~tachado~</code></span>
         <span id="waCount">0 / ${nf(MAX_MESSAGE)}</span>
       </div>
+      <div id="waZonePrev" class="wa-zoneprev" style="display:none"></div>
     </div>
 
     <div class="wa-card">
       <h3><span class="n">3</span> Enviar</h3>
       <div class="wa-sendrow" id="waSendRow">
-        <span class="wa-note">⚠️ Se publicará en el grupo desde la línea corporativa. Queda registrado con fecha y autor.</span>
+        <span class="wa-note">⚠️ Se publicará en los grupos marcados desde la línea corporativa, uno detrás de otro. Queda registrado con fecha y autor.</span>
         <button class="wa-btn wa" id="waSendBtn" disabled>📤 Enviar</button>
       </div>
       <div class="wa-prog" id="waProg" style="display:none">
@@ -744,18 +833,27 @@ export async function renderWaSend(user) {
   // grupos asignados; la pantalla se reduce al destino grupo (empresas,
   // personas y numero directo son de superadmin).
   apiGroups(user).then(r => {
-    const sel = $('#waFGroup');
+    const sel = $('#waGrpList');
     if (!sel || !r || !r.ok) return;
     const en = (r.groups || []).filter(g => g.enabled);
-    sel.innerHTML = '<option value="">— Ninguno —</option>'
-      + en.map(g => `<option value="${g.id}">${esc(g.alias || g.wa_name || g.chat_id)}</option>`).join('');
+    en.forEach(g => ZONAS_GRUPO.set(Number(g.id), g.zonas || []));
+    sel.innerHTML = en.length
+      ? en.map(g => {
+          const z = (g.zonas || []);
+          return `<label class="wa-grp"><input type="checkbox" value="${g.id}">
+            <span class="wa-grp-n">${esc(g.alias || g.wa_name || g.chat_id)}</span>
+            <span class="wa-grp-z">${z.length ? esc(z.join(' · ')) : 'sin zona'}</span></label>`;
+        }).join('')
+      : '<span class="wa-note">No hay grupos habilitados.</span>';
+    sel.addEventListener('change', () => { invalidatePreview(); pintarPrevioZonas(); });
+    pintarPrevioZonas();
     if (r.mode === 'admin') {
       ['waSeg', 'waTgtCompanies', 'waTgtPeople', 'waTelBox'].forEach(id => {
         const el = document.getElementById(id);
         if (el) el.style.display = 'none';
       });
       const os = $('#waOrsep');
-      if (os) os.textContent = 'elige el grupo asignado al que enviarás';
+      if (os) os.textContent = 'elige los grupos asignados a los que enviarás';
       if (!en.length) {
         $('#waTblNote').textContent = 'Aún no tienes grupos asignados: pídele al superadministrador que te autorice en la pantalla Grupos.';
       }
@@ -782,8 +880,8 @@ export async function renderWaSend(user) {
     $('#' + id).addEventListener('change', invalidatePreview));
   $('#waFActive').addEventListener('change', invalidatePreview);
   $('#waFTel').addEventListener('input', invalidatePreview);
-  $('#waFGroup').addEventListener('change', invalidatePreview);
-  $('#waMsg').addEventListener('input', syncSendState);
+  $('#waMsg').addEventListener('input', () => { syncSendState(); pintarPrevioZonas(); });
+  if ($('#waZoneGreet')) $('#waZoneGreet').addEventListener('change', pintarPrevioZonas);
   paintPeopleList();
 
   // v4.99: buscador de personas (modo lista manual)
@@ -827,7 +925,9 @@ export async function renderWaSend(user) {
   $('#waClear').addEventListener('click', () => {
     ['waFZone', 'waFSubzone', 'waFType', 'waFConcept', 'waFCompany'].forEach(id => { $('#' + id).value = ''; });
     $('#waFActive').checked = true;
-    $('#waFTel').value = ''; $('#waFGroup').value = ''; $('#waMsg').value = '';
+    $('#waFTel').value = ''; $('#waMsg').value = '';
+    document.querySelectorAll('#waGrpList input[type=checkbox]').forEach(c => { c.checked = false; });
+    pintarPrevioZonas();
     $('#waPQ').value = ''; $('#waPResults').style.display = 'none'; $('#waPResults').innerHTML = '';
     PEOPLE = [];
     paintPeopleList();

@@ -49,6 +49,39 @@ async function sb(env, path, opts = {}) {
 
 const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+/* v6.180 — Cada grupo con sus ZONAS.
+   La relacion ya existe: es wa_zone_group, la misma que alimenta Ruteo de
+   avisos. Se agrega al catalogo porque la Difusion multi-grupo encabeza cada
+   mensaje con la zona del grupo ("Equipo de *Margarita*:"), y para eso la
+   pantalla necesita saber que zona le toca a cada uno.
+   Dos consultas en total, no una por grupo. */
+async function conZonas(env, groups) {
+  if (!groups.length) return groups;
+  const ids = groups.map(g => g.id);
+  const zg = await sb(env,
+    `wa_zone_group?wa_group_id=in.(${ids.join(',')})&enabled=eq.true&select=wa_group_id,zone_id`) || [];
+  if (!zg.length) return groups.map(g => ({ ...g, zonas: [] }));
+
+  const zoneIds = [...new Set(zg.map(z => z.zone_id).filter(v => v !== null && v !== undefined))];
+  const nombre = new Map();
+  if (zoneIds.length) {
+    const zs = await sb(env,
+      `zones?id=in.(${zoneIds.map(z => `"${z}"`).join(',')})&select=id,name`) || [];
+    zs.forEach(z => nombre.set(String(z.id), z.name));
+  }
+  const por = new Map();
+  zg.forEach(z => {
+    const n = nombre.get(String(z.zone_id));
+    if (!n) return;
+    if (!por.has(z.wa_group_id)) por.set(z.wa_group_id, []);
+    por.get(z.wa_group_id).push(n);
+  });
+  return groups.map(g => ({
+    ...g,
+    zonas: (por.get(g.id) || []).sort((a, b) => a.localeCompare(b, 'es')),
+  }));
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch (_) { return json({ ok: false, error: 'Cuerpo inválido.' }, 400); }
@@ -80,7 +113,8 @@ export async function onRequestPost({ request, env }) {
         ]);
         return json({
           ok: true, mode: 'super',
-          groups: rows || [], assign: assign || [], admins: admins || [],
+          groups: await conZonas(env, rows || []),
+          assign: assign || [], admins: admins || [],
           phone: env.GREENAPI_PHONE || null,
         });
       }
@@ -93,7 +127,11 @@ export async function onRequestPost({ request, env }) {
         rows = await sb(env,
           `wa_groups?id=in.(${ids.join(',')})&enabled=eq.true&select=id,chat_id,wa_name,alias,enabled&order=wa_name.asc`);
       }
-      return json({ ok: true, mode: 'admin', groups: rows || [], phone: env.GREENAPI_PHONE || null });
+      return json({
+        ok: true, mode: 'admin',
+        groups: await conZonas(env, rows || []),
+        phone: env.GREENAPI_PHONE || null,
+      });
     }
 
     /* ---------- gobernanza del catalogo: SOLO superadmin ---------- */

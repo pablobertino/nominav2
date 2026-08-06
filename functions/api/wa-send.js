@@ -292,6 +292,84 @@ async function pickGroup(env, body, restrictAdminId) {
   return grp;
 }
 
+/* =====================================================================
+   v6.180 — VARIOS grupos de una vez.
+
+   Devuelve los grupos pedidos, habilitados, dentro del alcance del usuario,
+   y CON SUS ZONAS. Si alguno no cumple, se devuelve el motivo en vez de
+   sacarlo en silencio: publicar en menos grupos de los que uno marco, sin
+   aviso, es peor que fallar.
+   ===================================================================== */
+async function pickGroups(env, ids, restrictAdminId) {
+  const list = [...new Set((Array.isArray(ids) ? ids : []).map(n => Number(n) || 0).filter(Boolean))];
+  if (!list.length) return { grupos: [], rechazados: [] };
+
+  const rows = await sb(env,
+    `wa_groups?id=in.(${list.join(',')})&select=id,chat_id,wa_name,alias,enabled`) || [];
+  const byId = new Map(rows.map(g => [g.id, g]));
+
+  // Alcance: un admin no-super solo publica en los grupos que tiene asignados.
+  let permitidos = null;
+  if (restrictAdminId) {
+    const links = await sb(env,
+      `wa_group_admins?admin_id=eq.${restrictAdminId}&group_id=in.(${list.join(',')})&select=group_id`) || [];
+    permitidos = new Set(links.map(l => l.group_id));
+  }
+
+  // Zonas de cada grupo, en UNA consulta (wa_zone_group ya lo sabe: es la
+  // misma relacion que usa Ruteo de avisos).
+  const zg = await sb(env,
+    `wa_zone_group?wa_group_id=in.(${list.join(',')})&enabled=eq.true&select=wa_group_id,zone_id`) || [];
+  const zoneIds = [...new Set(zg.map(z => z.zone_id).filter(v => v !== null && v !== undefined))];
+  const nameByZone = new Map();
+  if (zoneIds.length) {
+    const zs = await sb(env,
+      `zones?id=in.(${zoneIds.map(z => `"${z}"`).join(',')})&select=id,name`) || [];
+    zs.forEach(z => nameByZone.set(String(z.id), z.name));
+  }
+  const zonasDe = new Map();
+  zg.forEach(z => {
+    const n = nameByZone.get(String(z.zone_id));
+    if (!n) return;
+    if (!zonasDe.has(z.wa_group_id)) zonasDe.set(z.wa_group_id, []);
+    zonasDe.get(z.wa_group_id).push(n);
+  });
+
+  const grupos = [], rechazados = [];
+  for (const id of list) {
+    const g = byId.get(id);
+    if (!g) { rechazados.push({ id, motivo: 'no existe' }); continue; }
+    const nombre = g.alias || g.wa_name || g.chat_id;
+    if (!g.enabled) { rechazados.push({ id, nombre, motivo: 'no está habilitado' }); continue; }
+    if (!isGroupChat(g.chat_id)) { rechazados.push({ id, nombre, motivo: 'no es un grupo de WhatsApp' }); continue; }
+    if (permitidos && !permitidos.has(id)) { rechazados.push({ id, nombre, motivo: 'no está asignado a tu usuario' }); continue; }
+    grupos.push({
+      id: g.id, chat_id: g.chat_id, nombre,
+      zonas: (zonasDe.get(g.id) || []).sort((a, b) => a.localeCompare(b, 'es')),
+    });
+  }
+  return { grupos, rechazados };
+}
+
+/* Saludo con las zonas del grupo. Idea de Pablo, y es mejor que variar el
+   texto por variar: en el grupo de Margarita el aviso dice Margarita, o sea
+   que la diferencia entre mensajes es INFORMACION UTIL para quien lee, y de
+   paso deja de haber cuatro mensajes identicos seguidos.
+   Un grupo sin zonas (Sistemas, Coordinacion, MEJORANDO) no lleva saludo:
+   inventarle uno seria peor que no ponerlo. */
+function saludoZonas(zonas) {
+  if (!zonas || !zonas.length) return '';
+  const b = zonas.map(z => `*${z}*`);
+  const txt = b.length === 1 ? b[0]
+    : b.slice(0, -1).join(', ') + ' y ' + b[b.length - 1];
+  return `Equipo${zonas.length > 1 ? 's' : ''} de ${txt}:`;
+}
+
+function armarMensaje(base, zonas, conSaludo) {
+  const s = conSaludo ? saludoZonas(zonas) : '';
+  return s ? `${s}\n\n${base}` : base;
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch (_) { return json({ ok: false, error: 'Cuerpo inválido.' }, 400); }
@@ -424,52 +502,71 @@ export async function onRequestPost({ request, env }) {
       if (message.length > MAX_MESSAGE) {
         return json({ ok: false, error: `El mensaje supera los ${MAX_MESSAGE} caracteres.` }, 400);
       }
-      // v6.50 SOLO GRUPOS: la difusion publica UNICAMENTE en un grupo de
-      // WhatsApp. Se elimino el envio a empresas/personas/numero directo.
-      const grp = await pickGroup(env, body, restrictId);
-      if (!Number(body.group_id || 0)) {
-        return json({ ok: false, error: 'Elige el grupo donde se va a publicar.' }, 400);
+      /* v6.50 SOLO GRUPOS: la difusion publica UNICAMENTE en grupos de
+         WhatsApp. Se elimino el envio a empresas/personas/numero directo.
+         v6.180: y ahora en VARIOS grupos de una vez. Se acepta group_ids[];
+         group_id suelto se sigue admitiendo para no romper nada viejo. */
+      const idsPedidos = Array.isArray(body.group_ids) && body.group_ids.length
+        ? body.group_ids
+        : (Number(body.group_id || 0) ? [Number(body.group_id)] : []);
+      if (!idsPedidos.length) {
+        return json({ ok: false, error: 'Elige al menos un grupo donde publicar.' }, 400);
       }
-      if (grp === undefined) return json({ ok: false, error: 'Ese grupo no está habilitado o no está asignado a tu usuario.' }, 400);
-      if (!grp || !isGroupChat(grp.chat_id)) {
-        return json({ ok: false, error: 'El destino no es un grupo válido de WhatsApp.' }, 400);
+
+      const { grupos, rechazados } = await pickGroups(env, idsPedidos, restrictId);
+      if (!grupos.length) {
+        const det = rechazados.map(r => `${r.nombre || r.id} (${r.motivo})`).join('; ');
+        return json({ ok: false, error: 'Ninguno de los grupos elegidos se puede usar: ' + det }, 400);
       }
-      const rows = [{
-        id_number: 'grupo',
-        full_name: `Grupo: ${grp.alias || grp.wa_name || grp.chat_id}`,
-        company_code: '', phone: grp.chat_id, phone_ok: true, chat_id_direct: grp.chat_id,
-      }];
-      const batchFilters = { group_id: grp.id, group: grp.alias || grp.wa_name || grp.chat_id };
-      const r = { total: 1 };
+      /* Si alguno quedo afuera se corta y se explica. Publicar en menos grupos
+         de los que el usuario marco, sin decirle nada, es peor que fallar: se
+         entera dias despues, cuando alguien pregunta por que no le llego. */
+      if (rechazados.length) {
+        const det = rechazados.map(r => `${r.nombre || r.id} (${r.motivo})`).join('; ');
+        return json({ ok: false, error: 'No se envió nada. Estos grupos no se pueden usar: ' + det }, 400);
+      }
+
+      const conSaludo = body.zone_greeting !== false;   // por defecto SI
+      const batchFilters = {
+        group_ids: grupos.map(g => g.id),
+        groups: grupos.map(g => g.nombre),
+        zone_greeting: conSaludo,
+      };
 
       const batch = await sb(env, 'wa_batches', {
         method: 'POST',
         headers: { Prefer: 'return=representation' },
         body: JSON.stringify({
           created_by: actorName,
-          message,
+          message,                       // el texto BASE, sin saludo
           filters: batchFilters,
-          total: (r && r.total) || rows.length,
-          with_phone: rows.length,
+          total: grupos.length,
+          with_phone: grupos.length,
         }),
       });
       const batchId = batch && batch[0] && batch[0].id;
       if (!batchId) throw new Error('No se pudo crear el lote.');
 
-      // Cola: 1 fila (el grupo ya trae su chat_id @g.us).
+      /* Una fila por grupo, cada una con SU texto ya armado. Se guarda el
+         mensaje final y no el saludo suelto para que la bitacora muestre
+         exactamente lo que se publico en cada grupo. */
       await sb(env, 'wa_outbox', {
         method: 'POST',
         headers: { Prefer: 'return=minimal' },
-        body: JSON.stringify(rows.map(x => ({
+        body: JSON.stringify(grupos.map(g => ({
           batch_id: batchId,
-          id_number: x.id_number,
-          full_name: x.full_name || '',
-          company_code: x.company_code || '',
-          phone_raw: x.phone,
-          chat_id: x.chat_id_direct || toChatId(x.phone),
+          id_number: 'grupo',
+          full_name: `Grupo: ${g.nombre}`,
+          company_code: '',
+          phone_raw: g.chat_id,
+          chat_id: g.chat_id,
+          message: armarMensaje(message, g.zonas, conSaludo),
         }))),
       });
-      return json({ ok: true, batch_id: batchId, queued: rows.length });
+      return json({
+        ok: true, batch_id: batchId, queued: grupos.length,
+        grupos: grupos.map(g => ({ id: g.id, nombre: g.nombre, zonas: g.zonas })),
+      });
     }
 
     /* ---------------- process: enviar una tanda ---------------- */
@@ -480,12 +577,27 @@ export async function onRequestPost({ request, env }) {
       if (!batch || !batch.length) return json({ ok: false, error: 'El lote no existe.' }, 404);
       const message = batch[0].message;
       const isBig = Number(batch[0].with_phone || 0) > BIG_THRESHOLD;
-      const tanda = isBig ? BIG_BATCH_SIZE : BATCH_SIZE;
+      /* v6.180 RITMO DE LA DIFUSION MULTI-GRUPO.
+         El modo lento (isBig) se dispara por CANTIDAD, a partir de 20. Pero
+         la señal que mira WhatsApp no es el volumen: es mandar a CHATS
+         DISTINTOS con poco intervalo, tal como dice la nota de la v6.73. Una
+         difusion a 5 grupos no llega al umbral y saldria de una sola tanda,
+         con 450ms entre grupo y grupo: cinco chats distintos en dos segundos,
+         justo el patron que se quiere evitar.
+         Por eso, en cuanto hay MAS DE UN grupo, se manda de a UNO y sin pausa
+         del lado del servidor: la pausa la pone el navegador, entre 8 y 15
+         segundos al azar. Asi cada invocacion de la Function dura lo que dura
+         un mensaje (cero riesgo de timeout), el jitter sale gratis, se ve el
+         avance grupo por grupo, y los 15s de delaySendMessagesMilliseconds
+         del proveedor siguen siendo el piso duro por debajo. */
+      const multiGrupo = Number(batch[0].with_phone || 0) > 1;
+      const tanda = multiGrupo ? 1 : (isBig ? BIG_BATCH_SIZE : BATCH_SIZE);
 
       const pend = await sb(env,
-        `wa_outbox?batch_id=eq.${encodeURIComponent(bid)}&status=eq.pending&select=id,chat_id&order=id.asc&limit=${tanda}`);
+        `wa_outbox?batch_id=eq.${encodeURIComponent(bid)}&status=eq.pending&select=id,chat_id,message,full_name&order=id.asc&limit=${tanda}`);
       const ga = gaClient(env);
       let sent = 0, errors = 0;
+      const enviados = [];      // v6.180: para que el front diga cual acaba de salir
 
       for (const row of (pend || [])) {
         // v6.50 SOLO GRUPOS: nunca enviar a un chat individual. Si por algun
@@ -499,12 +611,15 @@ export async function onRequestPost({ request, env }) {
           continue;
         }
         try {
-          const res = await ga.sendMessage(row.chat_id, message);
+          // v6.180: cada fila puede traer su propio texto (el encabezado con
+          // la zona del grupo). Si no lo trae, se usa el del lote.
+          const res = await ga.sendMessage(row.chat_id, row.message || message);
           await sb(env, `wa_outbox?id=eq.${row.id}`, {
             method: 'PATCH', headers: { Prefer: 'return=minimal' },
             body: JSON.stringify({ status: 'sent', id_message: (res && res.idMessage) || null, sent_at: new Date().toISOString() }),
           });
           sent++;
+          enviados.push(row.full_name || row.chat_id);
         } catch (e) {
           await sb(env, `wa_outbox?id=eq.${row.id}`, {
             method: 'PATCH', headers: { Prefer: 'return=minimal' },
@@ -512,12 +627,18 @@ export async function onRequestPost({ request, env }) {
           });
           errors++;
         }
-        await sleep(isBig ? bigDelay() : DELAY_MS);
+        // En multi-grupo NO se duerme aca: la pausa (8-15s con jitter) la pone
+        // el navegador entre llamadas. Ver la nota de ritmo mas arriba.
+        if (!multiGrupo) await sleep(isBig ? bigDelay() : DELAY_MS);
       }
 
       const left = await sb(env,
         `wa_outbox?batch_id=eq.${encodeURIComponent(bid)}&status=eq.pending&select=id&limit=1`);
-      return json({ ok: true, sent, errors, remaining: (left && left.length) ? true : false });
+      return json({
+        ok: true, sent, errors,
+        remaining: (left && left.length) ? true : false,
+        enviados,
+      });
     }
 
     return json({ ok: false, error: 'Acción desconocida.' }, 400);
