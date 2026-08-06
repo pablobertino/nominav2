@@ -39,6 +39,7 @@
 import { buildReportText, buildAxWorkbookBase64 } from './_ax-template.js';
 import { resolveActor, can } from './_auth.js';
 import { axPublicarMarcajes, dayTypeToAx, axKey } from './_axmarcajes.js';
+import { axPublicarAusencias } from './_axausencias.js';
 
 // Mapa accion -> code. list/detail/ticket_* son lectura del Historial
 // (view.historial). set_attention/sync_osticket/resend_* son gestion del
@@ -1840,9 +1841,8 @@ async function publishAx(env, body, scope) {
   const a = await sbJson(env, `admin_users?id=eq.${encodeURIComponent(user.id)}&is_active=eq.true&select=id,role,name`);
   if (!a || !a.length) return json({ ok: false, error: 'Administrador no valido.' }, 403);
   const actor = await resolveActor(env, user);
-  if (!actor || !can(actor, 'report.publish.marcaje')) {
-    return json({ ok: false, error: 'No tienes permiso para publicar marcajes en AX.' }, 403);
-  }
+  // El permiso concreto depende del TIPO de reporte, y el tipo se sabe recien
+  // al leerlo: la comprobacion fina va mas abajo, apenas se conoce el topic.
   // Sin la X-API-Key no tiene sentido empezar: cortamos antes de tocar nada.
   if (!axKey(env)) {
     return json({ ok: false, error: 'Falta el secret canaima_apikey (o ax_api_key) en las variables del proyecto.' }, 500);
@@ -1859,8 +1859,24 @@ async function publishAx(env, body, scope) {
   if (!head || !head.length) return json({ ok: false, error: 'Reporte no encontrado o sin acceso.' }, 404);
   const rep = head[0];
 
-  if (rep.topic !== 'marcaje') {
-    return json({ ok: false, error: 'Solo los reportes de Marcaje Manual se publican en AX.' }, 400);
+  /* v6.181 — Cada tipo de reporte tiene su propio permiso: publicar marcajes
+     y publicar ausencias son decisiones distintas, con consecuencias distintas
+     (una ausencia mal cargada mueve la nomina). Por eso no se comparte gate. */
+  const GATE_POR_TOPIC = {
+    marcaje: 'report.publish.marcaje',
+    ausencia: 'report.publish.ausencia',
+  };
+  const gate = GATE_POR_TOPIC[rep.topic];
+  if (!gate) {
+    return json({ ok: false, error: 'Este tipo de reporte todavía no se publica en AX.' }, 400);
+  }
+  if (!actor || !can(actor, gate)) {
+    return json({
+      ok: false,
+      error: rep.topic === 'ausencia'
+        ? 'No tienes permiso para publicar ausencias en AX.'
+        : 'No tienes permiso para publicar marcajes en AX.',
+    }, 403);
   }
 
   // 3) Ya publicado: no es error, es un "ya esta". Sin efectos.
@@ -1896,139 +1912,20 @@ async function publishAx(env, body, scope) {
     }, 409);
   }
 
-  // 4) Las lineas del reporte.
-  const lines = await sbJson(env,
-    `mark_report_lines?report_id=eq.${id}`
-    + `&select=id,worker_id_number,worker_name,mark_date,day_type,time_in,time_out`
-    + `&order=id.asc`) || [];
-  if (!lines.length) {
-    return json({ ok: false, error: 'El reporte no tiene lineas de marcaje.' }, 400);
-  }
+  /* 4) LA PARTE QUE DEPENDE DEL TIPO DE REPORTE.
+     Marcajes y ausencias se leen de tablas distintas, se mandan a APIs
+     distintas y -sobre todo- tienen reglas de reintento OPUESTAS: en
+     marcajes reenviar es gratis porque AX omite lo identico; en ausencias
+     AX rechaza el periodo superpuesto y reenviar es peligroso. Por eso cada
+     uno tiene su funcion, y aca solo se elige.
+     Todo lo que sigue -cerrar, sellar, avisar a osTicket, la bitacora- es
+     comun a los dos y no se duplica. */
+  const proc = rep.topic === 'ausencia'
+    ? await publicarLineasAusencia(env, id, rep, user, body, actor)
+    : await publicarLineasMarcaje(env, id, rep, user);
+  if (proc.rechazo) return json(proc.rechazo.cuerpo, proc.rechazo.status);
 
-  // 4b) DOS LINEAS PARA LA MISMA PERSONA EL MISMO DIA no se pueden publicar:
-  //     en AX son UN solo registro (la clave es tienda+cedula+fecha), asi que
-  //     una pisaria a la otra y nadie sabria cual quedo. Mejor decirlo claro
-  //     antes de escribir nada que dejar el resultado librado al orden.
-  const porClave = new Map();
-  for (const l of lines) {
-    const k = `${l.worker_id_number}|${String(l.mark_date || '').slice(0, 10)}`;
-    porClave.set(k, (porClave.get(k) || 0) + 1);
-  }
-  const repetidas = [...porClave.entries()].filter(([, n]) => n > 1).map(([k]) => k.replace('|', ' el '));
-  if (repetidas.length) {
-    return json({
-      ok: false,
-      error: 'El reporte tiene mas de una linea para la misma persona el mismo dia, y en AX eso es un solo registro. '
-        + 'Hay que corregirlo antes de publicar: ' + repetidas.join('; ') + '.',
-    }, 409);
-  }
-
-  // 5) Lo que YA entro en un intento anterior DE ESTE reporte. Se compara
-  //    por line_id: una fila del log de otro reporte es una correccion y
-  //    debe volver a mandarse (regla 2 del encabezado).
-  const prev = await sbJson(env,
-    `ax_marcajes_log?report_id=eq.${id}&status=eq.ok&select=line_id`) || [];
-  const yaEntraron = new Set(prev.map(x => x.line_id).filter(v => v != null));
-
-  const pendientes = lines.filter(l => !yaEntraron.has(l.id));
-  const omitidas = lines.length - pendientes.length;
-
-  const nowIso = new Date().toISOString();
-  const lineaBase = (l, extra) => ({
-    line_id: l.id,
-    worker_id_number: l.worker_id_number,
-    worker_name: l.worker_name || null,
-    mark_date: String(l.mark_date || '').slice(0, 10),
-    day_type: l.day_type || 'L',
-    time_in: (l.time_in || '').slice(0, 5),
-    time_out: (l.time_out || '').slice(0, 5),
-    ...extra,
-  });
-
-  // Todo ya estaba publicado en un intento anterior: no hay nada que mandar,
-  // pero SI hay que cerrar el reporte (quedo a medio camino la vez pasada).
-  const lineas = lines
-    .filter(l => yaEntraron.has(l.id))
-    .map(l => lineaBase(l, {
-      status: 'omitida', mensaje: 'Ya se habia publicado en un intento anterior.',
-      error: null, payload: null,
-    }));
-
-  let publicadas = 0, fallidas = 0;
-  let axResumen = null;
-
-  if (pendientes.length) {
-    // 6) EL LOTE. Una sola llamada; si la cuenta no cuadra, el modulo
-    //    reintenta linea por linea y nos dice exactamente cual fallo.
-    const res = await axPublicarMarcajes(env, pendientes.map(l => ({
-      alias: rep.company_code,                 // alias, NO data_area
-      personnelNumber: l.worker_id_number,
-      transDate: String(l.mark_date || '').slice(0, 10),
-      dayType: dayTypeToAx(l.day_type),        // 'L'|'D' -> Workday|RestDay
-      timeEntry: l.time_in,                    // 'HH:MM:SS' -> segundos (lo hace el modulo)
-      timeExit: l.time_out,
-    })));
-
-    axResumen = {
-      llamadas: res.llamadas,
-      aislado: res.aislado,
-      mensaje: res.lote ? res.lote.mensaje : null,
-      contadores: res.lote ? res.lote.counters : null,
-    };
-
-    // 7) Rastro en ax_marcajes_log, en UN SOLO upsert para todas las lineas.
-    //    Antes era un INSERT por linea: con un reporte grande eso solo ya se
-    //    comia el presupuesto de subrequests de Cloudflare.
-    //    UPSERT por (tienda, cedula, fecha): si habia una fila de otro
-    //    reporte, se pisa con este intento.
-    //    created_at NO va en el payload a proposito: asi conserva la fecha
-    //    del PRIMER intento mientras sent_at guarda la del ultimo.
-    let logOk = true, logErr = null;
-    try {
-      await sb(env, 'ax_marcajes_log?on_conflict=company_code,worker_id_number,mark_date', {
-        method: 'POST',
-        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
-        body: JSON.stringify(pendientes.map((l, i) => {
-          const r = res.resultados[i];
-          return {
-            report_id: id,
-            line_id: l.id,
-            company_code: rep.company_code,
-            worker_id_number: l.worker_id_number,
-            mark_date: String(l.mark_date || '').slice(0, 10),
-            day_type: l.day_type || 'L',
-            time_in: l.time_in || null,
-            time_out: l.time_out || null,
-            status: r.ok ? 'ok' : 'error',
-            ax_message: r.mensaje ? String(r.mensaje).slice(0, 500) : null,
-            ax_error: r.ok ? null : String(r.error || '').slice(0, 500),
-            sent_at: nowIso,
-            sent_by: user.id,
-          };
-        })),
-      });
-    } catch (e) {
-      logOk = false;
-      logErr = String((e && e.message) || e).slice(0, 300);
-    }
-
-    pendientes.forEach((l, i) => {
-      const r = res.resultados[i];
-      const ok = r.ok && logOk;
-      if (ok) publicadas++; else fallidas++;
-      lineas.push(lineaBase(l, {
-        status: ok ? 'ok' : 'error',
-        mensaje: r.ok ? r.mensaje : null,
-        error: r.ok
-          ? (logOk ? null : `AX aceptó el marcaje pero no se pudo dejar constancia en la bitácora: ${logErr}`)
-          : r.error,
-        detalles_ax: r.detalles_ax || null,
-        xml: r.xml || null,
-        payload: r.payload,
-        via: r.via,
-      }));
-    });
-  }
+  const { lineas, publicadas, fallidas, omitidas, total, axResumen } = proc;
 
   // 8) TODO O NADA. Solo si no fallo ninguna se cierra el reporte, con
   //    estado + auditoria + sello en un solo PATCH (regla 4).
@@ -2098,7 +1995,7 @@ async function publishAx(env, body, scope) {
         company_code: rep.company_code,
         published_by: user.id,
         source: 'portal',
-        total: lines.length,
+        total,
         publicadas, fallidas, omitidas,
         ok: fallidas === 0,
         closed,
@@ -2120,7 +2017,8 @@ async function publishAx(env, body, scope) {
     ok: fallidas === 0,
     report_id: id,
     company_code: rep.company_code,
-    total: lines.length,
+    topic: rep.topic,
+    total,
     publicadas,
     fallidas,
     omitidas,
@@ -2134,4 +2032,321 @@ async function publishAx(env, body, scope) {
     ax: axResumen,
     lineas,
   }, fallidas === 0 ? 200 : 207);
+}
+
+/* =====================================================================
+   publicarLineasMarcaje — la parte de publish_ax propia de MARCAJE MANUAL.
+   Se extrajo tal cual en la v6.181, cuando entraron las ausencias: el
+   cierre del reporte, el sello, osTicket y la bitacora son comunes y
+   viven en publishAx; esto es lo unico que cambia entre un tipo y otro.
+   Devuelve { lineas, publicadas, fallidas, omitidas, total, axResumen }
+   o { rechazo: { cuerpo, status } } si hay que cortar antes de enviar.
+   ===================================================================== */
+async function publicarLineasMarcaje(env, id, rep, user) {
+  const nowIso = new Date().toISOString();
+    // 4) Las lineas del reporte.
+    const lines = await sbJson(env,
+      `mark_report_lines?report_id=eq.${id}`
+      + `&select=id,worker_id_number,worker_name,mark_date,day_type,time_in,time_out`
+      + `&order=id.asc`) || [];
+    if (!lines.length) {
+      return { rechazo: { cuerpo: { ok: false, error: 'El reporte no tiene lineas de marcaje.' }, status: 400 } };
+    }
+
+    // 4b) DOS LINEAS PARA LA MISMA PERSONA EL MISMO DIA no se pueden publicar:
+    //     en AX son UN solo registro (la clave es tienda+cedula+fecha), asi que
+    //     una pisaria a la otra y nadie sabria cual quedo. Mejor decirlo claro
+    //     antes de escribir nada que dejar el resultado librado al orden.
+    const porClave = new Map();
+    for (const l of lines) {
+      const k = `${l.worker_id_number}|${String(l.mark_date || '').slice(0, 10)}`;
+      porClave.set(k, (porClave.get(k) || 0) + 1);
+    }
+    const repetidas = [...porClave.entries()].filter(([, n]) => n > 1).map(([k]) => k.replace('|', ' el '));
+    if (repetidas.length) {
+      return { rechazo: { status: 409, cuerpo: {
+        ok: false,
+        error: 'El reporte tiene mas de una linea para la misma persona el mismo dia, y en AX eso es un solo registro. '
+          + 'Hay que corregirlo antes de publicar: ' + repetidas.join('; ') + '.',
+      } } };
+    }
+
+    // 5) Lo que YA entro en un intento anterior DE ESTE reporte. Se compara
+    //    por line_id: una fila del log de otro reporte es una correccion y
+    //    debe volver a mandarse (regla 2 del encabezado).
+    const prev = await sbJson(env,
+      `ax_marcajes_log?report_id=eq.${id}&status=eq.ok&select=line_id`) || [];
+    const yaEntraron = new Set(prev.map(x => x.line_id).filter(v => v != null));
+
+    const pendientes = lines.filter(l => !yaEntraron.has(l.id));
+    const omitidas = lines.length - pendientes.length;
+
+      const lineaBase = (l, extra) => ({
+      line_id: l.id,
+      worker_id_number: l.worker_id_number,
+      worker_name: l.worker_name || null,
+      mark_date: String(l.mark_date || '').slice(0, 10),
+      day_type: l.day_type || 'L',
+      time_in: (l.time_in || '').slice(0, 5),
+      time_out: (l.time_out || '').slice(0, 5),
+      ...extra,
+    });
+
+    // Todo ya estaba publicado en un intento anterior: no hay nada que mandar,
+    // pero SI hay que cerrar el reporte (quedo a medio camino la vez pasada).
+    const lineas = lines
+      .filter(l => yaEntraron.has(l.id))
+      .map(l => lineaBase(l, {
+        status: 'omitida', mensaje: 'Ya se habia publicado en un intento anterior.',
+        error: null, payload: null,
+      }));
+
+    let publicadas = 0, fallidas = 0;
+    let axResumen = null;
+
+    if (pendientes.length) {
+      // 6) EL LOTE. Una sola llamada; si la cuenta no cuadra, el modulo
+      //    reintenta linea por linea y nos dice exactamente cual fallo.
+      const res = await axPublicarMarcajes(env, pendientes.map(l => ({
+        alias: rep.company_code,                 // alias, NO data_area
+        personnelNumber: l.worker_id_number,
+        transDate: String(l.mark_date || '').slice(0, 10),
+        dayType: dayTypeToAx(l.day_type),        // 'L'|'D' -> Workday|RestDay
+        timeEntry: l.time_in,                    // 'HH:MM:SS' -> segundos (lo hace el modulo)
+        timeExit: l.time_out,
+      })));
+
+      axResumen = {
+        llamadas: res.llamadas,
+        aislado: res.aislado,
+        mensaje: res.lote ? res.lote.mensaje : null,
+        contadores: res.lote ? res.lote.counters : null,
+      };
+
+      // 7) Rastro en ax_marcajes_log, en UN SOLO upsert para todas las lineas.
+      //    Antes era un INSERT por linea: con un reporte grande eso solo ya se
+      //    comia el presupuesto de subrequests de Cloudflare.
+      //    UPSERT por (tienda, cedula, fecha): si habia una fila de otro
+      //    reporte, se pisa con este intento.
+      //    created_at NO va en el payload a proposito: asi conserva la fecha
+      //    del PRIMER intento mientras sent_at guarda la del ultimo.
+      let logOk = true, logErr = null;
+      try {
+        await sb(env, 'ax_marcajes_log?on_conflict=company_code,worker_id_number,mark_date', {
+          method: 'POST',
+          headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+          body: JSON.stringify(pendientes.map((l, i) => {
+            const r = res.resultados[i];
+            return {
+              report_id: id,
+              line_id: l.id,
+              company_code: rep.company_code,
+              worker_id_number: l.worker_id_number,
+              mark_date: String(l.mark_date || '').slice(0, 10),
+              day_type: l.day_type || 'L',
+              time_in: l.time_in || null,
+              time_out: l.time_out || null,
+              status: r.ok ? 'ok' : 'error',
+              ax_message: r.mensaje ? String(r.mensaje).slice(0, 500) : null,
+              ax_error: r.ok ? null : String(r.error || '').slice(0, 500),
+              sent_at: nowIso,
+              sent_by: user.id,
+            };
+          })),
+        });
+      } catch (e) {
+        logOk = false;
+        logErr = String((e && e.message) || e).slice(0, 300);
+      }
+
+      pendientes.forEach((l, i) => {
+        const r = res.resultados[i];
+        const ok = r.ok && logOk;
+        if (ok) publicadas++; else fallidas++;
+        lineas.push(lineaBase(l, {
+          status: ok ? 'ok' : 'error',
+          mensaje: r.ok ? r.mensaje : null,
+          error: r.ok
+            ? (logOk ? null : `AX aceptó el marcaje pero no se pudo dejar constancia en la bitácora: ${logErr}`)
+            : r.error,
+          detalles_ax: r.detalles_ax || null,
+          xml: r.xml || null,
+          payload: r.payload,
+          via: r.via,
+        }));
+      });
+    }
+
+  return { lineas, publicadas, fallidas, omitidas, total: lines.length, axResumen };
+}
+
+/* =====================================================================
+   publicarLineasAusencia — la parte de publish_ax propia de PERIODO DE
+   AUSENCIA.                                                    (v6.181)
+
+   ES DISTINTA A LA DE MARCAJES EN LO ESENCIAL, y conviene tenerlo claro
+   antes de tocarla:
+
+   1) SE MANDA DE A UNA LINEA. Lo hace el modulo _axausencias.js. AX
+      identifica los fallos por CEDULA ("Fallo (28772674): ..."), asi que
+      en un lote con dos periodos del mismo empleado no se sabria cual
+      fallo. De a una, el 201 decide solo.
+
+   2) NO SE REINTENTA LO QUE YA ENTRO, NUNCA. AX rechaza el periodo que se
+      superpone con otro del mismo empleado, y devuelve el MISMO error
+      tanto si la linea ya la mandamos nosotros como si choca con una
+      ausencia cargada por otra via. Reenviar significaria marcar como
+      fallida una linea que esta bien cargada. Por eso ax_ausencias_log
+      es fuente de verdad y lo que figura 'ok' se saltea siempre.
+
+   3) EL DOCUMENTO OBLIGATORIO MANDA. Una linea cuyo respaldo esta
+      pendiente y es exigido (enforcement 'block') NO se publica: cargar
+      un reposo en la nomina sin el certificado es justo lo que despues no
+      se puede defender. Se permite forzarlo, pero solo de a un reporte,
+      solo preguntando, y solo a quien tenga report.publish.forzar.
+   ===================================================================== */
+async function publicarLineasAusencia(env, id, rep, user, body, actor) {
+  const nowIso = new Date().toISOString();
+
+  // Las lineas, con su documento (si el tipo lo pide).
+  const lines = await sbJson(env,
+    `absence_report_lines?report_id=eq.${id}`
+    + `&select=id,worker_id_number,worker_name,absence_code,ax_code,date_from,date_to,note,`
+    + `absence_report_docs(doc_name,status,enforcement)`
+    + `&order=id.asc`) || [];
+  if (!lines.length) {
+    return { rechazo: { status: 400, cuerpo: { ok: false, error: 'El reporte no tiene lineas de ausencia.' } } };
+  }
+
+  // Lo que YA entro. Se compara por line_id de ESTE reporte (regla 2).
+  const prev = await sbJson(env,
+    `ax_ausencias_log?report_id=eq.${id}&status=eq.ok&select=line_id`) || [];
+  const yaEntraron = new Set(prev.map(x => x.line_id).filter(v => v != null));
+
+  /* Documento exigido y todavia pendiente. enforcement 'block' es el campo
+     que ya usa el portal para distinguir respaldo obligatorio de
+     recomendado: se respeta ese, no se inventa otra regla. */
+  const sinDoc = (l) => {
+    const d = (l.absence_report_docs && l.absence_report_docs.length) ? l.absence_report_docs[0] : null;
+    return !!(d && d.enforcement === 'block' && d.status !== 'adjunto');
+  };
+  const faltantes = lines.filter(l => !yaEntraron.has(l.id) && sinDoc(l));
+  const forzar = body.force_missing_docs === true;
+
+  if (faltantes.length && !forzar) {
+    /* Se corta y se PREGUNTA, en vez de publicar a medias. La pantalla
+       decide como mostrarlo: de a un reporte ofrece publicar igual (si el
+       usuario tiene el permiso), y en la cola simplemente lo saltea. */
+    const puedeForzar = !!(actor && can(actor, 'report.publish.forzar'));
+    return { rechazo: { status: 409, cuerpo: {
+      ok: false,
+      needs_docs: true,
+      can_force: puedeForzar,
+      error: puedeForzar
+        ? `Hay ${faltantes.length} ausencia(s) sin el documento obligatorio. Podés publicarlas igual, pero quedará registrado que se hizo sin respaldo.`
+        : `Hay ${faltantes.length} ausencia(s) sin el documento obligatorio. No se puede publicar hasta que estén adjuntos.`,
+      lineas_sin_doc: faltantes.map(l => ({
+        line_id: l.id,
+        worker_id_number: l.worker_id_number,
+        worker_name: l.worker_name || null,
+        date_from: l.date_from,
+        date_to: l.date_to,
+        absence_code: l.absence_code,
+        doc_name: (l.absence_report_docs && l.absence_report_docs[0] && l.absence_report_docs[0].doc_name) || null,
+      })),
+    } } };
+  }
+
+  const pendientes = lines.filter(l => !yaEntraron.has(l.id));
+  const omitidas = lines.length - pendientes.length;
+
+  const base = (l, extra) => ({
+    line_id: l.id,
+    worker_id_number: l.worker_id_number,
+    worker_name: l.worker_name || null,
+    date_from: String(l.date_from || '').slice(0, 10),
+    date_to: String(l.date_to || '').slice(0, 10),
+    absence_code: l.absence_code,
+    ax_code: l.ax_code,
+    sin_doc: sinDoc(l),
+    ...extra,
+  });
+
+  const lineas = lines
+    .filter(l => yaEntraron.has(l.id))
+    .map(l => base(l, {
+      status: 'omitida',
+      mensaje: 'Ya se había publicado en un intento anterior. No se reenvía: AX rechazaría el período repetido.',
+      error: null, payload: null,
+    }));
+
+  let publicadas = 0, fallidas = 0;
+  let axResumen = null;
+
+  if (pendientes.length) {
+    const res = await axPublicarAusencias(env, pendientes.map(l => ({
+      personnelNumber: l.worker_id_number,
+      dateFrom: String(l.date_from || '').slice(0, 10),
+      dateTo: String(l.date_to || '').slice(0, 10),
+      absenceCode: l.ax_code || l.absence_code,
+      // approvedState 0 (Review): publicar desde el portal NO aprueba,
+      // deja el registro para que alguien lo apruebe dentro de AX.
+    })));
+    axResumen = { llamadas: res.llamadas, aislado: true, mensaje: null, contadores: null };
+
+    /* La bitacora se escribe SOLO con lo que entro y lo que fallo de este
+       intento, en un upsert por (report_id, line_id). Va ANTES de contar
+       resultados a proposito: si no se puede registrar, la linea cuenta
+       como fallida — con ausencias, perder el rastro de lo que entro es
+       peor que no publicar, porque despues no se puede reintentar. */
+    let logOk = true, logErr = null;
+    try {
+      await sb(env, 'ax_ausencias_log?on_conflict=report_id,line_id', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=merge-duplicates,return=minimal' },
+        body: JSON.stringify(pendientes.map((l, i) => {
+          const r = res.resultados[i];
+          return {
+            report_id: id,
+            line_id: l.id,
+            company_code: rep.company_code,
+            worker_id_number: l.worker_id_number,
+            worker_name: l.worker_name || null,
+            date_from: String(l.date_from || '').slice(0, 10),
+            date_to: String(l.date_to || '').slice(0, 10),
+            absence_code: l.absence_code || null,
+            ax_state: r.payload ? r.payload.state : null,
+            approved_state: r.payload ? r.payload.approvedState : null,
+            status: r.ok ? 'ok' : 'error',
+            ax_message: r.mensaje ? String(r.mensaje).slice(0, 500) : null,
+            ax_error: r.ok ? null : String(r.error || '').slice(0, 500),
+            forzado: forzar && sinDoc(l),
+            sent_at: nowIso,
+            sent_by: user.id,
+          };
+        })),
+      });
+    } catch (e) {
+      logOk = false;
+      logErr = String((e && e.message) || e).slice(0, 300);
+    }
+
+    pendientes.forEach((l, i) => {
+      const r = res.resultados[i];
+      const ok = r.ok && logOk;
+      if (ok) publicadas++; else fallidas++;
+      lineas.push(base(l, {
+        status: ok ? 'ok' : 'error',
+        mensaje: r.ok ? r.mensaje : null,
+        error: r.ok
+          ? (logOk ? null : `AX registró la ausencia pero no se pudo dejar constancia en la bitácora: ${logErr}`)
+          : r.error,
+        http: r.http,
+        payload: r.payload,
+        forzada: forzar && sinDoc(l),
+      }));
+    });
+  }
+
+  return { lineas, publicadas, fallidas, omitidas, total: lines.length, axResumen };
 }

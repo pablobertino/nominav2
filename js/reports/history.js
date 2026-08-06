@@ -110,7 +110,7 @@ function flashBtn(b, ok) {
    por sesion, cacheada en module scope.
    Ante fallo de red se es PERMISIVO en la pantalla — el endpoint valida el
    permiso igual, asi que nadie hace nada que no pueda por un error pasajero. */
-const HIST_CODES = ['report.attention', 'report.publish.marcaje'];
+const HIST_CODES = ['report.attention', 'report.publish.marcaje', 'report.publish.ausencia'];
 let HIST_PERMS = null;
 
 async function ensureHistoryPerms(user) {
@@ -146,13 +146,19 @@ export async function renderHistory(user) {
   const perms = await ensureHistoryPerms(user);
   const canManage = !!perms['report.attention'];
   const canPublishAx = !!perms['report.publish.marcaje'];
+  const canPublishAus = !!perms['report.publish.ausencia'];
+  /* v6.181 — Un reporte se puede publicar si su tipo tiene endpoint Y el
+     usuario tiene el permiso DE ESE TIPO. Publicar marcajes y publicar
+     ausencias son decisiones distintas: una ausencia mal cargada mueve la
+     nomina, un marcaje no. Por eso son dos permisos y no uno. */
+  const puedePublicar = (r) => (r && r.type === 'ausencia') ? canPublishAus : canPublishAx;
   /* v6.176 — La columna de seleccion y la barra de acciones son de QUIEN
      TENGA ALGO QUE HACER CON VARIOS REPORTES A LA VEZ, no solo de quien
      cambia estados. Si dependieran de report.attention, un rol con permiso
      para publicar pero sin el de atencion se quedaria sin la cola y sin
      ninguna pista de por que. Dentro de la barra, cada control sigue
      pidiendo SU permiso. */
-  const canSelect = canManage || canPublishAx;
+  const canSelect = canManage || canPublishAx || canPublishAus;
 
   // estado de la vista
   const ST = {
@@ -216,7 +222,7 @@ export async function renderHistory(user) {
       <input id="hSelComment" placeholder="Comentario (opcional)" style="flex:0 1 220px">
       <button class="btn btn-sm btn-primary" id="hSelApply">Aplicar</button>
       <button class="btn btn-sm" id="hSelSync" title="Reenviar a osTicket el estado actual de los reportes seleccionados">\u21BB Sincronizar</button>` : ''}
-      ${canPublishAx ? `<button class="btn btn-sm btn-ax" id="hSelPub" title="Publicar en AX los reportes de Marcaje Manual seleccionados, uno detr\u00E1s de otro">${AX_ARROW} Publicar</button>` : ''}
+      ${(canPublishAx || canPublishAus) ? `<button class="btn btn-sm btn-ax" id="hSelPub" title="Publicar en AX los reportes seleccionados, uno detr\u00E1s de otro">${AX_ARROW} Publicar</button>` : ''}
       <button class="btn btn-sm" id="hSelClear">Limpiar</button>
     </div>` : ''}
 
@@ -402,13 +408,14 @@ export async function renderHistory(user) {
     // Quien decide si se puede publicar es motivoNoPublicable, compartida con
     // la cola: si el boton y la cola opinaran distinto, el usuario veria un
     // reporte con boton que la cola saltea, o al reves.
-    if (!canPublishAx || motivoNoPublicable(r)) return '';
+    if (!puedePublicar(r) || motivoNoPublicable(r)) return '';
     // Misma flecha, mismos colores y MISMA PALABRA que el "Publicar" de
     // Sincronizacion. En el portal "Publicar" ya significa una sola cosa
     // -mandarlo a AX-, asi que aclararlo en la etiqueta sobra. El destino se
     // explica en el tooltip y en el aviso del modal, que es donde hace falta.
+    const que = r.type === 'ausencia' ? 'estas ausencias' : 'estos marcajes';
     return `<button class="btn btn-sm btn-ax" data-pubax="${r.id}"
-      title="Cargar estos marcajes en AX 2012. Si entran todos, el reporte queda cerrado para siempre."
+      title="Cargar ${que} en AX 2012. Si entran todas, el reporte queda cerrado para siempre."
       >${AX_ARROW} Publicar</button>`;
   }
 
@@ -544,7 +551,8 @@ export async function renderHistory(user) {
       await openPublishAxModal({
         user,
         report: {
-          id, company_code: row.company_code, company_name: row.company_name,
+          id, type: row.type,
+          company_code: row.company_code, company_name: row.company_name,
           workers_count: row.workers_count,
         },
         onDone: () => load(),
@@ -595,7 +603,7 @@ export async function renderHistory(user) {
        explica el motivo de cada uno, y un boton muerto no explica nada. */
     const pb = $('#hSelPub');
     if (pb) {
-      const pubN = ST.rows.filter(r => ST.selected.has(r.id) && !motivoNoPublicable(r)).length;
+      const pubN = ST.rows.filter(r => ST.selected.has(r.id) && puedePublicar(r) && !motivoNoPublicable(r)).length;
       pb.innerHTML = `${AX_ARROW} Publicar${pubN ? ` (${pubN})` : ''}`;
       pb.title = pubN
         ? `Publicar en AX ${pubN} reporte(s) de Marcaje Manual, uno detrás de otro`

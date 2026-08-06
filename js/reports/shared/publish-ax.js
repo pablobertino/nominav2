@@ -1,6 +1,6 @@
 /* =====================================================================
    js/reports/shared/publish-ax.js                            (v6.168)
-   Modal de "Publicar en AX" para los reportes de Marcaje Manual.
+   Modal de "Publicar en AX" para Marcaje Manual y Periodo de Ausencia.
    Lo usan el Historial (js/reports/history.js) y la pantalla de Detalle
    (js/reports/report-detail.js), para que el aviso y el resultado se vean
    IGUAL en los dos sitios.
@@ -37,13 +37,30 @@ function fmtDate(iso) {
   return (y && m && d) ? `${d}/${m}/${y}` : iso;
 }
 
-/* Horas de una linea. En Descanso no se muestran horas porque no las tiene:
-   el portal las deja vacias y a AX se le mandan en 0. */
+/* Horas de una linea de MARCAJE. En Descanso no se muestran horas porque no
+   las tiene: el portal las deja vacias y a AX se le mandan en 0. */
 function fmtHoras(l) {
   if (l.day_type === 'D') return '<span class="pill pill-pend">Descanso</span>';
   const a = l.time_in || '—', b = l.time_out || '—';
   return `<span class="time-badge">${esc(a)}</span> → <span class="time-badge">${esc(b)}</span>`;
 }
+
+/* v6.181 — Una linea de AUSENCIA no tiene horas: tiene un PERIODO y un tipo.
+   Si falta el respaldo obligatorio se marca, porque es el dato que explica
+   por que el reporte se freno. */
+function fmtPeriodo(l) {
+  const uno = l.date_from === l.date_to;
+  const p = uno
+    ? `<span class="time-badge">${fmtDate(l.date_from)}</span>`
+    : `<span class="time-badge">${fmtDate(l.date_from)}</span> → <span class="time-badge">${fmtDate(l.date_to)}</span>`;
+  const tipo = l.absence_code ? ` <span class="pax-ced">${esc(l.absence_code)}</span>` : '';
+  const doc = l.sin_doc ? ' <span class="pill pill-out" title="Sin el documento obligatorio">sin respaldo</span>' : '';
+  return p + tipo + doc;
+}
+
+/* Es una linea de ausencia si trae periodo. Evita pasarle el tipo del reporte
+   a cada helper: el dato ya viene en la linea. */
+const esAusencia = (l) => !!(l && l.date_from);
 
 const ESTADO = {
   ok:      { cls: 'att-closed',   txt: 'Publicado' },
@@ -59,9 +76,11 @@ const ESTADO = {
    El servidor vuelve a validar todo esto; aca es para no ofrecer lo que
    se sabe que va a ser rechazado.
    ===================================================================== */
+const PUBLICABLES = { marcaje: 'Marcaje Manual', ausencia: 'Período de Ausencia' };
+
 export function motivoNoPublicable(r) {
   if (!r) return 'Reporte desconocido';
-  if (r.type !== 'marcaje') return 'No es Marcaje Manual';
+  if (!PUBLICABLES[r.type]) return 'Este tipo de reporte no se publica en AX';
   if (r.ax_published_at) return 'Ya está publicado';
   // v6.175: "Cerrado" ya significa "cargado en AX a mano"; publicar encima
   // podria pisar una correccion hecha al cargarlo.
@@ -71,16 +90,18 @@ export function motivoNoPublicable(r) {
 
 function lineasTabla(lineas) {
   if (!lineas || !lineas.length) return '';
+  const aus = esAusencia(lineas[0]);
   return `<div class="pax-tablewrap"><table class="dtl-table pax-table"><thead><tr>
-      <th>Trabajador</th><th>Fecha</th><th>Horas</th><th>Estado</th><th>Detalle</th>
+      <th>Trabajador</th><th>${aus ? 'Período' : 'Fecha'}</th>${aus ? '' : '<th>Horas</th>'}<th>Estado</th><th>Detalle</th>
     </tr></thead><tbody>
     ${lineas.map(l => {
       const e = ESTADO[l.status] || ESTADO.error;
       const detalle = l.error || l.mensaje || '';
       return `<tr class="pax-${l.status}">
         <td><b>${esc(l.worker_name || '—')}</b><div class="pax-ced">${esc(l.worker_id_number)}</div></td>
-        <td>${fmtDate(l.mark_date)}</td>
-        <td>${fmtHoras(l)}</td>
+        ${esAusencia(l)
+          ? `<td>${fmtPeriodo(l)}</td>`
+          : `<td>${fmtDate(l.mark_date)}</td><td>${fmtHoras(l)}</td>`}
         <td><span class="pill ${e.cls}">${e.txt}</span></td>
         <td class="pax-msg">${esc(detalle)}</td>
       </tr>`;
@@ -134,14 +155,15 @@ export function openPublishAxModal({ user, report, onDone }) {
             <button class="modal-x" data-act="close" aria-label="Cerrar">✕</button>
           </div>
           <div class="pax-body">
-            <p class="confirm-msg">Se van a cargar en <b>AX 2012</b> los marcajes de
+            <p class="confirm-msg">Se van a cargar en <b>AX 2012</b> ${report.type === 'ausencia' ? 'las ausencias' : 'los marcajes'} de
               <b>${esc(nombre)}</b>${cuantos ? ` (${cuantos} trabajador${cuantos === 1 ? '' : 'es'})` : ''}.</p>
             <div class="pax-warn">
               <b>Esto no se puede deshacer desde el portal.</b>
               Si entran todas las líneas, el reporte queda <b>Cerrado</b>, su ticket
               en osTicket también, y ya no podrá volver a ningún estado anterior.
-              <div class="pax-warn-soft">Si alguna línea no entra, el reporte sigue abierto
-                y se puede reintentar: lo que ya se cargó no se duplica.</div>
+              <div class="pax-warn-soft">${report.type === 'ausencia'
+                ? 'Si alguna línea no entra, el reporte sigue abierto y se puede reintentar: las que ya entraron no se reenvían, porque AX rechaza un período repetido.'
+                : 'Si alguna línea no entra, el reporte sigue abierto y se puede reintentar: lo que ya se cargó no se duplica.'}</div>
             </div>
           </div>
           <div class="modal-actions">
@@ -183,6 +205,46 @@ export function openPublishAxModal({ user, report, onDone }) {
             <div class="modal-actions"><button class="btn btn-primary" data-act="close">Entendido</button></div>
           </div>`;
         wire();
+        return;
+      }
+
+      /* v6.181 — DOCUMENTO OBLIGATORIO PENDIENTE.
+         El backend corta antes de mandar nada y devuelve que lineas estan sin
+         respaldo. Aca se pregunta, que es la decision del 05/08/2026: forzar
+         se hace mirando UN caso, no marcando quince casillas — por eso la cola
+         directamente saltea estos reportes y solo el modal de a uno ofrece
+         seguir. Y el boton de seguir aparece solo si el servidor dijo que este
+         usuario puede (can_force = permiso report.publish.forzar). */
+      if (d.needs_docs) {
+        const ls = d.lineas_sin_doc || [];
+        ov.innerHTML = `
+          <div class="modal-box pax-box notice-error" role="dialog" aria-modal="true">
+            <div class="modal-head"><span>Faltan documentos obligatorios</span>
+              <button class="modal-x" data-act="close" aria-label="Cerrar">✕</button></div>
+            <div class="pax-body">
+              <p class="confirm-msg">${esc(d.error || '')}</p>
+              ${ls.length ? `<div class="pax-tablewrap"><table class="dtl-table pax-table"><thead><tr>
+                  <th>Trabajador</th><th>Período</th><th>Documento que falta</th>
+                </tr></thead><tbody>
+                ${ls.map(l => `<tr>
+                  <td><b>${esc(l.worker_name || '—')}</b><div class="pax-ced">${esc(l.worker_id_number)}</div></td>
+                  <td>${fmtPeriodo(l)}</td>
+                  <td class="pax-msg">${esc(l.doc_name || 'Respaldo del tipo de ausencia')}</td>
+                </tr>`).join('')}
+              </tbody></table></div>` : ''}
+              ${d.can_force
+                ? `<div class="pax-warn">Si publicás igual, esas ausencias quedan cargadas en la nómina
+                     <b>sin respaldo</b>, y va a quedar registrado que vos lo autorizaste.</div>`
+                : `<div class="pax-warn">Adjuntá los documentos en el reporte y volvé a intentarlo.</div>`}
+            </div>
+            <div class="modal-actions">
+              <button class="btn" data-act="close">${d.can_force ? 'Cancelar' : 'Entendido'}</button>
+              ${d.can_force ? `<button class="btn btn-ax" data-act="force">${AX_ARROW} Publicar igual</button>` : ''}
+            </div>
+          </div>`;
+        wire();
+        const fz = ov.querySelector('[data-act="force"]');
+        if (fz) fz.addEventListener('click', () => publicar(true));
         return;
       }
 
@@ -245,10 +307,10 @@ export function openPublishAxModal({ user, report, onDone }) {
       wire();
     };
 
-    async function publicar() {
+    async function publicar(forzar) {
       publicando = true;
       pintarEnCurso();
-      const d = await postPublishAx(user, report.id, null);
+      const d = await postPublishAx(user, report.id, null, forzar === true);
       publicando = false;
       // Solo se avisa al llamador (para recargar) si algo cambio de verdad.
       if (d && d.ok !== false) resultado = d;
@@ -378,7 +440,7 @@ export function openPublishAxQueueModal({ user, reports, faltantes = 0, onDone }
             <button class="modal-x" data-act="close" aria-label="Cerrar">✕</button>
           </div>
           <div class="pax-body">
-            <p class="confirm-msg">Se van a cargar en <b>AX 2012</b> los marcajes de
+            <p class="confirm-msg">Se van a cargar en <b>AX 2012</b> los reportes de
               <b>${aptos.length}</b> reporte${aptos.length === 1 ? '' : 's'}
               (${totalTrab} trabajador${totalTrab === 1 ? '' : 'es'} en total), uno detrás de otro.</p>
             <div class="pax-warn">
@@ -444,6 +506,13 @@ export function openPublishAxQueueModal({ user, reports, faltantes = 0, onDone }
     const resumenLinea = (d) => {
       if (!d) return 'Se perdió la conexión.';
       if (d.already) return 'Ya estaba publicado.';
+      /* v6.181: faltan documentos obligatorios. En la cola NO se ofrece
+         forzar -esa decision se toma mirando un caso, no quince- asi que se
+         saltea y se dice que hay que entrar al reporte. */
+      if (d.needs_docs) {
+        const n = (d.lineas_sin_doc || []).length;
+        return `Salteado: ${n} ausencia(s) sin el documento obligatorio. Abrí el reporte para resolverlo.`;
+      }
       if (!d.ok && !d.lineas) return d.error || 'Rechazado.';
       const p = [];
       if (d.publicadas) p.push(`${d.publicadas} publicado${d.publicadas === 1 ? '' : 's'}`);
@@ -480,7 +549,8 @@ export function openPublishAxQueueModal({ user, reports, faltantes = 0, onDone }
         resultados.push({ r, d });
         const estado = !d ? QST.err
           : (d.already || d.ok) ? QST.ok
-            : (d.lineas && d.lineas.length) ? QST.parc : QST.err;
+            : d.needs_docs ? QST.skip
+              : (d.lineas && d.lineas.length) ? QST.parc : QST.err;
         setFila(r.id, estado, resumenLinea(d));
         hechos++;
         setAvance(hechos, aptos.length);

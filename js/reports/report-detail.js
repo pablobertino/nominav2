@@ -15,7 +15,7 @@
 
 import { $ } from '../core/dom.js';
 import { openResendModal } from './shared/resend-modal.js';
-import { openPublishAxModal, AX_ARROW } from './shared/publish-ax.js';
+import { openPublishAxModal, motivoNoPublicable, AX_ARROW } from './shared/publish-ax.js';
 import {
   ATT_STATES, ATT_ORDER, attPill, axPublishedPill, syncDot, attAuditText, fmtStamp,
   fetchTicketText, fetchTicketExcel, postSetAttention, postSyncOsticket,
@@ -26,7 +26,7 @@ import {
    que en el Historial: un coordinador con report.attention concedido no veia
    el selector de estado). Cacheado en module scope; permisivo si falla la
    red, porque el endpoint valida el permiso igual. */
-const RD_CODES = ['report.attention', 'report.publish.marcaje'];
+const RD_CODES = ['report.attention', 'report.publish.marcaje', 'report.publish.ausencia'];
 let RD_PERMS = null;
 
 async function ensureDetailPerms(user) {
@@ -152,6 +152,7 @@ export async function showReportDetail({ reportId, user, onBack }) {
   const perms = await ensureDetailPerms(user);
   const canManage = !!perms['report.attention'];
   const canPublishAx = !!perms['report.publish.marcaje'];
+  const canPublishAus = !!perms['report.publish.ausencia'];
 
   const res = await fetch('/api/reports-history', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -204,13 +205,12 @@ export async function showReportDetail({ reportId, user, onBack }) {
     attControls = `<div class="sb-row">${attPill(r.attention)}</div>${auditHtml}${commentHtml}`;
   }
 
-  /* Boton "Publicar": solo Marcaje Manual, con permiso, sin sello, y NO
-     cerrado. v6.175 — "Cerrado" ya significa "cargado en AX" a mano;
-     publicar encima podria pisar una correccion hecha al cargarlo (AX
-     actualiza el registro existente). Para publicarlo hay que devolverle
-     antes el estado a Abierto o Atendido, cosa que aun se puede porque no
-     tiene el sello. */
-  const showPubBtn = (r.type === 'marcaje') && canPublishAx && !publicado && r.attention !== 'closed';
+  /* Boton "Publicar". Quien decide si el reporte es publicable es
+     motivoNoPublicable, la MISMA funcion que usan el Historial y la cola:
+     si opinaran distinto, el usuario veria el boton en un sitio y no en el
+     otro. v6.181: ya cubre Marcaje Manual y Periodo de Ausencia. */
+  const permisoPub = r.type === 'ausencia' ? canPublishAus : canPublishAx;
+  const showPubBtn = permisoPub && !motivoNoPublicable(r);
 
   const statusBand = `
     <div class="statusband">
@@ -347,7 +347,8 @@ export async function showReportDetail({ reportId, user, onBack }) {
       await openPublishAxModal({
         user,
         report: {
-          id: r.id, company_code: r.company_code, company_name: r.company_name,
+          id: r.id, type: r.type,
+          company_code: r.company_code, company_name: r.company_name,
           workers_count: r.workers_count,
         },
         onDone: () => showReportDetail({ reportId: r.id, user, onBack }),

@@ -127,10 +127,15 @@ export async function postSyncOsticket(user, { reportIds, mode } = {}) {
    closed, published_at, lineas:[...] } o { ok:true, already:true }.
    Nota: el backend responde 207 cuando algo fallo, asi que NO se puede usar
    response.ok para decidir; hay que mirar el cuerpo. */
-export async function postPublishAx(user, reportId, comment) {
+export async function postPublishAx(user, reportId, comment, forceMissingDocs) {
   return fetch('/api/reports-history', {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action: 'publish_ax', user, report_id: reportId, comment: comment || null }),
+    body: JSON.stringify({
+      action: 'publish_ax', user, report_id: reportId, comment: comment || null,
+      // v6.181: solo se manda cuando el usuario confirmo publicar una ausencia
+      // sin su documento obligatorio. El servidor exige report.publish.forzar.
+      force_missing_docs: forceMissingDocs === true,
+    }),
   }).then(r => r.json()).catch(() => null);
 }
 
