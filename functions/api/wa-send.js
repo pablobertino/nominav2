@@ -662,6 +662,12 @@ export async function onRequestPost({ request, env }) {
       }
 
       const batchFilters = {
+        /* v6.190 — target: 'groups' VUELVE. La v6.180 reescribio estos filtros
+           para varios grupos y se lo llevo puesto sin querer; el Historial usa
+           ese campo para saber que clase de envio fue, asi que las difusiones
+           quedaron clasificadas como "Otro" y el filtro "Difusion" no las
+           mostraba. Estaban ahi, invisibles. */
+        target: 'groups',
         group_ids: grupos.map(g => g.id),
         groups: grupos.map(g => g.nombre),
         zone_greeting: conSaludo,

@@ -107,7 +107,13 @@ function originOf(filters) {
       },
     };
   }
-  if (f.target === 'groups') {
+  /* v6.190 — Se reconoce por target 'groups' O por traer group_ids.
+     Lo segundo es la red: si un dia alguien vuelve a armar los filtros y se
+     olvida del target -paso en la v6.180-, un envio a grupos sigue siendo un
+     envio a grupos, y no hay razon para que el Historial lo mande a "Otro".
+     Ademas esto reclasifica solas las corridas que ya quedaron mal, sin tener
+     que tocar los datos guardados. */
+  if (f.target === 'groups' || Array.isArray(f.group_ids)) {
     // Vino de Mensajes (regla con code) o de una Difusion suelta a grupos.
     if (f.rule) return { kind: 'rule', rule: String(f.rule), label: null };
     return { kind: 'broadcast', rule: null, label: null };
