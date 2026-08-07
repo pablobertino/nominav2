@@ -202,6 +202,7 @@ function ensureStyles() {
   .wa-zp-n{font-size:11.5px;color:#64748b;margin-bottom:5px;font-weight:600}
   .wa-zp-s{font-weight:400;color:#94a3b8}
   .wa-zp-b{font-size:13px;color:#0f172a;line-height:1.5;white-space:pre-wrap;word-break:break-word}
+  .wa-why{font-size:12px;color:#b45309;font-weight:600;margin-right:10px;align-self:center}
   .wa-note{margin-right:auto;font-size:11.5px;color:#92400e;background:var(--warn-bg,#fffbeb);border:1px solid #fde68a;border-radius:9px;padding:7px 11px}
   .wa-confirm{display:flex;gap:9px;align-items:center;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:9px 13px;font-size:12.5px;color:#991b1b;font-weight:600}
   .wa-prog{border:1px solid #bbf1d2;background:#e9fbf0;border-radius:11px;padding:13px 15px;margin-top:12px}
@@ -364,6 +365,12 @@ function syncSendState() {
   const largoOk = msg.length > 0 && msg.length <= MAX_MESSAGE;
   const btn = $('#waSendBtn');
 
+  /* v6.188 — Un boton apagado sin explicacion es una trampa: el usuario le da
+     clic, no pasa nada, y concluye que la pantalla esta rota. Aca se dice que
+     falta. Reportado en vivo: "le hago clic al boton y no sale el mensaje" —
+     y lo que faltaba era marcar un grupo. */
+  const porQue = (motivo) => { const w = $('#waWhy'); if (w) w.textContent = motivo || ''; };
+
   /* v6.186 — Con grupos marcados, el boton NO depende del preview.
      Antes exigia PREVIEW, que solo se llena al pulsar "Ver destinatario"...
      y marcar un grupo llama a invalidatePreview(), que lo borra. Con el
@@ -382,9 +389,23 @@ function syncSendState() {
       const conArchivo = MEDIA ? (MEDIA.es_imagen ? ' con imagen' : ' con PDF') : '';
       btn.textContent = `📤 Enviar a ${nf(grupos)} grupo${grupos === 1 ? '' : 's'}${conArchivo}`;
     }
+    porQue(!largoOk
+      ? (msg.length ? 'El mensaje supera el máximo.' : 'Falta escribir el mensaje.')
+      : (!pieOk ? 'El texto no entra como pie de foto.' : ''));
     $('#waCount').textContent = `${nf(msg.length)} / ${nf(MAX_MESSAGE)}`;
     return;
   }
+
+  // Sin grupos marcados no hay a dónde enviar: hay que decirlo.
+  if (!PREVIEW) {
+    if (btn) { btn.disabled = true; btn.textContent = '📤 Enviar'; }
+    porQue(largoOk
+      ? 'Marcá al menos un grupo arriba.'
+      : 'Marcá al menos un grupo y escribí el mensaje.');
+    $('#waCount').textContent = `${nf(msg.length)} / ${nf(MAX_MESSAGE)}`;
+    return;
+  }
+  porQue('');
 
   const n = msgCount();
   const ok = !SENDING && PREVIEW && n > 0 && largoOk;
@@ -708,7 +729,11 @@ function pintarMedia() {
       ${MEDIA.preview
         ? `<img src="${MEDIA.preview}" alt="">`
         : '<span class="wa-media-pdf">PDF</span>'}
-      <div class="wa-media-meta"><b>${esc(MEDIA.file_name)}</b><span>${kb}</span></div>
+      <div class="wa-media-meta"><b>${esc(MEDIA.file_name)}</b><span>${kb}${
+        MEDIA.opt
+          ? ` · optimizada desde ${(MEDIA.opt.antes / 1048576).toFixed(1)} MB${
+              MEDIA.opt.w < MEDIA.opt.wOrig ? ` y ${MEDIA.opt.wOrig}px` : ''}`
+          : ''}</span></div>
       <button type="button" class="wa-media-x" id="waMediaDel" title="Quitar">✕</button>
     </div>`;
   const del = $('#waMediaDel');
@@ -748,9 +773,70 @@ function avisarCaption() {
   }
 }
 
-async function subirMedia(user, file) {
+/* =====================================================================
+   v6.188 — Optimizar la imagen ANTES de subirla.
+
+   POR QUE VALE LA PENA: WhatsApp recomprime las imagenes a JPEG de todas
+   formas. Subir un PNG de 2,5 MB solo gasta la subida del usuario y el
+   espacio del bucket — el que recibe ve exactamente lo mismo. Achicando a
+   1600 px de ancho y JPEG al 85% queda en 200-400 KB sin diferencia
+   visible, y ademas entra comodo en el limite de 5 MB.
+
+   1600 px es el ancho maximo que WhatsApp conserva; mas grande se
+   desperdicia. Y si el original ya es mas chico NO se agranda: reencodar
+   una imagen chica solo la empeora.
+
+   SE RESPETA EL ORIGINAL SI NO HAY GANANCIA: si el resultado pesa igual o
+   mas -pasa con capturas de pantalla planas, donde el PNG gana- se manda
+   el archivo tal cual. Optimizar por optimizar no es optimizar.
+   ===================================================================== */
+const MAX_LADO = 1600;
+const JPEG_Q = 0.85;
+
+function optimizarImagen(file) {
+  return new Promise((resolve) => {
+    if (!file.type.startsWith('image/')) return resolve({ file, optimizada: false });
+    const url = URL.createObjectURL(file);
+    const img = new Image();
+    img.onload = () => {
+      try {
+        const escala = Math.min(1, MAX_LADO / Math.max(img.width, img.height));
+        const w = Math.round(img.width * escala), h = Math.round(img.height * escala);
+        const c = document.createElement('canvas');
+        c.width = w; c.height = h;
+        const ctx = c.getContext('2d');
+        // Fondo blanco: el JPEG no tiene transparencia y sin esto los PNG
+        // con fondo transparente salen con manchas negras.
+        ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, w, h);
+        ctx.drawImage(img, 0, 0, w, h);
+        c.toBlob((blob) => {
+          URL.revokeObjectURL(url);
+          if (!blob || blob.size >= file.size) return resolve({ file, optimizada: false });
+          const nombre = file.name.replace(/\.[^.]+$/, '') + '.jpg';
+          resolve({
+            file: new File([blob], nombre, { type: 'image/jpeg' }),
+            optimizada: true,
+            antes: file.size, despues: blob.size,
+            w, h, wOrig: img.width, hOrig: img.height,
+          });
+        }, 'image/jpeg', JPEG_Q);
+      } catch (_) {
+        URL.revokeObjectURL(url);
+        resolve({ file, optimizada: false });
+      }
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); resolve({ file, optimizada: false }); };
+    img.src = url;
+  });
+}
+
+async function subirMedia(user, original) {
   const box = $('#waMediaBox');
-  if (box) { box.style.display = ''; box.innerHTML = '<span class="wa-note">Subiendo el archivo…</span>'; }
+  if (box) { box.style.display = ''; box.innerHTML = '<span class="wa-note">Preparando el archivo…</span>'; }
+
+  const opt = await optimizarImagen(original);
+  const file = opt.file;
+  if (box) box.innerHTML = '<span class="wa-note">Subiendo el archivo…</span>';
 
   const b64 = await new Promise((res, rej) => {
     const fr = new FileReader();
@@ -777,6 +863,7 @@ async function subirMedia(user, file) {
     es_imagen: !!r.es_imagen,
     // Vista previa local: no se vuelve a bajar del bucket para mirarla.
     preview: r.es_imagen ? URL.createObjectURL(file) : null,
+    opt: opt.optimizada ? opt : null,
   };
   pintarMedia();
   syncSendState();
@@ -924,6 +1011,7 @@ export async function renderWaSend(user) {
       <h3><span class="n">3</span> Enviar</h3>
       <div class="wa-sendrow" id="waSendRow">
         <span class="wa-note">⚠️ Se publicará en los grupos marcados desde la línea corporativa, uno detrás de otro. Queda registrado con fecha y autor.</span>
+        <span class="wa-why" id="waWhy"></span>
         <button class="wa-btn wa" id="waSendBtn" disabled>📤 Enviar</button>
       </div>
       <div class="wa-prog" id="waProg" style="display:none">
@@ -1138,6 +1226,27 @@ export async function renderWaSend(user) {
   });
 
   const confirmHtml = () => {
+    /* v6.188 — Rama de GRUPOS. Sin esto, PREVIEW.target reventaba con
+       PREVIEW en null: era el tercer sitio del mismo camino que daba por
+       hecho que siempre habia un preview hecho. */
+    const gs = gruposMarcados().length;
+    if (gs > 0) {
+      const arch = MEDIA ? ` con ${MEDIA.es_imagen ? 'la imagen' : 'el PDF'} <b>${esc(MEDIA.file_name)}</b>` : '';
+      const modo = MEDIA
+        ? (modoMedia() === 'caption' ? ' (un solo mensaje, con el texto de pie)' : ' (dos mensajes: archivo y luego texto)')
+        : '';
+      // ~11,5s de pausa promedio entre grupos (8-15 con jitter).
+      const seg = Math.round((gs - 1) * 11.5);
+      const est = gs > 1
+        ? ` Va a tardar alrededor de <b>${seg < 60 ? seg + ' s' : Math.ceil(seg / 60) + ' min'}</b>: el envío es pausado a propósito para cuidar la línea.`
+        : '';
+      return `<div class="wa-confirm">¿Confirmás la publicación en
+        <b>&nbsp;${nf(gs)}&nbsp;</b> grupo${gs === 1 ? '' : 's'}${arch}${modo}?
+        Esta acción no se puede deshacer.${est}</div>
+        <button class="wa-btn danger" id="waConfNo">Cancelar</button>
+        <button class="wa-btn wa" id="waConfYes">Sí, enviar ahora</button>`;
+    }
+
     const n = msgCount();   // v5.05: neto (sin los excluidos a mano)
     const ent = netEntities();
     const nEx = EXCLUDED.size;
@@ -1152,7 +1261,15 @@ export async function renderWaSend(user) {
   };
 
   $('#waSendBtn').addEventListener('click', () => {
-    if (!PREVIEW || SENDING) return;
+    /* v6.188 — El clic NO exige PREVIEW cuando hay grupos marcados.
+       Este era el bug de "le hago clic y no pasa nada": la v6.186 quito la
+       exigencia de PREVIEW para HABILITAR el boton, pero la dejo aca, en el
+       manejador. Resultado: el boton se veia activo, se pulsaba, y la
+       primera linea hacia return en silencio. Mismo tipo de error que la
+       propia v6.186 -cambiar un lado y dejar el otro-, esta vez dentro del
+       mismo archivo. */
+    if (SENDING) return;
+    if (!PREVIEW && !gruposMarcados().length) return;
     // Confirmación inline (sin modales nativos)
     $('#waSendRow').innerHTML = confirmHtml();
     $('#waConfNo').addEventListener('click', () => renderSendRowIdle(user));
@@ -1161,10 +1278,19 @@ export async function renderWaSend(user) {
 
   function renderSendRowIdle() {
     $('#waSendRow').innerHTML = `
-      <span class="wa-note">⚠️ Se publicará en el grupo desde la línea corporativa. Queda registrado con fecha y autor.</span>
+      <span class="wa-note">⚠️ Se publicará en los grupos marcados desde la línea corporativa, uno detrás de otro. Queda registrado con fecha y autor.</span>
+      <span class="wa-why" id="waWhy"></span>
       <button class="wa-btn wa" id="waSendBtn" disabled>📤 Enviar</button>`;
     $('#waSendBtn').addEventListener('click', () => {
-      if (!PREVIEW || SENDING) return;
+      /* v6.188 — El clic NO exige PREVIEW cuando hay grupos marcados.
+       Este era el bug de "le hago clic y no pasa nada": la v6.186 quito la
+       exigencia de PREVIEW para HABILITAR el boton, pero la dejo aca, en el
+       manejador. Resultado: el boton se veia activo, se pulsaba, y la
+       primera linea hacia return en silencio. Mismo tipo de error que la
+       propia v6.186 -cambiar un lado y dejar el otro-, esta vez dentro del
+       mismo archivo. */
+    if (SENDING) return;
+    if (!PREVIEW && !gruposMarcados().length) return;
       $('#waSendRow').innerHTML = confirmHtml();
       $('#waConfNo').addEventListener('click', () => renderSendRowIdle());
       $('#waConfYes').addEventListener('click', () => doSend(user));
