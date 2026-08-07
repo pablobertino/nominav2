@@ -1912,7 +1912,43 @@ function openFicha(ced) {
     if (grid) grid.style.display = empty ? 'none' : '';
   };
   initBankRefCard(host, w, STATE, syncDocsSection);   // v6.66: referencia bancaria (ahora en Documentos)
-  initRifCard(host, w, STATE, syncDocsSection);        // v6.74: RIF (SENIAT)
+  /* v6.185 — Cuando el RIF trae domicilio fiscal, la ficha tiene que
+     enterarse EN EL ACTO. El backend ya lo guardaba en workers_master, pero
+     la pantalla seguia mostrando "Se completa al cargar el RIF" porque su
+     copia en memoria del trabajador era la de antes de subirlo. El usuario
+     concluia, con razon, que no se habia guardado nada.
+     Se actualizan las tres cosas que dependen del dato: la fila de solo
+     lectura, la caja del editor, y el boton "Copiar a Direccion Personal"
+     -que solo aparece si la Direccion Personal esta vacia-. */
+  const aplicarFiscal = (fis) => {
+    if (!fis) return;
+    w.fiscal_address = fis;
+
+    const fr = host.querySelector('#ff_fiscal_row');
+    const fv = host.querySelector('[data-v="fiscal_address"]');
+    if (fr) fr.style.display = '';
+    if (fv) { fv.textContent = fis; fv.classList.remove('empty'); }
+
+    const box = host.querySelector('#e_fiscal');
+    if (box) { box.textContent = fis; box.classList.remove('empty'); }
+    const wrap = host.querySelector('#e_fiscal_wrap');
+    if (wrap) wrap.style.display = '';
+
+    const copyBtn = host.querySelector('#e_copy_fiscal');
+    const addr = host.querySelector('#e_address');
+    if (copyBtn && addr) {
+      copyBtn.style.display = addr.value.trim() ? 'none' : 'inline-block';
+      // El listener se engancha al abrir el editor con el valor de entonces;
+      // se vuelve a colgar para que copie el domicilio RECIEN leido.
+      copyBtn.onclick = () => {
+        addr.value = fis;
+        addr.dispatchEvent(new Event('input'));
+        copyBtn.style.display = 'none';
+        addr.focus();
+      };
+    }
+  };
+  initRifCard(host, w, STATE, syncDocsSection, aplicarFiscal);   // v6.74: RIF (SENIAT)
   initCedulaCard(host, w, STATE, syncDocsSection);     // v6.77: cédula (imagen)
   window.scrollTo(0, 0);
 }

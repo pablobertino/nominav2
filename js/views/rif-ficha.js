@@ -257,7 +257,7 @@ const UP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strok
 const RIF_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="15" x2="15" y2="15"/></svg>';
 
 /* ===================== TARJETA EN LA FICHA ===================== */
-export async function initRifCard(host, w, STATE, onRender) {
+export async function initRifCard(host, w, STATE, onRender, onFiscal) {
   const slot = host.querySelector('#rifSlot');
   if (!slot) return;
   ensureStyles();
@@ -308,7 +308,19 @@ export async function initRifCard(host, w, STATE, onRender) {
       </div>`;
 
     const up = slot.querySelector('[data-rif="upload"]');
-    if (up) up.addEventListener('click', () => openUploadModal(w, STATE, () => refresh()));
+    /* v6.185 — Al subir el RIF hay que avisar el domicilio fiscal que trae.
+       Antes el unico callback era onRender (= syncDocsSection), que solo
+       muestra u oculta la seccion de Documentos: la fila "Direccion Fiscal"
+       y el boton "Copiar a Direccion Personal" se habian pintado antes desde
+       el `w` en memoria, con fiscal_address todavia en null, y NADIE los
+       volvia a mirar. El dato se guardaba y la pantalla seguia diciendo "Se
+       completa al cargar el RIF". Reportado por Delia Salcedo el 07/08/2026:
+       "no escribio la direccion fiscal" — si la escribio; no se veia. */
+    if (up) up.addEventListener('click', () => openUploadModal(w, STATE, (doc) => {
+      refresh();
+      const fis = doc && doc.datos && doc.datos.domicilio_fiscal;
+      if (fis && typeof onFiscal === 'function') { try { onFiscal(String(fis).trim()); } catch (_) { /* noop */ } }
+    }));
     const vp = slot.querySelector('[data-rif="view"]');
     if (vp) vp.addEventListener('click', () => viewPdf(STATE, vp.dataset.path));
     const del = slot.querySelector('[data-rif="del"]');
@@ -481,7 +493,7 @@ function openUploadModal(w, STATE, onSaved) {
           verdict.className = 'rifd-verdict ok';
           verdict.innerHTML = '<b>RIF guardado.</b> Queda <b>cargado</b> como respaldo en la ficha.';
           foot.style.display = 'none';
-          if (onSaved) onSaved();
+          if (onSaved) onSaved(r && r.document);
           setTimeout(close, 1400);
         } else {
           verdict.className = 'rifd-verdict err';
