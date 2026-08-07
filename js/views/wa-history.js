@@ -111,6 +111,19 @@ function ensureStyles() {
   .wh-pill.none{background:#f1f5f9;color:#64748b;border:1px solid var(--border)}
   .wh-chev{flex:none;color:var(--faint,#94a3b8);transition:transform .15s}
   .wh-card.open .wh-chev{transform:rotate(90deg)}
+  /* v6.189 — adjunto y texto por grupo en el detalle */
+  .wh-media{display:flex;align-items:center;gap:12px;background:#fff;border:1px solid var(--border);
+    border-radius:10px;padding:10px 12px;margin-bottom:12px}
+  .wh-media img{width:76px;height:76px;object-fit:cover;border-radius:8px;border:1px solid #eef2f7;display:block}
+  .wh-media-pdf{width:76px;height:76px;border-radius:8px;display:flex;align-items:center;justify-content:center;
+    background:#fef2f2;color:#b91c1c;font-size:12px;font-weight:700;border:1px solid #fee2e2;flex:none}
+  .wh-media-meta{min-width:0}
+  .wh-media-meta b{font-size:13px;display:block;overflow:hidden;text-overflow:ellipsis}
+  .wh-media-meta span{font-size:11.5px;color:var(--muted)}
+  .wh-media-meta a{color:var(--brand);text-decoration:none}
+  .wh-gmsg{font-size:11.5px;color:var(--muted);white-space:pre-wrap;margin-top:5px;line-height:1.45;
+    border-left:2px solid var(--border);padding-left:8px}
+  .wh-hint{font-size:11.5px;color:var(--muted);margin:-6px 0 10px}
   .wh-detail{border-top:1px solid var(--border);background:#fbfcfe;padding:14px 16px;display:none}
   .wh-card.open .wh-detail{display:block}
   .wh-msg{background:var(--surface,#fff);border:1px solid var(--border);border-radius:10px;padding:10px 13px;font-size:12.5px;color:var(--ink);white-space:pre-wrap;line-height:1.5;max-height:160px;overflow-y:auto;margin-bottom:12px}
@@ -167,7 +180,15 @@ function originInfo(r) {
     return { cls: 'rule', txt: '💬 ' + lbl };
   }
   if (r.origin_kind === 'broadcast') {
-    return { cls: 'broadcast', txt: '📣 Difusión' + (r.origin_label ? ' · ' + r.origin_label : '') };
+    /* v6.189: una difusion puede ir a VARIOS grupos. Antes la etiqueta traia
+       un solo nombre suelto y no habia forma de saber a cuantos se mando sin
+       abrir el detalle. Con muchos se resume: los dos primeros y "+N". */
+    const gs = Array.isArray(r.group_names) ? r.group_names.filter(Boolean) : [];
+    let dest = r.origin_label || '';
+    if (gs.length === 1) dest = gs[0];
+    else if (gs.length > 1) dest = `${gs.slice(0, 2).join(' · ')}${gs.length > 2 ? ` +${gs.length - 2}` : ''}`;
+    const clip = r.media ? (r.media.es_imagen ? ' 🖼' : ' 📄') : '';
+    return { cls: 'broadcast', txt: '📣 Difusión' + (dest ? ' · ' + dest : '') + clip };
   }
   if (r.origin_kind === 'cred') {
     return { cls: 'cred', txt: '🔑 Credenciales' + (r.origin_label ? ' · ' + r.origin_label : '') };
@@ -267,11 +288,53 @@ function paintDetail(batchId, data) {
     </tr>`;
   }).join('') : `<tr><td colspan="${isCred ? 3 : 2}" style="color:var(--muted);padding:12px">Esta corrida no llegó a registrar destinos (se cortó antes de enviar).</td></tr>`;
 
-  host.innerHTML = `
+  /* v6.189 — El adjunto. Si fue imagen se muestra; si fue PDF, el nombre con
+     enlace. La URL viene firmada por una hora desde el backend. */
+  const m = b.media;
+  const mediaHtml = !m ? '' : `
+    <div class="wh-dtitle">Adjunto</div>
+    <div class="wh-media">
+      ${m.es_imagen && m.url
+        ? `<a href="${m.url}" target="_blank" rel="noopener"><img src="${m.url}" alt="${esc(m.name)}"></a>`
+        : '<span class="wh-media-pdf">PDF</span>'}
+      <div class="wh-media-meta">
+        ${m.url
+          ? `<a href="${m.url}" target="_blank" rel="noopener"><b>${esc(m.name)}</b></a>`
+          : `<b>${esc(m.name)}</b>`}
+        <span>${m.mode === 'caption'
+          ? 'Se envió en un solo mensaje, con el texto de pie'
+          : 'Se envió como archivo y el texto aparte'}</span>
+      </div>
+    </div>`;
+
+  /* Con encabezado de zona, cada grupo recibio un texto DISTINTO. Mostrar solo
+     el del lote seria mostrar algo que nadie leyo. Si todos coinciden se
+     muestra uno; si no, se muestra el de cada grupo en su fila. */
+  const textos = [...new Set(rows.map(d => d.message).filter(Boolean))];
+  const unico = textos.length <= 1;
+  const msgHtml = `
     <div class="wh-dtitle">Mensaje enviado</div>
-    <div class="wh-msg">${esc(b.message)}</div>
+    <div class="wh-msg">${esc(unico ? (textos[0] || b.message) : b.message)}</div>
+    ${unico ? '' : '<div class="wh-hint">Cada grupo recibió su propio encabezado de zona; el texto de cada uno está abajo.</div>'}`;
+
+  const bodyFinal = (isCred || unico) ? body : rows.map(d => {
+    const stCls = d.bucket === 'ok' ? 'ok' : d.bucket === 'error' ? 'err' : 'pend';
+    const stTxt = d.bucket === 'ok' ? 'Enviado' : d.bucket === 'error' ? 'Error' : 'Pendiente';
+    const errLine = d.error_text ? `<div class="wh-err">${esc(d.error_text)}</div>` : '';
+    const gname = d.group_name
+      ? `<span class="wh-gname">${esc(d.group_name)}</span>`
+      : `<span class="wh-jid">${esc(d.chat_id || '—')}</span>`;
+    return `<tr>
+      <td>${gname}${d.message ? `<div class="wh-gmsg">${esc(d.message)}</div>` : ''}</td>
+      <td><span class="wh-st ${stCls}">${stTxt}</span>${errLine}</td>
+    </tr>`;
+  }).join('');
+
+  host.innerHTML = `
+    ${msgHtml}
+    ${mediaHtml}
     <div class="wh-dtitle">${isCred ? 'Destinatario' : 'Grupos'} (${nf(rows.length)})</div>
-    <table class="wh-table"><thead>${head}</thead><tbody>${body}</tbody></table>`;
+    <table class="wh-table"><thead>${head}</thead><tbody>${bodyFinal}</tbody></table>`;
 }
 
 async function toggleDetail(user, batchId) {

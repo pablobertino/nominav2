@@ -67,6 +67,30 @@ function bucketOf(status) {
    { kind, rule, label } donde kind es 'rule' | 'broadcast' | 'cred' | 'other'.
    rule = code del mensaje (si aplica), para que el frontend pueda mostrar la
    etiqueta del mensaje si la tiene a mano. */
+/* v6.189 — URL firmada para ver el adjunto de una difusion en el Historial.
+   Se pide SOLO al abrir el detalle de una corrida, nunca en la lista: firmar
+   100 corridas para mostrar 100 miniaturas que casi nadie va a mirar es
+   regalar tiempo de respuesta. */
+const WA_MEDIA_BUCKET = 'wa-media';
+async function mediaSignedUrl(env, path) {
+  if (!path) return null;
+  try {
+    const res = await fetch(`${env.supabase_url}/storage/v1/object/sign/${WA_MEDIA_BUCKET}/${path}`, {
+      method: 'POST',
+      headers: {
+        apikey: env.supabase_service_role,
+        Authorization: `Bearer ${env.supabase_service_role}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ expiresIn: 3600 }),
+    });
+    if (!res.ok) return null;
+    const j = await res.json();
+    const rel = j && (j.signedURL || j.signedUrl);
+    return rel ? `${env.supabase_url}/storage/v1${rel.startsWith('/') ? '' : '/'}${rel}` : null;
+  } catch (_) { return null; }
+}
+
 function originOf(filters) {
   const f = filters || {};
   /* v6.158: los avisos de Naima (_naima.js) marcan filters.source='naima' y
@@ -117,7 +141,7 @@ export async function onRequestPost({ request, env }) {
 
       // Corridas (mas recientes primero). Traigo lo justo para la lista.
       const batches = await sb(env,
-        `wa_batches?select=id,created_at,created_by,message,filters,total,with_phone`
+        `wa_batches?select=id,created_at,created_by,message,filters,total,with_phone,media_name,media_mime`
         + `&order=created_at.desc&limit=${limit}&offset=${offset}`);
       const rows = batches || [];
       if (!rows.length) return json({ ok: true, rows: [], templates: {} });
@@ -176,6 +200,13 @@ export async function onRequestPost({ request, env }) {
           rule_code: o.rule,            // code del mensaje (si aplica)
           origin_label: o.label,        // etiqueta suelta (cred/difusion vieja)
           group_ids: (b.filters && b.filters.group_ids) || null,
+          // v6.189: los NOMBRES de los grupos, para que la cabecera los liste
+          // todos cuando la difusion fue a varios (antes solo se veia uno).
+          group_names: (b.filters && b.filters.groups) || null,
+          // Si llevo archivo, para poner el clip en la lista sin firmar nada.
+          media: b.media_name
+            ? { name: b.media_name, mime: b.media_mime, es_imagen: b.media_mime !== 'application/pdf' }
+            : null,
           // v6.158: de que tienda fue el aviso y a que grupo se publico.
           naima: o.naima
             ? { ...o.naima, company_name: compNames[o.naima.company] || null, group: a.name || null }
@@ -199,13 +230,14 @@ export async function onRequestPost({ request, env }) {
       if (!batchId) return json({ ok: false, error: 'Falta el identificador de la corrida.' }, 400);
 
       const bArr = await sb(env,
-        `wa_batches?id=eq.${batchId}&select=id,created_at,created_by,message,filters,total,with_phone&limit=1`);
+        `wa_batches?id=eq.${batchId}`
+        + `&select=id,created_at,created_by,message,filters,total,with_phone,media_path,media_name,media_mime,media_mode&limit=1`);
       const batch = bArr && bArr[0];
       if (!batch) return json({ ok: false, error: 'No se encontró la corrida.' }, 404);
 
       const items = await sb(env,
         `wa_outbox?batch_id=eq.${batchId}`
-        + `&select=id,id_number,full_name,company_code,phone_raw,chat_id,status,id_message,error_text,created_at,sent_at`
+        + `&select=id,id_number,full_name,company_code,phone_raw,chat_id,status,id_message,error_text,created_at,sent_at,message`
         + `&order=id.asc`);
       const list = items || [];
 
@@ -231,6 +263,12 @@ export async function onRequestPost({ request, env }) {
         id_message: r.id_message || null,
         error_text: r.error_text || null,
         sent_at: r.sent_at || null,
+        /* v6.189: el texto que recibio ESTE grupo. Con el encabezado de zona
+           cada uno recibe algo distinto, asi que mostrar solo el mensaje base
+           del lote seria mostrar algo que nadie leyo. Si la fila no tiene
+           texto propio (difusiones viejas), queda en null y la pantalla usa
+           el del lote. */
+        message: r.message || null,
       }));
 
       return json({
@@ -245,6 +283,17 @@ export async function onRequestPost({ request, env }) {
           origin_label: o.label,
           total: batch.total || 0,
           with_phone: batch.with_phone || 0,
+          /* v6.189: el adjunto, con URL firmada de una hora. Se firma aca y
+             no en la lista porque el detalle se abre de a uno. */
+          media: batch.media_path
+            ? {
+              name: batch.media_name || 'archivo',
+              mime: batch.media_mime || null,
+              mode: batch.media_mode || null,
+              es_imagen: batch.media_mime !== 'application/pdf',
+              url: await mediaSignedUrl(env, batch.media_path),
+            }
+            : null,
         },
         detail,
       });
