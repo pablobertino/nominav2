@@ -416,23 +416,35 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------------- preview: destinatarios ---------------- */
     if (action === 'preview') {
-      // v6.50 SOLO GRUPOS: el preview solo confirma el grupo destino.
-      if (!Number(body.group_id || 0)) {
-        return json({ ok: false, error: 'Elige el grupo donde se va a publicar.' }, 400);
+      /* v6.50 SOLO GRUPOS: el preview solo confirma los grupos destino.
+         v6.186 — Acepta group_ids[]. La v6.180 cambio el envio a varios
+         grupos y actualizo 'send' pero NO esto, que siguio exigiendo
+         group_id en singular. Como la pantalla ya solo manda group_ids, el
+         preview respondia 400, PREVIEW quedaba en null y el boton Enviar no
+         se habilitaba NUNCA: Difusion quedo inutilizable desde ese deploy.
+         Se mantiene group_id suelto por compatibilidad. */
+      const idsPrev = Array.isArray(body.group_ids) && body.group_ids.length
+        ? body.group_ids
+        : (Number(body.group_id || 0) ? [Number(body.group_id)] : []);
+      if (!idsPrev.length) {
+        return json({ ok: false, error: 'Elige al menos un grupo donde publicar.' }, 400);
       }
-      const grp = await pickGroup(env, body, restrictId);
-      if (grp === undefined) return json({ ok: false, error: 'Ese grupo no está habilitado o no está asignado a tu usuario.' }, 400);
-      if (!grp || !isGroupChat(grp.chat_id)) {
-        return json({ ok: false, error: 'El destino no es un grupo válido de WhatsApp.' }, 400);
+      const { grupos: gps, rechazados: rech } = await pickGroups(env, idsPrev, restrictId);
+      if (!gps.length) {
+        const det = rech.map(x => `${x.nombre || x.id} (${x.motivo})`).join('; ');
+        return json({ ok: false, error: 'Ninguno de los grupos elegidos se puede usar: ' + det }, 400);
       }
       return json({
         ok: true,
-        total: 1, with_phone: 1, without_phone: 0,
-        rows: [{
-          id_number: '—', full_name: `Grupo: ${grp.alias || grp.wa_name || grp.chat_id}`,
-          company_code: '', company_name: '(un solo mensaje al grupo)',
-          phone: grp.chat_id, phone_ok: true,
-        }],
+        total: gps.length, with_phone: gps.length, without_phone: 0,
+        rechazados: rech,
+        rows: gps.map(g => ({
+          id_number: '—',
+          full_name: `Grupo: ${g.nombre}`,
+          company_code: '',
+          company_name: g.zonas.length ? g.zonas.join(' · ') : '(sin zona)',
+          phone: g.chat_id, phone_ok: true,
+        })),
       });
     }
 

@@ -323,9 +323,28 @@ function msgCount() {
 
 function syncSendState() {
   const msg = $('#waMsg').value.trim();
-  const n = msgCount();
-  const ok = !SENDING && PREVIEW && n > 0 && msg.length > 0 && msg.length <= MAX_MESSAGE;
+  const largoOk = msg.length > 0 && msg.length <= MAX_MESSAGE;
   const btn = $('#waSendBtn');
+
+  /* v6.186 — Con grupos marcados, el boton NO depende del preview.
+     Antes exigia PREVIEW, que solo se llena al pulsar "Ver destinatario"...
+     y marcar un grupo llama a invalidatePreview(), que lo borra. Con el
+     preview roto desde la v6.180 eso dejaba el boton apagado para siempre.
+     Pero ademas el requisito ya no tiene sentido: la vista previa por grupo
+     muestra, textual, lo que va a recibir cada uno. Pedir un segundo preview
+     de los mismos grupos que estan tildados ahi arriba es puro tramite. */
+  const grupos = gruposMarcados().length;
+  if (grupos > 0) {
+    if (btn) {
+      btn.disabled = SENDING || !largoOk;
+      btn.textContent = `📤 Enviar a ${nf(grupos)} grupo${grupos === 1 ? '' : 's'}`;
+    }
+    $('#waCount').textContent = `${nf(msg.length)} / ${nf(MAX_MESSAGE)}`;
+    return;
+  }
+
+  const n = msgCount();
+  const ok = !SENDING && PREVIEW && n > 0 && largoOk;
   if (btn) {
     btn.disabled = !ok;
     const ent = netEntities();
@@ -845,7 +864,7 @@ export async function renderWaSend(user) {
             <span class="wa-grp-z">${z.length ? esc(z.join(' · ')) : 'sin zona'}</span></label>`;
         }).join('')
       : '<span class="wa-note">No hay grupos habilitados.</span>';
-    sel.addEventListener('change', () => { invalidatePreview(); pintarPrevioZonas(); });
+    sel.addEventListener('change', () => { invalidatePreview(); pintarPrevioZonas(); syncSendState(); });
     pintarPrevioZonas();
     if (r.mode === 'admin') {
       ['waSeg', 'waTgtCompanies', 'waTgtPeople', 'waTelBox'].forEach(id => {
