@@ -160,6 +160,31 @@ function ensureStyles() {
   .wa-msgfoot{display:flex;justify-content:space-between;align-items:center;margin-top:6px;font-size:11.5px;color:var(--muted);flex-wrap:wrap;gap:6px}
   .wa-msgfoot code{background:#f1f5f9;border-radius:4px;padding:1px 5px}
   .wa-sendrow{display:flex;gap:10px;align-items:center;justify-content:flex-end;flex-wrap:wrap}
+  /* v6.187 — adjunto (imagen o PDF) */
+  .wa-media{margin-top:14px;border-top:1px solid #eef2f7;padding-top:12px}
+  .wa-media-pick{display:inline-flex;align-items:center;gap:10px;cursor:pointer}
+  .wa-media-btn{font-size:12.5px;font-weight:600;color:#0f766e;background:#f0fdfa;border:1px solid #ccfbf1;
+    border-radius:9px;padding:7px 12px}
+  .wa-media-pick:hover .wa-media-btn{background:#ccfbf1}
+  .wa-media-hint{font-size:11.5px;color:#94a3b8}
+  .wa-media-box{margin-top:10px}
+  .wa-media-file{display:flex;align-items:center;gap:11px;border:1px solid #e2e8f0;border-radius:10px;
+    padding:9px 11px;background:#fff}
+  .wa-media-file img{width:56px;height:56px;object-fit:cover;border-radius:8px;flex:none;border:1px solid #eef2f7}
+  .wa-media-pdf{width:56px;height:56px;border-radius:8px;flex:none;display:flex;align-items:center;
+    justify-content:center;background:#fef2f2;color:#b91c1c;font-size:12px;font-weight:700;border:1px solid #fee2e2}
+  .wa-media-meta{flex:1;min-width:0}
+  .wa-media-meta b{display:block;font-size:13px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .wa-media-meta span{font-size:11.5px;color:#94a3b8}
+  .wa-media-x{border:0;background:none;color:#94a3b8;font-size:15px;cursor:pointer;padding:4px 6px;border-radius:6px}
+  .wa-media-x:hover{background:#f1f5f9;color:#0f172a}
+  .wa-media-mode{margin-top:11px;display:flex;flex-direction:column;gap:6px}
+  .wa-media-mode label{font-size:12.5px;color:#334155;cursor:pointer;font-weight:400}
+  .wa-media-mode input{margin-right:6px;accent-color:#2563eb;vertical-align:-1px}
+  .wa-media-mode input:disabled+b,.wa-media-mode input:disabled{opacity:.45;cursor:not-allowed}
+  .wa-media-warn{background:#fef6e7;border-left:3px solid #b45309;border-radius:0 8px 8px 0;
+    padding:8px 11px;font-size:12px;color:#8a5a00;margin-top:4px;line-height:1.5}
+
   /* v6.180 — lista de grupos con casillas + vista previa por grupo */
   .wa-grplist{display:flex;flex-direction:column;gap:2px;border:1px solid var(--border,#e2e8f0);border-radius:9px;
     padding:6px;background:#fff;max-height:190px;overflow-y:auto}
@@ -257,6 +282,19 @@ function currentFilters() {
   };
 }
 
+/* v6.187 — Adjunto en curso: { path, mime, file_name, bytes, es_imagen }.
+   Se llena al subir el archivo y se manda con el envio. */
+let MEDIA = null;
+
+/* Limite REAL del pie de foto en WhatsApp. El proveedor acepta mas, pero el
+   telefono lo corta y nadie se entera hasta que el mensaje ya salio. */
+const CAPTION_MAX = 1024;
+
+function modoMedia() {
+  const r = document.querySelector('input[name="waMMode"]:checked');
+  return r ? r.value : 'caption';
+}
+
 /* v6.180 — Los grupos marcados en la lista de casillas. */
 function gruposMarcados() {
   return Array.from(document.querySelectorAll('#waGrpList input[type=checkbox]:checked'))
@@ -335,9 +373,14 @@ function syncSendState() {
      de los mismos grupos que estan tildados ahi arriba es puro tramite. */
   const grupos = gruposMarcados().length;
   if (grupos > 0) {
+    /* v6.187: con imagen y texto en un solo mensaje, el pie tiene su propio
+       limite. Se bloquea aca ademas de en el servidor, para que el usuario
+       lo vea antes y no despues de mandar siete grupos. */
+    const pieOk = !(MEDIA && MEDIA.es_imagen && modoMedia() === 'caption' && msg.length > CAPTION_MAX);
     if (btn) {
-      btn.disabled = SENDING || !largoOk;
-      btn.textContent = `📤 Enviar a ${nf(grupos)} grupo${grupos === 1 ? '' : 's'}`;
+      btn.disabled = SENDING || !largoOk || !pieOk;
+      const conArchivo = MEDIA ? (MEDIA.es_imagen ? ' con imagen' : ' con PDF') : '';
+      btn.textContent = `📤 Enviar a ${nf(grupos)} grupo${grupos === 1 ? '' : 's'}${conArchivo}`;
     }
     $('#waCount').textContent = `${nf(msg.length)} / ${nf(MAX_MESSAGE)}`;
     return;
@@ -641,6 +684,104 @@ function pintarPrevioZonas() {
 const pausaGrupo = () => 8000 + Math.floor(Math.random() * 7000);
 const dormir = ms => new Promise(r => setTimeout(r, ms));
 
+/* =====================================================================
+   v6.187 — Adjuntar un archivo a la difusion.
+   Se sube apenas se elige: el aviso de "pesa mas de 5 MB" o "ese tipo no
+   sirve" tiene que llegar mientras se arma el mensaje, no despues de
+   pulsar Enviar con siete grupos marcados.
+   ===================================================================== */
+function pintarMedia() {
+  const box = $('#waMediaBox'), modo = $('#waMediaMode');
+  if (!box) return;
+  if (!MEDIA) {
+    box.style.display = 'none'; box.innerHTML = '';
+    if (modo) modo.style.display = 'none';
+    avisarCaption();
+    return;
+  }
+  const kb = MEDIA.bytes > 1048576
+    ? `${(MEDIA.bytes / 1048576).toFixed(1)} MB`
+    : `${Math.round(MEDIA.bytes / 1024)} KB`;
+  box.style.display = '';
+  box.innerHTML = `
+    <div class="wa-media-file">
+      ${MEDIA.preview
+        ? `<img src="${MEDIA.preview}" alt="">`
+        : '<span class="wa-media-pdf">PDF</span>'}
+      <div class="wa-media-meta"><b>${esc(MEDIA.file_name)}</b><span>${kb}</span></div>
+      <button type="button" class="wa-media-x" id="waMediaDel" title="Quitar">✕</button>
+    </div>`;
+  const del = $('#waMediaDel');
+  if (del) del.addEventListener('click', () => {
+    MEDIA = null;
+    const inp = $('#waFile'); if (inp) inp.value = '';
+    pintarMedia(); pintarPrevioZonas(); syncSendState();
+  });
+
+  /* Con PDF el pie de foto se ve mal en el telefono, asi que se fuerza el
+     modo de dos mensajes y se explica por que. */
+  if (modo) {
+    modo.style.display = '';
+    const cap = modo.querySelector('input[value="caption"]');
+    const sep = modo.querySelector('input[value="separate"]');
+    if (!MEDIA.es_imagen) {
+      if (cap) { cap.checked = false; cap.disabled = true; }
+      if (sep) sep.checked = true;
+    } else if (cap) {
+      cap.disabled = false;
+    }
+  }
+  avisarCaption();
+}
+
+/* Aviso del limite del pie de foto. Se calcula en vivo mientras se escribe:
+   enterarse al pulsar Enviar seria tarde. */
+function avisarCaption() {
+  const w = $('#waMediaWarn');
+  if (!w) return;
+  const msg = ($('#waMsg') && $('#waMsg').value.trim()) || '';
+  const excede = MEDIA && MEDIA.es_imagen && modoMedia() === 'caption' && msg.length > CAPTION_MAX;
+  w.style.display = excede ? '' : 'none';
+  if (excede) {
+    w.innerHTML = `El texto tiene <b>${nf(msg.length)}</b> caracteres y WhatsApp corta el pie de foto en
+      <b>${nf(CAPTION_MAX)}</b>. Acortalo, o elegí <b>Dos mensajes</b>.`;
+  }
+}
+
+async function subirMedia(user, file) {
+  const box = $('#waMediaBox');
+  if (box) { box.style.display = ''; box.innerHTML = '<span class="wa-note">Subiendo el archivo…</span>'; }
+
+  const b64 = await new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(String(fr.result).split(',')[1] || '');
+    fr.onerror = () => rej(new Error('No se pudo leer el archivo.'));
+    fr.readAsDataURL(file);
+  });
+
+  const r = await api(user, {
+    action: 'upload_media', file_name: file.name, mime: file.type, base64: b64,
+  });
+  if (!r || !r.ok) {
+    MEDIA = null;
+    if (box) {
+      box.style.display = '';
+      box.innerHTML = `<span class="wa-note" style="background:#fef2f2;border-color:#fecaca;color:#991b1b">${esc((r && r.error) || 'No se pudo subir el archivo.')}</span>`;
+    }
+    const inp = $('#waFile'); if (inp) inp.value = '';
+    syncSendState();
+    return;
+  }
+  MEDIA = {
+    path: r.path, mime: r.mime, file_name: r.file_name, bytes: r.bytes,
+    es_imagen: !!r.es_imagen,
+    // Vista previa local: no se vuelve a bajar del bucket para mirarla.
+    preview: r.es_imagen ? URL.createObjectURL(file) : null,
+  };
+  pintarMedia();
+  syncSendState();
+}
+
 async function runBatch(user, batchId, totalToSend) {
   const prog = $('#waProg');
   prog.style.display = '';
@@ -758,6 +899,25 @@ export async function renderWaSend(user) {
         <span id="waCount">0 / ${nf(MAX_MESSAGE)}</span>
       </div>
       <div id="waZonePrev" class="wa-zoneprev" style="display:none"></div>
+
+      <!-- v6.187 — Adjunto (imagen o PDF). Se sube al elegirlo, no al enviar:
+           asi el error de tamaño o de tipo aparece mientras se arma el
+           mensaje y no cuando ya se le dio a Enviar. -->
+      <div class="wa-media">
+        <label class="wa-media-pick">
+          <input type="file" id="waFile" accept="image/jpeg,image/png,image/webp,application/pdf" hidden>
+          <span class="wa-media-btn">📎 Adjuntar imagen o PDF</span>
+          <span class="wa-media-hint">JPG, PNG, WebP o PDF · hasta 5 MB</span>
+        </label>
+        <div id="waMediaBox" class="wa-media-box" style="display:none"></div>
+        <div id="waMediaMode" class="wa-media-mode" style="display:none">
+          <label><input type="radio" name="waMMode" value="caption" checked>
+            <b>Un solo mensaje</b> — la imagen con el texto de pie</label>
+          <label><input type="radio" name="waMMode" value="separate">
+            <b>Dos mensajes</b> — primero el archivo y después el texto</label>
+          <div class="wa-media-warn" id="waMediaWarn" style="display:none"></div>
+        </div>
+      </div>
     </div>
 
     <div class="wa-card">
@@ -899,7 +1059,13 @@ export async function renderWaSend(user) {
     $('#' + id).addEventListener('change', invalidatePreview));
   $('#waFActive').addEventListener('change', invalidatePreview);
   $('#waFTel').addEventListener('input', invalidatePreview);
-  $('#waMsg').addEventListener('input', () => { syncSendState(); pintarPrevioZonas(); });
+  $('#waMsg').addEventListener('input', () => { syncSendState(); pintarPrevioZonas(); avisarCaption(); });
+  if ($('#waFile')) $('#waFile').addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    if (f) subirMedia(user, f);
+  });
+  document.querySelectorAll('input[name="waMMode"]').forEach(r =>
+    r.addEventListener('change', () => { avisarCaption(); syncSendState(); }));
   if ($('#waZoneGreet')) $('#waZoneGreet').addEventListener('change', pintarPrevioZonas);
   paintPeopleList();
 
@@ -946,6 +1112,9 @@ export async function renderWaSend(user) {
     $('#waFActive').checked = true;
     $('#waFTel').value = ''; $('#waMsg').value = '';
     document.querySelectorAll('#waGrpList input[type=checkbox]').forEach(c => { c.checked = false; });
+    MEDIA = null;
+    if ($('#waFile')) $('#waFile').value = '';
+    pintarMedia();
     pintarPrevioZonas();
     $('#waPQ').value = ''; $('#waPResults').style.display = 'none'; $('#waPResults').innerHTML = '';
     PEOPLE = [];
@@ -1009,7 +1178,12 @@ export async function renderWaSend(user) {
     const filters = currentFilters();
     const message = $('#waMsg').value.trim();
     $('#waSendRow').innerHTML = `<span class="wa-note">Creando lote…</span>`;
-    const r = await api(user, { action: 'send', ...filters, message });
+    const r = await api(user, {
+      action: 'send', ...filters, message,
+      // v6.187: el archivo ya esta en el bucket; aca solo viaja la referencia.
+      media: MEDIA ? { path: MEDIA.path, mime: MEDIA.mime, file_name: MEDIA.file_name } : null,
+      media_mode: MEDIA ? modoMedia() : null,
+    });
     if (!r || !r.ok) {
       SENDING = false;
       $('#waSendRow').innerHTML = `<span class="wa-note" style="background:#fef2f2;border-color:#fecaca;color:#991b1b">${esc((r && r.error) || 'No se pudo crear el envío.')}</span>`;

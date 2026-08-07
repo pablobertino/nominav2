@@ -370,6 +370,70 @@ function armarMensaje(base, zonas, conSaludo) {
   return s ? `${s}\n\n${base}` : base;
 }
 
+/* =====================================================================
+   v6.187 — ADJUNTO DE LA DIFUSION (imagen o PDF)
+
+   El archivo NO viaja a WhatsApp desde el portal: se deja en el bucket
+   privado wa-media y a Green-API se le pasa una URL FIRMADA, que su
+   servidor descarga. Por eso el bucket puede seguir siendo privado: la
+   URL vive unas horas y despues no sirve mas.
+
+   La firma se pide EN EL MOMENTO DE ENVIAR, no al encolar: una difusion
+   puede quedar a medias y retomarse mucho despues, y una URL guardada en
+   el lote ya estaria vencida. Cuesta un subrequest por grupo.
+   ===================================================================== */
+const WA_MEDIA_BUCKET = 'wa-media';
+const WA_MEDIA_MAX = 5 * 1024 * 1024;                 // 5 MB
+const WA_MEDIA_TTL = 6 * 60 * 60;                     // 6 h de firma
+const WA_MEDIA_MIMES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+
+/* Limite REAL del pie de foto en WhatsApp. Green-API acepta mas, pero el
+   telefono lo corta y nadie se entera hasta que el mensaje ya salio. */
+const WA_CAPTION_MAX = 1024;
+
+async function mediaUpload(env, path, bytes, mime) {
+  const res = await fetch(`${env.supabase_url}/storage/v1/object/${WA_MEDIA_BUCKET}/${path}`, {
+    method: 'POST',
+    headers: {
+      apikey: env.supabase_service_role,
+      Authorization: `Bearer ${env.supabase_service_role}`,
+      'Content-Type': mime,
+      'x-upsert': 'true',
+      'cache-control': '3600',
+    },
+    body: bytes,
+  });
+  if (!res.ok) throw new Error(`Storage ${res.status}: ${await res.text()}`);
+  return true;
+}
+
+async function mediaSignedUrl(env, path) {
+  if (!path) return null;
+  const res = await fetch(`${env.supabase_url}/storage/v1/object/sign/${WA_MEDIA_BUCKET}/${path}`, {
+    method: 'POST',
+    headers: {
+      apikey: env.supabase_service_role,
+      Authorization: `Bearer ${env.supabase_service_role}`,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({ expiresIn: WA_MEDIA_TTL }),
+  });
+  if (!res.ok) throw new Error(`Storage sign ${res.status}: ${await res.text()}`);
+  const j = await res.json();
+  const rel = j && (j.signedURL || j.signedUrl);
+  if (!rel) throw new Error('Storage no devolvio la URL firmada.');
+  return `${env.supabase_url}/storage/v1${rel.startsWith('/') ? '' : '/'}${rel}`;
+}
+
+/* base64 -> bytes, sin dependencias. */
+function b64ToBytes(b64) {
+  const limpio = String(b64 || '').replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '');
+  const bin = atob(limpio);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch (_) { return json({ ok: false, error: 'Cuerpo inválido.' }, 400); }
@@ -415,6 +479,43 @@ export async function onRequestPost({ request, env }) {
     }
 
     /* ---------------- preview: destinatarios ---------------- */
+    /* ---------------- upload_media: dejar el archivo en el bucket -------------
+       Se sube ANTES de encolar, para que el usuario vea el error de tamaño o
+       de tipo mientras arma el mensaje y no al darle Enviar. Devuelve la ruta;
+       el archivo no se asocia a ningun lote hasta que se envia. */
+    if (action === 'upload_media') {
+      if (!can(actor, 'wa.send')) {
+        return json({ ok: false, error: 'No tienes permiso para difundir por WhatsApp (wa.send).' }, 403);
+      }
+      const mime = String(body.mime || '').toLowerCase().trim();
+      const nombre = String(body.file_name || 'archivo').trim().slice(0, 120);
+      if (!WA_MEDIA_MIMES.has(mime)) {
+        return json({ ok: false, error: 'Solo se admiten imágenes (JPG, PNG, WebP) o PDF.' }, 400);
+      }
+      let bytes;
+      try { bytes = b64ToBytes(body.base64); }
+      catch (_) { return json({ ok: false, error: 'No se pudo leer el archivo.' }, 400); }
+      if (!bytes.length) return json({ ok: false, error: 'El archivo está vacío.' }, 400);
+      if (bytes.length > WA_MEDIA_MAX) {
+        return json({ ok: false, error: `El archivo pesa ${(bytes.length / 1048576).toFixed(1)} MB y el máximo son 5 MB.` }, 400);
+      }
+
+      const ext = mime === 'application/pdf' ? 'pdf'
+        : mime === 'image/png' ? 'png'
+          : mime === 'image/webp' ? 'webp' : 'jpg';
+      const hoy = new Date().toISOString().slice(0, 10);
+      const path = `${hoy}/${crypto.randomUUID()}.${ext}`;
+      try { await mediaUpload(env, path, bytes, mime); }
+      catch (e) { return json({ ok: false, error: 'No se pudo guardar el archivo: ' + String(e.message || e) }, 502);
+      }
+      return json({
+        ok: true, path, mime, file_name: nombre,
+        bytes: bytes.length,
+        es_imagen: mime !== 'application/pdf',
+        caption_max: WA_CAPTION_MAX,
+      });
+    }
+
     if (action === 'preview') {
       /* v6.50 SOLO GRUPOS: el preview solo confirma los grupos destino.
          v6.186 — Acepta group_ids[]. La v6.180 cambio el envio a varios
@@ -539,10 +640,32 @@ export async function onRequestPost({ request, env }) {
       }
 
       const conSaludo = body.zone_greeting !== false;   // por defecto SI
+
+      /* v6.187 — Adjunto opcional. media_mode lo elige quien envia:
+           caption  = UN mensaje, la imagen con el texto de pie
+           separate = DOS mensajes al mismo grupo, archivo y luego texto
+         Para PDF el pie de foto se ve mal en el telefono, asi que si no se
+         eligio nada se usa separate. */
+      const media = body.media && body.media.path ? body.media : null;
+      const esPdf = !!(media && media.mime === 'application/pdf');
+      const modo = media
+        ? (body.media_mode === 'caption' || body.media_mode === 'separate'
+          ? body.media_mode
+          : (esPdf ? 'separate' : 'caption'))
+        : null;
+      if (media && modo === 'caption' && message.length > WA_CAPTION_MAX) {
+        return json({
+          ok: false,
+          error: `Con la imagen y el texto en un solo mensaje, WhatsApp corta el pie de foto en ${WA_CAPTION_MAX} caracteres y el mensaje tiene ${message.length}. `
+            + 'Acortalo, o elegí mandar el archivo y el texto por separado.',
+        }, 400);
+      }
+
       const batchFilters = {
         group_ids: grupos.map(g => g.id),
         groups: grupos.map(g => g.nombre),
         zone_greeting: conSaludo,
+        media_mode: modo,
       };
 
       const batch = await sb(env, 'wa_batches', {
@@ -554,6 +677,10 @@ export async function onRequestPost({ request, env }) {
           filters: batchFilters,
           total: grupos.length,
           with_phone: grupos.length,
+          media_path: media ? media.path : null,
+          media_name: media ? (media.file_name || 'archivo') : null,
+          media_mime: media ? media.mime : null,
+          media_mode: modo,
         }),
       });
       const batchId = batch && batch[0] && batch[0].id;
@@ -577,6 +704,7 @@ export async function onRequestPost({ request, env }) {
       });
       return json({
         ok: true, batch_id: batchId, queued: grupos.length,
+        media: media ? { name: media.file_name, mime: media.mime, mode: modo } : null,
         grupos: grupos.map(g => ({ id: g.id, nombre: g.nombre, zonas: g.zonas })),
       });
     }
@@ -585,9 +713,24 @@ export async function onRequestPost({ request, env }) {
     if (action === 'process') {
       const bid = String(body.batch_id || '');
       if (!bid) return json({ ok: false, error: 'Falta el lote.' }, 400);
-      const batch = await sb(env, `wa_batches?id=eq.${encodeURIComponent(bid)}&select=id,message,with_phone`);
+      const batch = await sb(env,
+        `wa_batches?id=eq.${encodeURIComponent(bid)}`
+        + `&select=id,message,with_phone,media_path,media_name,media_mime,media_mode`);
       if (!batch || !batch.length) return json({ ok: false, error: 'El lote no existe.' }, 404);
       const message = batch[0].message;
+
+      /* v6.187 — Adjunto del lote. La URL firmada se pide AHORA y no al
+         encolar: una difusion puede retomarse horas despues y una firma
+         guardada ya estaria vencida. Una sola por invocacion. */
+      const mediaPath = batch[0].media_path || null;
+      const mediaModo = batch[0].media_mode || null;
+      let mediaUrl = null;
+      if (mediaPath) {
+        try { mediaUrl = await mediaSignedUrl(env, mediaPath); }
+        catch (e) {
+          return json({ ok: false, error: 'No se pudo preparar el archivo adjunto: ' + String(e.message || e) }, 502);
+        }
+      }
       const isBig = Number(batch[0].with_phone || 0) > BIG_THRESHOLD;
       /* v6.180 RITMO DE LA DIFUSION MULTI-GRUPO.
          El modo lento (isBig) se dispara por CANTIDAD, a partir de 20. Pero
@@ -625,7 +768,26 @@ export async function onRequestPost({ request, env }) {
         try {
           // v6.180: cada fila puede traer su propio texto (el encabezado con
           // la zona del grupo). Si no lo trae, se usa el del lote.
-          const res = await ga.sendMessage(row.chat_id, row.message || message);
+          const texto = row.message || message;
+          let res;
+
+          if (mediaUrl && mediaModo === 'caption') {
+            // UN mensaje: el archivo con el texto de pie.
+            res = await ga.sendFileByUrl(row.chat_id, mediaUrl, batch[0].media_name || 'archivo', texto);
+          } else if (mediaUrl) {
+            /* DOS mensajes AL MISMO GRUPO: primero el archivo, despues el
+               texto. La pausa corta de aca no es la del anti-baneo: lo
+               delator es saltar entre chats DISTINTOS con poco intervalo,
+               no escribir dos veces seguidas en el mismo chat, que es lo que
+               hace cualquier persona que manda una foto y la comenta. Entre
+               grupo y grupo siguen mandando los 8-15s del navegador. */
+            res = await ga.sendFileByUrl(row.chat_id, mediaUrl, batch[0].media_name || 'archivo', '');
+            await sleep(1200 + Math.floor(Math.random() * 1800));
+            res = await ga.sendMessage(row.chat_id, texto);
+          } else {
+            res = await ga.sendMessage(row.chat_id, texto);
+          }
+
           await sb(env, `wa_outbox?id=eq.${row.id}`, {
             method: 'PATCH', headers: { Prefer: 'return=minimal' },
             body: JSON.stringify({ status: 'sent', id_message: (res && res.idMessage) || null, sent_at: new Date().toISOString() }),
