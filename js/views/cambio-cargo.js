@@ -160,8 +160,21 @@ export async function renderCambioCargoHist(user) {
   await paintCola();
 }
 
+/* v6.192: clave de sesion con la que se cargo CAT. EL PORQUE: cerrar sesion
+   NO recarga la pagina — clearSession() borra sessionStorage y go('/login')
+   solo cambia el hash, asi que el modulo ES sigue vivo y CAT (variable de
+   modulo) sobrevive al cambio de usuario. Con el `if (CAT) return true` de
+   antes, entrar con otra cuenta seguia usando el catalogo del anterior:
+   `me` equivocado (por eso "Mis sugerencias" contaba 0 estando bien) y,
+   mucho peor, `my` equivocado — a un rol SIN mov.autoaprobar se le podia
+   pintar "Aprobar y preparar", un boton que el backend le rechaza. */
+let CAT_FOR = null;
+function userKey(u) { return u ? `${u.kind || 'admin'}:${u.id || u.companyCode || ''}` : ''; }
+
 async function ensureCat() {
-  if (CAT) return true;
+  const k = userKey(USER);
+  if (CAT && CAT_FOR === k) return true;
+  if (CAT_FOR !== k) { CAT = null; MOVES = []; MIS_UNSEEN = new Set(); CC_WIN = null; }
   const c = await api({ action: 'catalog' });
   if (!c || !c.ok) {
     const b = document.getElementById('ccBody');
@@ -169,6 +182,7 @@ async function ensureCat() {
     return false;
   }
   CAT = c;
+  CAT_FOR = k;
   // v6.114: ventana de fecha efectiva (regla del sistema). Guia del wizard;
   // el server revalida al sugerir/aprobar.
   if (!CC_WIN) {
@@ -288,28 +302,40 @@ async function runSearch(q) {
   if (!r || !r.ok) { box.innerHTML = `<div class="cc-hint">No se pudo buscar. Intenta de nuevo.</div>`; return; }
   const rows = r.rows || [];
   if (!rows.length) { box.innerHTML = `<div class="cc-hint">Sin resultados.</div>`; return; }
-  box.innerHTML = rows.slice(0, 40).map(p => {
+  /* v6.192: una MISMA cedula puede traer varias filas — son sus empleos, no
+     personas repetidas (MEILER 31836004: FB04 hasta el 29/06 y FB02 desde el
+     30/06). Dos arreglos:
+     1) los empleos CERRADOS se marcan y van al final. Antes se veian igual
+        que el vigente y elegir el equivocado creaba un traslado desde una
+        tienda donde la persona ya no trabaja, sin ningun aviso.
+     2) la seleccion va por INDICE y no por cedula. El `rows.find(x =>
+        x.id_number === ced)` devolvia SIEMPRE la primera fila de esa cedula,
+        asi que hacer clic en el empleo vigente podia elegir el cerrado
+        segun como viniera ordenado. */
+  const vivo = p => p.is_active !== false;
+  const orden = rows.slice().sort((a, b) => (vivo(b) ? 1 : 0) - (vivo(a) ? 1 : 0));
+  box.innerHTML = orden.slice(0, 40).map((p, i) => {
     const cargoTxt = norm(p.role) || '';
     const ini = (norm(p.full_name) || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
-    const on = D.person && D.person.id_number === p.id_number;
+    const on = D.person && D.person.id_number === p.id_number && D.person.company_code === p.company_code;
     const av = p.thumb_url ? `<img src="${esc(p.thumb_url)}" alt="">` : esc(ini);
     const zsc = [p.zona, p.subzona, p.concepto].filter(Boolean).map(esc).join(' · ');
-    return `<div class="cc-prow ${on ? 'on' : ''}" data-ced="${esc(p.id_number)}">
+    const cerrado = !vivo(p);
+    return `<div class="cc-prow ${on ? 'on' : ''}${cerrado ? ' cerrado' : ''}" data-i="${i}">
       <div class="cc-pav">${av}</div>
-      <div style="flex:1"><div class="cc-pnm">${esc(p.full_name || '')}</div>
+      <div style="flex:1"><div class="cc-pnm">${esc(p.full_name || '')}${cerrado ? ` <span class="cc-exemp">EMPLEO CERRADO${p.end_date ? ' · hasta ' + esc(fmt(p.end_date)) : ''}</span>` : ''}</div>
         <div class="cc-pmeta">V-${esc(p.id_number)}${p.company_code ? ' · ' + esc(p.company_code) : ''}${p.company_name ? ' ' + esc(p.company_name) : ''}</div>
         ${zsc ? `<div class="cc-pmeta">${zsc}</div>` : ''}</div>
       <span class="cc-pcargo">${esc(cargoTxt)}</span>
-      <button class="cc-openf" data-ced="${esc(p.id_number)}" title="Ver ficha completa">${IC_FICHA}</button></div>`;
+      <button class="cc-openf" data-i="${i}" title="Ver ficha completa">${IC_FICHA}</button></div>`;
   }).join('');
   box.querySelectorAll('.cc-prow').forEach(row => row.addEventListener('click', e => {
     if (e.target.closest('.cc-openf')) return;
-    const p = rows.find(x => String(x.id_number) === row.dataset.ced);
-    pickPerson(p);
+    pickPerson(orden[parseInt(row.dataset.i, 10)]);
   }));
   box.querySelectorAll('.cc-openf').forEach(btn => btn.addEventListener('click', e => {
     e.stopPropagation();
-    const p = rows.find(x => String(x.id_number) === btn.dataset.ced);
+    const p = orden[parseInt(btn.dataset.i, 10)];
     if (p) openFichaFor(p);
   }));
 }
@@ -374,8 +400,10 @@ function stepDestino(el) {
   if (D.tipo === 'ascenso' || D.tipo === 'descenso') {
     const opts = targetsFor(D.person, D.tipo);
     if (!opts.length) { el.innerHTML = `<div class="cc-warn err">No hay cargos que tu rol pueda asignar para este ${D.tipo}. Debe hacerlo un rol superior.</div>`; return; }
-    el.innerHTML = `<div class="cc-fld"><label>Nuevo cargo</label>
-      <select id="ccCargo">${opts.map(c => `<option value="${c.code}" ${c.code === D.cargoTo ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</select>${roleNote}</div>`;
+    /* v6.192: el cargo nuevo es LA decision de este paso; hasta ahora era un
+       combo igual a cualquier otro y se perdia en la pantalla. */
+    el.innerHTML = `<div class="cc-fld cc-hero ${esc(D.tipo)}"><label>Nuevo cargo</label>
+      <select id="ccCargo" class="cc-sel-hero">${opts.map(c => `<option value="${c.code}" ${c.code === D.cargoTo ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</select>${roleNote}</div>`;
     document.getElementById('ccCargo').addEventListener('change', e => { D.cargoTo = e.target.value; paintFicha(); syncNext(); });
     return;
   }
@@ -388,8 +416,8 @@ function stepDestino(el) {
         ${selChip}
         <input class="cc-inp" id="ccEmpToQ" placeholder="Buscar por alias, razón social, zona, subzona o concepto…" autocomplete="off">
         <div class="cc-plist" id="ccEmpToList"><div class="cc-hint">Cargando tiendas…</div></div></div>
-      <div class="cc-fld"><label>Cargo en destino</label>
-        <select id="ccCargo">${opts.map(c => `<option value="${c.code}" ${c.code === (D.cargoTo || D.person.cargo_code) ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</select></div>
+      <div class="cc-fld cc-hero traslado"><label>Cargo en destino</label>
+        <select id="ccCargo" class="cc-sel-hero">${opts.map(c => `<option value="${c.code}" ${c.code === (D.cargoTo || D.person.cargo_code) ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</select></div>
       <div class="cc-warn">Sale del origen y entra al destino al día siguiente (nunca dos tiendas el mismo día). Las fechas van en el paso siguiente.</div>${roleNote}`;
     document.getElementById('ccCargo').addEventListener('change', e => { D.cargoTo = e.target.value; paintFicha(); syncNext(); });
     const q = document.getElementById('ccEmpToQ');
@@ -666,7 +694,8 @@ async function finish(k) {
    DISPARA el reporte + ticket (Reportes → Historial).
    ===================================================================== */
 const TIPO_LB = { ascenso: 'Ascenso', descenso: 'Descenso', lateral: 'Lateral', traslado: 'Traslado', egreso: 'Egreso' };
-const APRO_FILTERS = [['sugerido', 'Pendientes'], ['reportado', 'Aprobados'], ['rechazado', 'Rechazados'], ['anulado', 'Anulados'], ['mias', 'Mis sugerencias']];
+// v6.192: "Sugeridos" y no "Pendientes" — nombra lo que la fila ES, no lo que le falta.
+const APRO_FILTERS = [['sugerido', 'Sugeridos'], ['reportado', 'Aprobados'], ['rechazado', 'Rechazados'], ['anulado', 'Anulados'], ['mias', 'Mis sugerencias']];
 const APRO_PER = 8;
 let APRO_PAGE = 1, APRO_SEL = null, APRO_SUB = 'list';   // 'list' | 'detail'
 
@@ -750,21 +779,36 @@ function renderAList() {
   const pages = Math.max(1, Math.ceil(list.length / APRO_PER));
   if (APRO_PAGE > pages) APRO_PAGE = pages;
   const slice = list.slice((APRO_PAGE - 1) * APRO_PER, APRO_PAGE * APRO_PER);
+  const my = CAT.my || {};
+  const me = String((CAT && CAT.me) || '');
   el.innerHTML = slice.length ? slice.map(mv => {
     const loc = [mv.empresa_origen, mv.rz, mv.zona, mv.subzona, mv.concepto].filter(Boolean).map(esc).join(' · ');
+    /* v6.192: aprobar sin entrar al detalle. Misma regla que adentro: si la
+       sugerencia es tuya y no tenes mov.autoaprobar, el boton NO se pinta
+       (mostrarlo deshabilitado seria una trampa, y el backend lo rechaza). */
+    const puedo = mv.estado === 'sugerido' && my.aprobar
+      && (my.autoaprobar || String(mv.suggested_by || '') !== me);
     return `<div class="cc-acard" data-id="${mv.id}">
       ${avatarHtml(mv)}
       <div style="flex:1;min-width:0">
         <div class="cc-anm">${esc(mv.full_name || ('V-' + mv.id_number))} <span class="cc-pillA ${mv.tipo}">${esc((TIPO_LB[mv.tipo] || mv.tipo).toUpperCase())}</span></div>
         <div class="cc-adet">${mvDetail(mv)}</div>
         <div class="cc-aloc">${loc || ('V-' + esc(mv.id_number))}</div>
-        <div class="cc-amt"><span class="cc-mini sug">✎ Sugirió: ${esc(mv.suggested_by || '—')}</span>${mv.estado === 'reportado' ? ` <span class="cc-mini apr">✓ Aprobó: ${esc(mv.approved_by || '—')}</span>${mv.osticket_id ? ` <span class="cc-mini tk">Ticket #${esc(mv.osticket_id)}</span>` : ''}` : mv.estado === 'rechazado' ? ` <span class="cc-mini rec">✕ Rechazó: ${esc(mv.rejected_by || '—')}</span>` : ` <span class="cc-mini pend">⏳ Sin aprobar</span>`}</div>
+        <div class="cc-amt"><span class="cc-sugby">✎ Sugirió <b>${esc(mv.suggested_by || '—')}</b></span>${mv.estado === 'reportado' ? ` <span class="cc-mini apr">✓ Aprobó: ${esc(mv.approved_by || '—')}</span>${mv.osticket_id ? ` <span class="cc-mini tk">Ticket #${esc(mv.osticket_id)}</span>` : ''}` : mv.estado === 'rechazado' ? ` <span class="cc-mini rec">✕ Rechazó: ${esc(mv.rejected_by || '—')}</span>` : ` <span class="cc-mini pend">⏳ Sin aprobar</span>`}</div>
       </div>
-      <button class="cc-openf" data-fic="${mv.id}" title="Ver ficha completa">${IC_FICHA}</button>
+      <div class="cc-acta">
+        <button class="cc-openf" data-fic="${mv.id}" title="Ver ficha completa">${IC_FICHA}</button>
+        ${puedo ? `<button class="cc-btn apr cc-quickapr" data-apr="${mv.id}">✓ Aprobar</button>` : ''}
+      </div>
     </div>`;
   }).join('') : `<div class="cc-acard" style="cursor:default"><span class="cc-hint">${COLA_FILTER === 'sugerido' ? 'No hay sugerencias pendientes.' : 'Nada aquí.'}</span></div>`;
+  el.querySelectorAll('.cc-quickapr').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    const mv = MOVES.find(x => x.id === parseInt(b.dataset.apr, 10));
+    if (mv) quickApprove(mv);
+  }));
   el.querySelectorAll('.cc-acard[data-id]').forEach(c => c.addEventListener('click', e => {
-    if (e.target.closest('.cc-openf')) return;
+    if (e.target.closest('.cc-acta')) return;   // v6.192: ficha y aprobar rapido
     showDetail(parseInt(c.dataset.id, 10));
   }));
   el.querySelectorAll('.cc-openf').forEach(b => b.addEventListener('click', e => {
@@ -849,14 +893,17 @@ async function renderDetail() {
       ? anularHtml
       : mv.estado === 'rechazado'
         ? ''
+        /* v6.192: el aviso a la tienda va PRIMERO y destacado. Estaba
+           enterrado entre el texto y los botones, y es la decision que no
+           se puede deshacer: una vez publicada, la tienda ya la vio. */
         : (puedoAprobarEsta ? `<div class="cc-aact-box" style="margin-top:14px">
-            <div class="cc-aact" style="border:0;border-radius:0">
-              <div class="cc-awill">Al aprobar se genera el reporte de <b>${aproTopicLabel(mv.tipo)}</b> con su ticket, y va a <b>Reportes → Historial</b>.</div>
-            </div>
-            <div class="cc-notify">
+            <div class="cc-notify cc-notify-hero">
               <label class="cc-sw"><input type="checkbox" id="ccNotify" checked><span class="tr"></span><span class="kn"></span></label>
               <div class="txt"><div class="t1">🔔 Avisar a la tienda de este cambio</div>
                 <div class="t2"><b>${esc(aproStoresTxt(mv))}</b> lo verá en sus <b>Novedades</b> apenas apruebes. Desactívalo para <b>retrasar el aviso</b> (podrás avisar después desde aquí).</div></div>
+            </div>
+            <div class="cc-aact" style="border:0;border-radius:0">
+              <div class="cc-awill">Al aprobar se genera el reporte de <b>${aproTopicLabel(mv.tipo)}</b> con su ticket, y va a <b>Reportes → Historial</b>.</div>
             </div>
             <div class="cc-aact" style="border-top:1px solid var(--border)">
               <button class="cc-btn back" id="ccARej">Rechazar</button>
@@ -1020,6 +1067,47 @@ function ccPrompt(label, okLabel) {
     ov.querySelector('#ccPromptOk').addEventListener('click', () => done(ta.value.trim()));
     ov.addEventListener('click', e => { if (e.target === ov) done(null); });
   });
+}
+/* v6.192: aprobar desde la LISTA, sin entrar al detalle. No aprueba de una
+   al primer clic a proposito: aprobar genera un ticket real y le publica la
+   novedad a la tienda, asi que se confirma — y el toggle del aviso viene
+   DENTRO de la confirmacion para no perderlo por atajar. */
+function ccConfirmAprobar(mv) {
+  return new Promise(resolve => {
+    let ov = document.getElementById('ccPromptOv');
+    if (ov) ov.remove();
+    ov = document.createElement('div');
+    ov.id = 'ccPromptOv';
+    ov.className = 'cc-prompt-ov';
+    ov.innerHTML = `<div class="cc-prompt">
+      <div class="cc-prompt-l">Aprobar el <b>${esc(aproTopicLabel(mv.tipo))}</b> de <b>${esc(mv.full_name || '')}</b></div>
+      <div class="cc-hint" style="margin:-4px 0 12px">Se genera el reporte con su ticket y va a <b>Reportes → Historial</b>.</div>
+      <div class="cc-notify cc-notify-hero" style="border-radius:11px;border:1px solid var(--border)">
+        <label class="cc-sw"><input type="checkbox" id="ccQNotify" checked><span class="tr"></span><span class="kn"></span></label>
+        <div class="txt"><div class="t1">🔔 Avisar a la tienda de este cambio</div>
+          <div class="t2"><b>${esc(aproStoresTxt(mv))}</b> lo verá en sus <b>Novedades</b> apenas apruebes. Desactívalo para <b>retrasar el aviso</b>.</div></div>
+      </div>
+      <div class="cc-prompt-btns">
+        <button class="cc-btn back" id="ccPromptCancel">Cancelar</button>
+        <button class="cc-btn apr" id="ccPromptOk">✓ Aprobar y generar ticket</button>
+      </div></div>`;
+    document.body.appendChild(ov);
+    const done = val => { ov.remove(); resolve(val); };
+    ov.querySelector('#ccPromptCancel').addEventListener('click', () => done(null));
+    ov.querySelector('#ccPromptOk').addEventListener('click', () => done(!!ov.querySelector('#ccQNotify').checked));
+    ov.addEventListener('click', e => { if (e.target === ov) done(null); });
+  });
+}
+async function quickApprove(mv) {
+  const notifyStore = await ccConfirmAprobar(mv);
+  if (notifyStore === null) return;            // cancelado
+  const r = await api({ action: 'approve', id: mv.id, notify_store: notifyStore });
+  if (!r || !r.ok) return toast((r && r.error) || 'No se pudo aprobar.', true);
+  await loadCola();
+  renderApro();
+  toast(r.store_notified
+    ? (r.osticket_id ? `Aprobado. Ticket #${r.osticket_id}. La tienda fue avisada.` : 'Aprobado. La tienda fue avisada.')
+    : 'Aprobado. El aviso a la tienda quedó retenido.');
 }
 async function rejectMove(id) {
   const reason = await ccPrompt('Motivo del rechazo (opcional):', 'Rechazar');
@@ -1386,6 +1474,24 @@ function styleBlock() {
   .nv-legend span{display:inline-flex;align-items:center;gap:6px}
   /* ===== Toggle "avisar a la tienda" + banda de estado del aviso ===== */
   .cc-notify{display:flex;align-items:flex-start;gap:12px;padding:12px 18px;background:#fbfcfe;border-top:1px solid var(--border)}
+  /* v6.192 — el aviso a la tienda no se puede deshacer: se ve o no sirve. */
+  .cc-notify-hero{background:#fffbeb;border-top:0;border-bottom:1px solid #fde68a;padding:14px 18px}
+  .cc-notify-hero .t1{font-size:14px;font-weight:800;color:#92400e}
+  /* v6.192 — el cargo nuevo es LA decision del paso Destino. */
+  .cc-hero{border:1px solid var(--border);border-left:4px solid var(--hc,#94a3b8);border-radius:12px;padding:13px 15px;background:var(--hbg,#f8fafc)}
+  .cc-hero.ascenso{--hc:#16a34a;--hbg:#f0fdf4}
+  .cc-hero.descenso{--hc:#d97706;--hbg:#fffbeb}
+  .cc-hero.traslado{--hc:#2563eb;--hbg:#eff6ff}
+  .cc-hero label{font-size:12px;color:#334155}
+  .cc-sel-hero{font-size:17px !important;font-weight:800;padding:12px 13px !important;border-color:var(--hc) !important;background:#fff;color:#0f172a}
+  /* v6.192 — quien sugirio deja de competir con el estado. */
+  .cc-sugby{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#475569;background:#eff6ff;border:1px solid #bfdbfe;border-radius:999px;padding:2px 10px}
+  .cc-sugby b{color:#1d4ed8;font-weight:800}
+  .cc-acta{display:flex;flex-direction:column;align-items:flex-end;gap:7px;flex:0 0 auto}
+  /* v6.192 — un empleo cerrado no puede parecerse al vigente. */
+  .cc-prow.cerrado{opacity:.62;background:#fafafa}
+  .cc-exemp{display:inline-block;vertical-align:middle;font-size:9.5px;font-weight:800;letter-spacing:.3px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:999px;padding:1px 7px;margin-left:6px}
+  .cc-quickapr{padding:6px 12px !important;font-size:12px !important;white-space:nowrap}
   .cc-notify .txt{flex:1}
   .cc-notify .t1{font-size:13px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:7px}
   .cc-notify .t2{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.45}
