@@ -216,10 +216,19 @@ function paintWizard() {
     const line = i < STEP_LABELS.length - 1 ? `<div class="cc-stpline ${i < STEP ? 'done' : ''}"></div>` : '';
     return step + line;
   }).join('');
+  /* v6.191: DOS botones cuando se puede autoaprobar. Antes habia UNO solo,
+     elegido por my.aprobar: el que podia aprobar NUNCA podia dejar algo
+     sugerido, porque la opcion sencillamente no se pintaba. Dos efectos
+     malos: era imposible ensayar el circuito completo desde una cuenta, y
+     el atajo se tomaba siempre, incluso cuando el caso pedia que otro lo
+     mirara. Ahora aprobar de una es una DECISION, no el unico camino.
+     Sin mov.autoaprobar solo queda sugerir — aunque tengas mov.aprobar —
+     porque en el wizard lo que estas creando es tuyo. */
   const foot = STEP === 4
-    ? (my.aprobar
-      ? `<button class="cc-btn apr" id="ccFin" data-k="a">✓ Aprobar y preparar</button>`
-      : `<button class="cc-btn sug" id="ccFin" data-k="s">Enviar sugerencia</button>`)
+    ? (my.autoaprobar
+      ? `<button class="cc-btn sug cc-fin" data-k="s" style="margin-right:8px">Enviar sugerencia</button>`
+        + `<button class="cc-btn apr cc-fin" data-k="a">✓ Aprobar y preparar</button>`
+      : `<button class="cc-btn sug cc-fin" data-k="s">Enviar sugerencia</button>`)
     : `<button class="cc-btn next" id="ccNext" ${canNext() ? '' : 'disabled'}>Continuar →</button>`;
 
   body.innerHTML = `
@@ -229,7 +238,7 @@ function paintWizard() {
       <div class="cc-wbody" id="ccStep"></div>
       <div class="cc-wfoot">
         <button class="cc-btn back" id="ccBack" style="visibility:${STEP === 0 ? 'hidden' : 'visible'}">← Atrás</button>
-        <span class="cc-fnote">${STEP === 4 ? (my.aprobar ? 'Con <b>aprobación</b> queda listo para exportar.' : 'Queda <b>sugerido</b> para el Gerente de Zona.') : ''}</span>
+        <span class="cc-fnote">${STEP === 4 ? (my.autoaprobar ? 'Elegí: <b>sugerir</b> y que otro lo revise, o <b>aprobar</b> de una vez.' : 'Queda <b>sugerido</b> hasta que otra persona lo apruebe.') : ''}</span>
         <span class="cc-sp"></span>${foot}
       </div>
     </div>
@@ -237,7 +246,8 @@ function paintWizard() {
 
   document.getElementById('ccBack')?.addEventListener('click', () => { STEP = Math.max(0, STEP - 1); paintWizard(); });
   document.getElementById('ccNext')?.addEventListener('click', () => { if (canNext()) { STEP = Math.min(4, STEP + 1); paintWizard(); } });
-  document.getElementById('ccFin')?.addEventListener('click', e => finish(e.currentTarget.dataset.k));
+  // v6.191: ya no es un id unico — pueden ser dos botones (sugerir / aprobar).
+  document.querySelectorAll('.cc-fin').forEach(b => b.addEventListener('click', e => finish(e.currentTarget.dataset.k)));
 
   paintStep();
   paintFicha();
@@ -465,7 +475,9 @@ function stepRevision(el) {
   el.innerHTML = `<div class="cc-after">
       <div class="cc-rev-h">${esc(p.full_name)} <span class="cc-pillA ${D.tipo}">${T}</span>${extra}</div>
       <div class="cc-hint" style="font-size:13px;margin-top:6px">${fraseHtml(p)}. Efectivo el <b>${fEf}</b>.</div>
-      <div class="cc-hint" style="margin-top:10px">Al confirmar queda <b>${CAT.my.aprobar ? 'aprobado' : 'sugerido para el Gerente de Zona'}</b>. La plantilla AX se descarga después, desde el Historial.</div>
+      <div class="cc-hint" style="margin-top:10px">${CAT.my.autoaprobar
+        ? 'Abajo elegís: <b>Enviar sugerencia</b> (queda pendiente de que alguien más la revise) o <b>Aprobar y preparar</b> (se genera el ticket ya).'
+        : 'Al confirmar queda <b>sugerido</b>, pendiente de aprobación. Nadie aprueba su propia sugerencia.'} La plantilla AX se descarga después, desde el Historial.</div>
     </div>`;
 }
 function fraseHtml(p) {
@@ -615,11 +627,19 @@ async function finish(k) {
     fecha_alta: D.tipo === 'traslado' ? D.fechaA : null,
     comentario: D.comentario || null,
   };
-  const btn = document.getElementById('ccFin');
-  if (btn) { btn.disabled = true; btn.textContent = 'Guardando…'; }
+  /* v6.191: hay que bloquear LOS DOS botones mientras guarda, no solo el
+     que se apreto: si no, se puede sugerir y aprobar el mismo movimiento
+     con dos clics seguidos. Se guarda el texto original para devolverlo
+     tal cual si falla, en vez de reconstruirlo a mano. */
+  const btns = Array.from(document.querySelectorAll('.cc-fin'));
+  const btn = btns.find(b => b.dataset.k === k) || null;
+  const label0 = btn ? btn.textContent : '';
+  btns.forEach(b => { b.disabled = true; });
+  if (btn) btn.textContent = 'Guardando…';
   const r = await api({ action: 'suggest', items: [item], approve: k === 'a' });
   if (!r || !r.ok) {
-    if (btn) { btn.disabled = false; btn.textContent = k === 'a' ? '✓ Aprobar y preparar' : 'Enviar sugerencia'; }
+    btns.forEach(b => { b.disabled = false; });
+    if (btn) btn.textContent = label0;
     toast((r && r.error) || 'No se pudo guardar el movimiento.', true);
     return;
   }
@@ -772,6 +792,12 @@ async function renderDetail() {
   const mv = MOVES.find(x => x.id === APRO_SEL);
   if (!mv) { backToList(); return; }
   const my = CAT.my || {};
+  /* v6.191: el segundo par de ojos, tambien acá. Sin esto el bloqueo del
+     wizard seria decorativo: bastaba sugerir, entrar a Aprobaciones y
+     aprobarse uno mismo. Rechazar la propia SI se permite: eso es cancelar
+     lo que uno mismo propuso, no hay conflicto de interés. */
+  const esMia = String(mv.suggested_by || '') === String(CAT.me || '');
+  const puedoAprobarEsta = my.aprobar && (my.autoaprobar || !esMia);
   const ini = iniOf(mv.full_name);
   const av = mv.thumb_url ? `<img src="${esc(mv.thumb_url)}" alt="">` : esc(ini);
   const cargoTxt = mv.cargo_from ? esc(cargoLabel(mv.cargo_from)).toUpperCase() : '';
@@ -823,7 +849,7 @@ async function renderDetail() {
       ? anularHtml
       : mv.estado === 'rechazado'
         ? ''
-        : (my.aprobar ? `<div class="cc-aact-box" style="margin-top:14px">
+        : (puedoAprobarEsta ? `<div class="cc-aact-box" style="margin-top:14px">
             <div class="cc-aact" style="border:0;border-radius:0">
               <div class="cc-awill">Al aprobar se genera el reporte de <b>${aproTopicLabel(mv.tipo)}</b> con su ticket, y va a <b>Reportes → Historial</b>.</div>
             </div>
@@ -837,7 +863,20 @@ async function renderDetail() {
               <span class="cc-sp"></span>
               <button class="cc-btn apr" id="ccAApr">✓ Aprobar y generar ticket</button>
             </div>
-          </div>` : `<div class="cc-aact cc-aact-box"><div class="cc-awill">⏳ Esperando aprobación del Gerente de Zona.</div></div>`)}
+          </div>`
+          /* v6.191: sos vos quien la sugirió y no tenés mov.autoaprobar. No
+             mostramos el botón de aprobar deshabilitado y mudo — se explica
+             por qué no está, y se deja Rechazar, que acá significa
+             "cancelo lo que yo mismo propuse". */
+          : esMia && my.aprobar ? `<div class="cc-aact-box" style="margin-top:14px">
+            <div class="cc-aact" style="border:0;border-radius:0">
+              <div class="cc-awill">✋ Esta sugerencia es <b>tuya</b>, así que no podés aprobarla vos. La tiene que revisar <b>Capital Humano</b> u otra persona con permiso. Si te arrepentiste, rechazala acá.</div>
+            </div>
+            <div class="cc-aact" style="border-top:1px solid var(--border)">
+              <button class="cc-btn back" id="ccARej">Rechazar mi sugerencia</button>
+            </div>
+          </div>`
+          : `<div class="cc-aact cc-aact-box"><div class="cc-awill">⏳ Esperando aprobación.</div></div>`)}
   `;
   document.getElementById('ccBackList')?.addEventListener('click', backToList);
   document.getElementById('ccAFicha')?.addEventListener('click', () => openFichaFor({ id_number: mv.id_number, company_code: mv.empresa_origen }, () => renderCambioCargoHist(USER)));

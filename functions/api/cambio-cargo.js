@@ -8,6 +8,9 @@
    Tabla: nomina_v2.personnel_movement_requests.
    Cargos de zona/tienda: nomina_v2.cargos (ambito, hier_level, movable).
    Alcance por rol de asignacion: nomina_v2.mov_role_scope (min_assign_level).
+   OJO: un rol AUSENTE de mov_role_scope queda en nivel 999 y no puede asignar
+   NINGUN cargo (el mas alto, GERENTE_ZONA, es 10). Dar mov.sugerir sin darle
+   su fila ahi = wizard que se llena entero y revienta en el ultimo paso.
 
    Acciones (POST { action, user, ... }):
      catalog {}                gate view.cambiocargo | mov.sugerir | mov.aprobar
@@ -16,9 +19,12 @@
                                el nivel de asignacion del rol.
      list    {estado?, q?}     gate view.cambiocargo. Movimientos del alcance.
      suggest {items:[...], approve?}  gate mov.sugerir (approve=true exige
-                               mov.aprobar): inserta uno o varios movimientos.
-     approve {id}              gate mov.aprobar.
-     reject  {id, reason?}     gate mov.aprobar.
+                               mov.aprobar + mov.autoaprobar): inserta uno o
+                               varios movimientos.
+     approve {id}              gate mov.aprobar, y ademas mov.autoaprobar si
+                               el movimiento lo sugirio uno mismo.
+     reject  {id, reason?}     gate mov.aprobar. Rechazar lo propio SI se
+                               permite: es cancelar, no auto-aprobarse.
      export  {ids?}            gate mov.aprobar. Arma la matriz de la plantilla
                                AX (18 columnas, traslado=2 filas) de los
                                aprobados y los marca exportados.
@@ -150,6 +156,13 @@ export async function onRequestPost({ request, env }) {
 
     const mySugerir = can(actor, 'mov.sugerir');
     const myAprobar = can(actor, 'mov.aprobar');
+    /* v6.191: SEGUNDO PAR DE OJOS. Hasta aca, tener mov.aprobar alcanzaba para
+       cerrar el circuito solo: el gerente_zona sugeria y se aprobaba a si
+       mismo. No era teorico — el unico traslado que habia en la tabla tenia
+       suggested_by = approved_by. Ahora mov.aprobar sirve para aprobar lo de
+       OTROS; aprobar lo PROPIO pide ademas mov.autoaprobar, que hoy solo
+       tienen Capital Humano (coordinador) y el superadmin. */
+    const myAuto = can(actor, 'mov.autoaprobar');
     const myView = can(actor, 'view.cambiocargo') || mySugerir || myAprobar;
     /* v6.155: la COLA de aprobaciones (action 'list') salio del paraguas de
        view.cambiocargo y tiene permiso propio. Se le suman aprobar/anular
@@ -248,7 +261,7 @@ export async function onRequestPost({ request, env }) {
         ok: true,
         cargos,
         egress_reasons: (reasons || []).map(r => ({ code: r.code, label: r.label })),
-        my: { sugerir: mySugerir, aprobar: myAprobar, view: myView, anular: can(actor, 'mov.anular') },
+        my: { sugerir: mySugerir, aprobar: myAprobar, autoaprobar: myAuto, view: myView, anular: can(actor, 'mov.anular') },
         assign_min_level: minLevel,
         role: actor.role,
         osticket_url: (ostRow && ostRow[0] && ostRow[0].value) || null,
@@ -346,6 +359,10 @@ export async function onRequestPost({ request, env }) {
       if (!mySugerir) return json({ ok: false, error: 'No tienes permiso para sugerir cambios (mov.sugerir).' }, 403);
       const wantApprove = body.approve === true;
       if (wantApprove && !myAprobar) return json({ ok: false, error: 'No tienes permiso para aprobar (mov.aprobar).' }, 403);
+      /* v6.191: "aprobar de una vez" es, por definicion, aprobarse a si mismo:
+         el que sugiere y el que aprueba son la misma persona en la misma
+         llamada. Por eso pide mov.autoaprobar ademas de mov.aprobar. */
+      if (wantApprove && !myAuto) return json({ ok: false, error: 'No puedes aprobar tu propia sugerencia. Envíala y que la apruebe Capital Humano (falta mov.autoaprobar).' }, 403);
 
       const items = Array.isArray(body.items) ? body.items : [];
       if (!items.length) return json({ ok: false, error: 'No hay movimientos que registrar.' }, 400);
@@ -473,6 +490,15 @@ export async function onRequestPost({ request, env }) {
       const mv = rows && rows[0];
       if (!mv) return json({ ok: false, error: 'Movimiento no encontrado.' }, 404);
       if (!['sugerido', 'aprobado'].includes(mv.estado)) return json({ ok: false, error: 'El movimiento ya no esta pendiente.' }, 409);
+      /* v6.191: el segundo par de ojos, tambien desde la COLA. Sin esto el
+         bloqueo del wizard seria decorativo: bastaba sugerir, ir a
+         Aprobaciones y aprobarse ahi. RECHAZAR la propia sigue permitido a
+         proposito — rechazar lo tuyo es cancelarlo, no hay conflicto de
+         interes, y bloquearlo dejaria sugerencias colgadas esperando a un
+         tercero solo para borrarlas. */
+      if (String(mv.suggested_by || '') === String(actor.actor || '') && !myAuto) {
+        return json({ ok: false, error: 'No puedes aprobar tu propia sugerencia. La tiene que aprobar Capital Humano u otra persona con permiso.' }, 403);
+      }
       // Aprobar = generar el reporte/ticket como los demas reportes del sistema.
       const gen = await generateReport(env, request, actor, body.user, mv);
       if (!gen.ok) return json({ ok: false, error: gen.error, details: gen.details }, 422);

@@ -127,10 +127,13 @@ const MENU_CATALOG = [
   { g: 'Cargos', items: [
     // v6.106: Cambio de Cargo (wizard) y Aprobaciones comparten view.cambiocargo;
     // las acciones son sugerir y aprobar/ejecutar.
-    { id: 'cambiocargo', lbl: 'Cambio de Cargo', view: 'view.cambiocargo', acts: ['mov.sugerir', 'mov.aprobar', 'mov.anular'] },
+    /* v6.191: mov.autoaprobar = puede cerrar el circuito solo (aprobar de una
+       vez en el wizard, o aprobar desde la cola algo que sugirio el mismo).
+       Sin el, mov.aprobar sirve solo para lo de OTROS. */
+    { id: 'cambiocargo', lbl: 'Cambio de Cargo', view: 'view.cambiocargo', acts: ['mov.sugerir', 'mov.aprobar', 'mov.autoaprobar', 'mov.anular'] },
     /* v6.155: Aprobaciones sale del paraguas de view.cambiocargo y tiene su
        propio permiso: se puede dar el wizard sin dar la cola de aprobacion. */
-    { id: 'cargohistorial', lbl: 'Aprobaciones', view: 'view.cargohistorial', acts: ['mov.aprobar', 'mov.anular'] },
+    { id: 'cargohistorial', lbl: 'Aprobaciones', view: 'view.cargohistorial', acts: ['mov.aprobar', 'mov.autoaprobar', 'mov.anular'] },
   ] },
   { g: 'Reportes', items: [
     { id: 'historial', lbl: 'Historial', view: 'view.historial', acts: ['report.attention'] },
