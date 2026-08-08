@@ -908,13 +908,12 @@ function renderAList() {
     return `<div class="cc-acard" data-id="${mv.id}">
       ${avatarHtml(mv)}
       <div style="flex:1;min-width:0">
-        <div class="cc-anm">${esc(mv.full_name || ('V-' + mv.id_number))} <span class="cc-pillA ${mv.tipo}">${esc((TIPO_LB[mv.tipo] || mv.tipo).toUpperCase())}</span></div>
+        <div class="cc-anm">${esc(mv.full_name || ('V-' + mv.id_number))} <span class="cc-pillA ${mv.tipo}">${esc((TIPO_LB[mv.tipo] || mv.tipo).toUpperCase())}</span> <button class="cc-openf inline" data-fic="${mv.id}" title="Ver ficha completa">${IC_FICHA}</button></div>
         <div class="cc-adet">${mvDetail(mv)}</div>
-        <div class="cc-aloc">${loc || ('V-' + esc(mv.id_number))}</div>
+        <div class="cc-aloc"><b class="ced">V-${esc(mv.id_number)}</b>${loc ? ' · ' + loc : ''}</div>
         <div class="cc-amt"><span class="cc-sugby">✎ Sugirió <b>${esc(mv.suggested_by || '—')}</b></span>${mv.estado === 'reportado' ? ` <span class="cc-mini apr">✓ Aprobó: ${esc(mv.approved_by || '—')}</span>${mv.osticket_id ? ` <span class="cc-mini tk">Ticket #${esc(mv.osticket_id)}</span>` : ''}` : mv.estado === 'rechazado' ? ` <span class="cc-mini rec">✕ Rechazó: ${esc(mv.rejected_by || '—')}</span>` : mv.estado === 'vencido' ? ` <span class="cc-mini venc">⌛ Vencida${vencFecha(mv) ? ' · fecha ' + esc(vencFecha(mv)) : ''}</span>` : ` <span class="cc-mini pend">⏳ Sin aprobar</span>`}</div>
       </div>
       <div class="cc-acta">
-        <button class="cc-openf" data-fic="${mv.id}" title="Ver ficha completa">${IC_FICHA}</button>
         ${puedo ? `<button class="cc-btn apr cc-quickapr" data-apr="${mv.id}">✓ Aprobar</button>` : ''}
         ${mv.estado === 'sugerido' && my.aprobar ? `<button class="cc-btn back cc-quickrej" data-rej="${mv.id}">✕ Rechazar</button>` : ''}
       </div>
@@ -938,7 +937,8 @@ function renderAList() {
     toast('Sugerencia rechazada.');
   }));
   el.querySelectorAll('.cc-acard[data-id]').forEach(c => c.addEventListener('click', e => {
-    if (e.target.closest('.cc-acta')) return;   // v6.192: ficha y aprobar rapido
+    // v6.196: la ficha se mudo al lado del nombre, fuera de .cc-acta.
+    if (e.target.closest('.cc-acta, .cc-openf')) return;
     showDetail(parseInt(c.dataset.id, 10));
   }));
   el.querySelectorAll('.cc-openf').forEach(b => b.addEventListener('click', e => {
@@ -1636,7 +1636,15 @@ function styleBlock() {
   /* v6.192 — quien sugirio deja de competir con el estado. */
   .cc-sugby{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#475569;background:#eff6ff;border:1px solid #bfdbfe;border-radius:999px;padding:2px 10px}
   .cc-sugby b{color:#1d4ed8;font-weight:800}
-  .cc-acta{display:flex;flex-direction:column;align-items:flex-end;gap:7px;flex:0 0 auto}
+  /* v6.196: Aprobar y Rechazar EN LINEA. Estaban uno debajo del otro porque
+     compartian la columna con el icono de ficha; la ficha se mudo al lado del
+     nombre, que es donde uno la busca, y liberó el ancho. */
+  .cc-acta{display:flex;flex-direction:row;align-items:center;gap:7px;flex:0 0 auto}
+  /* display:inline-flex y no el flex del base: si no, el boton se comporta
+     como bloque y se cae del renglon del nombre. */
+  .cc-openf.inline{display:inline-flex;vertical-align:middle;width:24px;height:24px;padding:0;margin-left:3px;border-radius:7px}
+  .cc-openf.inline svg{width:14px;height:14px}
+  .cc-aloc .ced{color:#334155;font-weight:800;font-family:ui-monospace,monospace}
   /* v6.192 — un empleo cerrado no puede parecerse al vigente. */
   .cc-prow.cerrado{opacity:.62;background:#fafafa}
   .cc-exemp{display:inline-block;vertical-align:middle;font-size:9.5px;font-weight:800;letter-spacing:.3px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:999px;padding:1px 7px;margin-left:6px}
