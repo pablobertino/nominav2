@@ -104,6 +104,30 @@ async function ccWindow(env) {
 
 const TIPOS = new Set(['ascenso', 'descenso', 'lateral', 'traslado', 'egreso']);
 
+/* v6.193 — VENCIMIENTO DE SUGERENCIAS.
+
+   El agujero que tapa: la ventana de fechas (ccWindow) se validaba SOLO al
+   sugerir. `approve` no la revisaba nunca. Y la ventana se MUEVE sola todos
+   los dias (minDate = hoy - margen). O sea que una sugerencia cargada hoy
+   con fecha efectiva del limite, aprobada tres dias despues, entraba a AX
+   con una fecha que el propio portal habria rechazado ese dia. En silencio.
+
+   Por que solo el limite INFERIOR: maxDate tambien avanza con el calendario,
+   asi que una fecha futura nunca se sale por arriba con el paso del tiempo —
+   se acerca. Lo unico que puede pasarse de rango esperando es el pasado. */
+function movFechas(mv) {
+  const t = String(mv.tipo || '');
+  if (t === 'traslado') return [mv.fecha_baja, mv.fecha_alta].filter(Boolean);
+  if (t === 'egreso') return [mv.fecha_baja].filter(Boolean);
+  return [mv.fecha_efectiva].filter(Boolean);
+}
+function movVencido(mv, win) {
+  const fs = movFechas(mv).map(d => String(d).slice(0, 10));
+  if (!fs.length) return false;
+  return fs.some(d => d < win.minDate);
+}
+const ESTADOS_PENDIENTES = ['sugerido', 'aprobado'];
+
 /* Etiqueta del rol para el "responsable/origen" del reporte (rol real de quien
    aprueba/genera). Fallback: el code con guiones->espacios. */
 function roleLabelES(role) {
@@ -251,11 +275,16 @@ export async function onRequestPost({ request, env }) {
 
     if (action === 'catalog') {
       if (!myView) return json({ ok: false, error: 'No tienes permiso para Cambio de Cargo.' }, 403);
-      const [cargos, reasons, minLevel, ostRow] = await Promise.all([
+      /* v6.193: cedulas con un movimiento EN CURSO. El backend ya rechazaba el
+         duplicado, pero recien al enviar — despues de llenar los cinco pasos.
+         Con esto el wizard lo avisa en el paso 1, donde todavia no perdiste
+         nada. La validacion de verdad sigue estando en `suggest`. */
+      const [cargos, reasons, minLevel, ostRow, enCursoRows] = await Promise.all([
         loadCargos(env),
         sb(env, 'egress_reasons?is_active=eq.true&select=code,label,sort_order&order=sort_order'),
         assignLevel(env, actor),
         sb(env, 'app_settings?key=eq.osticket_url&select=value'),
+        sb(env, `personnel_movement_requests?estado=in.(${ESTADOS_PENDIENTES.join(',')})&select=id_number,tipo`),
       ]);
       return json({
         ok: true,
@@ -267,6 +296,9 @@ export async function onRequestPost({ request, env }) {
         osticket_url: (ostRow && ostRow[0] && ostRow[0].value) || null,
         viewer_is_agent: await viewerIsAgent(env, body.user || null),
         me: String(actor.actor || ''),   // v6.117: para filtrar "Mis sugerencias"
+        // v6.193: { cedula: tipo } de los movimientos en curso, para el paso 1.
+        en_curso: Object.fromEntries((enCursoRows || []).map(r => [String(r.id_number), r.tipo])),
+        window: await ccWindow(env),
       });
     }
 
@@ -311,7 +343,48 @@ export async function onRequestPost({ request, env }) {
         const inList = codes.map(c => `"${c}"`).join(',');
         path += `&or=(empresa_origen.in.(${inList}),empresa_destino.in.(${inList}))`;
       }
-      let rows = await sb(env, path) || [];
+      /* v6.193: ventana de fechas de la BANDEJA (distinta de la ventana de
+         fechas efectivas). El archivo — aprobados, rechazados, anulados,
+         vencidos — crece para siempre y hay que poder acotarlo. Los
+         PENDIENTES quedan SIEMPRE fuera del recorte: son la cola de trabajo,
+         y esconder por fecha algo que nadie resolvio es exactamente como se
+         pierden. La cola se vacia sola al resolverla; el archivo no. */
+      const desde = isoDate(body.desde), hasta = isoDate(body.hasta);
+      let rango = '';
+      if (desde || hasta) {
+        const cond = [];
+        if (desde) cond.push(`created_at.gte.${desde}`);
+        if (hasta) cond.push(`created_at.lt.${addDaysIso(hasta, 1)}`);
+        rango = `&and=(or(estado.in.(${ESTADOS_PENDIENTES.join(',')}),and(${cond.join(',')})))`;
+      }
+      /* Si el arbol logico anidado no le cae bien a PostgREST, se cae a la
+         consulta SIN rango antes que dejar la bandeja vacia: mejor mostrar de
+         mas que hacerle creer a alguien que no hay nada que aprobar. */
+      let rows;
+      try {
+        rows = await sb(env, path + rango) || [];
+      } catch (e) {
+        if (!rango) throw e;
+        rows = await sb(env, path) || [];
+      }
+
+      /* v6.193: AUTO-VENCER al leer. No hay cron en Pages Functions, y este es
+         el punto por el que pasan todos los que miran la bandeja, asi que es
+         donde el vencimiento ocurre "solo". El approve igual revalida: esto
+         es para que se VEA venir, no para que sea seguro. */
+      const winL = await ccWindow(env);
+      const vencidas = rows.filter(r => ESTADOS_PENDIENTES.includes(r.estado) && movVencido(r, winL));
+      if (vencidas.length) {
+        const nowL = new Date().toISOString();
+        try {
+          await sb(env, `personnel_movement_requests?id=in.(${vencidas.map(v => v.id).join(',')})`, {
+            method: 'PATCH', headers: { Prefer: 'return=minimal' },
+            body: JSON.stringify({ estado: 'vencido', updated_at: nowL }),
+          });
+          const ids = new Set(vencidas.map(v => v.id));
+          rows = rows.map(r => ids.has(r.id) ? { ...r, estado: 'vencido', updated_at: nowL } : r);
+        } catch (_) { /* si falla el marcado, approve igual las corta */ }
+      }
       const q = norm(body.q).toLowerCase();
       if (q) rows = rows.filter(r => (r.full_name || '').toLowerCase().includes(q) || (r.id_number || '').includes(q));
       // Enriquecer con datos de la tienda origen (razon social, zona, subzona,
@@ -346,7 +419,7 @@ export async function onRequestPost({ request, env }) {
           dest_rz: dc.rz || null, dest_concepto: dc.concepto || null,
           thumb_url: thumb(w.photo_key), gender: w.gender || null, birth_date: w.birth_date || null };
       });
-      return json({ ok: true, rows });
+      return json({ ok: true, rows, window: winL });
     }
 
     // v6.114: ventana de fecha efectiva (min/max) para el wizard.
@@ -489,7 +562,19 @@ export async function onRequestPost({ request, env }) {
       const rows = await sb(env, `personnel_movement_requests?id=eq.${id}&select=*`);
       const mv = rows && rows[0];
       if (!mv) return json({ ok: false, error: 'Movimiento no encontrado.' }, 404);
-      if (!['sugerido', 'aprobado'].includes(mv.estado)) return json({ ok: false, error: 'El movimiento ya no esta pendiente.' }, 409);
+      if (!ESTADOS_PENDIENTES.includes(mv.estado)) return json({ ok: false, error: 'El movimiento ya no esta pendiente.' }, 409);
+      /* v6.193: revalidar la ventana AL APROBAR. Faltaba: solo se validaba al
+         sugerir, y como la ventana se corre sola cada dia, aprobar tarde
+         metia en AX una fecha ya invalida. Se marca vencido y se corta. */
+      const winA = await ccWindow(env);
+      if (movVencido(mv, winA)) {
+        const nowV = new Date().toISOString();
+        await sb(env, `personnel_movement_requests?id=eq.${id}`, {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ estado: 'vencido', updated_at: nowV }),
+        });
+        return json({ ok: false, vencido: true, error: `Esta sugerencia se venció: su fecha (${movFechas(mv).map(d => String(d).slice(0, 10)).join(' y ')}) quedó fuera de la ventana permitida, que hoy va del ${winA.minDate} al ${winA.maxDate}. Cargala de nuevo con una fecha válida.` }, 409);
+      }
       /* v6.191: el segundo par de ojos, tambien desde la COLA. Sin esto el
          bloqueo del wizard seria decorativo: bastaba sugerir, ir a
          Aprobaciones y aprobarse ahi. RECHAZAR la propia sigue permitido a

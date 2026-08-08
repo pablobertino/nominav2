@@ -22,6 +22,11 @@ let COMPS = null;               // tiendas del alcance (para el traslado)
 let STEP = 0;
 let TRAJ_OPEN = true;           // estado abierto/plegado de la trayectoria (persiste entre pasos)
 let COLA_FILTER = 'todos', COLA_Q = '';
+/* v6.193: rango y orden de la bandeja. Arranca en el ultimo mes porque el
+   archivo se acumula para siempre; "Ver todo" lo vacia. */
+const isoHoy = () => new Date().toISOString().slice(0, 10);
+const isoMenos = d => new Date(Date.now() - d * 864e5).toISOString().slice(0, 10);
+let COLA_DESDE = isoMenos(30), COLA_HASTA = isoHoy(), COLA_ORD = 'recientes';
 let MOVES = [];                 // historial cargado
 const D = resetD();
 
@@ -224,9 +229,12 @@ function paintWizard() {
   const my = CAT.my || {};
   ensureDefaults();
   // Pasos con círculos numerados + conectores, como los wizards de Reportes.
+  /* v6.193: los pasos YA COMPLETADOS son clickeables. Antes, para corregir el
+     tipo estando en el paso 5 habia que apretar "Atrás" cuatro veces. */
   const stepper = STEP_LABELS.map((l, i) => {
     const st = i < STEP ? 'done' : (i === STEP ? 'on' : '');
-    const step = `<div class="cc-stp ${st}"><span class="cc-stp-c">${i < STEP ? '✓' : (i + 1)}</span><span class="cc-stp-l">${l}</span></div>`;
+    const ir = i < STEP ? ` data-go="${i}" title="Volver a ${esc(l)}"` : '';
+    const step = `<div class="cc-stp ${st}"${ir}><span class="cc-stp-c">${i < STEP ? '✓' : (i + 1)}</span><span class="cc-stp-l">${l}</span></div>`;
     const line = i < STEP_LABELS.length - 1 ? `<div class="cc-stpline ${i < STEP ? 'done' : ''}"></div>` : '';
     return step + line;
   }).join('');
@@ -247,7 +255,7 @@ function paintWizard() {
 
   body.innerHTML = `
     <div class="cc-wiz">
-      <div class="cc-wh"><div><h1>Cambio de Cargo</h1><div class="sub">Paso ${STEP + 1} de 5 · ${esc(STEP_LABELS[STEP])}</div></div><a class="cc-guia" href="/guias/cambio-cargo.html" target="_blank" rel="noopener">📘 ¿Cómo funciona?</a></div>
+      <div class="cc-wh"><div><h1>Cambio de Cargo</h1><div class="sub">Paso ${STEP + 1} de 5 · ${esc(STEP_LABELS[STEP])}</div></div><span class="cc-sp"></span>${STEP > 0 || D.person ? `<button class="cc-btn back mini" id="ccCancel" title="Descartar y volver al paso 1">✕ Cancelar</button>` : ''}<a class="cc-guia" href="/guias/cambio-cargo.html" target="_blank" rel="noopener">📘 ¿Cómo funciona?</a></div>
       <div class="cc-steps">${stepper}</div>
       <div class="cc-wbody" id="ccStep"></div>
       <div class="cc-wfoot">
@@ -259,6 +267,13 @@ function paintWizard() {
     <div id="ccFicha"></div>`;
 
   document.getElementById('ccBack')?.addEventListener('click', () => { STEP = Math.max(0, STEP - 1); paintWizard(); });
+  // v6.193: salir sin tener que desandar paso por paso.
+  document.getElementById('ccCancel')?.addEventListener('click', () => {
+    Object.assign(D, resetD()); STEP = 0; paintWizard();
+  });
+  document.querySelectorAll('.cc-stp[data-go]').forEach(s => s.addEventListener('click', () => {
+    STEP = parseInt(s.dataset.go, 10); paintWizard();
+  }));
   document.getElementById('ccNext')?.addEventListener('click', () => { if (canNext()) { STEP = Math.min(4, STEP + 1); paintWizard(); } });
   // v6.191: ya no es un id unico — pueden ser dos botones (sugerir / aprobar).
   document.querySelectorAll('.cc-fin').forEach(b => b.addEventListener('click', e => finish(e.currentTarget.dataset.k)));
@@ -321,9 +336,12 @@ async function runSearch(q) {
     const av = p.thumb_url ? `<img src="${esc(p.thumb_url)}" alt="">` : esc(ini);
     const zsc = [p.zona, p.subzona, p.concepto].filter(Boolean).map(esc).join(' · ');
     const cerrado = !vivo(p);
-    return `<div class="cc-prow ${on ? 'on' : ''}${cerrado ? ' cerrado' : ''}" data-i="${i}">
+    // v6.193: el "ya hay un cambio en curso" saltaba recien al enviar, con los
+    // cinco pasos llenos. Ahora se ve acá, antes de empezar.
+    const curso = enCursoDe(p.id_number);
+    return `<div class="cc-prow ${on ? 'on' : ''}${cerrado ? ' cerrado' : ''}${curso ? ' encurso' : ''}" data-i="${i}">
       <div class="cc-pav">${av}</div>
-      <div style="flex:1"><div class="cc-pnm">${esc(p.full_name || '')}${cerrado ? ` <span class="cc-exemp">EMPLEO CERRADO${p.end_date ? ' · hasta ' + esc(fmt(p.end_date)) : ''}</span>` : ''}</div>
+      <div style="flex:1"><div class="cc-pnm">${esc(p.full_name || '')}${cerrado ? ` <span class="cc-exemp">EMPLEO CERRADO${p.end_date ? ' · hasta ' + esc(fmt(p.end_date)) : ''}</span>` : ''}${curso ? ` <span class="cc-encurso">YA TIENE UN ${esc(String(curso).toUpperCase())} EN CURSO</span>` : ''}</div>
         <div class="cc-pmeta">V-${esc(p.id_number)}${p.company_code ? ' · ' + esc(p.company_code) : ''}${p.company_name ? ' ' + esc(p.company_name) : ''}</div>
         ${zsc ? `<div class="cc-pmeta">${zsc}</div>` : ''}</div>
       <span class="cc-pcargo">${esc(cargoTxt)}</span>
@@ -346,7 +364,19 @@ function openFichaFor(p, back) {
   if (!cc) { toast('No pude abrir la ficha: falta la empresa.', true); return; }
   renderWorkerPhotos(USER, cc, back || (() => renderCambioCargo(USER)), { mode: 'store', openCed: p.id_number });
 }
+/* v6.193: ¿esta persona ya tiene un movimiento sugerido/aprobado sin resolver?
+   Lo manda `catalog` en en_curso. La validacion de verdad sigue en el backend
+   al enviar: esto es para no hacerte llenar cinco pasos al pedo. */
+function enCursoDe(ced) {
+  const m = (CAT && CAT.en_curso) || {};
+  return m[String(ced)] || null;
+}
 function pickPerson(p) {
+  const curso = enCursoDe(p && p.id_number);
+  if (curso) {
+    toast(`${p.full_name || 'Esta persona'} ya tiene un ${curso} en curso. Resolvé o anulá ese antes de crear otro.`, true);
+    return;
+  }
   // Mapea el cargo de texto del roster a un code de cargos (mejor esfuerzo).
   D.person = {
     id_number: p.id_number, full_name: p.full_name || '', role_text: norm(p.role) || '',
@@ -412,10 +442,16 @@ function stepDestino(el) {
     const selChip = D.empTo
       ? `<div class="cc-selchip">Destino: <b>${esc(D.empTo)}</b>${D.empToLabel ? ' · ' + esc(D.empToLabel) : ''} <button id="ccEmpClear" title="Cambiar">✕</button></div>`
       : '';
+    /* v6.193: COMBO en vez de lista larga. Antes era un buscador con una lista
+       de hasta 50 filas que empujaba todo el paso hacia abajo. El combo va
+       agrupado por ZONA (<optgroup>): con ~180 tiendas, una lista plana
+       alfabetica no ayuda a encontrar nada; la zona sí. El buscador queda
+       como filtro opcional del combo, no como forma de elegir. */
     el.innerHTML = `<div class="cc-fld"><label>Empresa/tienda destino</label>
         ${selChip}
-        <input class="cc-inp" id="ccEmpToQ" placeholder="Buscar por alias, razón social, zona, subzona o concepto…" autocomplete="off">
-        <div class="cc-plist" id="ccEmpToList"><div class="cc-hint">Cargando tiendas…</div></div></div>
+        <input class="cc-inp" id="ccEmpToQ" placeholder="Filtrar por alias, razón social, zona, subzona o concepto…" autocomplete="off">
+        <select class="cc-inp cc-empsel" id="ccEmpToSel"><option value="">Cargando tiendas…</option></select>
+        <div class="cc-hint" id="ccEmpToCnt" style="margin-top:6px"></div></div>
       <div class="cc-fld cc-hero traslado"><label>Cargo en destino</label>
         <select id="ccCargo" class="cc-sel-hero">${opts.map(c => `<option value="${c.code}" ${c.code === (D.cargoTo || D.person.cargo_code) ? 'selected' : ''}>${esc(c.label)}</option>`).join('')}</select></div>
       <div class="cc-warn">Sale del origen y entra al destino al día siguiente (nunca dos tiendas el mismo día). Las fechas van en el paso siguiente.</div>${roleNote}`;
@@ -436,28 +472,46 @@ function stepDestino(el) {
 }
 /* Lista filtrable de tiendas del alcance para el traslado. */
 function renderEmpToList(q) {
-  const box = document.getElementById('ccEmpToList');
-  if (!box) return;
+  const sel = document.getElementById('ccEmpToSel');
+  const cnt = document.getElementById('ccEmpToCnt');
+  if (!sel) return;
   const list = COMPS || [];
   const qq = norm(q).toLowerCase();
   const originCode = D.person && D.person.company_code;
-  let f = (qq ? list.filter(c => [c.code, c.business_name, c.zona, c.subzona, c.concepto].some(v => String(v || '').toLowerCase().includes(qq))) : list)
+  const f = (qq ? list.filter(c => [c.code, c.business_name, c.zona, c.subzona, c.concepto].some(v => String(v || '').toLowerCase().includes(qq))) : list)
     .filter(c => c.code !== originCode);
-  if (!f.length) { box.innerHTML = `<div class="cc-hint">Sin tiendas que coincidan en tu alcance.</div>`; return; }
-  box.innerHTML = f.slice(0, 50).map(c => `<div class="cc-prow ${D.empTo === c.code ? 'on' : ''}" data-code="${esc(c.code)}">
-      <div style="flex:1"><div class="cc-pnm">${esc(c.code)} · ${esc(c.business_name || '')}</div>
-        <div class="cc-pmeta">${[c.zona, c.subzona, c.concepto].filter(Boolean).map(esc).join(' · ') || '—'}</div></div>
-      ${statusBadge(c.status)}</div>`).join('');
-  box.querySelectorAll('.cc-prow').forEach(row => row.addEventListener('click', () => {
-    const c = (COMPS || []).find(x => x.code === row.dataset.code);
-    if (!c) return;
+  if (!f.length) {
+    sel.innerHTML = `<option value="">Sin tiendas que coincidan en tu alcance</option>`;
+    if (cnt) cnt.textContent = '';
+    return;
+  }
+  // Agrupadas por zona, y dentro por codigo. Es como la gente las busca.
+  const porZona = new Map();
+  f.forEach(c => {
+    const z = c.zona || 'Sin zona';
+    if (!porZona.has(z)) porZona.set(z, []);
+    porZona.get(z).push(c);
+  });
+  const zonas = [...porZona.keys()].sort((a, b) => a.localeCompare(b, 'es'));
+  sel.innerHTML = `<option value="">— Elegí la tienda destino —</option>`
+    + zonas.map(z => `<optgroup label="${esc(z)}">`
+      + porZona.get(z).sort((a, b) => String(a.code).localeCompare(String(b.code)))
+        .map(c => `<option value="${esc(c.code)}" ${D.empTo === c.code ? 'selected' : ''}>${esc(c.code)} · ${esc(c.business_name || '')}${c.subzona ? ' · ' + esc(c.subzona) : ''}${c.concepto ? ' · ' + esc(c.concepto) : ''}${statusTxt(c.status)}</option>`).join('')
+      + `</optgroup>`).join('');
+  if (cnt) cnt.textContent = `${f.length} tienda${f.length === 1 ? '' : 's'} en tu alcance${qq ? ' con ese filtro' : ''}.`;
+  sel.onchange = () => {
+    const c = (COMPS || []).find(x => x.code === sel.value);
+    if (!c) { D.empTo = ''; D.empToLabel = ''; D.empToConcepto = ''; syncNext(); return; }
     D.empTo = c.code; D.empToLabel = c.business_name || ''; D.empToConcepto = c.concepto || '';
     paintStep(); paintFicha(); syncNext();
-  }));
+  };
 }
-function statusBadge(st) {
-  if (st === 'Cerrada temporal') return `<span class="cc-stat tmp">Cerrada temporal</span>`;
-  if (st === 'Proyectada') return `<span class="cc-stat proj">Proyectada</span>`;
+/* v6.193: al pasar la lista de tiendas a un <select>, el badge de estado ya no
+   cabe como HTML — pero no se puede perder: una "Proyectada" (FA05, por caso)
+   se veria igual que una abierta. Va como texto dentro de la opcion. */
+function statusTxt(st) {
+  if (st === 'Cerrada temporal') return '  ⚠ CERRADA TEMPORAL';
+  if (st === 'Proyectada') return '  ⚠ PROYECTADA';
   return '';
 }
 
@@ -695,13 +749,14 @@ async function finish(k) {
    ===================================================================== */
 const TIPO_LB = { ascenso: 'Ascenso', descenso: 'Descenso', lateral: 'Lateral', traslado: 'Traslado', egreso: 'Egreso' };
 // v6.192: "Sugeridos" y no "Pendientes" — nombra lo que la fila ES, no lo que le falta.
-const APRO_FILTERS = [['sugerido', 'Sugeridos'], ['reportado', 'Aprobados'], ['rechazado', 'Rechazados'], ['anulado', 'Anulados'], ['mias', 'Mis sugerencias']];
+const APRO_FILTERS = [['sugerido', 'Sugeridos'], ['reportado', 'Aprobados'], ['rechazado', 'Rechazados'], ['vencido', 'Vencidos'], ['anulado', 'Anulados'], ['mias', 'Mis sugerencias']];
 const APRO_PER = 8;
 let APRO_PAGE = 1, APRO_SEL = null, APRO_SUB = 'list';   // 'list' | 'detail'
 
 let MIS_UNSEEN = new Set();   // v6.117: ids de mis sugerencias resueltas sin ver
 async function loadCola() {
-  const r = await api({ action: 'list', estado: 'todos' });
+  const r = await api({ action: 'list', estado: 'todos', desde: COLA_DESDE || undefined, hasta: COLA_HASTA || undefined });
+  if (r && r.ok && r.window) CC_WIN = r.window;   // v6.193: para marcar vencidas
   MOVES = (r && r.ok && r.rows) ? r.rows : [];
   // v6.117: qué sugerencias mías se resolvieron y no vi (para el contador).
   if (CAT && CAT.my && CAT.my.sugerir) {
@@ -715,7 +770,7 @@ async function paintCola() {
   body.innerHTML = `<div class="cc-cola"><div class="cc-loading">Cargando…</div></div>`;
   // v6.117: si venimos desde la campanita (aviso violeta), abrir en Mis sugerencias.
   if (window.__ccOpenMias) { window.__ccOpenMias = false; COLA_FILTER = 'mias'; }
-  if (!['sugerido', 'reportado', 'rechazado', 'anulado', 'mias'].includes(COLA_FILTER)) COLA_FILTER = 'sugerido';
+  if (!['sugerido', 'reportado', 'rechazado', 'vencido', 'anulado', 'mias'].includes(COLA_FILTER)) COLA_FILTER = 'sugerido';
   await loadCola();
   // v6.117: al entrar directo a "Mis sugerencias", marcarlas vistas.
   if (COLA_FILTER === 'mias' && MIS_UNSEEN.size) {
@@ -730,12 +785,39 @@ function aproCnt(est) {
   if (est === 'mias') { const me = CAT && CAT.me; return me ? MOVES.filter(m => m.suggested_by === me).length : 0; }
   return MOVES.filter(m => m.estado === est).length;
 }
+/* v6.193: criterios de orden. El default sigue siendo "recientes" para no
+   cambiarle la bandeja a nadie de un dia para el otro. */
+const ORDENES = [
+  ['recientes', 'Más recientes primero'],
+  ['antiguas', 'Más antiguas primero'],
+  ['nombre', 'Nombre (A-Z)'],
+  ['tipo', 'Tipo de movimiento'],
+  ['tienda', 'Tienda'],
+];
+function aproSort(list) {
+  const t = m => Date.parse(m.created_at || 0) || 0;
+  const s = (a, b) => String(a || '').localeCompare(String(b || ''), 'es');
+  const out = list.slice();
+  if (COLA_ORD === 'antiguas') out.sort((a, b) => t(a) - t(b));
+  else if (COLA_ORD === 'nombre') out.sort((a, b) => s(a.full_name, b.full_name));
+  else if (COLA_ORD === 'tipo') out.sort((a, b) => s(a.tipo, b.tipo) || t(b) - t(a));
+  else if (COLA_ORD === 'tienda') out.sort((a, b) => s(a.empresa_origen, b.empresa_origen) || t(b) - t(a));
+  else out.sort((a, b) => t(b) - t(a));
+  return out;
+}
 function aproFiltered() {
   const me = CAT && CAT.me;
   const base = COLA_FILTER === 'mias'
     ? MOVES.filter(m => me && m.suggested_by === me)
     : MOVES.filter(m => m.estado === COLA_FILTER);
-  return base.filter(m => !COLA_Q || (m.full_name || '').toLowerCase().includes(COLA_Q) || (m.id_number || '').includes(COLA_Q) || ((m.empresa_origen || '') + ' ' + (m.rz || '')).toLowerCase().includes(COLA_Q));
+  return aproSort(base.filter(m => !COLA_Q || (m.full_name || '').toLowerCase().includes(COLA_Q) || (m.id_number || '').includes(COLA_Q) || ((m.empresa_origen || '') + ' ' + (m.rz || '')).toLowerCase().includes(COLA_Q)));
+}
+/* v6.193: la fecha que se le paso a un movimiento vencido (la misma que el
+   backend mira: baja+alta en traslado, baja en egreso, efectiva en el resto). */
+function vencFecha(mv) {
+  const f = mv.tipo === 'traslado' ? [mv.fecha_baja, mv.fecha_alta]
+    : mv.tipo === 'egreso' ? [mv.fecha_baja] : [mv.fecha_efectiva];
+  return f.filter(Boolean).map(d => fmt(String(d).slice(0, 10))).join(' y ');
 }
 function iniOf(n) { return (String(n || '?').trim().split(/\s+/).map(w => w[0]).join('').slice(0, 2) || '?').toUpperCase(); }
 function avatarHtml(mv, big) {
@@ -758,6 +840,15 @@ function renderApro() {
   body.innerHTML = `<div class="cc-apro">
     <div class="cc-apro-head"><h2>Aprobaciones</h2>${pend ? `<span class="cc-cnt">${pend} pendiente${pend === 1 ? '' : 's'}</span>` : ''}<span class="cc-sp"></span><a class="cc-guia" href="/guias/cambio-cargo.html" target="_blank" rel="noopener">📘 ¿Cómo funciona?</a><span class="cc-hint">Al aprobar se genera el reporte y su <b>ticket</b> → Reportes · Historial</span></div>
     <div class="cc-apro-filters"><div class="cc-fchips">${chips}</div><input class="cc-inp" id="ccAQ" placeholder="Buscar por nombre, cédula o tienda…" value="${esc(COLA_Q)}"></div>
+    <div class="cc-apro-rango">
+      <span class="lb">Desde</span><input type="date" class="cc-inp d" id="ccADesde" value="${esc(COLA_DESDE)}">
+      <span class="lb">Hasta</span><input type="date" class="cc-inp d" id="ccAHasta" value="${esc(COLA_HASTA)}">
+      <button class="cc-btn back mini" id="ccARangoAll" title="Quitar el filtro de fechas">Ver todo</button>
+      <span class="cc-sp"></span>
+      <span class="lb">Ordenar</span>
+      <select class="cc-inp o" id="ccAOrd">${ORDENES.map(([v, l]) => `<option value="${v}" ${COLA_ORD === v ? 'selected' : ''}>${esc(l)}</option>`).join('')}</select>
+    </div>
+    <div class="cc-rangonote">El rango aplica al <b>archivo</b> (aprobados, rechazados, anulados y vencidos). Los <b>sugeridos</b> se muestran siempre completos: son la cola de trabajo y esconderlos por fecha es como se pierden.</div>
     <div id="ccAList"></div><div class="cc-pager" id="ccAPager"></div>
   </div>`;
   body.querySelectorAll('.cc-fchips button').forEach(b => b.addEventListener('click', async () => {
@@ -771,6 +862,13 @@ function renderApro() {
     renderApro();
   }));
   document.getElementById('ccAQ').addEventListener('input', e => { COLA_Q = e.target.value.toLowerCase(); APRO_PAGE = 1; renderAList(); });
+  // v6.193: cambiar el rango recarga del server (el recorte es del lado del
+  // server, si no el limite de 500 filas seguiria mordiendo igual).
+  const recargar = async () => { APRO_PAGE = 1; await loadCola(); renderApro(); };
+  document.getElementById('ccADesde')?.addEventListener('change', e => { COLA_DESDE = e.target.value; recargar(); });
+  document.getElementById('ccAHasta')?.addEventListener('change', e => { COLA_HASTA = e.target.value; recargar(); });
+  document.getElementById('ccARangoAll')?.addEventListener('click', () => { COLA_DESDE = ''; COLA_HASTA = ''; recargar(); });
+  document.getElementById('ccAOrd')?.addEventListener('change', e => { COLA_ORD = e.target.value; APRO_PAGE = 1; renderAList(); });
   renderAList();
 }
 function renderAList() {
@@ -794,11 +892,12 @@ function renderAList() {
         <div class="cc-anm">${esc(mv.full_name || ('V-' + mv.id_number))} <span class="cc-pillA ${mv.tipo}">${esc((TIPO_LB[mv.tipo] || mv.tipo).toUpperCase())}</span></div>
         <div class="cc-adet">${mvDetail(mv)}</div>
         <div class="cc-aloc">${loc || ('V-' + esc(mv.id_number))}</div>
-        <div class="cc-amt"><span class="cc-sugby">✎ Sugirió <b>${esc(mv.suggested_by || '—')}</b></span>${mv.estado === 'reportado' ? ` <span class="cc-mini apr">✓ Aprobó: ${esc(mv.approved_by || '—')}</span>${mv.osticket_id ? ` <span class="cc-mini tk">Ticket #${esc(mv.osticket_id)}</span>` : ''}` : mv.estado === 'rechazado' ? ` <span class="cc-mini rec">✕ Rechazó: ${esc(mv.rejected_by || '—')}</span>` : ` <span class="cc-mini pend">⏳ Sin aprobar</span>`}</div>
+        <div class="cc-amt"><span class="cc-sugby">✎ Sugirió <b>${esc(mv.suggested_by || '—')}</b></span>${mv.estado === 'reportado' ? ` <span class="cc-mini apr">✓ Aprobó: ${esc(mv.approved_by || '—')}</span>${mv.osticket_id ? ` <span class="cc-mini tk">Ticket #${esc(mv.osticket_id)}</span>` : ''}` : mv.estado === 'rechazado' ? ` <span class="cc-mini rec">✕ Rechazó: ${esc(mv.rejected_by || '—')}</span>` : mv.estado === 'vencido' ? ` <span class="cc-mini venc">⌛ Vencida${vencFecha(mv) ? ' · fecha ' + esc(vencFecha(mv)) : ''}</span>` : ` <span class="cc-mini pend">⏳ Sin aprobar</span>`}</div>
       </div>
       <div class="cc-acta">
         <button class="cc-openf" data-fic="${mv.id}" title="Ver ficha completa">${IC_FICHA}</button>
         ${puedo ? `<button class="cc-btn apr cc-quickapr" data-apr="${mv.id}">✓ Aprobar</button>` : ''}
+        ${mv.estado === 'sugerido' && my.aprobar ? `<button class="cc-btn back cc-quickrej" data-rej="${mv.id}">✕ Rechazar</button>` : ''}
       </div>
     </div>`;
   }).join('') : `<div class="cc-acard" style="cursor:default"><span class="cc-hint">${COLA_FILTER === 'sugerido' ? 'No hay sugerencias pendientes.' : 'Nada aquí.'}</span></div>`;
@@ -806,6 +905,18 @@ function renderAList() {
     e.stopPropagation();
     const mv = MOVES.find(x => x.id === parseInt(b.dataset.apr, 10));
     if (mv) quickApprove(mv);
+  }));
+  // v6.193: rechazar tambien desde la lista. Una bandeja donde podes decir
+  // que si pero no que no esta coja. Rechazar lo propio SI se permite.
+  el.querySelectorAll('.cc-quickrej').forEach(b => b.addEventListener('click', async e => {
+    e.stopPropagation();
+    const id = parseInt(b.dataset.rej, 10);
+    const reason = await ccPrompt('Motivo del rechazo (opcional):', 'Rechazar');
+    if (reason === null) return;
+    const r = await api({ action: 'reject', id, reason: reason || undefined });
+    if (!r || !r.ok) return toast((r && r.error) || 'No se pudo rechazar.', true);
+    await loadCola(); renderApro();
+    toast('Sugerencia rechazada.');
   }));
   el.querySelectorAll('.cc-acard[data-id]').forEach(c => c.addEventListener('click', e => {
     if (e.target.closest('.cc-acta')) return;   // v6.192: ficha y aprobar rapido
@@ -1389,6 +1500,14 @@ function styleBlock() {
   .cc-mini.rec{background:#fef2f2;color:#b91c1c}
   .cc-mini.pend{background:#fffbeb;color:#92400e}
   .cc-mini.tk{background:#f1f5f9;color:#475569;font-family:ui-monospace,monospace}
+  .cc-mini.venc{background:#f5f3ff;color:#6d28d9}
+  /* v6.193 — rango y orden de la bandeja. */
+  .cc-apro-rango{display:flex;align-items:center;gap:8px;flex-wrap:wrap;padding:0 2px 4px}
+  .cc-apro-rango .lb{font-size:11.5px;font-weight:700;color:var(--soft)}
+  .cc-apro-rango .cc-inp.d{width:auto;padding:6px 9px;font-size:12.5px}
+  .cc-apro-rango .cc-inp.o{width:auto;padding:6px 9px;font-size:12.5px;border:1px solid var(--border-2);border-radius:9px;font-family:inherit}
+  .cc-btn.mini{padding:6px 11px !important;font-size:12px !important}
+  .cc-rangonote{font-size:11.5px;color:var(--soft);padding:0 2px 10px;line-height:1.5}
   /* Detalle: bloque "quién sugirió / quién aprobó" (dos cosas distintas) */
   .cc-backbtn{display:inline-flex;align-items:center;gap:7px;margin-bottom:14px}
   .cc-whoblock{margin-top:14px;border:1px solid var(--border);border-radius:14px;overflow:hidden;max-width:900px;background:#fff}
@@ -1491,7 +1610,15 @@ function styleBlock() {
   /* v6.192 — un empleo cerrado no puede parecerse al vigente. */
   .cc-prow.cerrado{opacity:.62;background:#fafafa}
   .cc-exemp{display:inline-block;vertical-align:middle;font-size:9.5px;font-weight:800;letter-spacing:.3px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:999px;padding:1px 7px;margin-left:6px}
-  .cc-quickapr{padding:6px 12px !important;font-size:12px !important;white-space:nowrap}
+  /* v6.193 — ya tiene un movimiento sin resolver: se ve antes de elegirla. */
+  .cc-prow.encurso{opacity:.7;background:#fffbeb}
+  .cc-encurso{display:inline-block;vertical-align:middle;font-size:9.5px;font-weight:800;letter-spacing:.3px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;border-radius:999px;padding:1px 7px;margin-left:6px}
+  /* v6.193 — combo de tienda destino, agrupado por zona. */
+  .cc-empsel{margin-top:8px;padding:11px 12px;font-size:14px;font-weight:600;border:1px solid var(--border-2);border-radius:9px;font-family:inherit;background:#fff}
+  /* v6.193 — volver a un paso ya hecho sin desandar de a uno. */
+  .cc-stp[data-go]{cursor:pointer}
+  .cc-stp[data-go]:hover .cc-stp-l{text-decoration:underline}
+  .cc-quickapr,.cc-quickrej{padding:6px 12px !important;font-size:12px !important;white-space:nowrap}
   .cc-notify .txt{flex:1}
   .cc-notify .t1{font-size:13px;font-weight:600;color:var(--ink);display:flex;align-items:center;gap:7px}
   .cc-notify .t2{font-size:11.5px;color:var(--muted);margin-top:3px;line-height:1.45}
