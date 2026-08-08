@@ -179,7 +179,19 @@ function userKey(u) { return u ? `${u.kind || 'admin'}:${u.id || u.companyCode |
 async function ensureCat() {
   const k = userKey(USER);
   if (CAT && CAT_FOR === k) return true;
-  if (CAT_FOR !== k) { CAT = null; MOVES = []; MIS_UNSEEN = new Set(); CC_WIN = null; }
+  /* v6.195: al cambiar de usuario se limpia TODO el estado de la vista, no
+     solo el catalogo. Faltaban COMPS (las tiendas del alcance del anterior:
+     una cuenta acotada veia tiendas ajenas en el combo de traslado), el
+     borrador del wizard y los filtros de la bandeja, que quedaban escritos
+     de la sesion anterior. El reload al salir ya cubre el caso normal; esto
+     cubre el cambio de cuenta sin recarga. */
+  if (CAT_FOR !== k) {
+    CAT = null; MOVES = []; MIS_UNSEEN = new Set(); CC_WIN = null; COMPS = null;
+    Object.assign(D, resetD()); STEP = 0;
+    COLA_FILTER = 'todos'; COLA_Q = '';
+    COLA_DESDE = isoMenos(30); COLA_HASTA = isoHoy(); COLA_ORD = 'recientes';
+    APRO_PAGE = 1; APRO_SEL = null; APRO_SUB = 'list';
+  }
   const c = await api({ action: 'catalog' });
   if (!c || !c.ok) {
     const b = document.getElementById('ccBody');
@@ -1011,6 +1023,14 @@ async function renderDetail() {
       ? anularHtml
       : mv.estado === 'rechazado'
         ? ''
+        /* v6.195: 'vencido' caia en el "else" junto con 'sugerido' y pintaba
+           el boton de aprobar. El backend igual lo rechazaba, pero la pantalla
+           ofrecia algo imposible — que es exactamente la trampa que veniamos
+           sacando de esta vista. */
+        : mv.estado === 'vencido'
+        ? `<div class="cc-aact cc-aact-box" style="background:#f5f3ff;border-color:#ddd6fe">
+            <div class="cc-awill">⌛ <b>Sugerencia vencida.</b> Su fecha (${esc(vencFecha(mv))}) quedó fuera de la ventana permitida, que hoy va del <b>${esc(fmt(CC_WIN && CC_WIN.minDate))}</b> al <b>${esc(fmt(CC_WIN && CC_WIN.maxDate))}</b>. Ya no se puede aprobar: cargá el movimiento de nuevo con una fecha válida.</div>
+          </div>`
         /* v6.192: el aviso a la tienda va PRIMERO y destacado. Estaba
            enterrado entre el texto y los botones, y es la decision que no
            se puede deshacer: una vez publicada, la tienda ya la vio. */

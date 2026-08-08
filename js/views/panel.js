@@ -663,7 +663,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.194</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.195</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -8723,7 +8723,19 @@ export function renderPanel() {
       });
     } catch (_) { /* sin cambios en el menu */ }
   })();
-  $('#logoutBtn').addEventListener('click', () => { clearSession(); go('/login'); });
+  /* v6.195: cerrar sesion RECARGA la pagina de verdad.
+     Antes era clearSession() + go('/login'), y go() solo cambia el hash: el
+     documento nunca se recarga, asi que TODO el estado de modulo de las vistas
+     sobrevivia al cambio de cuenta. No era cosmetico — en Cambio de Cargo el
+     cache COMPS guarda las tiendas DEL ALCANCE del que lo cargo, asi que
+     entrar con una cuenta acotada despues de una amplia le ofrecia tiendas
+     que no le corresponden. Un reload limpia todas las vistas de una vez, hoy
+     y las que se agreguen despues; parchear modulo por modulo era condenarse
+     a redescubrir esto cada vez. */
+  $('#logoutBtn').addEventListener('click', () => {
+    clearSession();
+    window.location.replace(window.location.pathname);
+  });
   document.querySelectorAll('#pnlNav button[data-view]').forEach(b =>
     b.addEventListener('click', () => navigate(b.dataset.view, user)));
   // Toggle de los grupos colapsables del menú (admin/super). Por CSP no se usa
