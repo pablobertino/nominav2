@@ -426,7 +426,14 @@ function stepTipo(el) {
 
 /* --- paso Destino --- */
 function stepDestino(el) {
-  const roleNote = `<div class="cc-hint" style="margin-top:8px">🔒 Como <b>${esc(roleLabel())}</b> solo puedes asignar cargos por debajo del tuyo (se configura por rol).</div>`;
+  /* v6.194: el aviso del candado solo si el rol TIENE tope. Al coordinador
+     (min_assign_level 0) y al superadmin (-1) les decia "solo puedes asignar
+     cargos por debajo del tuyo" cuando pueden asignar todos: un permiso que
+     no existe, anunciado como si existiera. */
+  const tope = CAT && Number(CAT.assign_min_level);
+  const roleNote = (tope > 0)
+    ? `<div class="cc-hint" style="margin-top:8px">🔒 Como <b>${esc(roleLabel())}</b> solo puedes asignar cargos por debajo del tuyo (se configura por rol).</div>`
+    : '';
   if (D.tipo === 'ascenso' || D.tipo === 'descenso') {
     const opts = targetsFor(D.person, D.tipo);
     if (!opts.length) { el.innerHTML = `<div class="cc-warn err">No hay cargos que tu rol pueda asignar para este ${D.tipo}. Debe hacerlo un rol superior.</div>`; return; }
@@ -1602,7 +1609,10 @@ function styleBlock() {
   .cc-hero.descenso{--hc:#d97706;--hbg:#fffbeb}
   .cc-hero.traslado{--hc:#2563eb;--hbg:#eff6ff}
   .cc-hero label{font-size:12px;color:#334155}
-  .cc-sel-hero{font-size:17px !important;font-weight:800;padding:12px 13px !important;border-color:var(--hc) !important;background:#fff;color:#0f172a}
+  /* v6.194: 17px + padding 12px cortaba el texto por abajo — el select nativo
+     no crece solo con la fuente. Tamaño mas sobrio y line-height/height
+     explicitos, que es lo que en realidad faltaba. */
+  .cc-sel-hero{font-size:14.5px !important;font-weight:700;padding:9px 11px !important;line-height:1.5 !important;height:auto !important;min-height:0 !important;border-color:var(--hc) !important;background:#fff;color:#0f172a}
   /* v6.192 — quien sugirio deja de competir con el estado. */
   .cc-sugby{display:inline-flex;align-items:center;gap:5px;font-size:12px;color:#475569;background:#eff6ff;border:1px solid #bfdbfe;border-radius:999px;padding:2px 10px}
   .cc-sugby b{color:#1d4ed8;font-weight:800}
