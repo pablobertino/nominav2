@@ -340,25 +340,38 @@ async function runSearch(q) {
         asi que hacer clic en el empleo vigente podia elegir el cerrado
         segun como viniera ordenado. */
   const vivo = p => p.is_active !== false;
-  const orden = rows.slice().sort((a, b) => (vivo(b) ? 1 : 0) - (vivo(a) ? 1 : 0));
+  /* v6.197: los empleos CERRADOS ya no se listan acá. En v6.192 los marqué en
+     vez de esconderlos, y fue media medida: un empleo terminado no puede ser
+     el punto de partida de NINGUN movimiento — no se asciende, traslada ni
+     egresa a alguien de una tienda que ya dejó. Mostrarlo solo servia para
+     ofrecer una opcion invalida y hacer parecer duplicada a una persona que
+     no lo esta. Se avisa cuántos se ocultaron, para que no sea magia. */
+  const cerrados = rows.filter(p => !vivo(p)).length;
+  const orden = rows.filter(vivo);
+  if (!orden.length) {
+    box.innerHTML = `<div class="cc-hint">${cerrados
+      ? `Se encontró a esta persona, pero <b>sin empleo vigente</b> (${cerrados} empleo${cerrados === 1 ? '' : 's'} ya cerrado${cerrados === 1 ? '' : 's'}). No se le puede cargar un movimiento.`
+      : 'Sin resultados.'}</div>`;
+    return;
+  }
   box.innerHTML = orden.slice(0, 40).map((p, i) => {
     const cargoTxt = norm(p.role) || '';
     const ini = (norm(p.full_name) || '?').split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase();
     const on = D.person && D.person.id_number === p.id_number && D.person.company_code === p.company_code;
     const av = p.thumb_url ? `<img src="${esc(p.thumb_url)}" alt="">` : esc(ini);
     const zsc = [p.zona, p.subzona, p.concepto].filter(Boolean).map(esc).join(' · ');
-    const cerrado = !vivo(p);
     // v6.193: el "ya hay un cambio en curso" saltaba recien al enviar, con los
     // cinco pasos llenos. Ahora se ve acá, antes de empezar.
     const curso = enCursoDe(p.id_number);
-    return `<div class="cc-prow ${on ? 'on' : ''}${cerrado ? ' cerrado' : ''}${curso ? ' encurso' : ''}" data-i="${i}">
+    return `<div class="cc-prow ${on ? 'on' : ''}${curso ? ' encurso' : ''}" data-i="${i}">
       <div class="cc-pav">${av}</div>
-      <div style="flex:1"><div class="cc-pnm">${esc(p.full_name || '')}${cerrado ? ` <span class="cc-exemp">EMPLEO CERRADO${p.end_date ? ' · hasta ' + esc(fmt(p.end_date)) : ''}</span>` : ''}${curso ? ` <span class="cc-encurso">YA TIENE UN ${esc(String(curso).toUpperCase())} EN CURSO</span>` : ''}</div>
+      <div style="flex:1"><div class="cc-pnm">${esc(p.full_name || '')}${curso ? ` <span class="cc-encurso">YA TIENE UN ${esc(String(curso).toUpperCase())} EN CURSO</span>` : ''}</div>
         <div class="cc-pmeta">V-${esc(p.id_number)}${p.company_code ? ' · ' + esc(p.company_code) : ''}${p.company_name ? ' ' + esc(p.company_name) : ''}</div>
         ${zsc ? `<div class="cc-pmeta">${zsc}</div>` : ''}</div>
       <span class="cc-pcargo">${esc(cargoTxt)}</span>
       <button class="cc-openf" data-i="${i}" title="Ver ficha completa">${IC_FICHA}</button></div>`;
-  }).join('');
+  }).join('')
+    + (cerrados ? `<div class="cc-hint" style="margin-top:8px">No se muestra${cerrados === 1 ? '' : 'n'} <b>${cerrados} empleo${cerrados === 1 ? '' : 's'} ya cerrado${cerrados === 1 ? '' : 's'}</b>: un movimiento se carga siempre desde el empleo vigente. El historial completo está en la ficha.</div>` : '');
   box.querySelectorAll('.cc-prow').forEach(row => row.addEventListener('click', e => {
     if (e.target.closest('.cc-openf')) return;
     pickPerson(orden[parseInt(row.dataset.i, 10)]);
@@ -916,6 +929,7 @@ function renderAList() {
       <div class="cc-acta">
         ${puedo ? `<button class="cc-btn apr cc-quickapr" data-apr="${mv.id}">✓ Aprobar</button>` : ''}
         ${mv.estado === 'sugerido' && my.aprobar ? `<button class="cc-btn back cc-quickrej" data-rej="${mv.id}">✕ Rechazar</button>` : ''}
+        ${my.anular && ['aprobado', 'reportado', 'exportado'].includes(mv.estado) ? `<button class="cc-btn danger cc-quickanu" data-anu="${mv.id}">⊘ Anular</button>` : ''}
       </div>
     </div>`;
   }).join('') : `<div class="cc-acard" style="cursor:default"><span class="cc-hint">${COLA_FILTER === 'sugerido' ? 'No hay sugerencias pendientes.' : 'Nada aquí.'}</span></div>`;
@@ -935,6 +949,13 @@ function renderAList() {
     if (!r || !r.ok) return toast((r && r.error) || 'No se pudo rechazar.', true);
     await loadCola(); renderApro();
     toast('Sugerencia rechazada.');
+  }));
+  // v6.197: anular tambien desde la lista. Mismo criterio que aprobar y
+  // rechazar: entrar al detalle para cada accion rutinaria es peaje.
+  el.querySelectorAll('.cc-quickanu').forEach(b => b.addEventListener('click', e => {
+    e.stopPropagation();
+    const mv = MOVES.find(x => x.id === parseInt(b.dataset.anu, 10));
+    if (mv) anularMove(mv, true);
   }));
   el.querySelectorAll('.cc-acard[data-id]').forEach(c => c.addEventListener('click', e => {
     // v6.196: la ficha se mudo al lado del nombre, fuera de .cc-acta.
@@ -1258,12 +1279,15 @@ async function rejectMove(id) {
   toast('Sugerencia rechazada.');
 }
 /* v6.115: anular un movimiento ya aprobado/reportado (gate mov.anular). */
-async function anularMove(mv) {
+async function anularMove(mv, fromList) {
   const reason = await ccPrompt('Motivo de la anulación (opcional). Coordiná con Capital Humano para que cierren el ticket sin ejecutarlo.', 'Anular movimiento');
   if (reason === null) return;               // cancelado
   const r = await api({ action: 'anular', id: mv.id, reason: reason || undefined });
   if (!r || !r.ok) return toast((r && r.error) || 'No se pudo anular.', true);
   await loadCola();
+  // v6.197: si vino de la lista, se vuelve a la lista. Mandarlo al detalle
+  // seria sacarlo del lugar donde estaba trabajando.
+  if (fromList) { renderApro(); toast('Movimiento anulado. Coordiná con Capital Humano el cierre del ticket.'); return; }
   APRO_SUB = 'detail'; APRO_SEL = mv.id;
   renderDetail();
   toast('Movimiento anulado. Coordiná con Capital Humano el cierre del ticket.');
@@ -1645,9 +1669,9 @@ function styleBlock() {
   .cc-openf.inline{display:inline-flex;vertical-align:middle;width:24px;height:24px;padding:0;margin-left:3px;border-radius:7px}
   .cc-openf.inline svg{width:14px;height:14px}
   .cc-aloc .ced{color:#334155;font-weight:800;font-family:ui-monospace,monospace}
-  /* v6.192 — un empleo cerrado no puede parecerse al vigente. */
-  .cc-prow.cerrado{opacity:.62;background:#fafafa}
-  .cc-exemp{display:inline-block;vertical-align:middle;font-size:9.5px;font-weight:800;letter-spacing:.3px;color:#b91c1c;background:#fef2f2;border:1px solid #fecaca;border-radius:999px;padding:1px 7px;margin-left:6px}
+  /* v6.197: se fue .cc-prow.cerrado / .cc-exemp — los empleos cerrados ya no
+     se listan en el wizard, asi que su estilo era codigo muerto. Dejarlo era
+     invitar a la proxima confusion, como pasó con 'lateral'. */
   /* v6.193 — ya tiene un movimiento sin resolver: se ve antes de elegirla. */
   .cc-prow.encurso{opacity:.7;background:#fffbeb}
   .cc-encurso{display:inline-block;vertical-align:middle;font-size:9.5px;font-weight:800;letter-spacing:.3px;color:#92400e;background:#fef3c7;border:1px solid #fde68a;border-radius:999px;padding:1px 7px;margin-left:6px}
