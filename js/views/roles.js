@@ -68,7 +68,7 @@ const VIEW_SUBGROUPS = [
   ['Reportes', ['view.historial', 'view.estadisticas', 'view.reportempresas', 'view.estadopago', 'view.misstats']],
   ['Comunicacion', ['view.avisos', 'view.avisosconfig']],
   ['Solicitudes', ['view.solicitudes', 'view.firmantes']],
-  ['Sincronizacion', ['view.synclog', 'view.syncpend', 'view.sync', 'view.syncreview', 'view.axhistory', 'view.axcompare', 'view.erpquery']],
+  ['Sincronizacion', ['view.synclog', 'view.syncpend', 'view.sync', 'view.syncreview', 'view.axhistory', 'view.axcompare', 'view.erpquery', 'view.apistatus']],
   ['Datos bancarios', ['view.bankstats', 'view.banksync', 'view.bankhist', 'view.bankaccounts']],
   ['WhatsApp', ['view.whatsapp', 'view.wa.templates', 'view.wa.polls', 'view.wa.history', 'view.wa.groups', 'view.wa.routing']],
   ['Administracion', ['view.equipo', 'view.permisos', 'view.config', 'view.roles', 'view.resetdata']],
@@ -189,6 +189,9 @@ const MENU_CATALOG = [
 
     { id: 'axcompare', lbl: 'Comparar', view: 'view.axcompare', acts: ['hcm.sync', 'hcm.publish'], sub: 'Herramientas' },
     { id: 'erpquery', lbl: 'Consultar API', view: 'view.erpquery', acts: ['hcm.query'] },
+    // v6.199: solo salud de los servicios. No trae datos, por eso no comparte
+    // permiso con Consultar API: se puede dar uno sin el otro.
+    { id: 'apistatus', lbl: 'Estado de APIs', view: 'view.apistatus', acts: [], sub: 'Herramientas' },
   ] },
   // v4.81: grupo Datos bancarios (v4.78-4.80) en el editor visual.
   // v5.23/v5.24: banksync YA NO publica la ficha completa: publica SOLO la

@@ -48,6 +48,7 @@ import { renderWaPolls } from './wa-polls.js';
 import { renderWaHistory } from './wa-history.js';
 import { renderWaRouting } from './wa-routing.js';
 import { renderErpQuery } from './erp-query.js';
+import { renderApiStatus } from './api-status.js';
 import { renderSyncLog, renderSyncRun } from './sync-log.js';
 import { renderSyncPending } from './sync-pending.js';   // v5.40
 import { renderResetData } from './reset-data.js';
@@ -267,6 +268,9 @@ const NAV_GROUPS = [
     ['--', 'Herramientas'],
     ['axcompare', I.compare, 'Comparar', 'adminonly'],
     ['erpquery', I.search, 'Consultar API', 'adminonly'],
+    // v6.199: "¿estan vivas?" es otra pregunta que "¿que devuelven?", y hasta
+    // ahora solo se podia contestar chocando contra un error al publicar.
+    ['apistatus', I.alert, 'Estado de APIs', 'adminonly'],
   ] },
   // v4.78: grupo DATOS BANCARIOS (aprobado por Pablo). Nace con Estadisticas;
   // Sincronizar e Historial (clones filtrados a cuentas) llegan en v4.79/80,
@@ -663,7 +667,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.198</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.199</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -8270,6 +8274,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'wagrupos') renderWaGroups(user);
   else if (view === 'waruteo') renderWaRouting(user);
   else if (view === 'erpquery') renderErpQuery(user);
+  else if (view === 'apistatus') renderApiStatus(user);
   else if (view === 'synclog') renderSyncLog(user);
   /* v5.58 — EL DETALLE ES UNA PAGINA, NO UN DESPLEGABLE.
      Pablo lo pidio 6 o 7 veces y yo lo segui metiendo inline dentro de la fila
@@ -8679,6 +8684,7 @@ export function renderPanel() {
       constancias: 'view.solicitudes',
       syncreview: 'view.syncreview', axcompare: 'view.axcompare',
       axhistory: 'view.axhistory', synclog: 'view.synclog', erpquery: 'view.erpquery',
+      apistatus: 'view.apistatus',   // v6.199
       // v5.40: Pendientes reusa el permiso del Registro (view.synclog). Son la
       // misma informacion vista de dos formas: el Registro la cuenta por corrida
       // y Pendientes la junta por caso. Quien puede ver una, puede ver la otra;
