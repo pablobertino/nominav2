@@ -35,12 +35,17 @@ const json = (obj, status = 200) => new Response(JSON.stringify(obj), {
   status, headers: { 'Content-Type': 'application/json; charset=utf-8' },
 });
 
+/* v6.200: OJO CON Accept-Profile. Sin ese header PostgREST busca en `public`
+   y devuelve un 404 "Could not find the table 'public.api_catalog'". Las
+   tablas del portal viven en el esquema nomina_v2; todos los endpoints lo
+   mandan y este se copio sin el. */
 async function sb(env, path, init = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
     ...init,
     headers: {
       apikey: env.supabase_service_role,
       Authorization: `Bearer ${env.supabase_service_role}`,
+      'Accept-Profile': 'nomina_v2', 'Content-Profile': 'nomina_v2',
       'Content-Type': 'application/json',
       Accept: 'application/json',
       ...(init.headers || {}),
