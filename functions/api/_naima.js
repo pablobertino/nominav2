@@ -131,6 +131,107 @@ async function sb(env, path, opts = {}) {
 /* Solo grupos: jamas un chat individual (@c.us). Misma guarda que wa-send. */
 const isGroupChat = id => /@g\.us$/i.test(String(id || ''));
 
+/* =====================================================================
+   v6.203 — CUMPLEAÑOS DE QUIEN REPORTA
+
+   Cuando el responsable del reporte esta de cumpleaños, el acuse arranca con
+   una felicitacion. Va en el MISMO mensaje y no en uno aparte: un envio extra
+   a WhatsApp es justo lo que venimos cuidando, y llegaria descolgado del
+   contexto. Va ARRIBA porque un "feliz cumpleaños" debajo de un numero de
+   ticket parece un post-it pegado de apuro.
+
+   UNA SOLA VEZ AL DIA, y el candado no es un `if (ya salude)`: dos reportes
+   simultaneos leerian los dos que todavia no. Es la PK de naima_birthday_log
+   (id_number, greeted_on) — saluda el insert que entra, el otro rebota.
+
+   COMO SE LLEGA A LA FECHA: el reporte manda el NOMBRE del responsable, no su
+   cedula. store_contacts ata nombre+tienda a cedula (255 de 255 la tienen) y
+   de ahi workers_master da el birth_date (252 de 255). Se busca dentro de los
+   contactos DE ESA TIENDA, que son 4 como maximo, asi que el match por nombre
+   no es ambiguo. Si no calza, no se saluda: un cumpleaños perdido es molesto,
+   saludar a la persona equivocada es peor.
+
+   29 DE FEBRERO: se obvia en años normales (decision de Pablo). Solo saluda
+   cuando el calendario realmente trae un 29/02.
+   ===================================================================== */
+const SETTING_BIRTHDAY = 'wa_naima_birthday_enabled';
+
+const BIRTHDAY_LINES = [
+  '🎂 ¡Feliz cumpleaños, *{n}*! 🎉',
+  '🎂 ¡Hoy cumple años *{n}*! Felicidades de parte de todo el equipo 🎉',
+  '🥳 ¡Feliz cumpleaños, *{n}*! Que tengas un día bien bonito.',
+  '🎈 Antes de lo otro: ¡feliz cumpleaños, *{n}*! 🎂',
+  '🎉 ¡*{n}* está de cumpleaños! Que la pases lindo hoy 🎂',
+  '🎂 ¡Felicidades en tu día, *{n}*! 🎈',
+  '🎊 ¡Feliz cumpleaños, *{n}*! Que se cumpla todo lo que pidas 🎂',
+];
+
+/* Hoy en Venezuela. UTC-4 fijo, sin horario de verano: restar 4 horas alcanza
+   y evita depender de que el runtime traiga la base de zonas horarias. */
+function hoyCaracas() {
+  return new Date(Date.now() - 4 * 3600 * 1000).toISOString().slice(0, 10);
+}
+
+async function settingOn(env, key) {
+  try {
+    const r = await sb(env, `app_settings?key=eq.${encodeURIComponent(key)}&select=value`);
+    return String(r && r[0] ? r[0].value : '').trim().toLowerCase() === 'true';
+  } catch (_) { return false; }
+}
+
+/* Devuelve la linea de felicitacion o ''. NUNCA lanza: si algo falla, el
+   acuse sale igual sin saludo. */
+async function birthdayLine(env, ctx) {
+  try {
+    if (!ctx.responsible || !ctx.companyCode) return '';
+    if (!(await settingOn(env, SETTING_BIRTHDAY))) return '';
+
+    const hoy = hoyCaracas();                 // 'YYYY-MM-DD'
+    const mmdd = hoy.slice(5);
+    /* El 29/02 no necesita codigo: comparar MM-DD con MM-DD ya hace que quien
+       nacio ese dia solo calce cuando el calendario trae un 29/02. En años
+       normales no se saluda, que es lo acordado. */
+
+    const cc = encodeURIComponent(ctx.companyCode);
+    const nom = String(ctx.responsible).trim();
+    const contactos = await sb(env,
+      `store_contacts?company_code=eq.${cc}&select=id_number,full_name`) || [];
+    const norm = s => String(s || '').trim().toUpperCase().replace(/\s+/g, ' ');
+    const hit = contactos.find(c => norm(c.full_name) === norm(nom));
+    if (!hit || !hit.id_number) return '';
+
+    const ced = encodeURIComponent(hit.id_number);
+    const w = await sb(env, `workers_master?id_number=eq.${ced}&select=birth_date,full_name`);
+    const nace = w && w[0] && w[0].birth_date ? String(w[0].birth_date).slice(0, 10) : '';
+    if (!nace || nace.slice(5) !== mmdd) return '';
+
+    /* El candado. `Prefer: return=representation` + on conflict do nothing:
+       si vuelve vacio es que ya se saludo hoy y este reporte se queda callado. */
+    let entro = null;
+    try {
+      entro = await sb(env, 'naima_birthday_log?on_conflict=id_number,greeted_on', {
+        method: 'POST',
+        headers: { Prefer: 'resolution=ignore-duplicates,return=representation' },
+        body: JSON.stringify({
+          id_number: hit.id_number, greeted_on: hoy,
+          company_code: ctx.companyCode, report_id: ctx.reportId || null,
+          full_name: hit.full_name || nom,
+        }),
+      });
+    } catch (_) { return ''; }
+    if (!entro || !entro.length) return '';   // ya lo saludamos hoy
+
+    /* La frase rota por persona y año, no por reporte: si rotara por reporte,
+       dos personas que cumplen el mismo dia podrian sacar la misma. */
+    const semilla = Math.abs([...String(hit.id_number)].reduce((a, c) => a * 31 + c.charCodeAt(0), 7))
+      + Number(hoy.slice(0, 4));
+    const linea = BIRTHDAY_LINES[semilla % BIRTHDAY_LINES.length];
+    return linea.replace('{n}', firstName(nom));
+  } catch (_) {
+    return '';
+  }
+}
+
 /* Primer nombre, con la primera en mayuscula: 'JOSE LUIS PEREZ' -> 'José'
    no se puede (no hay acentos en el dato), pero si 'JOSE' -> 'Jose'. Se usa
    solo el primer nombre porque el saludo es cercano, no un encabezado. */
@@ -239,7 +340,11 @@ export async function naimaNotify(env, ctx) {
     if (!target.group) return { sent: false, skipped: target.skip };
 
     const g = target.group;
-    const text = naimaText(ctx);
+    /* v6.203: el saludo va PEGADO al acuse, no en un mensaje aparte. Si no
+       hay cumpleaños (o ya se saludo hoy) esto devuelve '' y el texto queda
+       exactamente igual que antes. */
+    const cumple = await birthdayLine(env, ctx);
+    const text = (cumple ? cumple + '\n\n' : '') + naimaText(ctx);
 
     /* Auditoria: la corrida (wa_batches) + el destino (wa_outbox), igual que
        Difusion y Mensajes, para que el aviso aparezca en el Historial de
