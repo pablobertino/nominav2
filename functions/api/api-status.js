@@ -109,14 +109,22 @@ export async function onRequestPost({ request, env }) {
       const rows = await sb(env,
         'api_catalog?is_active=eq.true&select=code,label,endpoint_url,method,params,note'
         + '&order=sort_order.asc,label.asc') || [];
-      // Se manda el HOST y no la URL completa: alcanza para agrupar por
-      // servidor (api / api2 / api3) sin publicar rutas internas en la UI.
+      /* El host va aparte para agrupar por servidor (api / api2 / api3).
+         v6.202: ademas viaja la URL COMPLETA. Antes solo mandaba el host, y
+         en una pantalla de diagnostico eso es esconder justo el dato que uno
+         necesita para hablar con quien mantiene la API. Igual solo la ven los
+         roles con view.apistatus, que son los mismos que ya pueden consultar
+         esas APIs desde Consultar API. */
       return json({
         ok: true,
         apis: rows.map(r => {
           let host = '';
           try { host = new URL(r.endpoint_url).host; } catch (_) { host = ''; }
-          return { code: r.code, label: r.label, host, note: r.note || null };
+          return {
+            code: r.code, label: r.label, host,
+            url: r.endpoint_url, method: r.method || 'GET',
+            note: r.note || null,
+          };
         }),
       });
     }

@@ -142,6 +142,14 @@ function pintar() {
   }));
 }
 
+/* v6.202: los parametros que se usaron REALMENTE en la prueba. Sin esto, ver
+   la URL pelada no dice con que alias ni con que fecha se consulto, que es la
+   mitad de la respuesta cuando algo devuelve 0 filas o rebota. */
+function qsTxt(r) {
+  const p = r && r.params;
+  if (!p || !Object.keys(p).length) return '';
+  return esc('?' + Object.keys(p).map(k => `${k}=${p[k]}`).join('&'));
+}
 function fila(a) {
   const r = RES[a.code] || { estado: 'wait' };
   const on = SEL.has(a.code);
@@ -159,6 +167,7 @@ function fila(a) {
     ${ic}
     <div class="as-mid">
       <div class="as-lbl">${esc(a.label)}</div>
+      <div class="as-url"><b>${esc(a.method || 'GET')}</b> ${esc(a.url || '')}${qsTxt(r)}</div>
       ${r.reason ? `<div class="as-reason ${r.estado === 'ok' ? 'soft' : ''}">${esc(r.reason)}</div>` : ''}
       ${a.note && r.estado === 'wait' ? `<div class="as-reason soft">${esc(a.note)}</div>` : ''}
     </div>
@@ -181,9 +190,9 @@ async function revisar(codes) {
     } else if (r.config) {
       RES[code] = { estado: 'cfg', reason: r.reason };
     } else if (r.ok_api) {
-      RES[code] = { estado: 'ok', ms: r.ms, rows: r.rows, reason: r.reason || null };
+      RES[code] = { estado: 'ok', ms: r.ms, rows: r.rows, params: r.params, reason: r.reason || null };
     } else {
-      RES[code] = { estado: 'fail', ms: r.ms, reason: r.reason || 'No respondió.' };
+      RES[code] = { estado: 'fail', ms: r.ms, params: r.params, reason: r.reason || 'No respondió.' };
     }
     pintar();
   }
@@ -232,6 +241,11 @@ function styleBlock() {
   .as-ic.cfg{background:#fffbeb;color:#92400e}
   .as-mid{flex:1;min-width:0}
   .as-lbl{font-size:13.5px;font-weight:700;color:var(--ink)}
+  /* v6.202 — el entrypoint, debajo del nombre. Se corta con ellipsis en
+     pantallas angostas pero se puede seleccionar y copiar entero. */
+  .as-url{font-size:11.5px;color:var(--soft);font-family:ui-monospace,SFMono-Regular,monospace;
+    margin-top:2px;word-break:break-all;line-height:1.4;user-select:all}
+  .as-url b{color:#475569;font-weight:800;margin-right:4px}
   .as-reason{font-size:12px;color:#b91c1c;margin-top:3px;line-height:1.45;word-break:break-word}
   .as-reason.soft{color:var(--soft)}
   .as-ms{font-size:12px;color:var(--soft);font-family:ui-monospace,monospace;flex:none}
