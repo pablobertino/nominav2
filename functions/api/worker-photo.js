@@ -35,6 +35,7 @@
 
 import { resolveActor, can } from './_auth.js';
 import { hcmRosterRaw, fullHcmPayload } from './_hcm.js';
+import { mismoValorAx } from './_contacto.js';
 
 const BUCKET = 'worker-photos';          // privado: full (y thumb viejas)
 const PUBLIC_BUCKET = 'worker-thumbs';   // publico: miniaturas nuevas
@@ -1015,8 +1016,13 @@ async function saveProfile(env, cc, body, table, deptScope) {
   const prevM = prevRows && prevRows[0] ? prevRows[0] : null;
   const norm = v => (v == null || v === '') ? '' : String(v).trim();
   const changed = {};   // campo -> true si cambio en esta edicion
+  /* v6.198: comparar con mismoValorAx y no con strings crudos. El maestro
+     guarda telefonos en los dos formatos (+58… y 04…), asi que "+584122450819"
+     vs "04122450819" —el MISMO numero— se registraba como cambio pendiente.
+     Eran 35 de 45 pendientes de telefono, y no se iban publicando: el portal
+     volvia a guardar internacional y AX seguia devolviendo nacional. */
   for (const f of AX_FIELDS) {
-    if (norm(patch[f]) !== norm(prevM ? prevM[f] : '')) changed[f] = true;
+    if (!mismoValorAx(f, patch[f], prevM ? prevM[f] : '')) changed[f] = true;
   }
   // Acumular con lo que ya estuviera pendiente (varias ediciones antes de
   // enviar): la union de campos cambiados sigue pendiente hasta el envio.

@@ -77,23 +77,51 @@ function echoValue(axKey, raw) {
 
 /* GET del roster CRUDO del sistema por alias. Devuelve un mapa
    cedula(solo digitos) -> fila cruda, o null si la llamada fallo. */
+/* v6.198 — POR QUE FALLO, no solo QUE fallo.
+
+   Antes esto era `if (!res.ok) return null` + `catch { return null }`: se
+   tragaba el status, el cuerpo y la excepcion. El usuario veia "No se pudo
+   leer la ficha actual del sistema (eco)" y ni el ni nosotros podiamos saber
+   si fue un 500, un timeout, un alias que la API no reconoce o un JSON con
+   otra forma. Y como el fallo es POR EMPRESA, una tienda caida rechaza todas
+   sus fichas con el mismo mensaje mudo.
+
+   Sigue devolviendo null (quien llama ya sabe que null = sin eco = no enviar),
+   pero ahora deja el motivo en hcmLastError para que el endpoint lo muestre. */
+let _hcmLastError = null;
+export function hcmLastError() { return _hcmLastError; }
+
 export async function hcmRosterRaw(env, alias) {
+  _hcmLastError = null;
   try {
     const url = `${HCM_API}?alias=${encodeURIComponent(alias)}`;
     const res = await fetch(url, {
       headers: { Accept: 'application/json', 'X-API-Key': env.canaima_apikey },
     });
-    if (!res.ok) return null;
+    if (!res.ok) {
+      let cuerpo = '';
+      try { cuerpo = (await res.text()).slice(0, 200); } catch (_) { /* sin cuerpo */ }
+      _hcmLastError = `HTTP ${res.status}${cuerpo ? ' — ' + cuerpo : ''}`;
+      return null;
+    }
     let data = await res.json();
     if (!Array.isArray(data)) data = data.empleados || data.data || data.items || [];
-    if (!Array.isArray(data)) return null;
+    if (!Array.isArray(data)) {
+      _hcmLastError = 'la API respondio 200 pero sin una lista de empleados reconocible';
+      return null;
+    }
     const map = {};
     for (const raw of data) {
       const ced = String(raw && raw.ficha != null ? raw.ficha : '').replace(/[^0-9]/g, '');
       if (ced) map[ced] = raw;
     }
+    if (!Object.keys(map).length) {
+      _hcmLastError = `la API respondio 200 pero sin fichas para el alias ${alias}`;
+      return null;
+    }
     return map;
   } catch (e) {
+    _hcmLastError = `no se pudo contactar la API (${(e && e.message) || e})`;
     return null;
   }
 }

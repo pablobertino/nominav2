@@ -37,7 +37,7 @@
    ===================================================================== */
 
 import { resolveActor, can, shadowCan, AuthError } from './_auth.js';
-import { hcmRosterRaw, fullHcmPayload } from './_hcm.js';
+import { hcmRosterRaw, fullHcmPayload, hcmLastError } from './_hcm.js';
 
 const HCM_API = 'https://api2.grupocanaima.com/empleados/datos/v1';
 
@@ -1045,10 +1045,11 @@ async function publish(env, actor, user, body) {
     (byCompany[cc] = byCompany[cc] || []).push(t);
   });
   const erpByCed = {};
-  const erpFailed = new Set();
+  const erpFailed = new Map();   // v6.198: company_code -> motivo del fallo
   for (const cc of Object.keys(byCompany)) {
     const m = await hcmRosterRaw(env, cc);
-    if (m === null) { erpFailed.add(cc); continue; }
+    // v6.198: guardar el POR QUE, no solo el que fallo.
+    if (m === null) { erpFailed.set(cc, hcmLastError() || 'motivo no informado'); continue; }
     Object.assign(erpByCed, m);
   }
 
@@ -1069,7 +1070,7 @@ async function publish(env, actor, user, body) {
       continue;
     }
     if (erpFailed.has(t.company_code)) {
-      rejected.push({ id_number: ced, reason: 'No se pudo leer la ficha actual del sistema (eco); no se envia sin eso.' });
+      rejected.push({ id_number: ced, reason: `No se pudo leer el padrón de ${t.company_code} en el sistema (eco), así que no se envía: ${erpFailed.get(t.company_code)}` });
       continue;
     }
     const erpRaw = erpByCed[ced];

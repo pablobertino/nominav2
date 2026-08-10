@@ -77,3 +77,38 @@ export const toInternacional = (v) => {
   const n = cleanPhone(v);
   return n ? '+58' + n.slice(1) : null;
 };
+
+/* ---------------------------------------------------------------------------
+   v6.198 — ¿DOS VALORES SON EL MISMO DATO?
+
+   El maestro guarda telefonos en los dos formatos a la vez (medido el
+   10/08/2026: 950 internacionales +58… y 1198 nacionales 04…). Comparar los
+   strings crudos hace que "+584122450819" y "04122450819" parezcan distintos
+   siendo el MISMO numero.
+
+   Esto ya se sabia y estaba resuelto en DOS lados —sync-roster.js (cleanPhone)
+   y ax-review.js (dPhoneNat)— pero el tercer camino, la EDICION de la ficha
+   por la tienda (worker-photo.js), comparaba con un String().trim() pelado.
+   Resultado: 35 de los 45 pendientes de telefono eran cambios que no cambiaban
+   nada, y encima inmortales — publicarlos no los resolvia, porque el portal
+   volvia a guardar internacional y AX seguia devolviendo nacional.
+
+   Por eso el comparador vive ACA, con cleanPhone y cleanEmail, y no suelto en
+   cada endpoint. Es la misma leccion que creo este archivo en la v6.184.
+
+   OJO CON EL ALCANCE: normaliza solo telefono y correo, donde los formatos son
+   demostrablemente equivalentes. Los nombres NO se tocan: cambiar "juan" por
+   "JUAN" es una edicion real que alguien quiso hacer y debe viajar a AX.
+--------------------------------------------------------------------------- */
+export const mismoValorAx = (field, a, b) => {
+  const plano = v => (v == null || v === '') ? '' : String(v).trim();
+  if (field === 'phone') {
+    const na = toNacional(a), nb = toNacional(b);
+    // Si alguno no es un movil VE valido, cae a la comparacion literal: no
+    // inventamos igualdad entre dos datos que no podemos normalizar.
+    if (na && nb) return na === nb;
+    return plano(a) === plano(b);
+  }
+  if (field === 'email') return plano(a).toLowerCase() === plano(b).toLowerCase();
+  return plano(a) === plano(b);
+};
