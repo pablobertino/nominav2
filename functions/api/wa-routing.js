@@ -29,6 +29,10 @@ import { NAIMA_TYPES } from './_naima.js';
 
 const SETTING_ENABLED = 'wa_naima_reports_enabled';
 const SETTING_TYPES   = 'wa_naima_reports_types';
+/* v6.204: el cumpleanos nacio en la v6.203 con su interruptor en app_settings
+   pero SIN pantalla donde prenderlo, o sea que no existia para nadie. Vive
+   aca porque esta es la pantalla que gobierna a Naima. */
+const SETTING_BIRTHDAY = 'wa_naima_birthday_enabled';
 const DEFAULT_TYPES   = 'ingreso,egreso,constancia';
 
 function json(b, s = 200) {
@@ -87,7 +91,7 @@ export async function onRequestPost({ request, env }) {
         sb(env, 'zones?select=id,name&order=name.asc'),
         sb(env, 'wa_groups?enabled=eq.true&select=id,chat_id,wa_name,alias&order=wa_name.asc'),
         sb(env, 'wa_zone_group?select=zone_id,wa_group_id,enabled'),
-        sb(env, `app_settings?key=in.(${SETTING_ENABLED},${SETTING_TYPES})&select=key,value`),
+        sb(env, `app_settings?key=in.(${SETTING_ENABLED},${SETTING_TYPES},${SETTING_BIRTHDAY})&select=key,value`),
         // Solo para el conteo "N tiendas" de cada fila; son ~200 filas.
         sb(env, 'companies?select=zone_id&limit=5000'),
       ]);
@@ -111,6 +115,7 @@ export async function onRequestPost({ request, env }) {
         ok: true,
         can_edit: true,   // llegar hasta aca ya implica el permiso de gestion
         enabled: String(byKey[SETTING_ENABLED] || 'false').toLowerCase() === 'true',
+        birthday: String(byKey[SETTING_BIRTHDAY] || 'false').toLowerCase() === 'true',
         types: String(byKey[SETTING_TYPES] == null ? DEFAULT_TYPES : byKey[SETTING_TYPES])
           .split(',').map(s => s.trim()).filter(Boolean),
         // El catalogo de tipos sale del backend para que la pantalla no tenga
@@ -149,6 +154,13 @@ export async function onRequestPost({ request, env }) {
       if (typeof body.enabled === 'boolean') {
         await setSetting(env, SETTING_ENABLED, body.enabled ? 'true' : 'false', {
           label: 'Avisos de Naima en grupos (reportes)', kind: 'bool', grupo: 'WhatsApp',
+        });
+      }
+      // v6.204: felicitacion de cumpleanos, interruptor aparte del maestro.
+      if (typeof body.birthday === 'boolean') {
+        await setSetting(env, SETTING_BIRTHDAY, body.birthday ? 'true' : 'false', {
+          label: 'Avisos de Naima: felicitar cumpleaños', kind: 'bool', grupo: 'WhatsApp',
+          description: 'Si quien reporta está de cumpleaños, Naima le agrega una felicitación al acuse del grupo. Una sola vez al día por persona.',
         });
       }
       if (Array.isArray(body.types)) {

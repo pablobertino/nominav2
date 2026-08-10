@@ -30,6 +30,7 @@ let DATA = null;      // respuesta cruda de 'load'
 let ROUTES = {};      // zone_id -> group_id | null  (estado editable)
 let TYPES = new Set();
 let ENABLED = false;
+let BDAY = false;      // v6.204: felicitar cumpleanos
 let RUSER = null;
 let DIRTY = false;
 
@@ -129,10 +130,23 @@ function paintStats() {
 function paintMaster() {
   const sw = $('#wrMaster');
   const st = $('#wrMasterState');
-  if (!sw || !st) return;
-  sw.classList.toggle('on', ENABLED);
-  st.textContent = ENABLED ? 'Activado' : 'Desactivado';
-  st.className = `wr-state ${ENABLED ? 'on' : 'off'}`;
+  if (sw && st) {
+    sw.classList.toggle('on', ENABLED);
+    st.textContent = ENABLED ? 'Activado' : 'Desactivado';
+    st.className = `wr-state ${ENABLED ? 'on' : 'off'}`;
+  }
+  /* v6.204: el cumpleanos cuelga del maestro — si Naima no avisa, no hay
+     acuse al que pegarle la felicitacion. Con el maestro apagado el switch
+     se ve apagado y no se puede tocar, en vez de mentir que esta prendido. */
+  const bs = $('#wrBday');
+  const bt = $('#wrBdayState');
+  if (bs && bt) {
+    const vivo = ENABLED && BDAY;
+    bs.classList.toggle('on', vivo);
+    bs.disabled = !ENABLED || !(DATA && DATA.can_edit);
+    bt.textContent = !ENABLED ? 'Requiere los avisos activos' : (BDAY ? 'Activado' : 'Desactivado');
+    bt.className = `wr-state ${vivo ? 'on' : 'off'}`;
+  }
 }
 
 function markDirty() {
@@ -222,7 +236,7 @@ async function save() {
   const routes = ((DATA && DATA.zones) || []).map(z => ({
     zone_id: z.id, wa_group_id: ROUTES[z.id] || null,
   }));
-  const r = await api(RUSER, { action: 'save', routes, enabled: ENABLED, types: [...TYPES] });
+  const r = await api(RUSER, { action: 'save', routes, enabled: ENABLED, birthday: BDAY, types: [...TYPES] });
 
   if (btn) btn.textContent = 'Guardar ruteo';
   if (!r || !r.ok) {
@@ -264,6 +278,7 @@ export async function renderWaRouting(user) {
 
   DATA = r;
   ENABLED = !!r.enabled;
+  BDAY = !!r.birthday;
   TYPES = new Set(r.types || []);
   ROUTES = {};
   (r.zones || []).forEach(z => { ROUTES[z.id] = (r.routes && r.routes[z.id]) || null; });
@@ -278,6 +293,14 @@ export async function renderWaRouting(user) {
         </div>
         <span id="wrMasterState" class="wr-state off">Desactivado</span>
         <button id="wrMaster" class="wr-sw" type="button"${ro ? ' disabled' : ''} aria-label="Activar o desactivar los avisos"></button>
+      </div>
+      <div class="wr-master" style="border-top:1px solid var(--border)">
+        <div class="txt">
+          <b>🎂 Felicitar cumpleaños</b>
+          <div>Si quien reporta está de cumpleaños, Naima le agrega la felicitación al acuse — <b>una sola vez al día</b>, aunque reporte varias veces. Se ve en el grupo de la zona.</div>
+        </div>
+        <span id="wrBdayState" class="wr-state off">Desactivado</span>
+        <button id="wrBday" class="wr-sw" type="button"${ro ? ' disabled' : ''} aria-label="Activar o desactivar la felicitación de cumpleaños"></button>
       </div>
       <div class="wr-cardh" style="border-top:1px solid var(--border)">
         Qué avisa <span class="mut">podés apagar un tipo suelto sin tocar el resto</span>
@@ -310,6 +333,10 @@ export async function renderWaRouting(user) {
   const sw = $('#wrMaster');
   if (sw && !ro) {
     sw.addEventListener('click', () => { ENABLED = !ENABLED; paintMaster(); markDirty(); });
+  }
+  const bs = $('#wrBday');
+  if (bs && !ro) {
+    bs.addEventListener('click', () => { if (!ENABLED) return; BDAY = !BDAY; paintMaster(); markDirty(); });
   }
   const btn = $('#wrSave');
   if (btn && !ro) btn.addEventListener('click', save);
