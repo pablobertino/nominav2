@@ -22,6 +22,7 @@ import { shadowCan } from './_auth.js';
    dentro de sync-roster.js (tiendas) y este archivo (empresas) ni los
    tenia: por eso las empresas quedaban sin telefono ni correo. */
 import { cleanPhone, cleanEmail } from './_contacto.js';
+import { bajarResponsablesSinEmpleo } from './_responsables.js';
 
 const AX_EMPLEADOS_API = 'https://api2.grupocanaima.com/empleados/datos/v1';
 
@@ -515,6 +516,25 @@ export async function onRequestPost({ request, env }) {
       } catch (e) {
         warnings.push('Responsables no sembrados: ' + String(e.message || e));
       }
+
+      /* v6.205: y DESPUES de sembrar, dar de baja a los responsables que ya
+         no tienen empleo vigente aca. El orden importa: primero entra el
+         gerente nuevo y despues sale el viejo, asi la tienda no queda ni un
+         instante sin a quien elegir.
+
+         El sync cerraba el empleo pero store_contacts quedaba intacto: 19 de
+         255 responsables ya no trabajaban donde figuraban y 9 tiendas
+         firmaban sus reportes con gente que se habia ido. */
+      try {
+        const resp = await bajarResponsablesSinEmpleo(env, cc, null);
+        if (resp.bajas.length) {
+          warnings.push(`Responsables dados de baja (ya no trabajan en ${cc}): `
+            + resp.bajas.map(b => b.full_name || b.id_number).join(', '));
+          if (resp.sin_responsables) {
+            warnings.push(`⚠ ${cc} quedó SIN responsables para reportar. Hay que cargar uno nuevo.`);
+          }
+        }
+      } catch (_) { /* nunca tumba el roster */ }
     } else {
       // --- EMPRESA NO-TIENDA: enterprise_workers ---
       // Conservar telefono/correo/direccion/department_id previos (la API no

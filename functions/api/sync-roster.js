@@ -59,6 +59,7 @@
 
 import { shadowCan } from './_auth.js';
 import { cleanPhone, cleanEmail } from './_contacto.js';
+import { bajarResponsablesSinEmpleo } from './_responsables.js';
 
 const HCM_API = 'https://api2.grupocanaima.com/empleados/datos/v1';
 const TIME_BUDGET_MS = 90000;   // presupuesto total de corrida
@@ -933,6 +934,24 @@ async function processStore(env, cc) {
       out.removed = toEgress.length;
       out.detail.removed = toEgress.map(([c]) => c);
     }
+
+    /* v6.205: el que egresa o se muda deja de ser RESPONSABLE de esta tienda.
+       Hasta ahora el sync cerraba el empleo y store_contacts quedaba intacto:
+       19 de 255 responsables ya no trabajaban donde figuraban, y 9 tiendas
+       habian quedado sin ninguno valido, firmando sus reportes con el nombre
+       de gente que se habia ido. Se revisa la tienda ENTERA y no solo los de
+       esta corrida, porque el desfase viejo tambien hay que barrerlo. */
+    try {
+      const resp = await bajarResponsablesSinEmpleo(env, cc, null);
+      if (resp.bajas.length) {
+        out.detail.responsables_baja = resp.bajas.map(b => b.full_name || b.id_number);
+        if (resp.sin_responsables) {
+          // Sin responsable la tienda NO puede reportar: se avisa fuerte.
+          out.alert = `${cc} quedó SIN responsables para reportar (se dieron de baja ${resp.bajas.length} que ya no trabajan ahí). Hay que cargar uno nuevo.`;
+          out.detail.sin_responsables = true;
+        }
+      }
+    } catch (_) { /* nunca tumba el sync */ }
     return out;
   } catch (e) {
     out.skipped = true;
