@@ -194,8 +194,14 @@ async function birthdayLine(env, ctx) {
 
     const cc = encodeURIComponent(ctx.companyCode);
     const nom = String(ctx.responsible).trim();
+    /* v6.206: is_active=true, como en todo el resto del codigo que lee
+       store_contacts. Hoy es inofensivo —quien esta de baja no aparece en el
+       wizard, asi que no puede ser el responsable de un reporte— pero desde
+       la v6.205 el sync da de baja a los que ya no trabajan en la tienda, y
+       leer sin filtrar deja abierta la puerta a felicitar a alguien que se
+       fue. Una consulta que ignora el estado es una trampa esperando. */
     const contactos = await sb(env,
-      `store_contacts?company_code=eq.${cc}&select=id_number,full_name`) || [];
+      `store_contacts?company_code=eq.${cc}&is_active=eq.true&select=id_number,full_name`) || [];
     const norm = s => String(s || '').trim().toUpperCase().replace(/\s+/g, ' ');
     const hit = contactos.find(c => norm(c.full_name) === norm(nom));
     if (!hit || !hit.id_number) return '';

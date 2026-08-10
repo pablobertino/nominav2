@@ -517,7 +517,12 @@ export async function onRequestPost({ request, env }) {
       // Asi, al subir un Reporte 10 nuevo, los gerentes quedan actualizados
       // sin pisar lo que la tienda gestiono manualmente.
       let contactsSeeded = 0;
-      // 1) Borrar (baja logica) los responsables 'report10' previos.
+      /* 1) Borrar los responsables 'report10' previos. OJO: es un DELETE de
+         verdad, no una baja logica — el comentario decia "baja logica" y no
+         lo era (v6.206). Aca esta bien que sea fisico: son filas sembradas
+         por el sistema desde el Reporte 10, se regeneran abajo, y nadie las
+         eligio a mano. La baja LOGICA (is_active=false) es la que usan la
+         pantalla de responsables y el sync, donde si hay que dejar rastro. */
       await sb(env,
         `store_contacts?company_code=eq.${encodeURIComponent(cc)}&source=eq.report10`,
         { method: 'DELETE' });
