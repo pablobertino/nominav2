@@ -132,6 +132,36 @@ export async function renderRecurrencia(user) {
         title="Ver el desglose de ${esc(t.company_code)}">${cuerpo}</button>`;
   }
 
+  /* =====================================================================
+     LO QUE ESTA VISTA NO CUENTA, DICHO EN LA VISTA.
+
+     Sin esto la pantalla se lee como incoherente, y con razon: AL01 muestra
+     110 marcajes y 23 personas en la pestaña de tiendas, y en la de
+     personas no aparece nadie. El motivo es correcto -las 110 son apoyo
+     entre tiendas, falla del sistema y altas sin enrolar, ninguna
+     imputable a la persona- pero vivia solo en un comentario del codigo.
+     Quien mira la pantalla veia dos numeros que no cerraban.
+
+     Ahora se dice con los numeros del propio periodo: cuantas lineas SI se
+     cuentan y cuantas no, y por que.
+     ===================================================================== */
+  function notaPersonas(causas) {
+    const marc = (causas || []).filter(c => c.tipo === 'marcaje');
+    if (!marc.length) return '';
+    const cuentan = marc.filter(c => c.atribuible);
+    const nCuentan = cuentan.reduce((n, c) => n + (c.lineas || 0), 0);
+    const total = marc.reduce((n, c) => n + (c.lineas || 0), 0);
+    const fuera = total - nCuentan;
+    const nombres = cuentan.map(c => c.label).join(' y ') || 'olvido de marcaje y cierre temprano';
+    return `<div class="rc-nota">
+      Acá solo cuentan las causas <b>imputables a la persona</b>: ${esc(nombres)}.
+      En este período son <b>${nCuentan}</b> de ${total} líneas de marcaje manual.
+      Las otras <b>${fuera}</b> son fallas del biométrico, de la electricidad, altas sin
+      enrolar o apoyo entre tiendas — <b>no son de la persona y no suman acá</b>.
+      Por eso una tienda puede tener muchos marcajes y ninguna persona en esta lista.
+    </div>`;
+  }
+
   function filaTienda(t) {
     const silenciada = !!t.silencio_hasta;
     /* La silenciada NO se esconde: se apaga. Si desapareciera, silenciar
@@ -224,6 +254,7 @@ export async function renderRecurrencia(user) {
           </tr></thead><tbody>${tiendas.map(filaTienda).join('')}</tbody></table>`
             : '<p class="hint">Ninguna tienda reportó marcajes manuales ni ausencias en este período.</p>'}
         ` : `
+          ${notaPersonas(causas)}
           ${personas.length ? `<table class="dtl-table rc-table"><thead><tr>
             <th>Trabajador</th><th>Tienda</th><th style="text-align:right">Eventos</th>
             <th style="text-align:right" title="Promedio de esta misma tienda">Prom. tienda</th>
@@ -279,19 +310,33 @@ export async function renderRecurrencia(user) {
     if (!cuerpo) return;
     if (!d || !d.ok) { cuerpo.innerHTML = `<p class="muted" style="margin:0">${esc(d ? d.error : 'Error de red.')}</p>`; return; }
 
+    /* Cada causa se abre y muestra QUIENES. Va en <details> cerrado: el
+       resumen sigue siendo lo primero que se lee, y los nombres aparecen
+       cuando alguien quiere hacer algo con ellos. Sin esto, "13 personas"
+       era un numero con el que no se podia hacer nada. */
     const grupo = (tipo, titulo) => {
       const f = (d.filas || []).filter(x => x.tipo === tipo);
       if (!f.length) return '';
       return `<div class="rc-grupo-t" style="margin-top:14px">${titulo}</div>
-        <table class="dtl-table"><tbody>
-        ${f.map(x => `<tr>
-          <td>${x.es_texto
-            ? `<span class="rc-txt">“${esc(x.etiqueta)}”</span><div class="rc-sub">escrito a mano</div>`
-            : esc(x.etiqueta)}</td>
-          <td style="text-align:right;white-space:nowrap"><b>${x.n}</b> <span class="rc-sub">línea${x.n === 1 ? '' : 's'}</span></td>
-          <td style="text-align:right;white-space:nowrap">${x.personas} <span class="rc-sub">persona${x.personas === 1 ? '' : 's'}</span></td>
-        </tr>`).join('')}
-        </tbody></table>`;
+        ${f.map(x => {
+          const gente = (d.quienes || []).filter(q => q.tipo === x.tipo && q.etiqueta === x.etiqueta);
+          const cab = x.es_texto
+            ? `<span class="rc-txt">“${esc(x.etiqueta)}”</span> <span class="rc-sub">· escrito a mano</span>`
+            : esc(x.etiqueta);
+          return `<details class="rc-det">
+            <summary><span class="rc-det-lbl">${cab}</span>
+              <span class="rc-det-n"><b>${x.n}</b> línea${x.n === 1 ? '' : 's'} ·
+                ${x.personas} persona${x.personas === 1 ? '' : 's'}</span></summary>
+            <div class="rc-det-body">
+              ${gente.length ? gente.map(q => `<div class="rc-q">
+                  <span class="rc-q-n">${esc(q.worker_name || '')}</span>
+                  <span class="rc-sub">${esc(q.id_number)}</span>
+                  <span class="rc-q-v">${q.n}</span>
+                </div>`).join('')
+                : '<div class="rc-sub">Sin detalle de personas.</div>'}
+            </div>
+          </details>`;
+        }).join('')}`;
     };
 
     cuerpo.innerHTML = grupo('marcaje', 'Marcaje manual') + grupo('ausencia', 'Períodos de ausencia')

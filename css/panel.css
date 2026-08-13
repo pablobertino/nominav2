@@ -821,6 +821,29 @@
    etiqueta del catalogo porque es lo unico que explica de verdad. */
 .rc-txt { font-style:italic; color:var(--ink); }
 
+/* La aclaracion de que NO se cuenta en la vista por persona. Va arriba de
+   la tabla y no en un tooltip: es lo que explica por que una tienda con 110
+   marcajes puede no tener ninguna persona en la lista, y sin eso la
+   pantalla se lee como si se contradijera. */
+.rc-nota { background:var(--brand-bg); color:#1e40af; border-radius:10px;
+  padding:11px 14px; font-size:12.5px; line-height:1.5; margin-bottom:14px; }
+
+/* Cada causa del desglose se abre y muestra QUIENES. Cerrado por defecto:
+   el resumen sigue siendo lo primero, los nombres aparecen cuando alguien
+   quiere hacer algo con ellos. */
+.rc-det { border-bottom:1px solid var(--border-soft); }
+.rc-det > summary { display:flex; align-items:baseline; gap:12px; padding:9px 2px;
+  cursor:pointer; list-style:none; }
+.rc-det > summary::-webkit-details-marker { display:none; }
+.rc-det > summary::before { content:'▸'; color:var(--faint); font-size:11px; flex:none; }
+.rc-det[open] > summary::before { content:'▾'; }
+.rc-det-lbl { flex:1; min-width:0; }
+.rc-det-n { font-size:12px; color:var(--muted); white-space:nowrap; }
+.rc-det-body { padding:2px 0 10px 18px; }
+.rc-q { display:flex; align-items:baseline; gap:8px; padding:3px 0; font-size:12.5px; }
+.rc-q-n { flex:1; min-width:0; }
+.rc-q-v { font-weight:700; color:var(--ink-soft); }
+
 /* ===================== WIZARD AUSENCIA (paso 4) ===================== */
 .type-row { display:flex; gap:14px; align-items:flex-end; margin-bottom:8px; }
 .coord-note { display:flex; gap:8px; background:var(--warn-bg); border:1px solid #f3e2bf; border-radius:var(--radius-md);

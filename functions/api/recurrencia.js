@@ -151,10 +151,19 @@ export async function onRequestPost({ request, env }) {
         return json({ ok: false, error: 'Esa tienda está fuera de tu alcance.' }, 403);
       }
 
-      const filas = await sb(env, 'rpc/recurrencia_tienda_detalle', {
-        method: 'POST', body: JSON.stringify({ p_company: company, p_desde: desde, p_hasta: hasta }),
-      });
-      return json({ ok: true, company_code: company, filas: filas || [] });
+      /* v6.218 — el desglose venia sin nombres: decia "57 lineas, 13
+         personas" y ahi se terminaba. El numero sin los nombres no sirve
+         para hacer nada. Se piden las dos cosas juntas y la pantalla los
+         agrupa; van en una sola ida porque son la misma pregunta. */
+      const [filas, quienes] = await Promise.all([
+        sb(env, 'rpc/recurrencia_tienda_detalle', {
+          method: 'POST', body: JSON.stringify({ p_company: company, p_desde: desde, p_hasta: hasta }),
+        }),
+        sb(env, 'rpc/recurrencia_tienda_quienes', {
+          method: 'POST', body: JSON.stringify({ p_company: company, p_desde: desde, p_hasta: hasta }),
+        }),
+      ]);
+      return json({ ok: true, company_code: company, filas: filas || [], quienes: quienes || [] });
     }
 
     /* ---------------- silenciar ---------------- */
