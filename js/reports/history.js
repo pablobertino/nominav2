@@ -88,6 +88,53 @@ function originPill(r) {
     : `<span class="pill pill-origin-company">${esc(r.company_type || 'Empresa')}</span>`;
 }
 
+/* =====================================================================
+   axEstadoLine (v6.209) — el renglon "Ya en AX" debajo del estado.
+
+   POR QUE EXISTE: medido el 13/08, 27 de los 36 reportes de egreso sin
+   cerrar YA estaban cargados en AX y nadie cerro el reporte. Alguien los
+   sube a mano y el portal se queda mirando el techo. Esto no cierra nada
+   ni bloquea nada: solo lo dice, que es lo que faltaba.
+
+   POR QUE UN RENGLON Y NO OTRA PILDORA: dos pildoras apiladas en la misma
+   celda compiten y ninguna gana. El estado del reporte es el dato mayor;
+   esto es una nota al pie suya. Por eso el color va en el texto y no en un
+   fondo: se lee sin gritar mas fuerte que el estado.
+
+   Tres formas, y ninguna opina sobre quien tiene razon:
+     - todas las lineas en AX, misma fecha  -> "Ya en AX · 10/08"
+     - todas en AX, otra fecha              -> ademas "el reporte dice ..."
+     - algunas si y otras no                -> "1 de 2 en AX"
+   El caso de fecha distinta se muestra ENTERO en el listado a proposito
+   (medido: 8 casos, todos de 1 o 2 dias). Esconderlo en un tooltip seria
+   ocultar justo lo unico que pide una decision humana.
+
+   No se pinta si el reporte tiene ax_published_at: eso lo publicamos
+   nosotros y la pildora con candado ya lo dice. El backend directamente no
+   manda el dato en ese caso.
+   ===================================================================== */
+function ddmm(iso) {
+  if (!iso) return '';
+  const [, m, d] = String(iso).slice(0, 10).split('-');
+  return (d && m) ? `${d}/${m}` : iso;
+}
+
+function axEstadoLine(r) {
+  const e = r && r.ax_estado;
+  if (!e || !e.en_ax) return '';
+  if (e.en_ax < e.lineas) {
+    return `<div class="att-ax att-ax-parc" title="Parte de las líneas de este reporte ya figuran egresadas en AX.">`
+      + `${e.en_ax} de ${e.lineas} en AX</div>`;
+  }
+  const fecha = e.fecha_ax ? ` · ${ddmm(e.fecha_ax)}` : '';
+  const cab = `<div class="att-ax att-ax-ok" title="Este egreso ya figura cargado en AX.">Ya en AX${fecha}</div>`;
+  if (e.coincide) return cab;
+  const dice = e.fecha_rep
+    ? `<div class="att-ax-sub">el reporte dice ${ddmm(e.fecha_rep)}</div>`
+    : '<div class="att-ax-sub">con otra fecha</div>';
+  return cab + dice;
+}
+
 // ¿viewport movil? (mismo umbral que el resto del portal: <=768px). Se
 // consulta en cada pintado para decidir tabla (escritorio) vs tarjetas
 // apiladas (movil).
@@ -311,6 +358,12 @@ export async function renderHistory(user) {
     ST.rows = d.rows; ST.total = d.total; ST.page = d.page; ST.perPage = d.per_page;
     ST.osticketUrl = d.osticket_url || '';
     ST.viewerIsAgent = !!d.viewer_is_agent;
+    // v6.209 — cuando se miro AX por ultima vez. Solo viene si en la pagina
+    // hay egresos; si no, queda null y el pie no dice nada.
+    // El replace es una red: si algun dia la marca llega con espacio en vez
+    // de "T" (formato de Postgres, no ISO), new Date() la rechaza en Safari y
+    // el pie mostraria el texto crudo.
+    ST.axSyncAt = d.ax_sync_at ? String(d.ax_sync_at).replace(' ', 'T') : null;
     paintRows(); paintPager();
   }
 
@@ -357,6 +410,9 @@ export async function renderHistory(user) {
       // + la auditoria (quien/cuando) del ultimo cambio.
       const audit = attAuditText(r);
       const auditHtml = audit ? `<div class="att-audit">${audit}</div>` : '';
+      // v6.209 — va DEBAJO del estado (no en columna propia): el listado ya
+      // esta ancho y este dato califica al estado, no compite con el.
+      const axHtml = axEstadoLine(r);
       let attTd;
       if (r.ax_published_at) {
         // v6.168 — Publicado en AX: NO va el selector. El estado ya no se
@@ -374,9 +430,9 @@ export async function renderHistory(user) {
         attTd = `<td><div class="att-cell">
           <select class="att-row-sel att-${r.attention}" data-attsel="${r.id}" title="Cambiar estado de este reporte">
             ${ATT_ORDER.map(k => `<option value="${k}" ${k === r.attention ? 'selected' : ''}>${ATT_STATES[k].label}</option>`).join('')}
-          </select>${syncDot(r.osticket_sync)}${syncBtn}</div>${auditHtml}</td>`;
+          </select>${syncDot(r.osticket_sync)}${syncBtn}</div>${auditHtml}${axHtml}</td>`;
       } else {
-        attTd = `<td>${attPill(r.attention)}${auditHtml}</td>`;
+        attTd = `<td>${attPill(r.attention)}${auditHtml}${axHtml}</td>`;
       }
       return `<tr class="main" data-open="${r.id}">
         ${checkTd}
@@ -444,6 +500,11 @@ export async function renderHistory(user) {
     const checkbox = canSelect && !publicado
       ? `<input type="checkbox" class="chk hrow-chk hc-check" data-pick="${r.id}" ${ST.selected.has(r.id) ? 'checked' : ''} title="Seleccionar">` : '';
 
+    // v6.209 \u2014 el mismo renglon del escritorio. Cuelga del bloque de estado
+    // cuando existe; si el que mira no gestiona no hay bloque, y entonces va
+    // en una fila propia con su etiqueta, para no quedar huerfano en la
+    // tarjeta.
+    const axHtml = axEstadoLine(r);
     let manageBlock = '';
     if (canManage && !publicado) {
       const audit = attAuditText(r);
@@ -457,7 +518,9 @@ export async function renderHistory(user) {
           <select class="att-row-sel att-${r.attention}" data-attsel="${r.id}" title="Cambiar estado de este reporte">
             ${ATT_ORDER.map(k => `<option value="${k}" ${k === r.attention ? 'selected' : ''}>${ATT_STATES[k].label}</option>`).join('')}
           </select>${syncDot(r.osticket_sync)}${syncBtn}
-        </div>${auditHtml}</div>`;
+        </div>${auditHtml}${axHtml}</div>`;
+    } else if (axHtml) {
+      manageBlock = `<div class="hc-manage"><span class="hc-k">AX</span><div>${axHtml}</div></div>`;
     }
 
     const resend = !r.osticket_id
@@ -684,7 +747,16 @@ export async function renderHistory(user) {
   function paintPager() {
     const from = ST.total === 0 ? 0 : (ST.page - 1) * ST.perPage + 1;
     const toN = Math.min(ST.page * ST.perPage, ST.total);
-    $('#hInfo').textContent = `Mostrando ${from}–${toN} de ${ST.total} reportes`;
+    /* v6.209 — junto al conteo va CUANDO se miro AX por ultima vez. Sin eso
+       el renglon "Ya en AX" aparenta ser tiempo real y no lo es: si alguien
+       egresa a una persona ahora mismo, el portal se entera en la proxima
+       corrida del cron de egresos. Solo aparece si la pagina trae egresos.
+       innerHTML y no textContent porque lleva marca; los valores son numeros
+       propios y una fecha ya formateada, nada que venga del usuario. */
+    const sync = ST.axSyncAt
+      ? ` <span class="hinfo-ax" title="El aviso «Ya en AX» sale de la última sincronización con el sistema, no de una consulta en vivo.">· AX al ${fmtSent(ST.axSyncAt)}</span>`
+      : '';
+    $('#hInfo').innerHTML = `Mostrando ${from}–${toN} de ${ST.total} reportes${sync}`;
     const npages = Math.max(1, Math.ceil(ST.total / ST.perPage));
     const maxShow = 7;
     let start = Math.max(1, ST.page - 3);

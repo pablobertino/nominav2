@@ -465,6 +465,63 @@ async function listReports(env, body, scope) {
     ax_published_at: r.ax_published_at || null,
   }));
 
+  /* v6.209 — ¿ESTE EGRESO YA ESTA CARGADO EN AX?
+     Medido el 13/08: 27 de los 36 reportes de egreso sin cerrar YA estaban
+     hechos en AX y nadie cerro el reporte. Alguien los carga a mano y el
+     portal no se entera. El dato para saberlo ya lo tenemos en casa
+     (nomina_v2.ax_egresos, que llena sola el cron nv2_ax_egresos_tick), asi
+     que esto NO llama a ninguna API: es una lectura de lo ya sincronizado.
+
+     UNA sola llamada por PAGINA, no una por fila: se juntan los ids de los
+     egresos visibles y la funcion los contesta todos juntos. La regla de
+     emparejamiento vive en la base a proposito (ver el comentario de
+     egresos_estado_ax); aca solo se pide el resultado. Es EXIGENTE: misma
+     cedula, MISMA TIENDA y fecha a no mas de 7 dias. Las dos condiciones
+     duras son las que evitan el falso positivo caro -dar por cargado un
+     egreso que en realidad es otro empleo del mismo trabajador-, y hay casos
+     reales de las dos clases: el reporte 718 tiene un egreso viejo en otra
+     sucursal, y hay gente con dos egresos en la misma tienda.
+
+     Se saltean los que tienen ax_published_at: esos los publicamos nosotros
+     y la pildora con candado ya lo dice. Repetirlo seria ruido.
+
+     Best-effort: si la funcion falla, el Historial se pinta igual sin el
+     dato. Es informacion de ayuda, no puede tumbar el listado. */
+  const egIds = rows.filter(r => r.topic === 'egreso' && !r.ax_published_at).map(r => r.id);
+  if (egIds.length) {
+    try {
+      const est = await sbJson(env, 'rpc/egresos_estado_ax', {
+        method: 'POST',
+        body: JSON.stringify({ p_report_ids: egIds }),
+      });
+      const byId = {};
+      (est || []).forEach(e => { byId[e.report_id] = e; });
+      out.forEach(o => {
+        const e = byId[o.id];
+        if (!e || !e.en_ax) return;
+        o.ax_estado = {
+          lineas: e.lineas,
+          en_ax: e.en_ax,
+          fecha_ax: e.fecha_ax || null,
+          fecha_rep: e.fecha_rep || null,
+          coincide: e.coincide === true,
+        };
+      });
+    } catch (_) { /* el listado no se cae por un dato informativo */ }
+  }
+
+  /* Cuando se miro AX por ultima vez. Va al pie del listado porque decir
+     "ya esta en AX" sin decir desde cuando sabemos eso es medio mentir: si
+     alguien egresa a una persona ahora mismo, el portal se entera en la
+     proxima corrida del cron. */
+  let axSyncAt = null;
+  if (egIds.length) {
+    try {
+      const cfg = await sbJson(env, 'ax_sync_config?id=eq.1&select=last_run_at,last_status');
+      if (cfg && cfg[0] && cfg[0].last_status === 'ok') axSyncAt = cfg[0].last_run_at || null;
+    } catch (_) { /* sin fecha se muestra el renglon igual, sin el "según" */ }
+  }
+
   // URL base de osTicket (sin barra final) para que el front arme el enlace
   // directo al ticket en el SCP: {base}/scp/tickets.php?number={osticket_id}.
   // Se lee una sola vez por pagina (no por fila).
@@ -472,7 +529,11 @@ async function listReports(env, body, scope) {
   try { osticketUrl = await osticketBase(env); } catch { osticketUrl = ''; }
   const isAgent = await viewerIsAgent(env, body.user || null);
 
-  return json({ ok: true, rows: out, total, page, per_page: perPage, osticket_url: osticketUrl, viewer_is_agent: isAgent });
+  return json({
+    ok: true, rows: out, total, page, per_page: perPage,
+    osticket_url: osticketUrl, viewer_is_agent: isAgent,
+    ax_sync_at: axSyncAt,
+  });
 }
 
 async function detailReport(env, body, scope) {

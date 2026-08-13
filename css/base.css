@@ -155,6 +155,25 @@ button { cursor: pointer; border: 0; }
 .att-audit { font-size: 10.5px; color: var(--faint); line-height: 1.3; margin-top: 3px; }
 .att-comment { font-size: 11px; color: var(--muted); font-style: italic; line-height: 1.35; margin-top: 2px; }
 
+/* "Ya en AX" (v6.209): el egreso del reporte ya figura cargado en el sistema.
+   Renglon y no pildora a proposito — el estado del reporte es el dato mayor y
+   esto lo califica, no compite con el. Por eso el color va en el TEXTO: se
+   distingue sin gritar mas fuerte que la pildora de arriba. */
+.att-ax { font-size: 11.5px; line-height: 1.3; margin-top: 5px; font-weight: 600;
+  display: flex; align-items: center; gap: 4px; }
+.att-ax::before { content: '\2713'; font-weight: 700; }
+.att-ax-ok { color: #15803d; }
+/* Parcial: azul, no verde. "A medias" y "listo" no pueden leerse igual de un
+   vistazo, que es justo como se lee esta columna. */
+.att-ax-parc { color: #1e40af; }
+.att-ax-parc::before { content: '\2013'; }
+/* La fecha del reporte cuando NO coincide con la de AX. Va en gris y sin
+   sangria propia: es la aclaracion del renglon de arriba, no otro estado. */
+.att-ax-sub { font-size: 10.5px; color: var(--faint); line-height: 1.3; padding-left: 15px; }
+
+/* Al pie del listado, junto al conteo: desde cuando sabemos lo de AX. */
+.hinfo-ax { color: var(--faint); }
+
 /* Modal de ayuda de estados: lista legible (pill a la izquierda, texto a la
    derecha). Reusa .modal-ov/.modal-box del panel. */
 .att-help-modal { max-width: 460px; }
