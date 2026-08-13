@@ -55,6 +55,66 @@ export async function renderRecurrencia(user) {
     pintar();
   }
 
+/* =====================================================================
+   TARJETAS GENERADAS DEL DATO (v6.215).
+
+   Antes estaban escritas a mano y comparadas por TEXTO
+   (`causa_top.startsWith('Sin dispositivo')`), lo que fallaba de dos
+   formas: si alguien renombraba la etiqueta en el catalogo la tarjeta
+   dejaba de contar sin avisar, y solo miraba la causa DOMINANTE de cada
+   tienda -asi que una con 5 "sin dispositivo" y 6 "otros" no entraba-.
+   Medido: decia 4 tiendas sin biometrico cuando eran 8, y 9 con problema
+   electrico cuando eran 12. La mitad.
+
+   Ahora salen de recurrencia_causas, que cuenta sobre las lineas. Una causa
+   nueva en el catalogo aparece sola: aca no hay ninguna lista escrita.
+
+   LA UNIDAD CAMBIA SEGUN EL TIPO, y no es un descuido. Una falla de marcaje
+   se cuenta en TIENDAS porque eso es lo accionable -8 sucursales sin
+   aparato es una orden de compra-. Una ausencia se cuenta en PERSONAS
+   porque un reposo no es una falla de la tienda. Cada tarjeta dice su
+   unidad debajo del numero para que nadie sume peras con manzanas.
+   ===================================================================== */
+  const CAUSA_TONO = {
+    no_device: 'rc-danger',          // la tienda no tiene aparato
+    power_outage: 'rc-warn',
+    biometric_failure: 'rc-warn',
+    system_failure: 'rc-warn',
+    forgot: 'rc-att',                // atribuible a la persona
+    early_close: 'rc-att',
+  };
+
+  function grupoCausas(tipo, causas) {
+    const lista = (causas || []).filter(c => c.tipo === tipo);
+    if (!lista.length) return '';
+    // Las 5 mas pesadas; el resto se junta para no perder el total de vista.
+    const top = lista.slice(0, 5);
+    const resto = lista.slice(5);
+    const restoLineas = resto.reduce((n, c) => n + (c.lineas || 0), 0);
+    const esMarcaje = tipo === 'marcaje';
+    const total = lista.reduce((n, c) => n + (c.lineas || 0), 0);
+
+    const card = (c) => {
+      const n = esMarcaje ? c.tiendas : c.personas;
+      const un = esMarcaje ? (n === 1 ? 'tienda' : 'tiendas') : (n === 1 ? 'persona' : 'personas');
+      return `<div class="rc-stat">
+        <div class="rc-stat-l">${esc(c.label)}</div>
+        <div class="rc-stat-v ${CAUSA_TONO[c.code] || ''}">${n}</div>
+        <div class="rc-stat-u">${un} · ${c.lineas} línea${c.lineas === 1 ? '' : 's'}</div>
+      </div>`;
+    };
+
+    return `<div class="rc-grupo">
+      <div class="rc-grupo-t">${esMarcaje ? 'Marcaje manual' : 'Períodos de ausencia'}
+        <span class="rc-sub">${total} línea${total === 1 ? '' : 's'} en el período</span></div>
+      <div class="rc-stats">
+        ${top.map(card).join('')}
+        ${resto.length ? `<div class="rc-stat"><div class="rc-stat-l">Otras ${resto.length}</div>
+          <div class="rc-stat-v">${restoLineas}</div><div class="rc-stat-u">líneas</div></div>` : ''}
+      </div>
+    </div>`;
+  }
+
   function filaTienda(t) {
     const silenciada = !!t.silencio_hasta;
     /* La silenciada NO se esconde: se apaga. Si desapareciera, silenciar
@@ -111,8 +171,7 @@ export async function renderRecurrencia(user) {
     }
     const tiendas = d.tiendas || [];
     const personas = d.personas || [];
-    const sinBio = tiendas.filter(t => (t.causa_top || '').startsWith('Sin dispositivo')).length;
-    const luz = tiendas.filter(t => (t.causa_top || '').startsWith('Problema el')).length;
+    const causas = d.causas || [];
     const silenciadas = tiendas.filter(t => t.silencio_hasta).length;
 
     const opts = (d.periodos || []).map(p =>
@@ -134,9 +193,9 @@ export async function renderRecurrencia(user) {
         </div>
 
         ${ST.tab === 'tiendas' ? `
+          ${grupoCausas('marcaje', causas)}
+          ${grupoCausas('ausencia', causas)}
           <div class="rc-stats">
-            <div class="rc-stat"><div class="rc-stat-l">Sin biométrico</div><div class="rc-stat-v rc-danger">${sinBio}</div></div>
-            <div class="rc-stat"><div class="rc-stat-l">Problema eléctrico</div><div class="rc-stat-v rc-warn">${luz}</div></div>
             <div class="rc-stat"><div class="rc-stat-l">Tiendas con reportes</div><div class="rc-stat-v">${tiendas.length}</div></div>
             <div class="rc-stat"><div class="rc-stat-l">Silenciadas</div><div class="rc-stat-v">${silenciadas}</div></div>
           </div>

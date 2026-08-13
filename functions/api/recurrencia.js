@@ -99,9 +99,15 @@ export async function onRequestPost({ request, env }) {
          resto tiene cero". El numero solo nunca alcanzo. */
       const min = Math.max(1, Math.min(50, parseInt(body.min, 10) || 2));
 
-      const [tiendas, personas, periodos] = await Promise.all([
+      const [tiendas, personas, causas, periodos] = await Promise.all([
         sb(env, 'rpc/recurrencia_tiendas', { method: 'POST', body: JSON.stringify({ p_desde: desde, p_hasta: hasta }) }),
         sb(env, 'rpc/recurrencia_personas', { method: 'POST', body: JSON.stringify({ p_desde: desde, p_hasta: hasta, p_min: min }) }),
+        /* v6.215 — la composicion del periodo. Las tarjetas se generan de
+           ACA y no de una lista escrita en el front: si mañana entra una
+           causa nueva al catalogo, aparece sola. La version anterior
+           comparaba etiquetas con texto y contaba solo donde la causa era
+           dominante: decia 4 tiendas sin biometrico cuando eran 8. */
+        sb(env, 'rpc/recurrencia_causas', { method: 'POST', body: JSON.stringify({ p_desde: desde, p_hasta: hasta }) }),
         sb(env, 'payroll_periods?select=name,range_start,range_end&order=range_start.desc&limit=24'),
       ]);
 
@@ -113,6 +119,12 @@ export async function onRequestPost({ request, env }) {
         ok: true, desde, hasta, min,
         tiendas: filtrar(tiendas),
         personas: filtrar(personas),
+        /* Las causas NO se recortan por alcance: son el panorama del grupo,
+           no filas de nadie. Recortarlas exigiria recalcular los distinct de
+           tiendas y personas empresa por empresa, y un coordinador vería
+           "3 tiendas sin biométrico" queriendo decir "3 de las mías", que es
+           otra cosa. Se muestran como lo que son: el total del período. */
+        causas: causas || [],
         periodos: periodos || [],
         puede_silenciar: can(actor, 'report.recurrencia.silenciar'),
       });

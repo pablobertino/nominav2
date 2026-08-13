@@ -1982,7 +1982,7 @@ function fichaHtml(w, c) {
                cuando hay algo, no verlo seria ambiguo (¿no hay reportes, o la
                pantalla no existe?). Asi, entrar y leer "nunca la incluyeron
                en un reporte" es una respuesta, no un silencio. -->
-          <button class="btn" id="ffReportes" title="Ver todo lo que se ha reportado de esta persona"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg> Reportes</button>
+          <button class="btn" id="ffReportes" title="Ver todo lo que se ha reportado de esta persona"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg> Reportes<span id="ffRepN" class="ff-repn" hidden></span></button>
           ${(STATE.can.ficha || STATE.can.photo) ? '<button class="btn" id="ffEdit">Editar</button>' : ''}
           <button class="btn" id="ffCancel" style="display:none">Cancelar</button>
           <button class="btn btn-primary" id="ffSave" style="display:none">Guardar cambios</button>
@@ -2495,6 +2495,25 @@ function wireFicha(host, w) {
      resuelve recien al hacer clic, cuando los dos modulos ya existen.
      El onExit vuelve a ESTA ficha, no a la grilla. */
   const repBtn = q('#ffReportes');
+  /* v6.215 — El numero al lado del boton. Se pide APARTE y sin bloquear el
+     pintado de la ficha: si la consulta tarda o falla, la ficha ya esta en
+     pantalla y el boton sirve igual, solo que sin contador. Un dato de
+     adorno no puede demorar la ficha entera.
+     Con 0 no se pinta nada: un "0" en un globito se lee como si algo
+     estuviera mal, y no tener reportes es lo normal (4 de cada 5 fichas). */
+  if (repBtn) {
+    (async () => {
+      try {
+        const r = await fetch('/api/reports-history', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'worker_reports', user: STATE.user, id_number: w.id_number }),
+        }).then(x => x.json());
+        const n = (r && r.ok && r.rows) ? r.rows.length : 0;
+        const b = q('#ffRepN');
+        if (b && n) { b.textContent = String(n); b.hidden = false; }
+      } catch (_) { /* sin contador, el boton igual funciona */ }
+    })();
+  }
   if (repBtn) {
     repBtn.addEventListener('click', async () => {
       const prev = repBtn.textContent;

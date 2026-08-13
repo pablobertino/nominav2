@@ -796,6 +796,20 @@
 .rc-silpill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px;
   background:var(--border-soft); color:var(--muted); margin-right:6px; }
 .rc-err { color:var(--danger); font-size:12.5px; margin-top:8px; min-height:16px; }
+/* Grupos de tarjetas: marcaje y ausencia por separado, porque se cuentan en
+   unidades distintas (tiendas vs personas) y mezclarlas invita a sumarlas. */
+.rc-grupo { margin-bottom:14px; }
+.rc-grupo-t { font-size:12.5px; font-weight:700; color:var(--ink-soft); margin-bottom:8px;
+  display:flex; align-items:baseline; gap:8px; }
+.rc-grupo-t .rc-sub { font-weight:400; }
+/* La unidad va SIEMPRE debajo del numero: sin eso, un 8 de tiendas y un 34
+   de personas se leen como la misma escala. */
+.rc-stat-u { font-size:10.5px; color:var(--faint); margin-top:2px; }
+
+/* Contador de reportes en el boton de la ficha. Con 0 no se pinta. */
+.ff-repn { display:inline-block; margin-left:6px; min-width:18px; padding:1px 6px;
+  border-radius:999px; background:var(--brand-bg); color:var(--brand);
+  font-size:11px; font-weight:700; }
 
 /* ===================== WIZARD AUSENCIA (paso 4) ===================== */
 .type-row { display:flex; gap:14px; align-items:flex-end; margin-bottom:8px; }
