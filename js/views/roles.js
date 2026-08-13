@@ -65,7 +65,7 @@ const VIEW_SUBGROUPS = [
   ['Organizacion', ['view.empresas', 'view.estructura']],
   ['Personal', ['view.buscar', 'view.datosincompletos', 'view.dobleempleo', 'view.egresados', 'view.movimientos', 'view.egmotivos', 'view.rostersync', 'view.fotos']],
   ['Cargos', ['view.cambiocargo', 'view.cargohistorial', 'mov.sugerir', 'mov.aprobar']],
-  ['Reportes', ['view.historial', 'view.estadisticas', 'view.reportempresas', 'view.estadopago', 'view.misstats']],
+  ['Reportes', ['view.historial', 'view.estadisticas', 'view.recurrencia', 'view.reportempresas', 'view.estadopago', 'view.misstats']],
   ['Comunicacion', ['view.avisos', 'view.avisosconfig']],
   ['Solicitudes', ['view.solicitudes', 'view.firmantes']],
   ['Sincronizacion', ['view.synclog', 'view.syncpend', 'view.sync', 'view.syncreview', 'view.axhistory', 'view.axcompare', 'view.erpquery', 'view.apistatus']],
@@ -86,7 +86,7 @@ const VIEW_SUBGROUPS = [
 const MENU_CATALOG = [
   { g: '', items: [
     { id: 'dashboard', lbl: 'Inicio', view: 'view.dashboard', acts: [] },
-    { id: 'miempresa', lbl: 'Mi empresa', view: 'view.miempresa', acts: ['report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion'] },
+    { id: 'miempresa', lbl: 'Mi empresa', view: 'view.miempresa', acts: ['report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion', 'report.traslado'] },
     // v6.106: Novedades (rol tienda) — cambios que afectan a la tienda.
     { id: 'novedades', lbl: 'Novedades', view: 'view.novedades', acts: [] },
     { id: 'usuarios', lbl: 'Usuarios', view: 'view.usuarios', acts: ['compuser.create', 'compuser.reset', 'compuser.toggle', 'compuser.email', 'entuser.create', 'entuser.update', 'entuser.reset', 'entuser.toggle', 'entuser.scope'] },
@@ -94,14 +94,14 @@ const MENU_CATALOG = [
     { id: 'calendario', lbl: 'Calendario', view: 'view.calendario', acts: [] },
   ] },
   { g: 'Organizacion', items: [
-    { id: 'tiendas', lbl: 'Empresas', view: 'view.empresas', acts: ['company.contact', 'company.responsables', 'dept.create', 'dept.rename', 'dept.toggle', 'dept.delete', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion'] },
+    { id: 'tiendas', lbl: 'Empresas', view: 'view.empresas', acts: ['company.contact', 'company.responsables', 'dept.create', 'dept.rename', 'dept.toggle', 'dept.delete', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion', 'report.traslado'] },
     { id: 'catalogos', lbl: 'Estructura', view: 'view.estructura', acts: [] },
   ] },
   { g: 'Personal', items: [
     // v5.03: los botones de emitir reportes tambien viven en la vista Personal
     // (ficha del trabajador). Es el MISMO code que en Empresas y Mi empresa: la
     // piel sincroniza por code (un solo estado en ST.work -> una sola fila en BD).
-    { id: 'fotos', lbl: 'Personal', view: 'view.fotos', acts: ['photo.manage', 'ficha.edit', 'dept.assign', 'bankref.upload', 'rif.upload', 'cedula.upload', 'docs.remove', 'view.antiguedad', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion'] },
+    { id: 'fotos', lbl: 'Personal', view: 'view.fotos', acts: ['photo.manage', 'ficha.edit', 'dept.assign', 'bankref.upload', 'rif.upload', 'cedula.upload', 'docs.remove', 'view.antiguedad', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion', 'report.traslado'] },
     { id: 'buscar', lbl: 'Buscar', view: 'view.buscar', acts: [] },
     { id: 'datosincompletos', lbl: 'Datos incompletos', view: 'view.datosincompletos', acts: [] },
     // v5.19: Doble empleo. Solo consulta (los casos se corrigen en el sistema),
@@ -136,8 +136,18 @@ const MENU_CATALOG = [
     { id: 'cargohistorial', lbl: 'Aprobaciones', view: 'view.cargohistorial', acts: ['mov.aprobar', 'mov.autoaprobar', 'mov.anular'] },
   ] },
   { g: 'Reportes', items: [
-    { id: 'historial', lbl: 'Historial', view: 'view.historial', acts: ['report.attention'] },
+    /* v6.217 — LOS TRES PERMISOS DE PUBLICAR FALTABAN DESDE LA v6.167.
+       Existian en la base y el backend los exigia, pero no estaban en esta
+       pantalla: no habia forma de darlos ni quitarlos desde Roles, asi que
+       en la practica solo los tenia quien ya los tuviera cargado a mano.
+       Publicar en AX cierra el reporte PARA SIEMPRE — es de los permisos
+       que mas importa poder administrar, y era el que no se podia. */
+    { id: 'historial', lbl: 'Historial', view: 'view.historial',
+      acts: ['report.attention', 'report.publish.marcaje', 'report.publish.ausencia', 'report.publish.forzar'] },
     { id: 'estadisticas', lbl: 'Estadisticas', view: 'view.estadisticas', acts: [] },
+    // v6.217 — Ver la recurrencia y poder APAGAR un aviso son dos cosas
+    // distintas, y por eso silenciar es una accion aparte del ver.
+    { id: 'recurrencia', lbl: 'Recurrencia', view: 'view.recurrencia', acts: ['report.recurrencia.silenciar'] },
     { id: 'misstats', lbl: 'Mis estadisticas', view: 'view.misstats', acts: [] },
     { id: 'reportempresas', lbl: 'Analisis', view: 'view.reportempresas', acts: [] },
     { id: 'estadopago', lbl: 'Estado de pago', view: 'view.estadopago', acts: [] },
@@ -187,7 +197,9 @@ const MENU_CATALOG = [
     { id: 'syncreview', lbl: 'Publicar', view: 'view.syncreview', acts: ['hcm.publish', 'hcm.discard'], sub: 'Enviar al sistema' },
     { id: 'axhistory', lbl: 'Historial de envios', view: 'view.axhistory', acts: [] },
 
-    { id: 'axcompare', lbl: 'Comparar', view: 'view.axcompare', acts: ['hcm.sync', 'hcm.publish'], sub: 'Herramientas' },
+    // v6.217: hcm.view (ver el personal que devuelve AX) no figuraba en
+    // ninguna parte de esta pantalla, asi que no se podia conceder ni quitar.
+    { id: 'axcompare', lbl: 'Comparar', view: 'view.axcompare', acts: ['hcm.view', 'hcm.sync', 'hcm.publish'], sub: 'Herramientas' },
     { id: 'erpquery', lbl: 'Consultar API', view: 'view.erpquery', acts: ['hcm.query'] },
     // v6.199: solo salud de los servicios. No trae datos, por eso no comparte
     // permiso con Consultar API: se puede dar uno sin el otro.
