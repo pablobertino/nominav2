@@ -709,6 +709,31 @@
 .dtl-table .att-ax { margin-top:0; }
 .dtl-table .att-ax-sub { padding-left:0; }
 
+/* ===== Celda del trabajador en el Detalle (v6.211): avatar + datos + ficha.
+   Circulo de 34px y no el cuadrado de 42 de Buscar personal: alla la fila es
+   una tarjeta con aire, aca es una fila de tabla que se repite y cada pixel
+   de alto se multiplica por la cantidad de trabajadores del reporte. Las
+   INICIALES y su color salen de core/avatar.js, compartidas con Buscar
+   personal, para que la misma persona no cambie de color entre pantallas. */
+.rd-wcell { display:flex; align-items:center; gap:9px; }
+.rd-ava { width:34px; height:34px; border-radius:50%; flex:none; overflow:hidden;
+  display:flex; align-items:center; justify-content:center;
+  font-weight:700; font-size:12px; background:var(--border-soft); color:var(--ink-soft); }
+.rd-ava img { width:100%; height:100%; object-fit:cover; display:block; }
+/* Sin ficha en el maestro: borde punteado. No es un error ni una falta —
+   es alguien a quien se esta dando de alta— asi que se marca sin alarmar. */
+.rd-ava-nof { border:1px dashed var(--border); opacity:.75; }
+.rd-wname { min-width:0; flex:1; }
+.rd-noficha { font-size:10.5px; color:var(--faint); margin-top:2px; }
+.rd-fichabtn { flex:none; }
+
+/* La tienda de la cabecera abre el Personal de esa empresa. Mismo trato que
+   .ps-emp.link en Buscar personal: texto clicable, no boton — en el portal
+   la ficha se abre con boton y la empresa con enlace, y el Detalle repite
+   esa gramatica en vez de inventar una nueva. */
+.rd-emplink { cursor:pointer; color:var(--brand); border-bottom:1px solid transparent; }
+.rd-emplink:hover { border-bottom-color:var(--brand); }
+
 /* ===================== WIZARD AUSENCIA (paso 4) ===================== */
 .type-row { display:flex; gap:14px; align-items:flex-end; margin-bottom:8px; }
 .coord-note { display:flex; gap:8px; background:var(--warn-bg); border:1px solid #f3e2bf; border-radius:var(--radius-md);

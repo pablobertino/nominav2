@@ -549,9 +549,12 @@ async function detailReport(env, body, scope) {
   if (!head || !head.length) return json({ ok: false, error: 'Reporte no encontrado o sin acceso.' }, 404);
   const r = head[0];
 
-  // Nombre de tienda
-  const comp = await sbJson(env, `companies?company_code=eq.${encodeURIComponent(r.company_code)}&select=business_name`);
+  /* Nombre y TIPO de la tienda. El tipo se agrego en la v6.211: la pantalla
+     de Personal entra en modo 'store' o 'enterprise' segun sea tienda o no,
+     y sin este dato el enlace a la empresa abriria la grilla equivocada. */
+  const comp = await sbJson(env, `companies?company_code=eq.${encodeURIComponent(r.company_code)}&select=business_name,company_type`);
   const companyName = comp && comp[0] ? comp[0].business_name : null;
+  const companyType = comp && comp[0] ? comp[0].company_type : null;
 
   // Nombre del admin que cambio el estado de atencion (si lo hay).
   let attentionByName = null;
@@ -718,12 +721,52 @@ async function detailReport(env, body, scope) {
     });
   }
 
+  /* v6.211 — FOTO Y FICHA, para los CUATRO tipos por igual.
+     Va aca abajo y no dentro de cada rama a proposito: las cuatro ramas ya
+     dejaron sus lineas con la cedula en `id_number`, asi que la foto se
+     resuelve UNA vez para todas. Metido en cada rama serian cuatro copias de
+     la misma consulta esperando a que una se quede vieja.
+
+     UNA sola consulta para todas las lineas (in.(...)), no una por
+     trabajador. Y trae dos cosas distintas que la pantalla necesita separar:
+       thumb_url  la miniatura, si tiene foto cargada;
+       in_master  si la persona EXISTE en el maestro.
+     No es lo mismo "no tiene foto" que "todavia no tiene ficha": lo segundo
+     pasa en los ingresos (16 lineas hoy) porque se los esta dando de alta, y
+     ofrecer un boton de ficha que abre una pantalla vacia es peor que no
+     ofrecerlo.
+
+     La URL de la miniatura es publica y fija (bucket worker-thumbs, por
+     photo_key): no hay que firmar nada ni gastar una llamada por cara. */
+  if (lines.length) {
+    try {
+      const ceds = [...new Set(lines.map(l => l.id_number).filter(Boolean))];
+      if (ceds.length) {
+        const list = ceds.map(c => `"${c}"`).join(',');
+        const wm = await sbJson(env, `workers_master?id_number=in.(${list})&select=id_number,photo_key`);
+        const byCed = {};
+        (wm || []).forEach(w => { byCed[w.id_number] = w; });
+        lines.forEach(l => {
+          const w = byCed[l.id_number];
+          l.in_master = !!w;
+          l.thumb_url = (w && w.photo_key)
+            ? `${env.supabase_url}/storage/v1/object/public/worker-thumbs/${w.photo_key}.jpg`
+            : null;
+        });
+      }
+    } catch (_) {
+      /* Sin foto el detalle se pinta igual, con iniciales. Es adorno util,
+         no puede tumbar la pantalla. */
+    }
+  }
+
   return json({
     ok: true,
     osticket_url: await (async () => { try { return await osticketBase(env); } catch { return ''; } })(),
     viewer_is_agent: await viewerIsAgent(env, body.user || null),
     report: {
       id: r.id, type: r.topic, company_code: r.company_code, company_name: companyName,
+      company_type: companyType,
       zone_id: r.zone_id, subzone_id: r.subzone_id, sent_at: r.sent_at,
       responsible: r.responsible, position: r.position, workers_count: r.workers_count,
       attention: r.attention, osticket_id: r.osticket_id, email_sent: r.email_sent, notes: r.notes,

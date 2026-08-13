@@ -14,6 +14,8 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { initialsOf, avatarColors } from '../core/avatar.js';
+import { renderWorkerPhotos } from '../views/worker-photos.js';
 import { openResendModal } from './shared/resend-modal.js';
 import { openPublishAxModal, motivoNoPublicable, AX_ARROW } from './shared/publish-ax.js';
 import {
@@ -104,16 +106,58 @@ function originPill(r) {
     : `<span class="pill pill-origin-company">${r.company_type || 'Empresa'}</span>`;
 }
 
+/* =====================================================================
+   CELDA DEL TRABAJADOR (v6.211) — avatar + nombre + cedula + ficha.
+
+   Una sola para los CUATRO tipos de reporte. Antes cada rama pintaba el
+   nombre a su manera; ahora la columna "Trabajador" se ve igual en marcaje,
+   ausencia, egreso e ingreso, que es lo que uno espera de una misma tabla
+   con distinto contenido.
+
+   El boton de ficha es el MISMO icono de carnet que Buscar personal, a
+   proposito: alla la ficha se abre con boton y la empresa con texto
+   clicable, y el Detalle repite esa gramatica en vez de inventar otra.
+
+   TRES ESTADOS, y la diferencia entre los dos ultimos importa:
+     con foto        la miniatura publica (bucket worker-thumbs).
+     sin foto        iniciales de color, y el boton igual: la ficha existe.
+     sin ficha       ni boton ni enlace, y se dice "sin ficha aún". Pasa en
+                     los ingresos, con gente que se esta dando de alta y
+                     todavia no entro al maestro. Un boton que abre una
+                     pantalla vacia es peor que no tener boton.
+   ===================================================================== */
+const ICO_FICHA = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="10" r="2"/><path d="M13 9h5M13 13h5M6.5 15.5c.4-1.2 1.4-2 2.5-2s2.1.8 2.5 2"/></svg>';
+
+function avatarHtml(l) {
+  if (l.thumb_url) {
+    return `<div class="rd-ava"><img src="${esc(l.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
+  }
+  const c = avatarColors(l.id_number);
+  const cls = l.in_master === false ? 'rd-ava rd-ava-nof' : 'rd-ava';
+  return `<div class="${cls}" style="background:${c.bg};color:${c.fg}">${esc(initialsOf(l.name))}</div>`;
+}
+
+function workerCell(l) {
+  const sinFicha = l.in_master === false;
+  const btn = sinFicha
+    ? '<div class="rd-noficha">sin ficha aún</div>'
+    : `<button type="button" class="icon-btn rd-fichabtn" data-ficha="${esc(l.id_number)}" title="Ver la ficha de ${esc(l.name)}">${ICO_FICHA}</button>`;
+  return `<div class="rd-wcell">
+      ${avatarHtml(l)}
+      <div class="rd-wname"><b>${esc(l.name)}</b><div class="ced">${esc(l.ced_kind ? `${l.ced_kind}-${l.id_number}` : l.id_number)}</div>${sinFicha ? btn : ''}</div>
+      ${sinFicha ? '' : btn}
+    </div>`;
+}
+
 /* Lineas especificas por tipo. */
 function linesHtml(r) {
   if (r.type === 'marcaje') {
     if (!r.lines || !r.lines.length) return '<p class="hint">Sin líneas de detalle.</p>';
     return `<table class="dtl-table"><thead><tr>
-      <th>Trabajador</th><th>Cédula</th><th>Fecha</th><th>Entrada</th><th>Salida</th><th>Causa</th>
+      <th>Trabajador</th><th>Fecha</th><th>Entrada</th><th>Salida</th><th>Causa</th>
     </tr></thead><tbody>
       ${r.lines.map(l => `<tr>
-        <td><b>${l.name}</b></td>
-        <td class="ced">${l.id_number}</td>
+        <td>${workerCell(l)}</td>
         <td>${fmtDate(l.mark_date)}</td>
         <td><span class="time-badge">${l.time_in}</span></td>
         <td><span class="time-badge">${l.time_out}</span></td>
@@ -129,11 +173,10 @@ function linesHtml(r) {
       return `<span class="pill pill-pend">Pendiente${l.doc_name ? ' · ' + l.doc_name : ''}</span>`;
     };
     return `<table class="dtl-table"><thead><tr>
-      <th>Trabajador</th><th>Cédula</th><th>Tipo</th><th>Cód. AX</th><th>Desde</th><th>Hasta</th><th>Documento</th><th>Nota</th>
+      <th>Trabajador</th><th>Tipo</th><th>Cód. AX</th><th>Desde</th><th>Hasta</th><th>Documento</th><th>Nota</th>
     </tr></thead><tbody>
       ${r.lines.map(l => `<tr>
-        <td><b>${l.name}</b></td>
-        <td class="ced">${l.id_number}</td>
+        <td>${workerCell(l)}</td>
         <td>${l.absence_label}</td>
         <td><span class="pill pill-ax">${l.ax_code}</span></td>
         <td>${fmtDate(l.date_from)}</td>
@@ -214,7 +257,7 @@ function linesHtml(r) {
       <th title="Si esta persona ya figura egresada en AX, según la última sincronización">En AX</th>
     </tr></thead><tbody>
       ${r.lines.map(l => `<tr>
-        <td><b>${esc(l.name)}</b><div class="ced">${esc(l.id_number)}</div></td>
+        <td>${workerCell(l)}</td>
         <td>${l.role ? esc(l.role) : '<span class="muted">—</span>'}</td>
         <td>${fechaCell(l)}</td>
         <td>${antig(l)}</td>
@@ -265,7 +308,7 @@ function linesHtml(r) {
       <th>Trabajador</th><th>Cargo</th><th>Ingreso</th><th>Edad</th><th>Banco</th><th>Contacto</th><th>Documentos</th>
     </tr></thead><tbody>
       ${r.lines.map(l => `<tr>
-        <td><b>${esc(l.name)}</b><div class="ced">${esc(l.ced_kind ? `${l.ced_kind}-${l.id_number}` : l.id_number)}</div></td>
+        <td>${workerCell(l)}</td>
         <td>${l.role ? esc(l.role) : '<span class="muted">—</span>'}</td>
         <td>${fmtDate(l.start_date)}</td>
         <td>${edad(l)}</td>
@@ -386,7 +429,7 @@ export async function showReportDetail({ reportId, user, onBack }) {
     <div class="card">
       ${statusBand}
       <div class="rd-meta">
-        <div><span class="rd-lbl">Tienda</span><span class="rd-val">${r.company_code}${r.company_name ? ' · ' + r.company_name : ''}</span></div>
+        <div><span class="rd-lbl">Tienda</span><span class="rd-val"><span class="rd-emplink" id="rdEmpLink" title="Ver el personal de ${esc(r.company_code)}">${esc(r.company_code)}${r.company_name ? ' · ' + esc(r.company_name) : ''}</span></span></div>
         <div><span class="rd-lbl">Responsable</span><span class="rd-val">${r.responsible || '—'}${(() => { const sub = r.source_kind === 'admin' ? (r.source_role || r.position) : r.position; return sub ? ' · ' + sub : ''; })()}</span></div>
         <div><span class="rd-lbl">Origen</span><span class="rd-val">${originPill(r)}</span></div>
         <div><span class="rd-lbl">Trabajadores</span><span class="rd-val">${r.workers_count}</span></div>
@@ -396,6 +439,40 @@ export async function showReportDetail({ reportId, user, onBack }) {
     </div>`;
 
   $('#rdBack').addEventListener('click', onBack);
+
+  /* =====================================================================
+     v6.211 — SALIDAS HACIA PERSONAL: la ficha de un trabajador y el personal
+     de la tienda. Las dos son la MISMA pantalla (renderWorkerPhotos); lo
+     unico que cambia es si se le pide abrir una ficha puntual (openCed) o
+     entrar a la grilla completa.
+
+     El onExit vuelve a ESTE detalle, no al Historial. Es lo que uno espera
+     al mirar una ficha desde un reporte: volver al reporte. Y como el
+     Historial ahora conserva sus filtros, el camino completo -listado
+     filtrado, detalle, ficha, y toda la vuelta- no pierde nada.
+
+     NON_STORE_TYPES esta repetido en SEIS vistas del portal (ax-review,
+     movements, mov-quincena, personnel-search, panel, wizard-core). No se
+     unifica aca: migrar seis archivos es un cambio con su propio riesgo y
+     merece su propia version. Se sigue el patron existente y queda anotado.
+     ===================================================================== */
+  const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
+  const modoEmpresa = NON_STORE_TYPES.has(r.company_type) ? 'enterprise' : 'store';
+  const volverAlDetalle = () => showReportDetail({ reportId, user, onBack });
+  const irAPersonal = (openCed) => renderWorkerPhotos(
+    user, r.company_code, volverAlDetalle,
+    openCed ? { mode: modoEmpresa, openCed } : { mode: modoEmpresa },
+  );
+
+  const empLink = $('#rdEmpLink');
+  if (empLink) empLink.addEventListener('click', () => irAPersonal(null));
+
+  host.querySelectorAll('[data-ficha]').forEach(b => {
+    b.addEventListener('click', (e) => {
+      e.stopPropagation();
+      irAPersonal(b.dataset.ficha);
+    });
+  });
 
   // Feedback breve en boton-icono sin tocar el glifo.
   const flashBtn = (b, ok) => {

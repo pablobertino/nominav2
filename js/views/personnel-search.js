@@ -24,6 +24,7 @@
 
 import { $ } from '../core/dom.js';
 import { renderWorkerPhotos, openWorkerLightbox } from './worker-photos.js';
+import { AVATAR_BG, AVATAR_FG, initialsOf, avatarColor } from '../core/avatar.js';
 
 const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
 
@@ -31,19 +32,11 @@ function esc(s) {
   return String(s == null ? '' : s).replace(/[&<>"']/g, c =>
     ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
-function initialsOf(name) {
-  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
-  if (!parts.length) return '?';
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
-}
-const AVATAR_BG = ['#dbeafe', '#fae8ff', '#dcfce7', '#fef9c3', '#fee2e2', '#e0e7ff', '#ccfbf1', '#ffedd5'];
-const AVATAR_FG = ['#1e40af', '#86198f', '#166534', '#854d0e', '#991b1b', '#3730a3', '#0f766e', '#9a3412'];
-function avatarColor(seed) {
-  const s = String(seed || ''); let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return h % AVATAR_BG.length;
-}
+/* v6.211 — las iniciales, la paleta y el hash de color se mudaron a
+   core/avatar.js porque el Detalle de reportes muestra los mismos avatares.
+   Dos copias de una paleta no se rompen, se desincronizan: la misma persona
+   saldria de un color aca y de otro alla. El CSS sigue siendo de cada
+   pantalla (aca .ps-ava es un cuadrado de 42px; en el Detalle, un circulo). */
 /* Fecha ISO -> 'dd/mm/aa hh:mm' hora Caracas (para "Actualizó: X · fecha"). */
 function fmtDT(iso) {
   if (!iso) return '';

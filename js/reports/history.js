@@ -135,6 +135,12 @@ function axEstadoLine(r) {
   return cab + dice;
 }
 
+/* Lo que el Historial recuerda entre visitas (v6.211): con que estaba
+   filtrado y en que pagina. Vive en el modulo, no dentro de renderHistory,
+   justamente para sobrevivir a que esa funcion se vuelva a ejecutar al
+   volver de un detalle. Se llena en cada load(). */
+const RECUERDO = { filters: null, page: 1 };
+
 // ¿viewport movil? (mismo umbral que el resto del portal: <=768px). Se
 // consulta en cada pintado para decidir tabla (escritorio) vs tarjetas
 // apiladas (movil).
@@ -208,11 +214,34 @@ export async function renderHistory(user) {
   const canSelect = canManage || canPublishAx || canPublishAus;
 
   // estado de la vista
+  /* v6.211 — LOS FILTROS SOBREVIVEN AL DETALLE.
+     ST se declara adentro de renderHistory, y volver del detalle es
+     `onBack: () => renderHistory(user)`: se construia un ST nuevo con los
+     valores por defecto. No es que los filtros se borraran, es que nunca
+     volvian — el que filtraba por una tienda, abria un reporte y volvia,
+     se encontraba el listado entero otra vez.
+
+     Se guardan en RECUERDO, una variable de modulo. Mismo remedio que ya usa
+     js/views/personnel-search.js con sus criterios ("se conservan al volver
+     de una ficha", linea 136 de ese archivo).
+
+     La SELECCION no se guarda a proposito: volver de un detalle con quince
+     reportes todavia marcados, y una barra de acciones masivas encendida
+     sobre una seleccion que uno ya no tiene en la cabeza, es peor que
+     perderla. Filtros y pagina son contexto; la seleccion es una intencion,
+     y las intenciones no se heredan. */
+  /* Si venimos de vuelta, NINGUN atajo queda marcado: el estado en pantalla
+     lo armo el usuario con los filtros, no con un atajo, y dejar "Últimos 30
+     días" encendido sobre un listado que no es de los ultimos 30 dias es la
+     misma clase de mentira que el desplegable diciendo "Todas". */
+  const restaurado = !!RECUERDO.filters;
   const ST = {
-    filters: { type: 'ALL', date_from: daysAgoYMD(30), date_to: todayYMD(),
-               company: 'ALL', zone: 'ALL', subzone: 'ALL', concept: 'ALL',
-               q: '', attention: 'ALL', osticket: 'ALL' },
-    page: 1, perPage: 20, total: 0, rows: [],
+    filters: RECUERDO.filters
+      ? { ...RECUERDO.filters }
+      : { type: 'ALL', date_from: daysAgoYMD(30), date_to: todayYMD(),
+          company: 'ALL', zone: 'ALL', subzone: 'ALL', concept: 'ALL',
+          q: '', attention: 'ALL', osticket: 'ALL' },
+    page: RECUERDO.page || 1, perPage: 20, total: 0, rows: [],
     companies: [], zones: [], subzones: [], concepts: [], // catalogo para filtros
     selected: new Set(),   // ids marcados (seleccion multiple)
     osticketUrl: '',       // base URL de osTicket (para el enlace al ticket)
@@ -233,7 +262,7 @@ export async function renderHistory(user) {
       <div class="fl"><label>Tipo</label>
         <select id="hType">
           <option value="ALL">Todos los tipos</option>
-          ${Object.entries(TYPES).map(([k, t]) => `<option value="${k}">${t.icon} ${t.label}</option>`).join('')}
+          ${Object.entries(TYPES).map(([k, t]) => `<option value="${k}" ${k === ST.filters.type ? 'selected' : ''}>${t.icon} ${t.label}</option>`).join('')}
         </select></div>
       <div class="fl"><label>Desde</label><input type="date" id="hFrom" value="${ST.filters.date_from}"></div>
       <div class="fl"><label>Hasta</label><input type="date" id="hTo" value="${ST.filters.date_to}"></div>
@@ -243,17 +272,17 @@ export async function renderHistory(user) {
       <div class="fl"><label>Tienda</label><select id="hCompany"><option value="ALL">Todas</option></select></div>` : ''}
       <div class="fl fl-search"><label>Buscar</label>
         <div class="hsearch"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-          <input id="hQ" placeholder="N° de reporte o responsable…"></div></div>
+          <input id="hQ" placeholder="N° de reporte o responsable…" value="${esc(ST.filters.q || '')}"></div></div>
       ${canManage ? `<div class="fl"><label>Atención</label>
         <select id="hAtt">
           <option value="ALL">Todas</option>
-          ${ATT_ORDER.map(k => `<option value="${k}">${ATT_STATES[k].label}</option>`).join('')}
+          ${ATT_ORDER.map(k => `<option value="${k}" ${k === ST.filters.attention ? 'selected' : ''}>${ATT_STATES[k].label}</option>`).join('')}
         </select></div>` : ''}
     </div>
 
     <div class="chip-row" id="hChips">
       <span style="font-size:12px;color:var(--faint);align-self:center">Atajos:</span>
-      <button class="chip on" data-chip="30d">Últimos 30 días</button>
+      <button class="chip${restaurado ? '' : ' on'}" data-chip="30d">Últimos 30 días</button>
       <button class="chip" data-chip="quincena">Quincena en curso</button>
       <button class="chip" data-chip="pending">Abiertos</button>
       <button class="chip" data-chip="unsent">Sin osTicket</button>
@@ -321,7 +350,22 @@ export async function renderHistory(user) {
         + ST.concepts.map(c => `<option value="${c.name}">${c.name}</option>`).join('');
       fillSubzones();
       fillCompanies();
+      reflejarFiltros();
     }
+  }
+
+  /* v6.211 — Los cuatro selectores de ubicacion se llenan DESPUES de pintar
+     la pantalla (dependen de una consulta), asi que no pueden llevar el
+     `selected` en la plantilla como Tipo o Atencion. Hay que ponerles el
+     valor a mano una vez que tienen sus opciones; si no, al volver de un
+     detalle los datos salian filtrados por tienda pero el desplegable decia
+     "Todas", que es la peor de las dos mentiras posibles. */
+  function reflejarFiltros() {
+    const poner = (id, val) => { const el = $(id); if (el && val != null) el.value = val; };
+    poner('#hZone', ST.filters.zone);
+    poner('#hSub', ST.filters.subzone);
+    poner('#hConcept', ST.filters.concept);
+    poner('#hCompany', ST.filters.company);
   }
 
   // Subzonas dependientes de la zona elegida.
@@ -345,6 +389,11 @@ export async function renderHistory(user) {
   }
 
   async function load() {
+    // v6.211 — se anota ANTES de pedir, no despues: si la consulta falla o el
+    // usuario se va a mitad de camino, lo que quedo guardado sigue siendo lo
+    // que el tenia puesto en pantalla.
+    RECUERDO.filters = { ...ST.filters };
+    RECUERDO.page = ST.page;
     $('#hBody').innerHTML = `<tr><td colspan="${ncols}" class="pnl-loading">Cargando…</td></tr>`;
     const d = await fetch('/api/reports-history', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
