@@ -15,7 +15,7 @@
 
 import { $ } from '../core/dom.js';
 import { initialsOf, avatarColors } from '../core/avatar.js';
-import { renderWorkerPhotos } from '../views/worker-photos.js';
+import { renderWorkerPhotos, openWorkerLightbox } from '../views/worker-photos.js';
 import { openResendModal } from './shared/resend-modal.js';
 import { openPublishAxModal, motivoNoPublicable, AX_ARROW } from './shared/publish-ax.js';
 import {
@@ -130,7 +130,10 @@ const ICO_FICHA = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" s
 
 function avatarHtml(l) {
   if (l.thumb_url) {
-    return `<div class="rd-ava"><img src="${esc(l.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
+    // haspic + data-avpic: mismo par que .ps-ava en Buscar personal. El clic
+    // abre el visor grande (openWorkerLightbox), que es la misma ventana que
+    // ya se usa alla, con su boton de descargar.
+    return `<div class="rd-ava haspic" data-avpic="${esc(l.id_number)}" title="Ver foto"><img src="${esc(l.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`;
   }
   const c = avatarColors(l.id_number);
   const cls = l.in_master === false ? 'rd-ava rd-ava-nof' : 'rd-ava';
@@ -471,6 +474,20 @@ export async function showReportDetail({ reportId, user, onBack }) {
     b.addEventListener('click', (e) => {
       e.stopPropagation();
       irAPersonal(b.dataset.ficha);
+    });
+  });
+
+  /* La miniatura abre el visor grande, igual que en Buscar personal. Se usa
+     openWorkerLightbox, la MISMA ventana de alla (con su boton de descargar):
+     una foto de trabajador se mira siempre en el mismo visor, venga de donde
+     venga. La URL sale de la linea y no de un data-attribute para no repetir
+     una URL larga en el HTML de cada fila. */
+  host.querySelectorAll('[data-avpic]').forEach(el => {
+    el.addEventListener('click', (e) => {
+      e.stopPropagation();
+      const ced = el.dataset.avpic;
+      const l = (r.lines || []).find(x => String(x.id_number) === String(ced));
+      if (l && l.thumb_url) openWorkerLightbox(l.thumb_url, `${l.name} · C.I. ${ced}`, `${ced}.jpg`);
     });
   });
 

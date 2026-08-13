@@ -720,10 +720,18 @@
   display:flex; align-items:center; justify-content:center;
   font-weight:700; font-size:12px; background:var(--border-soft); color:var(--ink-soft); }
 .rd-ava img { width:100%; height:100%; object-fit:cover; display:block; }
+/* Con foto, el clic abre el visor grande: el cursor lo anuncia antes de
+   hacerlo, igual que .ps-ava.haspic en Buscar personal. */
+.rd-ava.haspic { cursor:zoom-in; }
 /* Sin ficha en el maestro: borde punteado. No es un error ni una falta —
    es alguien a quien se esta dando de alta— asi que se marca sin alarmar. */
 .rd-ava-nof { border:1px dashed var(--border); opacity:.75; }
-.rd-wname { min-width:0; flex:1; }
+/* SIN flex:1 a proposito. Con flex:1 el nombre se estiraba y empujaba el
+   boton de ficha al borde derecho de la celda, lejos de la persona a la que
+   pertenece. En Buscar personal el boton va PEGADO a los datos (.ps-actions
+   viene justo despues de .ps-main), y esa cercania es la que hace obvio de
+   quien es la ficha que se va a abrir. */
+.rd-wname { min-width:0; }
 .rd-noficha { font-size:10.5px; color:var(--faint); margin-top:2px; }
 .rd-fichabtn { flex:none; }
 
