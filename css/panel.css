@@ -831,6 +831,18 @@
 /* Cada causa del desglose se abre y muestra QUIENES. Cerrado por defecto:
    el resumen sigue siendo lo primero, los nombres aparecen cuando alguien
    quiere hacer algo con ellos. */
+/* Desglose de una tienda, ya como PANTALLA (v6.219). Un bloque por causa
+   con su gente debajo, todo abierto: en una pantalla hay lugar y los
+   nombres son justo lo que se viene a buscar. */
+.rc-blq { border:1px solid var(--border-soft); border-radius:10px; padding:11px 14px; margin-bottom:10px; }
+.rc-blq-h { display:flex; align-items:baseline; gap:14px; flex-wrap:wrap;
+  padding-bottom:8px; margin-bottom:6px; border-bottom:1px solid var(--border-soft); }
+.rc-blq-t { flex:1; min-width:200px; font-size:13.5px; }
+.rc-blq-n { font-size:12px; color:var(--muted); white-space:nowrap; }
+/* Dos columnas cuando hay lugar: una lista de 13 nombres en una sola
+   columna obliga a scrollear por algo que entra de sobra. */
+.rc-blq-g { display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:2px 18px; }
+
 .rc-det { border-bottom:1px solid var(--border-soft); }
 .rc-det > summary { display:flex; align-items:baseline; gap:12px; padding:9px 2px;
   cursor:pointer; list-style:none; }

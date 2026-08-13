@@ -145,20 +145,14 @@ export async function renderRecurrencia(user) {
      Ahora se dice con los numeros del propio periodo: cuantas lineas SI se
      cuentan y cuantas no, y por que.
      ===================================================================== */
-  function notaPersonas(causas) {
-    const marc = (causas || []).filter(c => c.tipo === 'marcaje');
-    if (!marc.length) return '';
-    const cuentan = marc.filter(c => c.atribuible);
-    const nCuentan = cuentan.reduce((n, c) => n + (c.lineas || 0), 0);
-    const total = marc.reduce((n, c) => n + (c.lineas || 0), 0);
-    const fuera = total - nCuentan;
-    const nombres = cuentan.map(c => c.label).join(' y ') || 'olvido de marcaje y cierre temprano';
+  function notaPersonas() {
     return `<div class="rc-nota">
-      Acá solo cuentan las causas <b>imputables a la persona</b>: ${esc(nombres)}.
-      En este período son <b>${nCuentan}</b> de ${total} líneas de marcaje manual.
-      Las otras <b>${fuera}</b> son fallas del biométrico, de la electricidad, altas sin
-      enrolar o apoyo entre tiendas — <b>no son de la persona y no suman acá</b>.
-      Por eso una tienda puede tener muchos marcajes y ninguna persona en esta lista.
+      Se cuentan <b>todos</b> los marcajes manuales, sin mirar la causa, y se comparan
+      contra el promedio de <b>su propia tienda</b>. Esa comparación es la que importa:
+      una falla del biométrico o de la luz le pasa a <b>toda</b> la tienda, así que el
+      cociente da cerca de 1. Si una sola persona acumula el doble o el triple que sus
+      compañeros, la causa declarada no explica la diferencia.
+      La columna <b>Causa que declara</b> es contexto, no filtro.
     </div>`;
   }
 
@@ -201,7 +195,9 @@ export async function renderRecurrencia(user) {
       <td>${esc(p.company_code)}</td>
       <td style="text-align:right"><b>${p.eventos}</b></td>
       <td style="text-align:right">${p.prom_tienda}</td>
-      <td style="text-align:right">${p.veces_prom == null ? '—' : `${p.veces_prom}×`}</td>
+      <td style="text-align:right"><b class="${p.veces_prom >= 2 ? 'rc-att' : ''}">${p.veces_prom == null ? '—' : `${p.veces_prom}×`}</b></td>
+      <td>${p.causa_top ? esc(p.causa_top) : '<span class="muted">—</span>'}
+        ${p.atribuibles ? `<div class="rc-sub">${p.atribuibles} de la persona</div>` : ''}</td>
       <td>${ddmm(p.ultimo)}</td>
       <td>${silenciada
         ? `<span class="rc-silpill" title="${esc(p.silencio_motivo || '')}">🔕 al ${ddmm(p.silencio_hasta)}</span>`
@@ -254,13 +250,15 @@ export async function renderRecurrencia(user) {
           </tr></thead><tbody>${tiendas.map(filaTienda).join('')}</tbody></table>`
             : '<p class="hint">Ninguna tienda reportó marcajes manuales ni ausencias en este período.</p>'}
         ` : `
-          ${notaPersonas(causas)}
+          ${notaPersonas()}
           ${personas.length ? `<table class="dtl-table rc-table"><thead><tr>
-            <th>Trabajador</th><th>Tienda</th><th style="text-align:right">Eventos</th>
-            <th style="text-align:right" title="Promedio de esta misma tienda">Prom. tienda</th>
-            <th style="text-align:right">Veces</th><th>Último</th><th></th>
+            <th>Trabajador</th><th>Tienda</th>
+            <th style="text-align:right" title="Marcajes manuales de esta persona en el período, de cualquier causa">Marcajes</th>
+            <th style="text-align:right" title="Promedio de marcajes por persona en esta misma tienda">Prom. tienda</th>
+            <th style="text-align:right" title="Cuántas veces el promedio de su propia tienda">Veces</th>
+            <th>Causa que declara</th><th>Último</th><th></th>
           </tr></thead><tbody>${personas.map(filaPersona).join('')}</tbody></table>`
-            : `<p class="hint">Nadie llega a ${ST.min} eventos de causa atribuible en este período. Solo se cuentan olvido de marcaje y cierre temprano: las fallas del biométrico, la electricidad y las altas sin enrolar no son de la persona.</p>`}
+            : `<p class="hint">Nadie llega a ${ST.min} marcajes manuales en este período dentro de una tienda con al menos 3 personas reportadas.</p>`}
         `}
       </div>`;
 
@@ -271,7 +269,7 @@ export async function renderRecurrencia(user) {
     host.querySelectorAll('[data-tab]').forEach(b =>
       b.addEventListener('click', () => { ST.tab = b.dataset.tab; pintar(); }));
     host.querySelectorAll('[data-det]').forEach(b =>
-      b.addEventListener('click', () => modalDetalle(b.dataset.det)));
+      b.addEventListener('click', () => vistaTienda(b.dataset.det)));
     host.querySelectorAll('[data-sil]').forEach(b =>
       b.addEventListener('click', () => modalSilencio('tienda', b.dataset.sil)));
     host.querySelectorAll('[data-silp]').forEach(b =>
@@ -287,60 +285,68 @@ export async function renderRecurrencia(user) {
      cifra deja de ser anonima y se entiende de que se trata la recurrencia
      -si es apoyo entre tiendas, una falla del centro comercial o gente que
      se olvida-. Las causas del catalogo van igual, para tener el total. */
-  async function modalDetalle(company) {
-    const ov = document.createElement('div');
-    ov.className = 'modal-ov';
-    ov.innerHTML = `<div class="modal-box pax-wide" role="dialog" aria-modal="true">
-        <div class="modal-head"><span>${esc(company)} · ${ddmm(ST.desde)} → ${ddmm(ST.hasta)}</span>
-          <button class="modal-x" data-x aria-label="Cerrar">✕</button></div>
-        <div id="rcDetBody" style="padding:16px 18px"><p class="muted" style="margin:0">Cargando…</p></div>
-      </div>`;
-    document.body.appendChild(ov);
-    const cerrar = () => ov.remove();
-    ov.querySelectorAll('[data-x]').forEach(b => b.addEventListener('click', cerrar));
+  /* =====================================================================
+     DESGLOSE DE UNA TIENDA — PANTALLA, NO MODAL (v6.219).
+
+     Era un modal y quedaba chico para lo que hay que mostrar: las causas,
+     los textos escritos a mano y, debajo de cada uno, QUIENES y cuantas
+     veces. En un cuadro flotante eso obliga a plegar la mitad y a scrollear
+     dentro de una caja; en una pantalla entra todo abierto, que es como se
+     lee de verdad. Ademas el portal ya navega asi -Personal, Movimientos,
+     el Detalle del reporte, Reportes del trabajador- con su "Volver".
+
+     El "Volver" repinta la lista con el MISMO periodo y la misma pestaña,
+     porque ST no se toco: volver no puede costarte los filtros.
+     ===================================================================== */
+  async function vistaTienda(company) {
+    host.innerHTML = `<button class="btn" id="rcBack" style="margin-bottom:18px">← Volver a Recurrencia</button>
+      <div class="pnl-loading">Cargando…</div>`;
+    $('#rcBack').addEventListener('click', pintar);
 
     const d = await fetch('/api/recurrencia', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ action: 'detalle_tienda', user, company_code: company, desde: ST.desde, hasta: ST.hasta }),
     }).then(r => r.json()).catch(() => null);
 
-    // Por id y no por 'div[style]': ese selector engancharia cualquier div
-    // con estilo en linea que se agregue mañana al modal.
-    const cuerpo = ov.querySelector('#rcDetBody');
-    if (!cuerpo) return;
-    if (!d || !d.ok) { cuerpo.innerHTML = `<p class="muted" style="margin:0">${esc(d ? d.error : 'Error de red.')}</p>`; return; }
+    const cab = `<button class="btn" id="rcBack" style="margin-bottom:18px">← Volver a Recurrencia</button>
+      <div class="pnl-head"><div><h1>${esc(company)}</h1>
+        <p>Marcajes manuales y ausencias del ${ddmm(ST.desde)} al ${ddmm(ST.hasta)}, por causa y por persona.</p></div></div>`;
 
-    /* Cada causa se abre y muestra QUIENES. Va en <details> cerrado: el
-       resumen sigue siendo lo primero que se lee, y los nombres aparecen
-       cuando alguien quiere hacer algo con ellos. Sin esto, "13 personas"
-       era un numero con el que no se podia hacer nada. */
+    if (!d || !d.ok) {
+      host.innerHTML = cab + `<div class="card"><p class="muted" style="margin:0">${esc(d ? d.error : 'Error de red.')}</p></div>`;
+      $('#rcBack').addEventListener('click', pintar);
+      return;
+    }
+
+    /* Todo abierto y sin plegar: en una pantalla hay lugar, y el dato que se
+       viene a buscar son justamente los nombres. Plegarlos seria repetir el
+       problema que tenia el modal. */
     const grupo = (tipo, titulo) => {
       const f = (d.filas || []).filter(x => x.tipo === tipo);
       if (!f.length) return '';
-      return `<div class="rc-grupo-t" style="margin-top:14px">${titulo}</div>
+      const total = f.reduce((n, x) => n + (x.n || 0), 0);
+      return `<h3 class="rd-section">${titulo} <span class="rc-sub">${total} línea${total === 1 ? '' : 's'}</span></h3>
         ${f.map(x => {
           const gente = (d.quienes || []).filter(q => q.tipo === x.tipo && q.etiqueta === x.etiqueta);
-          const cab = x.es_texto
-            ? `<span class="rc-txt">“${esc(x.etiqueta)}”</span> <span class="rc-sub">· escrito a mano</span>`
+          const titulo2 = x.es_texto
+            ? `<span class="rc-txt">“${esc(x.etiqueta)}”</span> <span class="rc-sub">· escrito a mano por la tienda</span>`
             : esc(x.etiqueta);
-          return `<details class="rc-det">
-            <summary><span class="rc-det-lbl">${cab}</span>
-              <span class="rc-det-n"><b>${x.n}</b> línea${x.n === 1 ? '' : 's'} ·
-                ${x.personas} persona${x.personas === 1 ? '' : 's'}</span></summary>
-            <div class="rc-det-body">
-              ${gente.length ? gente.map(q => `<div class="rc-q">
-                  <span class="rc-q-n">${esc(q.worker_name || '')}</span>
-                  <span class="rc-sub">${esc(q.id_number)}</span>
-                  <span class="rc-q-v">${q.n}</span>
-                </div>`).join('')
-                : '<div class="rc-sub">Sin detalle de personas.</div>'}
-            </div>
-          </details>`;
+          return `<div class="rc-blq">
+            <div class="rc-blq-h"><div class="rc-blq-t">${titulo2}</div>
+              <div class="rc-blq-n"><b>${x.n}</b> línea${x.n === 1 ? '' : 's'} ·
+                ${x.personas} persona${x.personas === 1 ? '' : 's'}</div></div>
+            ${gente.length ? `<div class="rc-blq-g">${gente.map(q => `<div class="rc-q">
+                <span class="rc-q-n">${esc(q.worker_name || '')}</span>
+                <span class="rc-sub">${esc(q.id_number)}</span>
+                <span class="rc-q-v">${q.n}</span>
+              </div>`).join('')}</div>` : '<div class="rc-sub" style="padding:6px 0">Sin detalle de personas.</div>'}
+          </div>`;
         }).join('')}`;
     };
 
-    cuerpo.innerHTML = grupo('marcaje', 'Marcaje manual') + grupo('ausencia', 'Períodos de ausencia')
-      || '<p class="muted" style="margin:0">Sin movimientos en este período.</p>';
+    const cuerpo = grupo('marcaje', 'Marcaje manual') + grupo('ausencia', 'Períodos de ausencia');
+    host.innerHTML = cab + `<div class="card">${cuerpo || '<p class="hint">Sin movimientos en este período.</p>'}</div>`;
+    $('#rcBack').addEventListener('click', pintar);
   }
 
   /* El modal pide las dos cosas que la base exige. No es burocracia: sin
