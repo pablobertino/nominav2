@@ -130,6 +130,33 @@ export async function onRequestPost({ request, env }) {
       });
     }
 
+    /* ---------------- detalle de una tienda ----------------
+       "Otros… ×101" no dice nada, y encima es la causa donde SI hay una
+       explicacion escrita: las 101 de AL01 son 57 "esta presentado apoyo a
+       otra tienda" + 42 "Presento apoyo a otra tienda" — la misma frase en
+       dos grafias. Esto abre esa cifra. */
+    if (action === 'detalle_tienda') {
+      if (!can(actor, 'view.recurrencia')) {
+        return json({ ok: false, error: 'No tienes permiso para ver esto.' }, 403);
+      }
+      const desde = isoDate(body.desde);
+      const hasta = isoDate(body.hasta);
+      const company = String(body.company_code || '').trim();
+      if (!desde || !hasta || !company) return json({ ok: false, error: 'Faltan datos.' }, 400);
+
+      // El alcance vale tambien aca: no se abre el detalle de una tienda
+      // que el usuario no puede ver en el listado.
+      const codes = await empresasDelActor(env, actor);
+      if (codes !== null && !codes.includes(company)) {
+        return json({ ok: false, error: 'Esa tienda está fuera de tu alcance.' }, 403);
+      }
+
+      const filas = await sb(env, 'rpc/recurrencia_tienda_detalle', {
+        method: 'POST', body: JSON.stringify({ p_company: company, p_desde: desde, p_hasta: hasta }),
+      });
+      return json({ ok: true, company_code: company, filas: filas || [] });
+    }
+
     /* ---------------- silenciar ---------------- */
     if (action === 'silenciar') {
       if (!can(actor, 'report.recurrencia.silenciar')) {

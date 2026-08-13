@@ -115,6 +115,23 @@ export async function renderRecurrencia(user) {
     </div>`;
   }
 
+  /* "Otros… ×101" no dice nada, y es peor que eso: 'Otros' es JUSTAMENTE la
+     causa donde quien reporto escribio una explicacion. Las 101 de AL01 son
+     57 "esta presentado apoyo a otra tienda" mas 42 "Presento apoyo a otra
+     tienda" — la misma frase en dos grafias. Cuando la causa dominante es
+     'Otros' se muestra ESE texto arriba y la etiqueta abajo, que es el orden
+     en que importan. Y toda la celda abre el desglose. */
+  function causaCell(t) {
+    if (!t.causa_top) return '<span class="muted">—</span>';
+    const n = t.causa_top_n ? `<span class="rc-sub">×${t.causa_top_n}</span>` : '';
+    const cuerpo = t.causa_top_txt
+      ? `<span class="rc-txt">“${esc(t.causa_top_txt)}”</span> ${n}
+         <div class="rc-sub">${esc(t.causa_top)} · escrito a mano</div>`
+      : `${esc(t.causa_top)} ${n}`;
+    return `<button type="button" class="rc-causa" data-det="${esc(t.company_code)}"
+        title="Ver el desglose de ${esc(t.company_code)}">${cuerpo}</button>`;
+  }
+
   function filaTienda(t) {
     const silenciada = !!t.silencio_hasta;
     /* La silenciada NO se esconde: se apaga. Si desapareciera, silenciar
@@ -131,7 +148,7 @@ export async function renderRecurrencia(user) {
       <td style="text-align:right">${t.ausencias}</td>
       <td style="text-align:right"><b>${t.por_persona == null ? '—' : t.por_persona}</b>
         <div class="rc-sub">${t.personas} persona${t.personas === 1 ? '' : 's'}</div></td>
-      <td>${esc(t.causa_top || '—')}${t.causa_top_n ? ` <span class="rc-sub">×${t.causa_top_n}</span>` : ''}</td>
+      <td>${causaCell(t)}</td>
       <td style="text-align:right">${t.atribuibles
         ? `<b class="rc-att">${t.atribuibles}</b>`
         : '<span class="muted">0</span>'}</td>
@@ -222,6 +239,8 @@ export async function renderRecurrencia(user) {
     });
     host.querySelectorAll('[data-tab]').forEach(b =>
       b.addEventListener('click', () => { ST.tab = b.dataset.tab; pintar(); }));
+    host.querySelectorAll('[data-det]').forEach(b =>
+      b.addEventListener('click', () => modalDetalle(b.dataset.det)));
     host.querySelectorAll('[data-sil]').forEach(b =>
       b.addEventListener('click', () => modalSilencio('tienda', b.dataset.sil)));
     host.querySelectorAll('[data-silp]').forEach(b =>
@@ -230,6 +249,53 @@ export async function renderRecurrencia(user) {
       b.addEventListener('click', () => levantar('tienda', b.dataset.lev)));
     host.querySelectorAll('[data-levp]').forEach(b =>
       b.addEventListener('click', () => levantar('persona', b.dataset.levp)));
+  }
+
+  /* El desglose de una tienda. Lo que se viene a ver es la fila de "Otros":
+     una linea por TEXTO distinto, con cuantas veces y cuanta gente. Ahi la
+     cifra deja de ser anonima y se entiende de que se trata la recurrencia
+     -si es apoyo entre tiendas, una falla del centro comercial o gente que
+     se olvida-. Las causas del catalogo van igual, para tener el total. */
+  async function modalDetalle(company) {
+    const ov = document.createElement('div');
+    ov.className = 'modal-ov';
+    ov.innerHTML = `<div class="modal-box pax-wide" role="dialog" aria-modal="true">
+        <div class="modal-head"><span>${esc(company)} · ${ddmm(ST.desde)} → ${ddmm(ST.hasta)}</span>
+          <button class="modal-x" data-x aria-label="Cerrar">✕</button></div>
+        <div id="rcDetBody" style="padding:16px 18px"><p class="muted" style="margin:0">Cargando…</p></div>
+      </div>`;
+    document.body.appendChild(ov);
+    const cerrar = () => ov.remove();
+    ov.querySelectorAll('[data-x]').forEach(b => b.addEventListener('click', cerrar));
+
+    const d = await fetch('/api/recurrencia', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'detalle_tienda', user, company_code: company, desde: ST.desde, hasta: ST.hasta }),
+    }).then(r => r.json()).catch(() => null);
+
+    // Por id y no por 'div[style]': ese selector engancharia cualquier div
+    // con estilo en linea que se agregue mañana al modal.
+    const cuerpo = ov.querySelector('#rcDetBody');
+    if (!cuerpo) return;
+    if (!d || !d.ok) { cuerpo.innerHTML = `<p class="muted" style="margin:0">${esc(d ? d.error : 'Error de red.')}</p>`; return; }
+
+    const grupo = (tipo, titulo) => {
+      const f = (d.filas || []).filter(x => x.tipo === tipo);
+      if (!f.length) return '';
+      return `<div class="rc-grupo-t" style="margin-top:14px">${titulo}</div>
+        <table class="dtl-table"><tbody>
+        ${f.map(x => `<tr>
+          <td>${x.es_texto
+            ? `<span class="rc-txt">“${esc(x.etiqueta)}”</span><div class="rc-sub">escrito a mano</div>`
+            : esc(x.etiqueta)}</td>
+          <td style="text-align:right;white-space:nowrap"><b>${x.n}</b> <span class="rc-sub">línea${x.n === 1 ? '' : 's'}</span></td>
+          <td style="text-align:right;white-space:nowrap">${x.personas} <span class="rc-sub">persona${x.personas === 1 ? '' : 's'}</span></td>
+        </tr>`).join('')}
+        </tbody></table>`;
+    };
+
+    cuerpo.innerHTML = grupo('marcaje', 'Marcaje manual') + grupo('ausencia', 'Períodos de ausencia')
+      || '<p class="muted" style="margin:0">Sin movimientos en este período.</p>';
   }
 
   /* El modal pide las dos cosas que la base exige. No es burocracia: sin

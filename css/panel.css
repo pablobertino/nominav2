@@ -811,6 +811,16 @@
   border-radius:999px; background:var(--brand-bg); color:var(--brand);
   font-size:11px; font-weight:700; }
 
+/* La causa dominante abre el desglose: es un boton, no texto muerto. Se
+   viste plano para no meter otro boton en una tabla ya cargada, pero el
+   subrayado al pasar por encima avisa que hace algo. */
+.rc-causa { background:none; border:0; padding:0; font:inherit; text-align:left;
+  color:inherit; cursor:pointer; width:100%; }
+.rc-causa:hover .rc-txt, .rc-causa:hover { text-decoration:underline; }
+/* El texto que ESCRIBIO la tienda. Va en cursiva y con mas peso que la
+   etiqueta del catalogo porque es lo unico que explica de verdad. */
+.rc-txt { font-style:italic; color:var(--ink); }
+
 /* ===================== WIZARD AUSENCIA (paso 4) ===================== */
 .type-row { display:flex; gap:14px; align-items:flex-end; margin-bottom:8px; }
 .coord-note { display:flex; gap:8px; background:var(--warn-bg); border:1px solid #f3e2bf; border-radius:var(--radius-md);
