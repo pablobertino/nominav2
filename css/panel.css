@@ -773,6 +773,30 @@
   cursor:pointer; font-weight:600; }
 .wr-link:hover { text-decoration:underline; }
 
+/* ===== RECURRENCIA DE REPORTES (v6.214) ===== */
+.rc-bar { display:flex; align-items:center; gap:14px; flex-wrap:wrap; margin-bottom:14px; }
+.rc-bar label { font-size:12.5px; color:var(--muted); display:flex; align-items:center; gap:7px; }
+.rc-rango { font-size:12px; color:var(--faint); }
+.rc-tabs { display:flex; gap:6px; }
+.rc-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(130px,1fr)); gap:12px; margin-bottom:16px; }
+.rc-stat { background:var(--border-soft); border-radius:10px; padding:12px 14px; }
+.rc-stat-l { font-size:12px; color:var(--muted); }
+.rc-stat-v { font-size:24px; font-weight:700; margin-top:2px; line-height:1.15; }
+.rc-danger { color:var(--danger); }
+.rc-warn { color:var(--warn); }
+.rc-sub { font-size:11px; color:var(--faint); }
+/* Los marcajes cuya causa SI es de la persona. Se destaca porque es la
+   columna que distingue "esta tienda tiene un problema" de "esta gente
+   tiene un habito": AL01 tiene 110 marcajes y 0 aca. */
+.rc-att { color:var(--warn); }
+/* Silenciada: apagada, NO escondida. Sigue en la tabla para que nadie pueda
+   hacer desaparecer un problema sin dejar rastro. */
+.rc-off { opacity:.55; }
+.rc-off:hover { opacity:.85; }
+.rc-silpill { display:inline-block; font-size:11px; padding:2px 8px; border-radius:999px;
+  background:var(--border-soft); color:var(--muted); margin-right:6px; }
+.rc-err { color:var(--danger); font-size:12.5px; margin-top:8px; min-height:16px; }
+
 /* ===================== WIZARD AUSENCIA (paso 4) ===================== */
 .type-row { display:flex; gap:14px; align-items:flex-end; margin-bottom:8px; }
 .coord-note { display:flex; gap:8px; background:var(--warn-bg); border:1px solid #f3e2bf; border-radius:var(--radius-md);

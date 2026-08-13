@@ -200,6 +200,9 @@ const NAV_GROUPS = [
   { title: 'Reportes', items: [
     ['historial', I.history, 'Historial'],
     ['estadisticas', I.chart, 'Estadísticas'],
+    // v6.214: va en Reportes y no en Personal porque analiza REPORTES
+    // (donde se repiten los marcajes manuales y las ausencias), no fichas.
+    ['recurrencia', I.chart, 'Recurrencia'],
     ['reportempresas', I.bizreport, 'Análisis'],
     ['estadopago', I.wallet, 'Estado de pago'],
   ] },
@@ -667,7 +670,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.213</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.214</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -8291,6 +8294,9 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'config') viewConfig(user);
   else if (view === 'historial') renderHistory(user);
   else if (view === 'estadisticas') renderReportStats(user);
+  // v6.214 — import dinamico: la vista solo la abre quien tiene el permiso,
+  // y no tiene sentido que su codigo viaje en la carga inicial de todos.
+  else if (view === 'recurrencia') import('./recurrencia.js').then(m => m.renderRecurrencia(user));
   else if (view === 'reportempresas') renderCompanyReports(user);
   else if (view === 'estadopago') renderPayGrid(user);
   else if (view === 'misstats') renderMyStats(user);
@@ -8678,6 +8684,7 @@ export function renderPanel() {
       novedades: 'view.novedades',
       rostersync: 'view.rostersync',
       historial: 'view.historial', estadisticas: 'view.estadisticas',
+      recurrencia: 'view.recurrencia',   // v6.214
       misstats: 'view.misstats', reportempresas: 'view.reportempresas',
       estadopago: 'view.estadopago',
       avisos: 'view.avisos', avisosconfig: 'view.avisosconfig',
