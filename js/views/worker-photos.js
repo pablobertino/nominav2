@@ -1977,6 +1977,12 @@ function fichaHtml(w, c) {
           <button class="btn btn-ghost-danger" id="ffDel" style="display:none">Quitar foto</button>
           ${(STATE.can.publish && w.ax_pending) ? `<button class="btn wp-btn-publish" id="ffPublish" title="Publicar en el sistema los cambios de esta ficha"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg> Publicar</button>` : ''}
           <button class="btn" id="ffCopy" title="Copiar datos de la ficha"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> Copiar</button>
+          <!-- v6.213 — Todo lo que las tiendas reportaron sobre esta persona.
+               El boton esta SIEMPRE, tenga o no reportes: si apareciera solo
+               cuando hay algo, no verlo seria ambiguo (¿no hay reportes, o la
+               pantalla no existe?). Asi, entrar y leer "nunca la incluyeron
+               en un reporte" es una respuesta, no un silencio. -->
+          <button class="btn" id="ffReportes" title="Ver todo lo que se ha reportado de esta persona"><svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg> Reportes</button>
           ${(STATE.can.ficha || STATE.can.photo) ? '<button class="btn" id="ffEdit">Editar</button>' : ''}
           <button class="btn" id="ffCancel" style="display:none">Cancelar</button>
           <button class="btn btn-primary" id="ffSave" style="display:none">Guardar cambios</button>
@@ -2482,6 +2488,31 @@ function wireFicha(host, w) {
   q('#ffBack').addEventListener('click', fichaBack);
   const cpBtn = q('#ffCopy');
   if (cpBtn) cpBtn.addEventListener('click', () => copyWorkerData(w, cpBtn));
+
+  /* v6.213 — Reportes de esta persona. Import DINAMICO, no arriba: la vista
+     de Reportes importa report-detail.js, que a su vez importa este archivo
+     para abrir fichas desde el detalle. Estatico seria un ciclo; dinamico se
+     resuelve recien al hacer clic, cuando los dos modulos ya existen.
+     El onExit vuelve a ESTA ficha, no a la grilla. */
+  const repBtn = q('#ffReportes');
+  if (repBtn) {
+    repBtn.addEventListener('click', async () => {
+      const prev = repBtn.textContent;
+      repBtn.disabled = true;
+      try {
+        /* STATE.cc y no STATE.company.company_code: company es lo que
+           devolvio el backend y guarda el alias en .code, no en
+           .company_code. cc es el alias con el que se entro y siempre esta. */
+        const mod = await import('./worker-reports.js');
+        await mod.renderWorkerReports(
+          STATE.user, w, STATE.cc,
+          () => renderWorkerPhotos(STATE.user, STATE.cc, STATE.onExit, { mode: STATE.mode, openCed: w.id_number }),
+        );
+      } catch (e) {
+        repBtn.disabled = false; repBtn.textContent = prev;
+      }
+    });
+  }
   // v5.01: botones condicionados por permisos; pueden no existir en el DOM.
   const edBtn = q('#ffEdit');
   if (edBtn) edBtn.addEventListener('click', toEdit);

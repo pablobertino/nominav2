@@ -742,6 +742,37 @@
 .rd-emplink { cursor:pointer; color:var(--brand); border-bottom:1px solid transparent; }
 .rd-emplink:hover { border-bottom-color:var(--brand); }
 
+/* ===== REPORTES DEL TRABAJADOR (v6.213) ===== */
+.wr-head { display:flex; align-items:center; gap:13px; padding-bottom:14px; margin-bottom:14px;
+  border-bottom:1px solid var(--border-soft); }
+.wr-ava { width:48px; height:48px; border-radius:50%; flex:none; overflow:hidden;
+  display:flex; align-items:center; justify-content:center; font-weight:700; font-size:15px;
+  background:var(--border-soft); color:var(--ink-soft); }
+.wr-ava img { width:100%; height:100%; object-fit:cover; display:block; }
+.wr-head-n { font-size:16px; font-weight:700; }
+.wr-head-s { font-size:12.5px; color:var(--muted); margin-top:2px; }
+
+/* Los totales son el motivo por el que esto es una pantalla y no un modal:
+   el numero manda y la etiqueta explica, no al reves. */
+.wr-stats { display:grid; grid-template-columns:repeat(auto-fit,minmax(120px,1fr)); gap:12px; margin-bottom:16px; }
+.wr-stat { background:var(--border-soft); border-radius:10px; padding:12px 14px; }
+.wr-stat-l { font-size:12px; color:var(--muted); }
+.wr-stat-v { font-size:24px; font-weight:700; margin-top:2px; line-height:1.15; }
+
+/* Cuantos reportes quedaron afuera por alcance. Va en tono de aviso y no de
+   error: no es un problema, es una advertencia de que lo que se ve no es
+   todo lo que hay. */
+.wr-nota { background:var(--warn-bg); color:#92400e; border-radius:10px;
+  padding:10px 13px; font-size:12.5px; margin-bottom:14px; }
+
+.wr-table .wr-tipo { white-space:nowrap; }
+.wr-table .wr-res { color:var(--ink-soft); }
+/* El N° de reporte es un boton porque navega dentro de la app (no es un
+   href): se lo viste de enlace para que se lea como lo que hace. */
+.wr-link { background:none; border:0; padding:0; font:inherit; color:var(--brand);
+  cursor:pointer; font-weight:600; }
+.wr-link:hover { text-decoration:underline; }
+
 /* ===================== WIZARD AUSENCIA (paso 4) ===================== */
 .type-row { display:flex; gap:14px; align-items:flex-end; margin-bottom:8px; }
 .coord-note { display:flex; gap:8px; background:var(--warn-bg); border:1px solid #f3e2bf; border-radius:var(--radius-md);

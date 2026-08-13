@@ -284,6 +284,7 @@ export async function onRequestPost({ request, env }) {
     if (body.action === 'resend_info') return await resendInfo(env, body, scope);
     if (body.action === 'resend_osticket') return await resendOsticket(env, body, scope);
     if (body.action === 'publish_ax') return await publishAx(env, body, scope);
+    if (body.action === 'worker_reports') return await workerReports(env, body, scope);
     return json({ ok: false, error: 'Accion no reconocida' }, 400);
   } catch (e) {
     return json({ ok: false, error: String(e.message || e) }, 500);
@@ -533,6 +534,67 @@ async function listReports(env, body, scope) {
     ok: true, rows: out, total, page, per_page: perPage,
     osticket_url: osticketUrl, viewer_is_agent: isAgent,
     ax_sync_at: axSyncAt,
+  });
+}
+
+/* =====================================================================
+   worker_reports (v6.213) — TODO lo reportado de UNA persona.
+
+   Alimenta la pantalla que se abre desde la ficha del trabajador. Junta los
+   seis tipos de reporte en una sola lista cronologica.
+
+   EL ALCANCE SE APLICA ACA Y NO EN LA BASE, a proposito. La funcion
+   worker_report_lines devuelve TODO lo que existe; el filtro de quien-ve-que
+   es el MISMO del Historial (scopeFilter + scopeDeptAuthorFilter) y vive en
+   un solo lugar. Si lo repitieramos dentro de la funcion habria dos
+   versiones de la misma regla, y la de la base seria la que nadie revisa
+   cuando cambia la matriz de permisos.
+
+   Y JUSTAMENTE POR ESO SE CUENTA LO QUE QUEDA AFUERA. Hay 10 trabajadores
+   reportados por mas de una tienda. Si a alguien le mostramos 2 de 5
+   reportes sin decirle que hay 3 mas, va a sacar conclusiones sobre un
+   historial incompleto creyendolo completo -y en una ficha de personal eso
+   se paga caro-. No se dice QUE son ni de donde: solo cuantos.
+
+   Body: { action:'worker_reports', user, id_number }
+   ===================================================================== */
+async function workerReports(env, body, scope) {
+  const ced = String(body.id_number || '').replace(/\D+/g, '');
+  if (!ced) return json({ ok: false, error: 'Falta la cédula del trabajador.' }, 400);
+
+  const todos = await sbJson(env, 'rpc/worker_report_lines', {
+    method: 'POST', body: JSON.stringify({ p_ced: ced }),
+  }) || [];
+
+  if (!todos.length) {
+    return json({ ok: true, id_number: ced, rows: [], fuera_de_alcance: 0 });
+  }
+
+  /* Cuales de esos reportes puede ver este usuario. Se pregunta por los ids
+     concretos y con las dos rejas puestas: la de empresa y la fina de
+     departamento/autoria. */
+  const ids = [...new Set(todos.map(r => r.report_id))];
+  let q = `reports_log?id=in.(${ids.join(',')})&select=id`;
+  q += scopeFilter(scope);
+  q += scopeDeptAuthorFilter(scope);
+  const vis = await sbJson(env, q) || [];
+  const visibles = new Set(vis.map(v => v.id));
+
+  const rows = todos.filter(r => visibles.has(r.report_id));
+
+  return json({
+    ok: true,
+    id_number: ced,
+    rows: rows.map(r => ({
+      report_id: r.report_id,
+      type: r.topic,
+      sent_at: r.sent_at,
+      company_code: r.company_code,
+      attention: r.attention,
+      ax_published: !!r.ax_published,
+      resumen: r.resumen || '',
+    })),
+    fuera_de_alcance: todos.length - rows.length,
   });
 }
 
