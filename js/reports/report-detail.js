@@ -62,6 +62,14 @@ function fmtDate(iso) {
   return `${d}/${m}/${y}`;
 }
 
+/* v6.210 — Los tipos viejos (marcaje, ausencia) interpolaban los textos
+   crudos. En egreso e ingreso hay campos que ESCRIBE una persona en la
+   tienda -el comentario del motivo, el correo, la direccion- y esos no se
+   pueden meter sin escapar en una plantilla HTML. */
+function esc(s) {
+  return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+}
+
 /* timestamptz ISO -> 'DD/MM/AAAA HH:MM a.m./p.m.' en hora Caracas (GMT-4) */
 function fmtSent(iso) {
   if (!iso) return '—';
@@ -135,6 +143,139 @@ function linesHtml(r) {
       </tr>`).join('')}
     </tbody></table>`;
   }
+  if (r.type === 'egreso') {
+    if (!r.lines || !r.lines.length) return '<p class="hint">Sin líneas de detalle.</p>';
+
+    /* La fecha que manda es report_date, que es la que viaja a AX. real_date
+       solo aparece cuando DIFIERE (el backend ya la manda en null si son
+       iguales): repetir dos veces la misma fecha no informa y hace dudar. */
+    const fechaCell = (l) => fmtDate(l.report_date)
+      + (l.real_date ? `<div class="dtl-sub">real: ${fmtDate(l.real_date)}</div>` : '');
+
+    /* Antiguedad en la unidad que se entiende de un vistazo. Que alguien haya
+       durado 1 dia y otro 3 años no puede leerse igual, y "450 dias" obliga a
+       hacer la cuenta mentalmente. */
+    const antig = (l) => {
+      const d = l.tenure_days;
+      if (d == null) return '<span class="muted">—</span>';
+      let txt;
+      if (d < 31) txt = `${d} día${d === 1 ? '' : 's'}`;
+      else if (d < 365) {
+        // Math.max(1,...) y el plural a mano: 31 dias redondea a 1 y salia
+        // "1 meses". Se ve en pantalla, y en una tabla de datos duros una
+        // falta de concordancia hace dudar del resto de los numeros.
+        const m = Math.max(1, Math.round(d / 30));
+        txt = `${m} mes${m === 1 ? '' : 'es'}`;
+      } else {
+        const a = Math.floor(d / 365); const m = Math.round((d % 365) / 30);
+        txt = `${a} a.${m ? ` ${m} m.` : ''}`;
+      }
+      return txt + (l.start_date ? `<div class="dtl-sub">desde ${fmtDate(l.start_date)}</div>` : '');
+    };
+
+    /* El motivo lo elige la tienda de una lista; el comentario lo ESCRIBE una
+       persona y suele explicar lo que el codigo no. Por eso va visible y no
+       en un tooltip. Debajo, solo si la central ratifico o RECTIFICO: el
+       'pendiente' es el estado de la mayoria y decirlo en cada fila seria
+       llenar la tabla de una palabra que no informa. */
+    const motivo = (l) => {
+      const base = l.reason ? esc(l.reason) : '<span class="muted">—</span>';
+      const com = l.reason_comment ? `<div class="dtl-note">“${esc(l.reason_comment)}”</div>` : '';
+      let rat = '';
+      if (l.ratif_status === 'rectificado') {
+        rat = `<div class="dtl-sub dtl-rect">rectificado${l.ratif_reason ? ` a: ${esc(l.ratif_reason)}` : ''}</div>`;
+      } else if (l.ratif_status === 'ratificado') {
+        rat = '<div class="dtl-sub">ratificado</div>';
+      }
+      return base + com + rat;
+    };
+
+    /* Cuando el documento no se exige, se dice POR QUE no se exige. "No
+       requiere" a secas no deja auditar nada. */
+    const docCell = (l) => {
+      if (l.has_document) return '<span class="pill pill-set">📎 Adjunto</span>';
+      if (l.doc_waived) {
+        return `<span class="muted">No requiere</span>${l.doc_cause ? `<div class="dtl-sub">${esc(l.doc_cause)}</div>` : ''}`;
+      }
+      return `<span class="pill pill-pend">Pendiente</span>${l.doc_cause ? `<div class="dtl-sub">${esc(l.doc_cause)}</div>` : ''}`;
+    };
+
+    /* Misma regla que el Historial, porque es la misma funcion de la base
+       (egresos_lineas_ax). Informativo: no cierra ni bloquea nada. */
+    const axCell = (l) => {
+      if (!l.ax_fin_contrato) return '<span class="muted">—</span>';
+      const igual = l.ax_fin_contrato === l.report_date;
+      return `<div class="att-ax att-ax-ok">${fmtDate(l.ax_fin_contrato).slice(0, 5)}</div>`
+        + (igual ? '' : `<div class="att-ax-sub">el reporte dice ${fmtDate(l.report_date).slice(0, 5)}</div>`);
+    };
+
+    return `<table class="dtl-table"><thead><tr>
+      <th>Trabajador</th><th>Cargo</th><th>Egreso</th><th>Antigüedad</th><th>Motivo</th><th>Documento</th>
+      <th title="Si esta persona ya figura egresada en AX, según la última sincronización">En AX</th>
+    </tr></thead><tbody>
+      ${r.lines.map(l => `<tr>
+        <td><b>${esc(l.name)}</b><div class="ced">${esc(l.id_number)}</div></td>
+        <td>${l.role ? esc(l.role) : '<span class="muted">—</span>'}</td>
+        <td>${fechaCell(l)}</td>
+        <td>${antig(l)}</td>
+        <td>${motivo(l)}</td>
+        <td>${docCell(l)}</td>
+        <td>${axCell(l)}</td>
+      </tr>`).join('')}
+    </tbody></table>`;
+  }
+
+  if (r.type === 'ingreso') {
+    if (!r.lines || !r.lines.length) return '<p class="hint">Sin líneas de detalle.</p>';
+
+    const edad = (l) => {
+      if (l.age_years != null) return `${l.age_years} años`;
+      if (!l.birth_date) return '<span class="muted">—</span>';
+      const b = new Date(l.birth_date), h = new Date();
+      let a = h.getFullYear() - b.getFullYear();
+      const m = h.getMonth() - b.getMonth();
+      if (m < 0 || (m === 0 && h.getDate() < b.getDate())) a--;
+      return `${a} años`;
+    };
+
+    /* Solo los ultimos 4 digitos de la cuenta: el numero entero no hace falta
+       para leer un reporte. Quien lo necesite lo tiene en Cuentas bancarias. */
+    const banco = (l) => {
+      if (!l.bank_name && !l.account_tail) return '<span class="muted">—</span>';
+      return `${esc(l.bank_name || '—')}${l.account_tail ? `<div class="dtl-sub">···${esc(l.account_tail)}</div>` : ''}`;
+    };
+
+    const contacto = (l) => {
+      const p = [];
+      if (l.phone) p.push(esc(l.phone));
+      if (l.email) p.push(`<div class="dtl-sub">${esc(l.email)}</div>`);
+      return p.length ? p.join('') : '<span class="muted">—</span>';
+    };
+
+    /* Los pendientes se NOMBRAN. "2 de 4" obliga a abrir otra cosa para saber
+       cuales faltan, y es justo el dato que uno viene a buscar. */
+    const docs = (l) => {
+      if (!l.docs_total) return '<span class="muted">No requiere</span>';
+      if (!l.docs_pend.length) return `<span class="pill pill-set">📎 ${l.docs_ok} de ${l.docs_total}</span>`;
+      return `<span class="pill pill-pend">${l.docs_ok} de ${l.docs_total}</span>`
+        + `<div class="dtl-sub">falta: ${esc(l.docs_pend.join(', '))}</div>`;
+    };
+
+    return `<table class="dtl-table"><thead><tr>
+      <th>Trabajador</th><th>Cargo</th><th>Ingreso</th><th>Edad</th><th>Banco</th><th>Contacto</th><th>Documentos</th>
+    </tr></thead><tbody>
+      ${r.lines.map(l => `<tr>
+        <td><b>${esc(l.name)}</b><div class="ced">${esc(l.ced_kind ? `${l.ced_kind}-${l.id_number}` : l.id_number)}</div></td>
+        <td>${l.role ? esc(l.role) : '<span class="muted">—</span>'}</td>
+        <td>${fmtDate(l.start_date)}</td>
+        <td>${edad(l)}</td>
+        <td>${banco(l)}</td>
+        <td>${contacto(l)}</td>
+        <td>${docs(l)}</td>
+      </tr>`).join('')}
+    </tbody></table>`;
+  }
+
   // otros tipos: aun no construidos
   return `<p class="hint">Este reporte incluye ${r.workers_count} trabajador(es). El detalle específico de “${(TYPES[r.type] || {}).label || r.type}” estará disponible cuando se implemente ese tipo de reporte.</p>`;
 }

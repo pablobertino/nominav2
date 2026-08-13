@@ -626,6 +626,96 @@ async function detailReport(env, body, scope) {
         doc_enforcement: doc ? doc.enforcement : null,
       };
     });
+  } else if (r.topic === 'egreso') {
+    /* v6.210 — hasta ahora el Detalle de un egreso mostraba un cartel de "no
+       implementado" sobre 121 reportes. Los datos estaban desde siempre.
+
+       Los dos catalogos se traen SUELTOS y se mapean en JavaScript en vez de
+       incrustarlos con PostgREST: egress_report_lines apunta DOS veces a
+       egress_reasons (el motivo que puso la tienda y el que corrigio la
+       central), y un embed con dos caminos al mismo destino obliga a
+       desambiguar con hints fragiles. Son 25 filas y 6: traerlas enteras sale
+       mas barato que la sintaxis para no traerlas. */
+    const [raw, reasons, causes] = await Promise.all([
+      sbJson(env,
+        `egress_report_lines?report_id=eq.${id}`
+        + '&select=id,worker_id_number,worker_name,report_date,real_date,has_document,doc_cause,'
+        + 'doc_waived,reason_code,reason_comment,admin_reason_status,admin_reason_code,'
+        + 'admin_reason_comment,snap_role,snap_start_date,snap_tenure_days,snap_age_years'
+        + '&order=id.asc'),
+      sbJson(env, 'egress_reasons?select=code,label'),
+      sbJson(env, 'egress_doc_causes?select=code,label'),
+    ]);
+    const labReason = {}; (reasons || []).forEach(x => { labReason[x.code] = x.label; });
+    const labCause = {}; (causes || []).forEach(x => { labCause[x.code] = x.label; });
+
+    /* Y de cada linea, si esa persona YA figura egresada en AX. Misma regla
+       que el Historial porque es literalmente la misma funcion (la de grano
+       fino: egresos_lineas_ax). Best-effort: sin esto el detalle se pinta
+       igual, solo que sin la columna. */
+    const axPorLinea = {};
+    try {
+      const ax = await sbJson(env, 'rpc/egresos_lineas_ax', {
+        method: 'POST', body: JSON.stringify({ p_report_ids: [id] }),
+      });
+      (ax || []).forEach(x => { if (x.fin_contrato) axPorLinea[x.line_id] = x.fin_contrato; });
+    } catch (_) { /* la columna En AX es de ayuda, no puede tumbar el detalle */ }
+
+    lines = (raw || []).map(l => ({
+      id_number: l.worker_id_number,
+      name: l.worker_name,
+      report_date: l.report_date,
+      // Solo viaja si DIFIERE: si es la misma fecha, repetirla en pantalla no
+      // agrega nada y encima invita a preguntarse por que hay dos.
+      real_date: (l.real_date && l.real_date !== l.report_date) ? l.real_date : null,
+      role: l.snap_role || null,
+      start_date: l.snap_start_date || null,
+      tenure_days: l.snap_tenure_days == null ? null : l.snap_tenure_days,
+      age_years: l.snap_age_years == null ? null : l.snap_age_years,
+      reason: labReason[l.reason_code] || l.reason_code || null,
+      reason_comment: l.reason_comment || null,
+      /* La ratificacion solo viaja cuando la central TOCO algo. 'pendiente' es
+         el estado de la mayoria y decirlo en cada fila seria llenar la tabla
+         de una palabra que no informa. */
+      ratif_status: (l.admin_reason_status && l.admin_reason_status !== 'pendiente')
+        ? l.admin_reason_status : null,
+      ratif_reason: l.admin_reason_code ? (labReason[l.admin_reason_code] || l.admin_reason_code) : null,
+      ratif_comment: l.admin_reason_comment || null,
+      has_document: !!l.has_document,
+      doc_waived: !!l.doc_waived,
+      doc_cause: l.doc_cause ? (labCause[l.doc_cause] || l.doc_cause) : null,
+      ax_fin_contrato: axPorLinea[l.id] || null,
+    }));
+  } else if (r.topic === 'ingreso') {
+    const raw = await sbJson(env,
+      `ingreso_report_lines?report_id=eq.${id}`
+      + '&select=id,worker_id_number,ced_kind,worker_name,cargo_code,birth_date,gender,'
+      + 'bank_name,account_number,email,phone,start_date,ingreso_report_docs(doc_name,status,enforcement)'
+      + '&order=id.asc');
+    lines = (raw || []).map(l => {
+      const docs = l.ingreso_report_docs || [];
+      const acc = String(l.account_number || '');
+      return {
+        id_number: l.worker_id_number,
+        ced_kind: l.ced_kind || null,
+        name: l.worker_name,
+        role: l.cargo_code || null,
+        start_date: l.start_date || null,
+        birth_date: l.birth_date || null,
+        gender: l.gender || null,
+        bank_name: l.bank_name || null,
+        /* Solo los ultimos 4 digitos. El numero completo no hace falta para
+           leer un reporte, y lo que no viaja al navegador no se puede filtrar
+           desde el navegador. Quien necesite la cuenta entera la tiene en
+           Cuentas bancarias, que es la pantalla que existe para eso. */
+        account_tail: acc ? acc.slice(-4) : null,
+        email: l.email || null,
+        phone: l.phone || null,
+        docs_total: docs.length,
+        docs_ok: docs.filter(d => d.status === 'adjunto').length,
+        docs_pend: docs.filter(d => d.status !== 'adjunto').map(d => d.doc_name).filter(Boolean),
+      };
+    });
   }
 
   return json({

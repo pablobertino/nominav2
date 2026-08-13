@@ -692,6 +692,23 @@
 .dtl-table .time-badge { display:inline-block; font-size:12px; font-weight:600; padding:2px 8px; border-radius:6px;
   background:var(--brand-bg); color:var(--brand); font-family:monospace; }
 
+/* Detalle de EGRESO e INGRESO (v6.210). Cada celda puede llevar un dato
+   principal y una aclaracion abajo: la fecha real cuando no es la del
+   reporte, desde cuando trabajaba, que documento falta, los ultimos digitos
+   de la cuenta. La aclaracion va chica y en gris — se lee al detenerse en la
+   fila, no compite con el dato de arriba. */
+.dtl-sub { font-size:11px; color:var(--faint); line-height:1.3; margin-top:2px; }
+/* El comentario del motivo lo escribe el gerente de la tienda: es lo unico
+   redactado por una persona en toda la fila, y suele explicar lo que el
+   codigo del motivo no. Por eso va visible y en cursiva, no en un tooltip. */
+.dtl-note { font-size:11.5px; color:var(--muted); font-style:italic; line-height:1.35; margin-top:3px; }
+/* Rectificado = la central CAMBIO el motivo que puso la tienda. Eso no es una
+   aclaracion mas: es una correccion, y se marca. */
+.dtl-rect { color:var(--warn); font-weight:600; }
+/* Dentro de la tabla el renglon de AX no necesita separarse de nada. */
+.dtl-table .att-ax { margin-top:0; }
+.dtl-table .att-ax-sub { padding-left:0; }
+
 /* ===================== WIZARD AUSENCIA (paso 4) ===================== */
 .type-row { display:flex; gap:14px; align-items:flex-end; margin-bottom:8px; }
 .coord-note { display:flex; gap:8px; background:var(--warn-bg); border:1px solid #f3e2bf; border-radius:var(--radius-md);
