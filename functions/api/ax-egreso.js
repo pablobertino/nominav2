@@ -1,5 +1,5 @@
 /* =====================================================================
-   functions/api/ax-egreso.js  ->  POST /api/ax-egreso            (v6.207)
+   functions/api/ax-egreso.js  ->  POST /api/ax-egreso            (v6.208)
    EGRESOS: HERRAMIENTA DE DIAGNOSTICO contra AX 2012.
 
    QUE ES Y QUE NO ES. Esto NO publica reportes. No lee egress_report_lines,
@@ -25,21 +25,55 @@
    Un modulo escrito hoy seria una suposicion con nombre de biblioteca.
    Nace cuando las pruebas digan como se comporta AX de verdad.
 
-   LO QUE HAY QUE AVERIGUAR (y por eso la respuesta va CRUDA):
-     1) Si la API dice la verdad. El middleware manda el lote entero en UNA
-        llamada SOAP y devuelve UN solo texto (api_workerExit.py, lineas
-        95-98). Solo contesta error si AX devuelve un HTTP distinto de 200,
-        o sea si se cae el lote completo. Hay que ver que dice cuando la
-        cedula no existe: si contesta un error honesto o si contesta
-        "Exito" como hace la API de marcajes.
-     2) Que pasa al REENVIAR un egreso ya cargado. En marcajes reenviar es
-        gratis (AX omite lo identico); en ausencias es peligroso (AX
-        rechaza el periodo superpuesto). En egresos no lo sabemos, y la
-        respuesta cambia todo el diseño: si AX pisa la fecha en silencio,
-        un reintento inocente corrompe una fin_contrato, que es el dato con
-        el que se pagan las prestaciones.
-     3) Si un lote mixto (una buena + una mala) se puede descifrar. Si no,
-        hay que mandar de a UNA linea, como se hizo con ausencias.
+   ---------------------------------------------------------------------
+   CONTRATO REAL  (verificado en vivo el 13/08/2026, v6.208)
+   ---------------------------------------------------------------------
+   PRIMERO Y MAS IMPORTANTE: el api_workerExit.py que circulo NO es lo que
+   esta desplegado. Ese archivo manda el lote entero en una llamada SOAP y
+   devuelve un solo texto crudo de AX. El middleware que atiende hoy tiene
+   logica POR TRABAJADOR y devuelve CONTADORES. No leer el .py como si
+   fuera la verdad; pedirle a Sistemas el actualizado.
+
+   Lo que contesta de verdad, siempre con HTTP 200 y status "success":
+
+     "Proceso finalizado. Egresados: 0. Errores: 1. Ya egresados: 0.
+      Trabajador 00000001 no encontrado. "
+
+   Tres cosas quedaron probadas:
+
+   1) MIENTE EN EL CODIGO HTTP, igual que la API de marcajes. Contesta 200
+      y "success" aunque una linea no haya entrado. Guiarse por eso es
+      cerrar un reporte para siempre con gente sin egresar.
+      LA UNICA SEÑAL CONFIABLE ES LA ARITMETICA:
+          Egresados + Errores + Ya egresados  ==  cuantos mande
+      Cuadro en las tres pruebas (1 de 1, 1 de 1, 2 de 2).
+
+   2) REENVIAR ES SEGURO. "Ya egresados" es una categoria propia, no un
+      error: la API detecta que la persona ya estaba egresada y la saltea
+      sin volver a escribir. Sigue el modelo de MARCAJES (omitir es exito),
+      no el de ausencias (donde AX rechaza y el log tiene que ser fuente de
+      verdad). Probado con la misma fecha; falta probar con una distinta.
+
+   3) EL LOTE SE PUEDE DESCIFRAR. Cada detalle nombra a la persona con su
+      cedula ("La persona LUIS ALEJANDRO QUERO LOPEZ (25457490) ya esta
+      egresada"), asi que en un lote mixto se puede atribuir linea por
+      linea. No hace falta la llamada-por-linea que se uso en ausencias.
+
+   Y quedo confirmado que personnelNumber es la CEDULA: se mando 25457490 y
+   la API resolvio el nombre completo. El "Ej. 000150" del HTML de ejemplo
+   es una pista falsa.
+
+   LO QUE TODAVIA NO SE SABE:
+     a) Que cara tiene un EXITO. Nunca se vio un "Egresados: 1": no sabemos
+        si el detalle nombra a quien entro. Si no lo nombra, en un lote con
+        varios exitos no se puede atribuir cual fue cual.
+     b) Si una fecha DISTINTA para alguien ya egresado pisa la fin_contrato.
+        El mensaje no menciona fechas, lo que sugiere que ni las mira, pero
+        eso es una lectura, no un dato. Importa porque esa fecha es con la
+        que se pagan las prestaciones.
+     c) Empleos MULTIPLES. Esta API no recibe alias, y hay gente con varias
+        relaciones laborales. Se supone que cierra la activa, que es unica,
+        pero no esta probado.
 
    Acciones (POST { action, user, ... }):
      health {}         Ping de vida (GET .../health). No escribe nada.
@@ -51,7 +85,14 @@
    verdad; cuanta menos mano la alcance, mejor. El permiso definitivo
    (report.publish.egreso) nace con el boton Publicar, no con esto.
 
-   Env vars: canaima_apikey (o ax_api_key), ax_egresos_url (opcional).
+   Env vars: canaima_apikey (o ax_api_key), ax_finalizar_url (opcional).
+
+   OJO CON EL NOMBRE DE LA VARIABLE: el override se llama ax_finalizar_url y
+   NO ax_egresos_url. Ese ultimo ya existe y apunta a la API de LECTURA de
+   egresos (/empleados/egresos/v1, la que usa ax-sync.js para llenar
+   nomina_v2.ax_egresos). Son endpoints opuestos -uno lee, este ESCRIBE- y
+   compartir el nombre significaria que configurar la sincronizacion manda
+   egresos al lugar equivocado.
    ===================================================================== */
 
 import { resolveActor, isSuperadmin, AuthError } from './_auth.js';
@@ -65,7 +106,7 @@ export const AX_EGRESOS_URL_DEFAULT = 'https://api.grupocanaima.com/empleados/fi
 const MAX_LOTE = 10;
 
 function axEgrBase(env) {
-  return String((env && env.ax_egresos_url) || AX_EGRESOS_URL_DEFAULT).replace(/\/+$/, '');
+  return String((env && env.ax_finalizar_url) || AX_EGRESOS_URL_DEFAULT).replace(/\/+$/, '');
 }
 
 function json(b, s = 200) {
