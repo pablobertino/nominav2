@@ -91,99 +91,61 @@ export async function onRequestPost({ request, env }) {
       return json({ ok: true, vacio: true, advertencias: 0, faltantes: 0, personas: 0, filas: [] });
     }
 
-    const filas = await sb(env, 'rpc/doc_estado_personal', {
-      method: 'POST', body: JSON.stringify({ p_codes: codes }),
-    }) || [];
-
+    /* v6.228 — SE CUENTA EN LA BASE, NO EN EL BACKEND.
+       La primera version traia todas las filas de doc_estado_personal y
+       contaba aca. Pero son 6264 (2088 personas x 3 recaudos) y PostgREST
+       corta la respuesta en 1000 por defecto: el resumen salia calculado
+       sobre una fraccion y el superadmin veia 6 advertencias en vez de 120.
+       El numero era plausible y estaba mal, que es la peor clase de error
+       porque nadie sospecha de una cifra razonable. Ahora la base cuenta y
+       devuelve una fila, y la lista filtra y limita en SQL. */
     if (action === 'resumen') {
-      /* Se cuentan las PERSONAS con advertencia, no los documentos: para
-         quien mira el Inicio, dos problemas de la misma persona son una
-         sola conversacion, no dos. */
-      const conAdv = new Set();
-      let advertencias = 0, faltantes = 0;
-      const porTipo = {};
-      filas.forEach(f => {
-        if (!porTipo[f.doc_type]) porTipo[f.doc_type] = { advertencia: 0, falta: 0, ok: 0 };
-        porTipo[f.doc_type][f.estado] = (porTipo[f.doc_type][f.estado] || 0) + 1;
-        if (f.estado === 'advertencia') { advertencias++; conAdv.add(f.id_number); }
-        if (f.estado === 'falta') faltantes++;
-      });
-      /* v6.227 — EL AVANCE DE LA QUINCENA. Es lo que hace que la barra del
-         Inicio no se vuelva invisible: "te faltan 13" es el mismo numero
-         todos los dias hasta que alguien haga algo, y un numero que no se
-         mueve deja de leerse. "6 cargados esta quincena" cambia cada vez
-         que suben un papel, y el merito queda del lado de la tienda.
-         No hace falta guardar nada: created_at ya esta en las dos tablas.
-         Si falla, la barra se pinta igual sin el avance. */
-      let avance = 0;
-      let desdeQ = null;
-      try {
-        const hoy = new Date().toISOString().slice(0, 10);
-        const per = await sb(env, `payroll_periods?range_start=lte.${hoy}&range_end=gte.${hoy}&select=range_start&limit=1`);
-        desdeQ = (per && per[0]) ? per[0].range_start : null;
-        if (desdeQ) {
-          const ced = [...new Set(filas.map(f => f.id_number))];
-          if (ced.length) {
-            const lista = ced.map(c => `"${c}"`).join(',');
-            const [pd, br] = await Promise.all([
-              sb(env, `personal_documents?estado=eq.pendiente&created_at=gte.${desdeQ}&id_number=in.(${lista})&select=id_number`),
-              sb(env, `bank_references?estado=eq.pendiente&created_at=gte.${desdeQ}&id_number=in.(${lista})&select=id_number`),
-            ]);
-            avance = (pd || []).length + (br || []).length;
-          }
-        }
-      } catch (_) { avance = 0; }
+      const [res, tip] = await Promise.all([
+        sb(env, 'rpc/doc_resumen_personal', { method: 'POST', body: JSON.stringify({ p_codes: codes }) }),
+        sb(env, 'rpc/doc_resumen_tipo', { method: 'POST', body: JSON.stringify({ p_codes: codes }) }),
+      ]);
+      const r = (res && res[0]) || { personas: 0, advertencias: 0, personas_con_advertencia: 0, faltantes: 0, al_dia: false };
 
       return json({
         ok: true,
-        advertencias,
-        personas_con_advertencia: conAdv.size,
-        faltantes,
-        personas: new Set(filas.map(f => f.id_number)).size,
-        avance_quincena: avance,
-        quincena_desde: desdeQ,
-        /* "Al dia" es sin advertencias Y sin faltantes. Se felicita solo si
-           hay gente: una empresa sin personal activo no esta al dia, esta
-           vacia, y felicitarla seria ridiculo. */
-        al_dia: !advertencias && !faltantes && filas.length > 0,
-        por_tipo: Object.entries(porTipo).map(([k, v]) => ({
-          doc_type: k, label: TIPOS[k] || k, ...v,
-        })),
+        personas: r.personas || 0,
+        advertencias: r.advertencias || 0,
+        personas_con_advertencia: r.personas_con_advertencia || 0,
+        faltantes: r.faltantes || 0,
+        al_dia: !!r.al_dia,
+        /* El avance viene de la MISMA funcion y con el MISMO alcance. Antes
+           se contaba aparte en el backend y salia del grupo entero aunque
+           mirara una tienda: el gerente habria visto como propio el merito
+           de las otras 133. */
+        avance_quincena: r.avance_quincena || 0,
+        quincena_desde: r.quincena_desde || null,
+        por_tipo: (tip || []).map(t => ({ ...t, label: TIPOS[t.doc_type] || t.doc_type })),
       });
     }
 
     if (action === 'list') {
-      const tipo = String(body.tipo || '').trim();
-      const estado = String(body.estado || '').trim();
-      const cc = String(body.company_code || '').trim();
-      const q = String(body.q || '').trim().toLowerCase();
-
-      let out = filas;
-      // 'ok' no se lista nunca: la pantalla es de lo que falta hacer.
-      out = out.filter(f => f.estado !== 'ok');
-      if (tipo) out = out.filter(f => f.doc_type === tipo);
-      if (estado) out = out.filter(f => f.estado === estado);
-      if (cc) out = out.filter(f => f.company_code === cc);
-      if (q) {
-        out = out.filter(f => String(f.worker_name || '').toLowerCase().includes(q)
-          || String(f.id_number || '').includes(q));
-      }
-
-      /* Las advertencias primero SIEMPRE: son las accionables y son pocas.
-         Si quedaran mezcladas por orden alfabetico, 120 casos concretos se
-         perderian entre 4650 faltantes. */
-      const peso = { advertencia: 0, falta: 1 };
-      out.sort((a, b) => (peso[a.estado] - peso[b.estado])
-        || String(a.company_code).localeCompare(String(b.company_code))
-        || String(a.worker_name).localeCompare(String(b.worker_name)));
-
-      const total = out.length;
+      const filas = await sb(env, 'rpc/doc_pendientes', {
+        method: 'POST',
+        body: JSON.stringify({
+          p_codes: codes,
+          p_tipo: String(body.tipo || '') || null,
+          p_estado: String(body.estado || '') || null,
+          p_q: String(body.q || '').trim() || null,
+          p_limit: 500,
+        }),
+      }) || [];
+      // total_real viaja en cada fila: asi se puede decir "500 de 4658" con
+      // un total que es cierto, y no "500 de 500".
+      const total = filas.length ? Number(filas[0].total_real) : 0;
       return json({
         ok: true,
         total,
-        // Tope para no mandar 4650 filas de una: la pantalla filtra.
-        truncado: total > 500,
-        filas: out.slice(0, 500).map(f => ({ ...f, doc_label: TIPOS[f.doc_type] || f.doc_type })),
+        truncado: total > filas.length,
+        filas: filas.map(f => ({
+          company_code: f.company_code, id_number: f.id_number, worker_name: f.worker_name,
+          doc_type: f.doc_type, estado: f.estado, detalle: f.detalle, cargado_at: f.cargado_at,
+          doc_label: TIPOS[f.doc_type] || f.doc_type,
+        })),
       });
     }
 
