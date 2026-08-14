@@ -113,6 +113,11 @@ export async function onRequestPost({ request, env }) {
         docs: (docs || []).map(d => ({
           id: d.id, name: d.name, note: d.note || null,
           enforcement: d.enforcement || 'warn', is_required: d.is_required !== false,
+          // v6.232: sin esto el front nunca sabe cual recaudo es la referencia
+          // bancaria y la validacion de la v6.231 quedaba muda. Estaba en el
+          // SELECT pero este map reconstruye campo por campo, asi que lo
+          // descartaba en silencio.
+          doc_kind: d.doc_kind || null,
         })),
         doc_limits: {
           max_file_mb: parseFloat(sm.doc_max_file_mb) || 2,
