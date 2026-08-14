@@ -167,6 +167,8 @@ const NAV_GROUPS = [
   { title: 'Personal', items: [
     ['buscar', I.search, 'Buscar'],
     ['datosincompletos', I.bizreport, 'Datos incompletos'],
+    // v6.226: recaudos con advertencia o faltantes, por trabajador.
+    ['doccontrol', I.docs, 'Control de recaudos'],
     // v5.16: Doble empleo. El badge con el numero de casos lo inyecta
     // paintDoubleEmpBadge() al cargar el panel (solo si hay casos).
     ['dobleempleo', I.alert, 'Doble empleo'],
@@ -367,6 +369,8 @@ const NAV_EDITOR_GROUPS = [
   { title: 'Personal', items: [
     ['buscar', I.search, 'Buscar'],
     ['datosincompletos', I.bizreport, 'Datos incompletos'],
+    // v6.226: recaudos con advertencia o faltantes, por trabajador.
+    ['doccontrol', I.docs, 'Control de recaudos'],
     ['norehire', I.userx, 'No reempleables'],
     ['egresados', I.userx, 'Egresados'],
     ['norehirecheck', I.usercheck, 'Verificar candidato'],
@@ -405,6 +409,8 @@ const NAV_GESTOR_GROUPS = [
   { title: 'Personal', items: [
     ['buscar', I.search, 'Buscar'],
     ['datosincompletos', I.bizreport, 'Datos incompletos'],
+    // v6.226: recaudos con advertencia o faltantes, por trabajador.
+    ['doccontrol', I.docs, 'Control de recaudos'],
     ['norehire', I.userx, 'No reempleables'],
     ['egresados', I.userx, 'Egresados'],
     ['norehirecheck', I.usercheck, 'Verificar candidato'],
@@ -670,7 +676,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.225</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.226</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -8307,6 +8313,7 @@ async function navigate(view, user, fromHistory = false) {
   // v6.214 — import dinamico: la vista solo la abre quien tiene el permiso,
   // y no tiene sentido que su codigo viaje en la carga inicial de todos.
   else if (view === 'recurrencia') import('./recurrencia.js').then(m => m.renderRecurrencia(user));
+  else if (view === 'doccontrol') import('./doc-control.js').then(m => m.renderDocControl(user));
   else if (view === 'reportempresas') renderCompanyReports(user);
   else if (view === 'estadopago') renderPayGrid(user);
   else if (view === 'misstats') renderMyStats(user);
@@ -8695,6 +8702,7 @@ export function renderPanel() {
       rostersync: 'view.rostersync',
       historial: 'view.historial', estadisticas: 'view.estadisticas',
       recurrencia: 'view.recurrencia',   // v6.214
+      doccontrol: 'view.doccontrol',     // v6.226
       misstats: 'view.misstats', reportempresas: 'view.reportempresas',
       estadopago: 'view.estadopago',
       avisos: 'view.avisos', avisosconfig: 'view.avisosconfig',

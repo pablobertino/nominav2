@@ -63,7 +63,7 @@ Object.entries(IMPLIES).forEach(([u, v]) => { IMPLIED_BY[v] = u; });
 const VIEW_SUBGROUPS = [
   ['Menu principal', ['view.dashboard', 'view.usuarios', 'view.documentos', 'view.calendario']],
   ['Organizacion', ['view.empresas', 'view.estructura']],
-  ['Personal', ['view.buscar', 'view.datosincompletos', 'view.dobleempleo', 'view.egresados', 'view.movimientos', 'view.egmotivos', 'view.rostersync', 'view.fotos']],
+  ['Personal', ['view.buscar', 'view.datosincompletos', 'view.doccontrol', 'view.dobleempleo', 'view.egresados', 'view.movimientos', 'view.egmotivos', 'view.rostersync', 'view.fotos']],
   ['Cargos', ['view.cambiocargo', 'view.cargohistorial', 'mov.sugerir', 'mov.aprobar']],
   ['Reportes', ['view.historial', 'view.estadisticas', 'view.recurrencia', 'view.reportempresas', 'view.estadopago', 'view.misstats']],
   ['Comunicacion', ['view.avisos', 'view.avisosconfig']],
@@ -104,6 +104,8 @@ const MENU_CATALOG = [
     { id: 'fotos', lbl: 'Personal', view: 'view.fotos', acts: ['photo.manage', 'ficha.edit', 'dept.assign', 'bankref.upload', 'rif.upload', 'cedula.upload', 'docs.remove', 'view.antiguedad', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion', 'report.traslado'] },
     { id: 'buscar', lbl: 'Buscar', view: 'view.buscar', acts: [] },
     { id: 'datosincompletos', lbl: 'Datos incompletos', view: 'view.datosincompletos', acts: [] },
+    // v6.226 — lee validaciones que ya existian y nadie mostraba; solo lectura.
+    { id: 'doccontrol', lbl: 'Control de recaudos', view: 'view.doccontrol', acts: [] },
     // v5.19: Doble empleo. Solo consulta (los casos se corrigen en el sistema),
     // por eso no tiene acciones: el permiso de vista es todo lo que hay.
     { id: 'dobleempleo', lbl: 'Doble empleo', view: 'view.dobleempleo', acts: [] },
