@@ -184,6 +184,14 @@ function ensureStyles() {
   .cr-erow:last-child{border-bottom:0}
   .cr-erow:hover{background:var(--bg-soft,#fafbfd)}
   .cr-erow input{width:16px;height:16px;accent-color:var(--brand,#2563eb);flex:none}
+  /* v6.224 — Fila apagada por antiguedad minima. Se deja EN LA LISTA con el
+     motivo: sacarla haria que quien la busca no la encuentre y no sepa si
+     es que no esta en el personal o que todavia no puede pedir constancia. */
+  .cr-erow-off{cursor:default;background:var(--bg-soft,#fafbfd)}
+  .cr-erow-off:hover{background:var(--bg-soft,#fafbfd)}
+  .cr-erow-off .cr-en,.cr-erow-off .cr-em{opacity:.55}
+  .cr-erow-off .cr-avatar,.cr-erow-off .cr-avatar-ph{opacity:.5}
+  .cr-eblock{font-size:11.5px;color:var(--warn,#b45309);margin-top:3px;line-height:1.4}
   .cr-erow .cr-en{font-weight:600;font-size:13px;color:var(--ink)}
   .cr-erow .cr-em{font-size:11.5px;color:var(--muted)}
   .cr-erow .cr-esp{flex:1}
@@ -790,6 +798,10 @@ function renderPicker() {
   }
   wrap.innerHTML = `<div class="cr-picker">${CREATE.roster.map(pickerRow).join('')}</div>`;
   wrap.querySelectorAll('[data-ced]').forEach(row => {
+    // v6.224 — la fila bloqueada no se selecciona ni con el clic sobre la
+    // etiqueta: sin esto, el <label> marcaria igual el checkbox deshabilitado
+    // en algunos navegadores y la persona quedaria elegida sin darse cuenta.
+    if (row.dataset.bloqueo) return;
     row.addEventListener('click', e => {
       if (e.target.tagName === 'INPUT') return; // el change lo maneja el checkbox
       const cb = row.querySelector('input');
@@ -812,6 +824,19 @@ function pickerRow(w) {
     : `<div class="cr-avatar-ph">${esc((w.full_name || '?').slice(0, 1).toUpperCase())}</div>`;
   const meta = [fmtCedula(ced), w.role || '', w.start_date ? 'Ingreso ' + fmtDate(w.start_date) : '', w.department_name || '']
     .filter(Boolean).join(' · ');
+  /* v6.224 — ANTIGUEDAD MINIMA. La persona sigue EN LA LISTA, apagada y con
+     el motivo: sacarla seria peor, porque quien la busca no la encuentra y
+     no sabe si es que no esta en el personal o que no puede pedirla todavia.
+     El checkbox va deshabilitado; el bloqueo de verdad esta en el servidor. */
+  if (w.bloqueo) {
+    return `<label class="cr-erow cr-erow-off" data-ced="${esc(ced)}" data-bloqueo="1">
+      <input type="checkbox" disabled>
+      ${avatar}
+      <span><div class="cr-en">${esc(w.full_name)}</div><div class="cr-em">${esc(meta)}</div>
+        <div class="cr-eblock">${esc(w.bloqueo)}</div></span>
+      <span class="cr-esp"></span>
+    </label>`;
+  }
   return `<label class="cr-erow" data-ced="${esc(ced)}">
     <input type="checkbox" ${checked}>
     ${avatar}

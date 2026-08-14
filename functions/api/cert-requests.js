@@ -201,6 +201,23 @@ async function companyRoster(env, cc, { department = null, q = '' } = {}) {
       (wm || []).forEach(w => { if (w.photo_key) photoByCed[w.id_number] = w.photo_key; });
     } catch { /* sin fotos: el roster carga igual */ }
   }
+  /* v6.224 — ANTIGUEDAD MINIMA, avisada en el picker. El bloqueo de verdad
+     esta en 'create'; esto es para que quien elige lo vea ANTES y no se
+     entere despues de armar la solicitud entera. Se resuelve en una sola
+     tanda para todo el roster visible. Si falla, el picker se pinta igual
+     sin el aviso: la reja del create sigue puesta. */
+  const bloqueoByCed = {};
+  if (ceds.length) {
+    try {
+      await Promise.all(ceds.map(async (c) => {
+        const m = await sb(env, 'rpc/constancia_bloqueo_motivo', {
+          method: 'POST', body: JSON.stringify({ p_ced: c, p_company: cc }),
+        });
+        if (m) bloqueoByCed[c] = String(m);
+      }));
+    } catch { /* el picker carga igual */ }
+  }
+
   return rows.map(r => ({
     id_number: r.id_number,
     full_name: r.full_name,
@@ -209,6 +226,8 @@ async function companyRoster(env, cc, { department = null, q = '' } = {}) {
     department_id: r.department_id || null,
     department_name: r.department_id != null ? (deptName[r.department_id] || null) : null,
     thumb_url: thumbUrl(env, photoByCed[r.id_number] || null),
+    // Motivo por el que todavia no puede pedir constancia (o null).
+    bloqueo: bloqueoByCed[r.id_number] || null,
   }));
 }
 
@@ -303,6 +322,34 @@ export async function onRequestPost({ request, env }) {
       if (missing.length) {
         return json({ ok: false, error: `Estas cedulas no estan en el personal de ${cc}: ${missing.join(', ')}` }, 422);
       }
+
+      /* v6.224 — ANTIGUEDAD MINIMA. Esta es la reja: el picker ya avisa y
+         deshabilita, pero eso es cortesia y se puede saltear. Aca no.
+         Se pregunta por cada cedula elegida (son 50 como maximo, y en la
+         practica una o dos) y se listan TODAS las que no llegan, no la
+         primera: si alguien eligio cinco personas, tiene que enterarse de
+         una vez de cuales no puede pedir, no de a una por intento.
+         Si la consulta falla NO se bloquea: es una regla de negocio, no un
+         control de seguridad, y una constancia trabada por un error de red
+         nuestro es un problema del trabajador que nadie va a poder explicar. */
+      try {
+        const motivos = [];
+        await Promise.all(ceds.map(async (c) => {
+          const m = await sb(env, 'rpc/constancia_bloqueo_motivo', {
+            method: 'POST', body: JSON.stringify({ p_ced: c, p_company: cc }),
+          });
+          if (m) motivos.push(`${(roster[c] && roster[c].full_name) || c}: ${m}`);
+        }));
+        if (motivos.length) {
+          return json({
+            ok: false,
+            error: motivos.length === 1
+              ? 'No se puede solicitar la constancia todavía.'
+              : `Hay ${motivos.length} personas que todavía no pueden pedir constancia.`,
+            details: motivos,
+          }, 422);
+        }
+      } catch (_) { /* sin el chequeo, la solicitud sigue */ }
 
       // Cabecera de la solicitud.
       // REGLA: la solicitud SIEMPRE pertenece a la EMPRESA/tienda destino

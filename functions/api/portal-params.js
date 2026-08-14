@@ -73,6 +73,20 @@ export async function onRequestPost({ request, env }) {
           return json({ ok: false, error: 'Debe ser un número entero de días (0 a 365).' }, 400);
         }
       }
+      /* v6.224 — Parámetros con valores CERRADOS. Sin esto, un parámetro de
+         texto libre acepta cualquier cosa: escribir "Grupo" con mayúscula o
+         "gruop" no daría error y la regla pasaría a comportarse distinto sin
+         que nadie se entere. Un parámetro que gobierna una regla no puede
+         fallar en silencio por un tipeo. */
+      const CERRADOS = {
+        constancia_antiguedad_base: ['grupo', 'empresa'],
+      };
+      if (CERRADOS[key] && !CERRADOS[key].includes(value)) {
+        return json({
+          ok: false,
+          error: `Valor no válido. Los admitidos son: ${CERRADOS[key].join(' o ')}.`,
+        }, 400);
+      }
       const cur = await sb(env, `portal_params?key=eq.${encodeURIComponent(key)}&select=key`);
       if (!cur || !cur.length) return json({ ok: false, error: 'Parámetro inexistente (se crean por migración).' }, 404);
       const upd = await sb(env, `portal_params?key=eq.${encodeURIComponent(key)}`, {
