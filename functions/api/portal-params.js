@@ -18,6 +18,29 @@
    Secrets: supabase_url, supabase_service_role
    ===================================================================== */
 
+/* =====================================================================
+   PARAMETROS DE VALORES CERRADOS (v6.224, con etiquetas desde la v6.225).
+
+   Vive UNA sola vez y sirve para dos cosas a la vez: valida el guardado y
+   arma el combo de la pantalla. Si estuvieran en dos lados, agregar un
+   valor nuevo al combo sin agregarlo a la validacion -o al reves- seria
+   cuestion de tiempo.
+
+   POR QUE SON CERRADOS. Un parametro de texto libre acepta cualquier cosa:
+   escribir "Grupo" con mayuscula o "gruop" no daria error y la regla
+   pasaria a comportarse distinto sin que nadie se entere. Un valor que
+   gobierna una regla no puede fallar en silencio por un tipeo.
+
+   La ETIQUETA es lo que se lee en el combo; el value es lo que se guarda.
+   Nadie tiene por que acordarse de como se escribe internamente.
+   ===================================================================== */
+const CERRADOS = {
+  constancia_antiguedad_base: [
+    { value: 'grupo', label: 'En el grupo — el traslado entre empresas no corta la antigüedad' },
+    { value: 'empresa', label: 'En la empresa actual — cuenta solo desde el ingreso a esa empresa' },
+  ],
+};
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -59,7 +82,18 @@ export async function onRequestPost({ request, env }) {
 
     if (action === 'list') {
       const params = await sb(env, 'portal_params?select=key,value,label,updated_at,updated_by&order=key');
-      return json({ ok: true, params: params || [] });
+      /* v6.225 — Los parametros de valores cerrados viajan con sus opciones
+         para que la pantalla pinte un COMBO y no una caja de texto. Nadie
+         tiene por que acordarse de si se escribe "grupo" o "empresa", ni
+         arriesgarse a un tipeo en un valor que gobierna una regla.
+         Las opciones salen de la MISMA constante que valida el guardado: si
+         se agrega un valor nuevo, aparece en el combo solo. */
+      return json({
+        ok: true,
+        params: (params || []).map(p => (CERRADOS[p.key]
+          ? { ...p, options: CERRADOS[p.key] }
+          : p)),
+      });
     }
 
     if (action === 'save') {
@@ -73,18 +107,10 @@ export async function onRequestPost({ request, env }) {
           return json({ ok: false, error: 'Debe ser un número entero de días (0 a 365).' }, 400);
         }
       }
-      /* v6.224 — Parámetros con valores CERRADOS. Sin esto, un parámetro de
-         texto libre acepta cualquier cosa: escribir "Grupo" con mayúscula o
-         "gruop" no daría error y la regla pasaría a comportarse distinto sin
-         que nadie se entere. Un parámetro que gobierna una regla no puede
-         fallar en silencio por un tipeo. */
-      const CERRADOS = {
-        constancia_antiguedad_base: ['grupo', 'empresa'],
-      };
-      if (CERRADOS[key] && !CERRADOS[key].includes(value)) {
+      if (CERRADOS[key] && !CERRADOS[key].some(o => o.value === value)) {
         return json({
           ok: false,
-          error: `Valor no válido. Los admitidos son: ${CERRADOS[key].join(' o ')}.`,
+          error: `Valor no válido. Los admitidos son: ${CERRADOS[key].map(o => o.value).join(' o ')}.`,
         }, 400);
       }
       const cur = await sb(env, `portal_params?key=eq.${encodeURIComponent(key)}&select=key`);

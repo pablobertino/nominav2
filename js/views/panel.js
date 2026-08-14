@@ -670,7 +670,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.224</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.225</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -7420,8 +7420,18 @@ async function cfgRenderParams(user, body) {
             <div style="font-weight:700;font-size:13px">${escP(p.label || p.key)}</div>
             <div class="muted" style="font-size:11px;margin-top:2px">clave: ${escP(p.key)}${p.updated_at ? ` · último cambio: ${escP(fmtTs(p.updated_at))}${p.updated_by ? ' por ' + escP(p.updated_by) : ''}` : ''}</div>
           </div>
-          <input data-pkey="${escP(p.key)}" type="${/_dias$/.test(p.key) ? 'number' : 'text'}" ${/_dias$/.test(p.key) ? 'min="0" max="365"' : ''} value="${escP(p.value)}"
-                 style="width:110px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;font-size:13px;text-align:center">
+          ${Array.isArray(p.options) && p.options.length
+            /* v6.225 — Los parámetros de valores cerrados se eligen de un
+               combo, no se escriben. Nadie tiene por qué acordarse de si va
+               "grupo" o "empresa", ni arriesgarse a un tipeo en un valor que
+               gobierna una regla. Las opciones las manda el backend desde la
+               MISMA constante que valida el guardado. */
+            ? `<select data-pkey="${escP(p.key)}"
+                 style="min-width:260px;max-width:420px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;font-size:13px">
+                 ${p.options.map(o => `<option value="${escP(o.value)}" ${o.value === p.value ? 'selected' : ''}>${escP(o.label || o.value)}</option>`).join('')}
+               </select>`
+            : `<input data-pkey="${escP(p.key)}" type="${/_dias$/.test(p.key) ? 'number' : 'text'}" ${/_dias$/.test(p.key) ? 'min="0" max="365"' : ''} value="${escP(p.value)}"
+                 style="width:110px;padding:8px 10px;border:1px solid #e5e7eb;border-radius:10px;font-size:13px;text-align:center">`}
           <button data-psave="${escP(p.key)}" style="padding:8px 16px;border:none;border-radius:10px;background:#2563eb;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Guardar</button>
           <span data-pmsg="${escP(p.key)}" style="font-size:12px;align-self:center;min-width:110px"></span>
         </div>`).join('') || '<p class="muted">Sin parámetros.</p>'}
