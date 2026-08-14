@@ -104,7 +104,7 @@ export async function injectDocBar(antesDe, user, irAControl) {
       <div class="rec-ic">📄</div>
       <div class="rec-b">
         <div class="rec-t">${personasAdv} persona${personasAdv === 1 ? '' : 's'} ${personasAdv === 1 ? 'tiene' : 'tienen'} un recaudo con problema</div>
-        <div class="rec-d">Referencias a nombre de otra persona, RIF vencidos o con datos que no coinciden.
+        <div class="rec-d">Referencias con una cédula que no es la del trabajador, o RIF vencidos.
           Ya están cargados: hay que revisarlos y pedir el correcto.${falt
             ? ` Faltan además <b>${falt}</b> por cargar.` : ''}</div>
         ${chip}

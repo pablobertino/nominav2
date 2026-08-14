@@ -7,9 +7,17 @@
    DE DONDE SALE. Los componentes de la ficha (RIF, referencia bancaria)
    validan al cargar y guardan el resultado desde julio. Esa columna solo
    aparecia en los tres modulos que la ESCRIBEN: nadie la leia. Habia
-   referencias a nombre de otra persona, cedulas que no coinciden y RIF
-   vencidos, detectados y guardados, sin una sola pantalla que los mostrara.
-   Esta pantalla no valida nada: lee lo que ya estaba escrito.
+   referencias con la cedula cambiada y RIF vencidos, detectados y guardados,
+   sin una sola pantalla que los mostrara. Esta pantalla no valida nada: lee
+   lo que ya estaba escrito.
+
+   QUE SE ALERTA Y QUE NO (v6.229). Solo lo que DISCRIMINA. La alerta por
+   NOMBRE se retiro despues de revisar los datos: de 97 avisos, ninguno era
+   un documento equivocado. En la referencia bancaria el nombre lo escribe el
+   banco -y en 36 casos el parser ni pudo leerlo-; en el RIF, la ficha trae
+   el nombre abreviado de AX y el PDF el legal completo, asi que la
+   comparacion falla siempre. Se revisaron los 8 casos donde el nombre SI se
+   leyo y era distinto: los 8 eran la misma persona, con la cedula correcta.
 
    DOS COSAS SEPARADAS, Y NO ES UN DETALLE:
      ADVERTENCIAS  ~120. Alguien mando el papel y algo no cuadra. Se puede
