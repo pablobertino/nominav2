@@ -108,12 +108,44 @@ export async function onRequestPost({ request, env }) {
         if (f.estado === 'advertencia') { advertencias++; conAdv.add(f.id_number); }
         if (f.estado === 'falta') faltantes++;
       });
+      /* v6.227 — EL AVANCE DE LA QUINCENA. Es lo que hace que la barra del
+         Inicio no se vuelva invisible: "te faltan 13" es el mismo numero
+         todos los dias hasta que alguien haga algo, y un numero que no se
+         mueve deja de leerse. "6 cargados esta quincena" cambia cada vez
+         que suben un papel, y el merito queda del lado de la tienda.
+         No hace falta guardar nada: created_at ya esta en las dos tablas.
+         Si falla, la barra se pinta igual sin el avance. */
+      let avance = 0;
+      let desdeQ = null;
+      try {
+        const hoy = new Date().toISOString().slice(0, 10);
+        const per = await sb(env, `payroll_periods?range_start=lte.${hoy}&range_end=gte.${hoy}&select=range_start&limit=1`);
+        desdeQ = (per && per[0]) ? per[0].range_start : null;
+        if (desdeQ) {
+          const ced = [...new Set(filas.map(f => f.id_number))];
+          if (ced.length) {
+            const lista = ced.map(c => `"${c}"`).join(',');
+            const [pd, br] = await Promise.all([
+              sb(env, `personal_documents?estado=eq.pendiente&created_at=gte.${desdeQ}&id_number=in.(${lista})&select=id_number`),
+              sb(env, `bank_references?estado=eq.pendiente&created_at=gte.${desdeQ}&id_number=in.(${lista})&select=id_number`),
+            ]);
+            avance = (pd || []).length + (br || []).length;
+          }
+        }
+      } catch (_) { avance = 0; }
+
       return json({
         ok: true,
         advertencias,
         personas_con_advertencia: conAdv.size,
         faltantes,
         personas: new Set(filas.map(f => f.id_number)).size,
+        avance_quincena: avance,
+        quincena_desde: desdeQ,
+        /* "Al dia" es sin advertencias Y sin faltantes. Se felicita solo si
+           hay gente: una empresa sin personal activo no esta al dia, esta
+           vacia, y felicitarla seria ridiculo. */
+        al_dia: !advertencias && !faltantes && filas.length > 0,
         por_tipo: Object.entries(porTipo).map(([k, v]) => ({
           doc_type: k, label: TIPOS[k] || k, ...v,
         })),

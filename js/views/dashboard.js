@@ -18,6 +18,19 @@ import { $ } from '../core/dom.js';
 import { gotoAviso } from './avisos.js';
 import { injectPeriodTimeline } from './period-timeline.js';
 import { injectPayCard } from './pay-card.js';
+// v6.227 — barra de recaudos, compartida por los DOS Inicios. Vive aparte
+// para que el del admin y el de la tienda no digan cosas distintas del
+// mismo dato: se arman por caminos separados y esa es justo la trampa.
+import { injectDocBar } from './doc-bar.js';
+
+/* v6.227 — Ir al Control de recaudos. Se hace clic en el boton del menu en
+   vez de llamar a navigate(): navigate vive en panel.js, que importa a este
+   modulo, y pedirselo de vuelta cerraria el ciclo. El boton ademas ya
+   respeta el permiso: si el rol no lo tiene, no existe y no pasa nada. */
+function irAControlRecaudos() {
+  const b = document.querySelector('#pnlNav button[data-view="doccontrol"]');
+  if (b) b.click();
+}
 
 /* ---------- helpers ---------- */
 function esc(s) { return String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c])); }
@@ -521,6 +534,13 @@ async function renderCompanyDash(user) {
   injectPeriodTimeline($('#pnlMain'));
   // Tarjeta de estado de pago del periodo, JUSTO debajo de la linea de tiempo.
   injectPayCard($('#pnlMain'), user.companyCode);
+  /* v6.227 — recaudos, arriba de los accesos rapidos (lo que en el Inicio
+     de la tienda ocupa el lugar de los KPIs). Best-effort a proposito: esta
+     barra no puede ser nunca el motivo de que el Inicio se vea roto. */
+  try {
+    const ancla = $('#pnlMain').querySelector('.dash-quick');
+    if (ancla) await injectDocBar(ancla, user, irAControlRecaudos);
+  } catch (_) { /* sin barra, el Inicio va igual */ }
 }
 
 /* ===================== DASHBOARD ADMIN ===================== */
@@ -644,6 +664,11 @@ async function renderAdminDash(user) {
   injectPeriodTimeline($('#pnlMain'));
   // v5.16: aviso de doble empleo (solo si hay casos y el rol lo permite).
   injectDoubleEmpCard({ kind: user.kind, id: user.id || null, companyCode: user.companyCode || null });
+  // v6.227 — recaudos, ARRIBA de los KPIs.
+  try {
+    const ancla = $('#pnlMain').querySelector('.dash-kpis');
+    if (ancla) await injectDocBar(ancla, user, irAControlRecaudos);
+  } catch (_) { /* sin barra, el Inicio va igual */ }
 }
 
 /* ===================== demografia (sexo / edades / estado civil) ===================== */
