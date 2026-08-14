@@ -633,8 +633,79 @@ function openIngresoModal(ctx, id) {
   (g.docs || []).forEach(d => {
     if (d && d.required_doc_id) docState[d.required_doc_id] = {
       file_name: d.file_name || null, file_b64: d.file_b64 || null, file_type: d.file_type || null,
+      brf: d.brf || null,
     };
   });
+
+  /* ---- Referencia bancaria validada en el alta (v6.231) --------------
+     Hasta ahora el PDF del banco viajaba como adjunto del ticket y no
+     quedaba en el portal: cuando la persona entraba al maestro, su ficha
+     nacia sin referencia y alguien tenia que volver a pedirsela. Ademas el
+     ingreso solo miraba peso y extension, asi que un PDF de otra persona
+     entraba sin que nadie lo notara -y esa es exactamente la via por la que
+     el mismo documento de un tercero termino cargado para dos trabajadores
+     de CB02-.
+
+     Se reusan las piezas de bank-ref-ficha.js (extractText/parseFields/
+     evaluate) en vez de reimplementarlas. Duplicar el parser habria sido
+     garantizar que en unos meses la ficha y el ingreso opinen distinto sobre
+     el mismo archivo, que es el problema que esta fase vino a cerrar.
+
+     Se compara contra lo que la tienda ACABA de escribir en el formulario
+     (cedula y cuenta), no contra el maestro: la persona todavia no existe.
+     Import dinamico para no cargar pdfjs en cada ingreso, solo cuando de
+     verdad adjuntan una referencia. */
+  const NLX = String.fromCharCode(10);
+  const BRF_KIND = 'bank_reference';
+  const esRefBancaria = (d) => d && d.doc_kind === BRF_KIND;
+
+  async function validarRef(docId, file) {
+    const st = docState[docId];
+    if (!st) return;
+    st.brf = { estado: 'leyendo' };
+    renderDocs();
+    try {
+      const mod = await import('../views/bank-ref-ficha.js');
+      const buf = await file.arrayBuffer();
+      const texto = await mod.extractText(buf);
+      const campos = mod.parseFields(texto, CAT.bankMap || {});
+      const cedV = DW.validateCedula(q('#ig_ced').value);
+      const accV = validAccount(q('#ig_account').value);
+      const nombre = [q('#ig_first').value, q('#ig_second').value, q('#ig_last').value]
+        .map(x => x.trim()).filter(Boolean).join(' ').toUpperCase();
+      const ev = mod.evaluate(campos,
+        { id_number: cedV.ced || '', full_name: nombre },
+        accV.account || '', CAT.bankMap || {});
+      const err = ev.warnings.find(w => w.level === 'err');
+      const warn = ev.warnings.find(w => w.level === 'warn');
+      st.brf = {
+        estado: err ? 'err' : (warn ? 'warn' : 'ok'),
+        mensaje: (err || warn) ? (err || warn).text : 'Coincide con los datos cargados en el formulario.',
+        campos, validaciones: ev.validaciones,
+      };
+    } catch (e) {
+      /* Un PDF ilegible, escaneado o protegido no puede frenar un alta: el
+         recaudo se guarda igual y queda para revisar desde la ficha. */
+      st.brf = { estado: 'nolegible', mensaje: 'No se pudo leer el PDF para verificarlo. Se adjunta igual y queda para revisar.' };
+    }
+    renderDocs();
+  }
+
+  function brfHtml(d, st) {
+    if (!esRefBancaria(d) || !st || !st.brf) return '';
+    const b = st.brf;
+    if (b.estado === 'leyendo') return `<div class="igbrf">Leyendo el PDF…</div>`;
+    const cls = { ok: 'ok', warn: 'wrn', err: 'err', nolegible: '' }[b.estado] || '';
+    const ic  = { ok: '✓', warn: '⚠', err: '✕', nolegible: 'ℹ' }[b.estado] || 'ℹ';
+    const c = b.campos || {};
+    const datos = (b.estado === 'ok' || b.estado === 'warn') ? `<div class="igbrf-x">
+      ${c.banco_nombre ? `<span>Banco <b>${esc(c.banco_nombre)}</b></span>` : ''}
+      ${c.cuenta_last4 ? `<span>Cuenta <b>···${esc(c.cuenta_last4)}</b></span>` : ''}
+      ${c.nombre_pdf ? `<span>A nombre de <b>${esc(c.nombre_pdf)}</b></span>` : ''}
+      ${c.cedula_pdf ? `<span>C.I. <b>${esc(c.cedula_pdf)}</b></span>` : ''}
+    </div>` : '';
+    return `<div class="igbrf ${cls}"><b>${ic}</b> ${esc(b.mensaje)}${datos}</div>`;
+  }
 
   function renderDocs() {
     const box = q('#ig_docs');
@@ -649,7 +720,7 @@ function openIngresoModal(ctx, id) {
       return `<div class="docrow">
         <span class="docrow-name">📄 ${esc(d.name)}</span>
         <span class="docrow-act">${right}</span>
-      </div>`;
+      </div>${brfHtml(d, st)}`;
     }).join('') +
       `<div class="docrow-foot" id="ig_docs_foot"></div>`;
     updateDocsFoot();
@@ -690,8 +761,13 @@ function openIngresoModal(ctx, id) {
           file_name: f.name,
           file_b64: String(reader.result).split(',')[1] || null,
           file_type: f.type || 'application/octet-stream',
+          brf: null,
         };
         renderDocs();
+        // Solo la referencia bancaria y solo en PDF: el parser lee texto, y
+        // una foto de la carta no tiene texto que leer.
+        const cat = CATDOCS.find(x => x.id === docId);
+        if (esRefBancaria(cat) && ext === 'pdf') validarRef(docId, f);
       };
       reader.readAsDataURL(f);
     });
@@ -871,6 +947,19 @@ function openIngresoModal(ctx, id) {
   });
   saveB.addEventListener('click', () => {
     if (Object.keys(check()).length) return;
+    /* v6.231 — Unico bloqueo nuevo, y solo para el caso que la evidencia
+       sostiene: cedula del PDF LEGIBLE, distinta, y ademas la cuenta no es la
+       del trabajador. Medido sobre las 532 referencias ya cargadas eso ocurre
+       2 veces, y las 2 son el mismo PDF de un tercero. Todo lo demas -PDF
+       ilegible, cedula con un digito mal, banco raro- avisa y deja pasar: una
+       validacion que traba altas legitimas termina siendo desactivada. */
+    const malo = CATDOCS.filter(d => esRefBancaria(d))
+      .map(d => docState[d.id]).find(st => st && st.brf && st.brf.estado === 'err');
+    if (malo) {
+      alert(`No se puede guardar con esa referencia bancaria.${NLX}${NLX}${malo.brf.mensaje}${NLX}${NLX}`
+        + 'Adjuntá la referencia del trabajador, o quitá el archivo y cargala después desde su ficha.');
+      return;
+    }
     const cedV = DW.validateCedula(q('#ig_ced').value);
     const accV = validAccount(q('#ig_account').value);
     const phoneV = validPhone(q('#ig_phone').value);
@@ -901,6 +990,9 @@ function openIngresoModal(ctx, id) {
           file_name: docState[d.id].file_name,
           file_b64: docState[d.id].file_b64,
           file_type: docState[d.id].file_type,
+          // Lo que el parser leyo del PDF. El backend lo guarda en
+          // bank_references al aprobar, sin volver a parsear nada.
+          brf: docState[d.id].brf || null,
         })),
     };
 

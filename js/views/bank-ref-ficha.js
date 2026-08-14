@@ -52,6 +52,12 @@ function nameKey(s) {
   return String(s || '').toUpperCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '')
     .replace(/[^A-Z\s]/g, ' ').split(/\s+/).filter(Boolean).sort().join(' ');
 }
+/* v6.231 — Se EXPORTAN las tres piezas puras (leer el PDF, extraer los
+   campos, evaluarlos) para que el wizard de Ingreso valide la referencia
+   con EXACTAMENTE la misma logica que la ficha, sin montar toda la
+   tarjeta -que ademas lista, firma y anula, cosas que en un alta no
+   existen todavia-. Duplicar el parser habria sido garantizar que en seis
+   meses la ficha y el ingreso juzguen distinto el mismo PDF. */
 function nameSim(a, b) {
   const ka = nameKey(a), kb = nameKey(b);
   if (!ka || !kb) return false;
@@ -97,7 +103,7 @@ function detectBank(text, acctPrefix) {
 }
 
 /* ---------- parser de campos ---------- */
-function parseFields(rawText, bankMap) {
+export function parseFields(rawText, bankMap) {
   const text = collapse(rawText);
   const out = { plantilla: 'otro', banco_code: null, banco_nombre: null, cuenta: null, cuenta_last4: null,
     tipo_cuenta: null, cedula_pdf: null, nombre_pdf: null, nro_operacion: null, fecha_emision: null };
@@ -158,7 +164,7 @@ function parseFields(rawText, bankMap) {
 }
 
 /* ---------- semaforos vs la ficha ---------- */
-function evaluate(fields, w, mercAcct, bankMap) {
+export function evaluate(fields, w, mercAcct, bankMap) {
   const fichaCed = digits(w.id_number);
   const cedOk = !!fields.cedula_pdf && digits(fields.cedula_pdf) === fichaCed;
   const nameOk = !!fields.nombre_pdf && nameSim(fields.nombre_pdf, w.full_name);
@@ -179,18 +185,46 @@ function evaluate(fields, w, mercAcct, bankMap) {
   }
   const bankOk = !!prefKnown && !incoherent;
 
+  /* --- Titularidad (v6.231). Reescrito tras medir los 532 documentos ya
+     cargados: la regla anterior acusaba 'es de otra persona' 9 veces y solo 2
+     lo eran. Las otras 7 tenian la cedula ILEGIBLE -el parser no la saca, casi
+     siempre BNC- y en 6 la cuenta del PDF coincidia digito por digito con la
+     del trabajador. Acusar por un dato que no se pudo leer no es una
+     validacion estricta: es una acusacion sin evidencia, y en el wizard de
+     Ingreso ademas habria trabado altas legitimas.
+
+     Dos reglas, las mismas que usa doc_estado_personal en la base para que la
+     ficha y el ingreso nunca juzguen distinto el mismo PDF:
+       1. LA CUENTA MANDA. Si la cuenta del PDF es la del trabajador, el
+          documento es suyo. Es prueba mas fuerte que el nombre (que lo
+          escribe el banco y a veces deforma) y que la cedula.
+       2. NO SE ACUSA CON DATOS ILEGIBLES. Sin cedula legible se pide revisar,
+          no se afirma que sea de un tercero.
+     Con esto los 9 quedan en 2, y esos 2 son reales: el mismo PDF de MANUEL
+     MENDOZA subido como referencia de dos trabajadores distintos de CB02. --- */
+  const l4Pdf = fields.cuenta_last4 || (cuenta ? digits(cuenta).slice(-4) : '');
+  const l4Ref = digits(mercAcct || '').slice(-4);
+  const cuentaEsSuya = !!l4Pdf && l4Pdf.length === 4 && l4Pdf === l4Ref;
+
   const warnings = [];
-  if (!cedOk) {
-    if (nameOk) warnings.push({ level: 'warn', code: 'cedula_mismatch', text: `La cédula del PDF (${fields.cedula_pdf ? fmtCed(fields.cedula_pdf) : '—'}) no coincide con la de la ficha (${fmtCed(fichaCed)}), aunque el nombre sí. Posible dígito mal escrito.` });
-    else warnings.push({ level: 'err', code: 'other_person', text: `El PDF parece de otra persona (${fields.nombre_pdf || '—'}, ${fields.cedula_pdf ? fmtCed(fields.cedula_pdf) : '—'}), no del trabajador. Solo se aceptan cuentas del titular.` });
+  if (cuentaEsSuya || cedOk) {
+    /* Confirmado. Sin advertencia de titularidad. */
+  } else if (!fields.cedula_pdf) {
+    warnings.push({ level: 'warn', code: 'ilegible', text: 'No se pudo leer la cédula del PDF y la cuenta no coincide con la cargada. Verificá que el documento sea del trabajador.' });
+  } else if (nameOk) {
+    warnings.push({ level: 'warn', code: 'cedula_mismatch', text: `La cédula del PDF (${fmtCed(fields.cedula_pdf)}) no coincide con la de la ficha (${fmtCed(fichaCed)}), aunque el nombre sí. Posible dígito mal escrito.` });
+  } else {
+    warnings.push({ level: 'err', code: 'other_person', text: `El PDF es de otra persona (${fields.nombre_pdf || '—'}, ${fmtCed(fields.cedula_pdf)}) y la cuenta tampoco es la del trabajador. Solo se aceptan cuentas del titular.` });
   }
   // Nombre: cuando la cédula coincide NO se advierte por el nombre (los bancos
   // lo deforman — ej. Banesco). El nombre es solo informativo; manda la cédula.
   if (incoherent) warnings.push({ level: 'warn', code: 'bank_incoherent', text: 'La carta parece de un banco distinto al del número de cuenta. Revísalo.' });
 
   const validaciones = { cedula_ok: cedOk, banco_ok: bankOk, formato_ok: !!acctOk, nombre_ok: nameOk,
+    cuenta_es_suya: cuentaEsSuya,
     ficha_cedula: fichaCed, ficha_nombre: w.full_name || '', warnings };
-  return { cedOk, nameOk, acctOk: !!acctOk, prefKnown: !!prefKnown, bankOk, incoherent, cuenta, warnings, validaciones };
+  return { cedOk, nameOk, acctOk: !!acctOk, prefKnown: !!prefKnown, bankOk, incoherent, cuenta,
+    cuentaEsSuya, warnings, validaciones };
 }
 
 /* ---------- estilos (una sola vez) ---------- */
@@ -524,7 +558,7 @@ function sem(kind, txt) {
 }
 
 /* ---------- pdfjs: extraer texto plano ---------- */
-async function extractText(arrayBuffer) {
+export async function extractText(arrayBuffer) {
   const pdfjs = await ensurePdfjs();
   const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise;
   let out = '';

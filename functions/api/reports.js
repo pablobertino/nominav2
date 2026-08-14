@@ -274,6 +274,17 @@ function osAttach(filename, base64, mime) {
   return { [filename]: `data:${mime || 'application/octet-stream'};base64,${base64}` };
 }
 
+/* base64 -> Uint8Array. Necesario desde la v6.231 para subir la referencia
+   bancaria a Storage: base64Bytes solo mide el tamano, no decodifica. */
+function b64ToBytes(b64) {
+  const limpio = String(b64 || '').replace(/^data:[^;]+;base64,/, '').replace(/\s/g, '');
+  let bin = '';
+  try { bin = atob(limpio); } catch (_) { return new Uint8Array(0); }
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
 // Tamano real (en bytes) que representa un string base64, sin decodificarlo.
 // Un base64 de longitud L codifica floor(L/4)*3 bytes menos el padding '='
 // (cada '=' final resta 1 byte). Sirve para validar el peso de un adjunto
@@ -1837,7 +1848,7 @@ async function submitIngreso(env, body) {
   // Catalogo fijo de documentos que se piden a CADA persona que ingresa.
   // map por id -> {id,name,enforcement}. Si un doc es 'block' y la persona
   // no adjunta su archivo, el envio se rechaza (no se registra el reporte).
-  const ingDocs = await sb(env, 'required_docs?incidence_code=eq.ingreso&is_active=eq.true&select=id,name,enforcement,is_required&order=sort_order');
+  const ingDocs = await sb(env, 'required_docs?incidence_code=eq.ingreso&is_active=eq.true&select=id,name,enforcement,is_required,doc_kind&order=sort_order');
   const ingDocMap = {};
   (ingDocs || []).forEach(d => { ingDocMap[d.id] = { id: d.id, name: d.name, enforcement: d.enforcement || 'warn' }; });
 
@@ -1994,6 +2005,8 @@ async function submitIngreso(env, body) {
         _b64: b64 || null,
         _fname: fname || `${cat.name}_${ced}`,
         _ftype: ftype || 'application/octet-stream',
+        _kind: cat.doc_kind || null,
+        _brf: (sent && sent.brf && typeof sent.brf === 'object') ? sent.brf : null,
       });
     });
     if (docErr) return;
@@ -2124,6 +2137,76 @@ async function submitIngreso(env, body) {
       await sb(env, 'ingreso_report_docs', { method: 'POST', body: JSON.stringify(docsPayload) });
     }
   }
+
+  /* --- La referencia bancaria deja de perderse (v6.231) ------------------
+     Hasta aca el PDF solo viajaba a osTicket. Cuando la persona entraba al
+     maestro su ficha nacia sin referencia y habia que volver a pedirsela: de
+     eso salen buena parte de los ~4650 recaudos faltantes que hoy muestra el
+     Control de recaudos.
+
+     bank_references se indexa por CEDULA y no exige que el trabajador exista
+     en workers_master, asi que se puede guardar ahora y la ficha lo encuentra
+     sola el dia que el alta se hace efectiva. Sin migracion ni proceso
+     posterior que alguien tenga que acordarse de correr.
+
+     Se guarda 'pendiente', igual que lo cargado desde la ficha: esta fase
+     hace que el documento no se pierda, no cambia quien lo aprueba.
+
+     Va al final y con su propio try: si Storage falla, el reporte ya quedo
+     registrado y los tickets salen igual. Perder la copia es molesto; perder
+     el alta entera por no poder guardar un adjunto seria mucho peor. */
+  try {
+    for (const l of clean) {
+      for (const d of (l._docs || [])) {
+        if (d._kind !== 'bank_reference' || !d._b64) continue;
+        const ced = String(l.worker_id_number || '').replace(/\D/g, '');
+        if (!ced) continue;
+        // Una sola por cedula: si la tienda ya la habia cargado antes, no se
+        // duplica. La ficha muestra la ultima y ver dos iguales confunde.
+        const ya = await sb(env, `bank_references?id_number=eq.${encodeURIComponent(ced)}&select=id&limit=1`);
+        if (Array.isArray(ya) && ya.length) continue;
+
+        const bytes = b64ToBytes(d._b64);
+        if (!bytes.length) continue;
+        const path = `${ced}/${Date.now()}.pdf`;
+        const up = await fetch(`${env.supabase_url}/storage/v1/object/bank-refs/${path}`, {
+          method: 'POST',
+          headers: {
+            apikey: env.supabase_service_role,
+            Authorization: `Bearer ${env.supabase_service_role}`,
+            'Content-Type': d._ftype || 'application/pdf',
+            'x-upsert': 'true',
+          },
+          body: bytes,
+        });
+        if (!up.ok) continue;
+
+        const c = (d._brf && d._brf.campos) || {};
+        await sb(env, 'bank_references', {
+          method: 'POST',
+          body: JSON.stringify({
+            id_number: ced,
+            plantilla: c.plantilla || 'otro',
+            banco_code: c.banco_code || null,
+            banco_nombre: c.banco_nombre || null,
+            cuenta: c.cuenta ? String(c.cuenta).replace(/\D/g, '').slice(0, 20) : null,
+            cuenta_last4: c.cuenta_last4 || null,
+            tipo_cuenta: c.tipo_cuenta || null,
+            cedula_pdf: c.cedula_pdf ? String(c.cedula_pdf).replace(/\D/g, '') : null,
+            nombre_pdf: c.nombre_pdf || null,
+            nro_operacion: c.nro_operacion || null,
+            fecha_emision: c.fecha_emision || null,
+            fecha_apertura: c.fecha_apertura || null,
+            validaciones: (d._brf && d._brf.validaciones) || { origen: 'ingreso', sin_parsear: true },
+            estado: 'pendiente',
+            storage_path: path,
+            uploaded_by: `ingreso:${responsible || cc}`,
+          }),
+        });
+      }
+    }
+  } catch (_) { /* el alta ya quedo registrada; la copia se puede recargar desde la ficha */ }
+
 
   // ─── ENVIO A OSTICKET ───
   // 1 ticket PLA (resumen de todas las personas + Excel accion A) +

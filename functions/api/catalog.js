@@ -98,7 +98,10 @@ export async function onRequestPost({ request, env }) {
       // Recaudos del ingreso (required_docs con incidence_code='ingreso', activos).
       // El modal de Alta los pide por trabajador; el envio los manda como
       // tickets DOC (uno por recaudo y por persona). enforcement: block/warn/optional.
-      const docs = await sb(env, 'required_docs?incidence_code=eq.ingreso&is_active=eq.true&select=id,name,note,enforcement,is_required,sort_order&order=sort_order');
+      // doc_kind (v6.231): dice cual de estos recaudos tiene equivalente en la
+      // ficha. El wizard lo usa para validar la referencia bancaria con el
+      // mismo parser que la ficha, en vez de reconocerla por el nombre.
+      const docs = await sb(env, 'required_docs?incidence_code=eq.ingreso&is_active=eq.true&select=id,name,note,enforcement,is_required,sort_order,doc_kind&order=sort_order');
       const settings = await sb(env, 'app_settings?key=in.(corte_hora_limite,corte_margen_dias,futuro_ingreso_egreso_dias,doc_max_file_mb,doc_max_total_mb,doc_allowed_ext)&select=key,value');
       const sm = {};
       (settings || []).forEach(s => { sm[s.key] = s.value; });
