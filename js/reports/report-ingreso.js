@@ -171,6 +171,57 @@ function startDateError(date, win) {
   return null;
 }
 
+/* =====================================================================
+   LIMITES DEL SELECTOR DE FECHA (v6.221).
+
+   Un <input type="date"> nativo NO sabe deshabilitar dias sueltos: solo
+   entiende min y max. No hay forma de agujerear el calendario entre el 13 y
+   el 15 dejando el 16 habilitado — para eso habria que reemplazar el
+   control por un calendario propio, que es mucho mas de lo que el problema
+   pide.
+
+   Lo que SI se puede, y es el caso mas frecuente, es cuando el rango
+   bloqueado toca el BORDE de la ventana: si se admite hasta el 29 y el 29
+   ya esta bloqueado, el tope baja al 28 y el dia directamente no aparece en
+   el control. Igual del lado de abajo.
+
+   Cuando el bloqueo queda en el MEDIO de la ventana, el calendario lo
+   ofrece igual y ahi actua la segunda red: al elegirlo, la fecha se borra
+   sola y queda el aviso. Es menos elegante que un dia gris, pero no deja
+   pasar el dato.
+   ===================================================================== */
+function limMax(maxDate) {
+  if (!maxDate) return '';
+  const r = rangoDe(maxDate);
+  return r ? DW.addDays(r.desde, -1) : maxDate;
+}
+function limMin(minDate) {
+  if (!minDate) return '';
+  const r = rangoDe(minDate);
+  return r ? DW.addDays(r.hasta, 1) : minDate;
+}
+function rangoDe(date) {
+  const cfg = CAT.ingresoBloqueo;
+  if (!cfg || !cfg.dias || !Array.isArray(cfg.rangos)) return null;
+  return cfg.rangos.find(x => date >= x.desde && date <= x.hasta) || null;
+}
+
+/* Si queda un cierre de quincena DENTRO de la ventana, se avisa antes de que
+   la persona lo elija. El calendario nativo no lo puede tachar, asi que al
+   menos que no sea una sorpresa al hacer clic. */
+function avisoCierre(win) {
+  const cfg = CAT.ingresoBloqueo;
+  if (!cfg || !cfg.dias || !Array.isArray(cfg.rangos)) return '';
+  const a = limMin(win.minDate), b = limMax(win.maxDate);
+  const dentro = cfg.rangos.filter(r => r.hasta >= a && r.desde <= b);
+  if (!dentro.length) return '';
+  return ' <b>No se admite</b> ' + dentro
+    .map(r => (r.desde === r.hasta
+      ? `el ${DW.fmtDate(r.desde)}`
+      : `del ${DW.fmtDate(r.desde)} al ${DW.fmtDate(r.hasta)}`))
+    .join(' ni ') + ' (cierre de quincena).';
+}
+
 /* Devuelve el aviso si la fecha cae en un cierre de quincena, o null. */
 function bloqueoDe(date) {
   const cfg = CAT.ingresoBloqueo;
@@ -517,9 +568,9 @@ function openIngresoModal(ctx, id) {
 
       <div class="ig-band" data-nrdim>
         <div class="ig-band-t">📅 Fecha inicial de empleo <span style="color:var(--danger)">*</span></div>
-        <input type="date" id="ig_start" min="${win.minDate || ''}" max="${win.maxDate}" value="${g.startDate || ''}">
+        <input type="date" id="ig_start" min="${limMin(win.minDate)}" max="${limMax(win.maxDate)}" value="${g.startDate || ''}">
         <div class="date-err" id="e_start" style="color:var(--danger);font-size:12px;min-height:15px;margin-top:5px"></div>
-        <div class="hint" style="margin-top:4px">Dato principal del reporte. Admite del ${DW.fmtDate(win.minDate)} al ${DW.fmtDate(win.maxDate)}.</div>
+        <div class="hint" style="margin-top:4px">Dato principal del reporte. Admite del ${DW.fmtDate(limMin(win.minDate))} al ${DW.fmtDate(limMax(win.maxDate))}.${avisoCierre(win)}</div>
       </div>
 
       <div class="ig-sec" data-nrdim>Identidad</div>
@@ -657,6 +708,19 @@ function openIngresoModal(ctx, id) {
   q('#ig_birth').addEventListener('input', () => { showAge(); check(); });
   ['#ig_start', '#ig_first', '#ig_second', '#ig_last', '#ig_cargo', '#ig_gender', '#ig_marital', '#ig_email', '#ig_address']
     .forEach(sel => { const el = q(sel); el.addEventListener('input', check); el.addEventListener('change', check); });
+
+  /* v6.221 — Segunda red para el cierre de quincena. Cuando el rango
+     bloqueado queda en el MEDIO de la ventana, el calendario nativo lo
+     ofrece igual (min/max no pueden agujerear el medio). Si se elige uno de
+     esos dias, la fecha se borra y queda el aviso: es preferible dejar el
+     campo vacio -que se ve- a dejar puesto un dato que el servidor va a
+     rechazar recien al enviar todo el reporte.
+     Va en 'change' y no en 'input': mientras se tipea a mano, un 2 puede
+     ser el principio de un 20, y borrarle el campo a alguien que esta
+     escribiendo es peor que el problema. */
+  q('#ig_start').addEventListener('change', function () {
+    if (this.value && bloqueoDe(this.value)) { this.value = ''; check(); }
+  });
 
   function showAge() {
     const v = q('#ig_birth').value, b = q('#ig_age');
