@@ -821,6 +821,21 @@
    etiqueta del catalogo porque es lo unico que explica de verdad. */
 .rc-txt { font-style:italic; color:var(--ink); }
 
+/* ===== X de los wizards (v6.223) =====
+   Los cinco formularios de reporte se cierran igual: X arriba a la derecha,
+   Escape, y pregunta antes de descartar si hay algo cargado. El boton lo
+   inyecta js/reports/shared/wizard-close.js para que sea el MISMO en los
+   cinco; si viviera en cada plantilla, tarde o temprano uno tendria otro
+   tamaño. El h3 lleva sangria a la derecha para que un titulo largo no se
+   le encime. */
+.modal-ov .wz-x { position:absolute; top:14px; right:16px; width:32px; height:32px;
+  display:flex; align-items:center; justify-content:center;
+  border:1px solid var(--border); border-radius:9px; background:#fff;
+  color:var(--ink-soft); cursor:pointer; font-size:15px; line-height:1; z-index:6;
+  transition:background .12s, border-color .12s, color .12s; }
+.modal-ov .wz-x:hover { background:var(--danger-bg); border-color:var(--danger); color:var(--danger); }
+.modal-ov .modal > h3:first-of-type { padding-right:44px; }
+
 /* La aclaracion de que NO se cuenta en la vista por persona. Va arriba de
    la tabla y no en un tooltip: es lo que explica por que una tienda con 110
    marcajes puede no tener ninguna persona en la lista, y sin eso la

@@ -28,7 +28,7 @@
 import { $ } from '../core/dom.js';
 import { getSession } from '../core/session.js';
 import * as DW from './shared/date-window.js';
-import { confirmModal } from './shared/ticket-actions.js';
+import { wireWizardClose, algunoConValor } from './shared/wizard-close.js';
 
 // Catalogos del wizard (cargos + bancos + operadoras + ventana). Una vez.
 let CAT = null;
@@ -97,15 +97,8 @@ function ensureIngresoCss() {
   .ig-modal{display:flex;flex-direction:column;padding:0 !important;overflow:hidden !important;max-height:88vh}
   .ig-mhead{flex:none;background:#fff;position:relative;z-index:5;box-shadow:0 4px 12px rgba(15,23,42,.07)}
   .ig-mhead h3{margin:0;padding:20px 26px 2px;padding-right:56px}
-  /* v6.222 — Cerrar desde arriba. El encabezado no scrollea, asi que la X
-     queda siempre a mano; antes habia que bajar hasta el final para llegar
-     al Cancelar. Se separa del titulo con padding-right para que en un
-     titulo largo no se le encime. */
-  .ig-x{position:absolute;top:14px;right:16px;width:32px;height:32px;display:flex;
-    align-items:center;justify-content:center;border:1px solid var(--border);
-    border-radius:9px;background:#fff;color:var(--ink-soft,#475569);cursor:pointer;
-    font-size:15px;line-height:1;transition:background .12s,border-color .12s,color .12s}
-  .ig-x:hover{background:var(--danger-bg,#fdecec);border-color:var(--danger,#dc2626);color:var(--danger,#dc2626)}
+  /* v6.223 — la X la inyecta shared/wizard-close.js sobre .ig-mhead y su
+     estilo (.wz-x) vive en panel.css, compartido con los otros wizards. */
   .ig-mhead .who{margin:0;padding:0 26px 12px}
   .ig-mbody{flex:1;min-height:0;overflow:auto;padding:16px 26px 24px}
   .ig-nrbanner{background:#fef2f2;border-top:1px solid #fecaca;border-bottom:2px solid #fca5a5;
@@ -570,7 +563,6 @@ function openIngresoModal(ctx, id) {
   ov.innerHTML = `
     <div class="modal modal-wide ig-modal">
       <div class="ig-mhead">
-        <button type="button" class="ig-x" id="ig_x" aria-label="Cerrar" title="Cerrar (Esc)">✕</button>
         <h3>${id ? 'Editar ingreso' : 'Nuevo ingreso (Alta)'}</h3>
         <p class="who">Acción <span class="pill pill-set">A · Alta</span> · Data ID <b>${companyLabel}</b> (automático, de la empresa)</p>
         <div id="ig_nrslot"></div>
@@ -865,30 +857,18 @@ function openIngresoModal(ctx, id) {
      Cancelar hace lo MISMO: hoy cerraba de una y perdia lo cargado igual,
      solo que nadie se quejaba porque estaba lejos. El riesgo era el mismo.
      ===================================================================== */
-  const hayDatos = () => ['#ig_start', '#ig_first', '#ig_second', '#ig_last', '#ig_ced',
-    '#ig_birth', '#ig_account', '#ig_phone', '#ig_email', '#ig_address']
-    .some(sel => { const el = q(sel); return el && String(el.value || '').trim(); })
-    || (q('#ig_cargo') && q('#ig_cargo').value);
-
-  const cerrar = async () => {
-    if (hayDatos()) {
-      const ok = await confirmModal({
-        title: 'Descartar el ingreso',
-        message: 'Ya cargaste datos de esta persona. Si cerrás ahora se pierden.',
-        confirmText: 'Descartar', cancelText: 'Seguir cargando', danger: true,
-      });
-      if (!ok) return;
-    }
-    document.removeEventListener('keydown', onEsc);
-    ov.remove();
-  };
-  // Escape cierra, con la misma pregunta. No se captura cuando el foco esta
-  // en el modal de confirmacion: ese ya tiene su propio Escape.
-  const onEsc = (e) => { if (e.key === 'Escape' && document.body.contains(ov)) cerrar(); };
-  document.addEventListener('keydown', onEsc);
-
-  q('#ig_x').addEventListener('click', cerrar);
-  q('#ig_cancel').addEventListener('click', cerrar);
+  /* v6.223 — Pasa al helper compartido. En la v6.222 esto vivia aca con su
+     propia X y su propio Escape; al llevarlo a los otros cuatro wizards
+     habrian quedado cinco copias, que es exactamente lo que se desincroniza.
+     La X de este formulario se inyecta sobre .ig-mhead, que es su encabezado
+     fijo, y no sobre .modal como en los demas. */
+  wireWizardClose({
+    ov, caja: ov.querySelector('.ig-mhead'), cancelar: '#ig_cancel',
+    titulo: 'Descartar el ingreso',
+    mensaje: 'Ya cargaste datos de esta persona. Si cerrás ahora se pierden.',
+    hayDatos: algunoConValor(ov, ['#ig_start', '#ig_first', '#ig_second', '#ig_last',
+      '#ig_ced', '#ig_birth', '#ig_cargo', '#ig_account', '#ig_phone', '#ig_email', '#ig_address']),
+  });
   saveB.addEventListener('click', () => {
     if (Object.keys(check()).length) return;
     const cedV = DW.validateCedula(q('#ig_ced').value);

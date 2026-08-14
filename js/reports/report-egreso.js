@@ -29,6 +29,7 @@
 
 import { $ } from '../core/dom.js';
 import * as DW from './shared/date-window.js';
+import { wireWizardClose, algunoConValor } from './shared/wizard-close.js';
 
 // Catalogo de causas de no-adjunto (cargado una vez). Cada una: {code,label,waives_document}.
 let CAUSES = null;
@@ -511,7 +512,9 @@ function openConfig(ctx, id) {
   const onTouch = () => { touched = true; tmp.reportDate = dateEl.value; check(); };
   dateEl.addEventListener('input', onTouch);
   dateEl.addEventListener('change', onTouch);
-  ov.querySelector('#egCancel').addEventListener('click', () => ov.remove());
+  wireWizardClose({ ov, cancelar: '#egCancel',
+    hayDatos: algunoConValor(ov, ['#egDate', '#egCause', '#egCauseOther', '#egCauseNote',
+      '#egRealNote', '#egReason', '#egReasonComment']) });
   applyB.addEventListener('click', () => {
     // real efectiva: si el toggle esta on y hay fecha distinta, se guarda;
     // si no, real = report (la persona egreso en la fecha reportada).
@@ -600,7 +603,8 @@ function openBulk(ctx) {
   const onTouch = () => { touched = true; check(); };
   dateEl.addEventListener('input', onTouch);
   dateEl.addEventListener('change', onTouch);
-  ov.querySelector('#bCancel').addEventListener('click', () => ov.remove());
+  wireWizardClose({ ov, cancelar: '#bCancel',
+    hayDatos: algunoConValor(ov, ['#bDate', '#bReason', '#bNote']) });
   applyB.addEventListener('click', () => {
     const date = dateEl.value;
     const cause = causeEl.value || '';

@@ -25,6 +25,7 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { wireWizardClose } from './shared/wizard-close.js';
 
 // Catalogo del wizard (campos modificables + cargos/bancos/operadoras). Una vez.
 let CAT = null;
@@ -537,7 +538,16 @@ function openModifModal(ctx, id) {
     return out;
   }
 
-  q('#moCancel').addEventListener('click', () => ov.remove());
+  /* v6.223 — X arriba + Escape + pregunta si hay algo cargado.
+     Aca "hay datos" no son campos fijos: el formulario arma sus inputs
+     segun los campos que la persona eligio modificar. Se mira lo que haya
+     dentro del modal, sea lo que sea. */
+  wireWizardClose({
+    ov, cancelar: '#moCancel',
+    hayDatos: () => [...ov.querySelectorAll('input, select, textarea')]
+      .some(el => (el.type === 'checkbox' || el.type === 'radio')
+        ? el.checked : String(el.value || '').trim()),
+  });
   q('#moSave').addEventListener('click', () => {
     // Construir el objeto changes final (solo lo que cambia, ya validado y
     // normalizado). Para el nombre, las 3 sub-claves.

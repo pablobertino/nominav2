@@ -7,6 +7,7 @@
 
 import { $ } from '../core/dom.js';
 import * as DW from './shared/date-window.js';
+import { wireWizardClose, algunoConValor } from './shared/wizard-close.js';
 
 let CAUSES = null; // [{code,label,is_other}]
 
@@ -283,7 +284,10 @@ function openCfg(mode, ctx) {
   dtEl.addEventListener('change', () => { toggleHoras(); recheck(); });
   causeEl.addEventListener('change', () => { toggleOther(); recheck(); });
   otherEl.addEventListener('input', recheck);
-  ov.querySelector('#cfgCancel').addEventListener('click', () => ov.remove());
+  /* v6.223 — X arriba + Escape + pregunta si hay algo cargado. La logica
+     vive en shared/wizard-close.js para que los cinco wizards cierren igual. */
+  wireWizardClose({ ov, cancelar: '#cfgCancel',
+    hayDatos: algunoConValor(ov, ['#cfgDate', '#cfgCause', '#cfgIn', '#cfgOut', '#cfgOther']) });
   recheck();
 
   applyB.addEventListener('click', () => {

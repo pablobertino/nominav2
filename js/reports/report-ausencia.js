@@ -29,6 +29,7 @@
 
 import { $ } from '../core/dom.js';
 import * as DW from './shared/date-window.js';
+import { wireWizardClose, algunoConValor } from './shared/wizard-close.js';
 
 let TYPES = null; // [{code,label,ax_code,allows_future,note,past_window_days,past_uses_cutoff,future_window_days,docs:[...]}]
 let CUTOFF_TIME = '14:00'; // hora tope global (para tipos con past_uses_cutoff)
@@ -449,7 +450,8 @@ function openConfig(ctx, id) {
   fromEl.addEventListener('input', check);
   toEl.addEventListener('input', check);
 
-  ov.querySelector('#mCancel').addEventListener('click', () => ov.remove());
+  wireWizardClose({ ov, cancelar: '#mCancel',
+    hayDatos: algunoConValor(ov, ['#mFrom', '#mTo', '#mNote']) });
   applyB.addEventListener('click', () => {
     // Preservar el archivo leido (b64/tipo) que el reader dejo en w.absence.
     const prev = w.absence || {};
@@ -533,7 +535,8 @@ function openBulk(ctx) {
   }
   fromEl.addEventListener('input', check);
   toEl.addEventListener('input', check);
-  ov.querySelector('#bCancel').addEventListener('click', () => ov.remove());
+  wireWizardClose({ ov, cancelar: '#bCancel',
+    hayDatos: algunoConValor(ov, ['#bFrom', '#bTo', '#bNote']) });
   applyB.addEventListener('click', () => {
     const from = fromEl.value, to = toEl.value, note = noteEl.value.trim();
     let skipped = 0;
