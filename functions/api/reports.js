@@ -1849,6 +1849,30 @@ async function submitIngreso(env, body) {
     return a;
   };
 
+  /* v6.220 — CIERRE DE QUINCENA: fechas de ingreso que no se admiten.
+     Se resuelve UNA vez para todas las fechas distintas del reporte y no
+     una por linea: un ingreso de ocho personas suele traer la misma fecha
+     ocho veces, y serian ocho consultas para la misma respuesta.
+     Si la consulta falla NO se bloquea nada: es una regla de negocio, no un
+     control de seguridad, y trabar reportes por un error de red nuestro
+     seria peor que dejar pasar una fecha. */
+  let bloqueoIngreso = null;
+  try {
+    const fechas = [...new Set((lines || [])
+      .map(l => String((l && l.start_date) || '').slice(0, 10))
+      .filter(f => /^\d{4}-\d{2}-\d{2}$/.test(f)))];
+    if (fechas.length) {
+      const motivos = {};
+      await Promise.all(fechas.map(async (f) => {
+        const r = await sb(env, 'rpc/ingreso_bloqueo_motivo', {
+          method: 'POST', body: JSON.stringify({ p_fecha: f }),
+        });
+        if (r) motivos[f] = String(r);
+      }));
+      if (Object.keys(motivos).length) bloqueoIngreso = (f) => motivos[f] || null;
+    }
+  } catch (_) { bloqueoIngreso = null; }
+
   // --- Validacion linea por linea ---
   const clean = [];
   const errors = [];
@@ -1918,6 +1942,18 @@ async function submitIngreso(env, body) {
       } else {
         errors.push(`${tag}: la fecha de ingreso (${start}) esta fuera del margen reportable (desde ${reportMin}).`);
       }
+      return;
+    }
+    /* v6.220 — CIERRE DE QUINCENA. La fecha de ingreso no puede caer en los
+       ultimos N dias de su quincena (portal_params.ingreso_bloqueo_dias;
+       0 = apagado). Se mira la FECHA DE INGRESO y no el dia en que se
+       reporta: lo que hay que proteger es el calculo de la quincena, y una
+       persona que entra el 30 desordena la nomina aunque se cargue el 2.
+       El motivo lo redacta la base -una sola frase, no una en el server y
+       otra en el front- y se resuelve UNA vez por reporte, no por linea.
+       Aplica a TODOS, tienda y central: no hay excepcion. */
+    if (bloqueoIngreso && bloqueoIngreso(start)) {
+      errors.push(`${tag}: ${bloqueoIngreso(start)}`);
       return;
     }
 

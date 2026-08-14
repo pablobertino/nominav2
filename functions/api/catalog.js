@@ -122,6 +122,37 @@ export async function onRequestPost({ request, env }) {
           margin_days: parseInt(sm.corte_margen_dias, 10) || 2,
           future_days: parseInt(sm.futuro_ingreso_egreso_dias, 10) || 7,
         },
+        /* v6.220 — CIERRE DE QUINCENA. Los dias finales de cada quincena en
+           los que no se admite una fecha de ingreso. Viaja al wizard para
+           poder avisarlo ANTES de que el gerente cargue ocho personas y se
+           lo rechacen al final; el bloqueo de verdad sigue estando en
+           submit_ingreso, que es el unico que no se puede saltear.
+           Se mandan los rangos calculados y no el numero de dias: el front
+           no tiene que saber donde termina cada quincena, y asi no hay dos
+           formas de calcular lo mismo. */
+        ingreso_bloqueo: await (async () => {
+          try {
+            const rows = await sb(env, 'portal_params?key=eq.ingreso_bloqueo_dias&select=value');
+            const dias = rows && rows[0] ? (parseInt(rows[0].value, 10) || 0) : 0;
+            if (dias <= 0) return { dias: 0, rangos: [] };
+            const hoy = new Date().toISOString().slice(0, 10);
+            const per = await sb(env,
+              `payroll_periods?range_end=gte.${hoy}&select=range_start,range_end&order=range_start.asc&limit=4`);
+            const rangos = (per || []).map(p => {
+              const fin = p.range_end;
+              const d = new Date(`${fin}T00:00:00Z`);
+              d.setUTCDate(d.getUTCDate() - (dias - 1));
+              let desde = d.toISOString().slice(0, 10);
+              if (desde <= p.range_start) {
+                const ini = new Date(`${p.range_start}T00:00:00Z`);
+                ini.setUTCDate(ini.getUTCDate() + 1);
+                desde = ini.toISOString().slice(0, 10);
+              }
+              return { desde, hasta: fin };
+            });
+            return { dias, rangos };
+          } catch (_) { return { dias: 0, rangos: [] }; }
+        })(),
       });
     }
 

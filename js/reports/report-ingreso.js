@@ -125,9 +125,12 @@ async function loadCatalogs() {
     docs: res.docs || [],
     docLimits: res.doc_limits || { max_file_mb: 2, max_total_mb: 20, allowed_ext: ['jpg','jpeg','png','pdf','doc','docx'] },
     win: res.window_config || { cutoff_time: '14:00', margin_days: 2, future_days: 7 },
+    // v6.220 — dias de cierre de quincena donde no se admite fecha de
+    // ingreso. Sin dato = apagado, que es como nace el parametro.
+    ingresoBloqueo: res.ingreso_bloqueo || { dias: 0, rangos: [] },
     bankMap: Object.fromEntries((res.bancos || []).map(b => [b.code, b.name])),
     opMap: Object.fromEntries((res.operadoras || []).map(o => [o.code, o.name])),
-  } : { cargos: [], bancos: [], operadoras: [], docs: [], docLimits: { max_file_mb: 2, max_total_mb: 20, allowed_ext: ['jpg','jpeg','png','pdf','doc','docx'] }, win: { cutoff_time: '14:00', margin_days: 2, future_days: 7 }, bankMap: {}, opMap: {} };
+  } : { cargos: [], bancos: [], operadoras: [], docs: [], docLimits: { max_file_mb: 2, max_total_mb: 20, allowed_ext: ['jpg','jpeg','png','pdf','doc','docx'] }, win: { cutoff_time: '14:00', margin_days: 2, future_days: 7 }, ingresoBloqueo: { dias: 0, rangos: [] }, bankMap: {}, opMap: {} };
   return CAT;
 }
 
@@ -158,7 +161,24 @@ function startDateError(date, win) {
     }
     return `No puede ser anterior al ${DW.fmtDate(win.minDate)} (fuera del margen reportable).`;
   }
+  /* v6.220 — CIERRE DE QUINCENA. Se avisa acá para que el gerente lo vea al
+     escribir la fecha y no después de cargar ocho personas. El bloqueo real
+     está en el servidor (submit_ingreso): esto es cortesía, no la reja.
+     Los rangos vienen calculados del backend; el front no sabe -ni tiene por
+     qué- dónde termina cada quincena. */
+  const bl = bloqueoDe(date);
+  if (bl) return bl;
   return null;
+}
+
+/* Devuelve el aviso si la fecha cae en un cierre de quincena, o null. */
+function bloqueoDe(date) {
+  const cfg = CAT.ingresoBloqueo;
+  if (!cfg || !cfg.dias || !Array.isArray(cfg.rangos)) return null;
+  const r = cfg.rangos.find(x => date >= x.desde && date <= x.hasta);
+  if (!r) return null;
+  return `Del ${DW.fmtDate(r.desde)} al ${DW.fmtDate(r.hasta)} no se admiten ingresos `
+    + `(cierre de quincena). La primera fecha disponible es el ${DW.fmtDate(DW.addDays(r.hasta, 1))}.`;
 }
 
 /* Valida la cuenta: 20 digitos, prefijo en catalogo de bancos. */
