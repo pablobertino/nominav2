@@ -659,46 +659,146 @@ function openIngresoModal(ctx, id) {
   const BRF_KIND = 'bank_reference';
   const esRefBancaria = (d) => d && d.doc_kind === BRF_KIND;
 
+  /* El PDF se parsea UNA vez; la evaluacion se repite cada vez que cambia la
+     cedula o la cuenta del formulario. En la v6.231 se evaluaba solo al
+     adjuntar, y con el formulario todavia vacio el resultado quedaba
+     congelado: mostraba 'Coincide con los datos cargados' sin que hubiera
+     nada cargado con que coincidir. */
+  let BRFMOD = null;
+
   async function validarRef(docId, file) {
     const st = docState[docId];
     if (!st) return;
     st.brf = { estado: 'leyendo' };
     renderDocs();
     try {
-      const mod = await import('../views/bank-ref-ficha.js');
-      const buf = await file.arrayBuffer();
-      const texto = await mod.extractText(buf);
-      const campos = mod.parseFields(texto, CAT.bankMap || {});
-      const cedV = DW.validateCedula(q('#ig_ced').value);
-      const accV = validAccount(q('#ig_account').value);
-      const nombre = [q('#ig_first').value, q('#ig_second').value, q('#ig_last').value]
-        .map(x => x.trim()).filter(Boolean).join(' ').toUpperCase();
-      const ev = mod.evaluate(campos,
-        { id_number: cedV.ced || '', full_name: nombre },
-        accV.account || '', CAT.bankMap || {});
-      const err = ev.warnings.find(w => w.level === 'err');
-      const warn = ev.warnings.find(w => w.level === 'warn');
-      st.brf = {
-        estado: err ? 'err' : (warn ? 'warn' : 'ok'),
-        mensaje: (err || warn) ? (err || warn).text : 'Coincide con los datos cargados en el formulario.',
-        campos, validaciones: ev.validaciones,
-      };
+      BRFMOD = BRFMOD || await import('../views/bank-ref-ficha.js');
+      const texto = await BRFMOD.extractText(await file.arrayBuffer());
+      st.brf = { estado: 'pend', campos: BRFMOD.parseFields(texto, CAT.bankMap || {}) };
+      evaluarRef(docId);
     } catch (e) {
-      /* Un PDF ilegible, escaneado o protegido no puede frenar un alta: el
-         recaudo se guarda igual y queda para revisar desde la ficha. */
+      /* Un PDF escaneado, protegido o sin texto no puede frenar un alta: el
+         recaudo se adjunta igual y queda para revisar desde la ficha. */
       st.brf = { estado: 'nolegible', mensaje: 'No se pudo leer el PDF para verificarlo. Se adjunta igual y queda para revisar.' };
+      renderDocs();
     }
+  }
+
+  function evaluarRef(docId) {
+    const st = docState[docId];
+    if (!st || !st.brf || !st.brf.campos || !BRFMOD) return;
+    const c = st.brf.campos;
+    const cedV = DW.validateCedula(q('#ig_ced').value);
+    const accV = validAccount(q('#ig_account').value);
+
+    /* Sin cedula escrita no hay contra que verificar. Decirlo es mejor que
+       mostrar un tilde verde que no significa nada: apenas la escriban, esto
+       se re-evalua solo. */
+    /* Se exige la cedula COMPLETA y valida, no cualquier digito suelto: si se
+       comparara mientras la tipean, una cedula del PDF mas corta coincidiria
+       a mitad de camino y el campo se bloquearia antes de que terminen. */
+    if (!cedV.ok) {
+      st.brf.estado = 'pend';
+      st.brf.mensaje = 'Escribí la cédula del trabajador para poder verificar que la referencia sea suya.';
+      bloquearCampos(false);
+      renderDocs(); return;
+    }
+
+    const nombre = [q('#ig_first').value, q('#ig_second').value, q('#ig_last').value]
+      .map(x => x.trim()).filter(Boolean).join(' ').toUpperCase();
+    const ev = BRFMOD.evaluate(c, { id_number: cedV.ced, full_name: nombre },
+      accV.account || '', CAT.bankMap || {});
+    const err = ev.warnings.find(w => w.level === 'err');
+    const warn = ev.warnings.find(w => w.level === 'warn');
+
+    /* AUTOCOMPLETADO — y por que NO se autocompleta la cedula.
+       Copiar la cuenta del PDF al formulario ahorra tipear 20 digitos, que es
+       justo donde se cometen los errores. Pero cualquier dato que copiemos
+       deja de servir como verificacion: si llenaramos la cedula desde el PDF,
+       la comparacion seria el PDF contra si mismo y daria verde SIEMPRE. El
+       caso de CB02 -el PDF de MANUEL MENDOZA cargado para dos personas- se
+       habria dado por bueno, y ademas habria dado de alta a esos dos
+       trabajadores con la cedula de Mendoza.
+       Por eso: la cedula la escribe la persona y es la evidencia; la cuenta se
+       copia SOLO despues de que esa evidencia dio positivo. */
+    if (ev.cedOk && !st.brf.autollenado) {
+      const full = c.cuenta ? String(c.cuenta).replace(/\D/g, '') : '';
+      if (full.length === 20) {
+        q('#ig_account').value = full;
+        st.brf.autollenado = true;
+        showBank(); check();
+      }
+      // Mercantil enmascara la cuenta (solo ***1234): no hay 20 digitos que
+      // copiar y el campo queda como estaba, para que lo completen a mano.
+    }
+    bloquearCampos(ev.cedOk);
+
+    const accV2 = validAccount(q('#ig_account').value);
+    const ev2 = (st.brf.autollenado || accV2.account !== (accV.account || ''))
+      ? BRFMOD.evaluate(c, { id_number: cedV.ced, full_name: nombre }, accV2.account || '', CAT.bankMap || {})
+      : ev;
+
+    st.brf.estado = err ? 'err' : (warn ? 'warn' : 'ok');
+    st.brf.validaciones = ev2.validaciones;
+    st.brf.mensaje = (err || warn) ? (err || warn).text : mensajeOk(ev2, st.brf.autollenado);
     renderDocs();
+  }
+
+  /* La referencia se vuelve a juzgar cada vez que cambia la cedula o la
+     cuenta. Sin esto el orden en que llenan el formulario decide el
+     resultado, que es la peor forma de que una validacion sea inestable. */
+  function revalidarRef() {
+    CATDOCS.filter(esRefBancaria).forEach(d => {
+      const st = docState[d.id];
+      if (st && st.brf && st.brf.campos) evaluarRef(d.id);
+    });
+  }
+
+  /* El mensaje dice QUE coincidio, no un generico. En la v6.231 decia
+     'Coincide con los datos cargados en el formulario' aunque el unico dato
+     cargado fuera la cedula y la cuenta estuviera vacia. */
+  function mensajeOk(ev, autollenado) {
+    if (autollenado) return 'La cédula coincide con el PDF. La cuenta se completó desde la referencia.';
+    if (ev.cedOk && ev.cuentaEsSuya) return 'La cédula y la cuenta coinciden con el PDF.';
+    if (ev.cedOk) return 'La cédula coincide con el PDF.';
+    return 'La cuenta del PDF es la del trabajador.';
+  }
+
+  /* Verificado el documento, cedula y cuenta quedan de solo lectura. No es
+     cosmetico: sin esto alguien puede validar con la cedula correcta y
+     cambiarla despues, y el reporte sale con el tilde verde y otra cedula.
+     Se usa readOnly y no disabled para que el valor siga viajando en el envio. */
+  function bloquearCampos(on) {
+    [['#ig_ced', 'cédula'], ['#ig_account', 'cuenta']].forEach(([sel]) => {
+      const el = q(sel);
+      if (!el) return;
+      el.readOnly = !!on;
+      el.classList.toggle('ig-locked', !!on);
+      el.title = on ? 'Verificado con la referencia bancaria. Quitá el PDF para editarlo.' : '';
+    });
+    const line = q('#ig_bankline');
+    if (line && on && !line.dataset.lock) { line.dataset.lock = '1'; }
+    if (line && !on) delete line.dataset.lock;
+  }
+
+  /* Al quitar el PDF se devuelve el control: ambos campos se reabren y la
+     cuenta se vacia, porque su unica fuente era el documento que se quito.
+     La cedula se respeta: la escribio la persona, no la dedujimos nosotros. */
+  function soltarRef(docId) {
+    const st = docState[docId];
+    if (st && st.brf && st.brf.autollenado) { q('#ig_account').value = ''; showBank(); }
+    bloquearCampos(false);
+    check();
   }
 
   function brfHtml(d, st) {
     if (!esRefBancaria(d) || !st || !st.brf) return '';
     const b = st.brf;
     if (b.estado === 'leyendo') return `<div class="igbrf">Leyendo el PDF…</div>`;
-    const cls = { ok: 'ok', warn: 'wrn', err: 'err', nolegible: '' }[b.estado] || '';
-    const ic  = { ok: '✓', warn: '⚠', err: '✕', nolegible: 'ℹ' }[b.estado] || 'ℹ';
+    const cls = { ok: 'ok', warn: 'wrn', err: 'err', nolegible: '', pend: '' }[b.estado] || '';
+    const ic  = { ok: '✓', warn: '⚠', err: '✕', nolegible: 'ℹ', pend: 'ℹ' }[b.estado] || 'ℹ';
     const c = b.campos || {};
-    const datos = (b.estado === 'ok' || b.estado === 'warn') ? `<div class="igbrf-x">
+    const datos = (b.estado === 'ok' || b.estado === 'warn' || b.estado === 'pend') ? `<div class="igbrf-x">
       ${c.banco_nombre ? `<span>Banco <b>${esc(c.banco_nombre)}</b></span>` : ''}
       ${c.cuenta_last4 ? `<span>Cuenta <b>···${esc(c.cuenta_last4)}</b></span>` : ''}
       ${c.nombre_pdf ? `<span>A nombre de <b>${esc(c.nombre_pdf)}</b></span>` : ''}
@@ -727,7 +827,13 @@ function openIngresoModal(ctx, id) {
     box.querySelectorAll('[data-pick]').forEach(b =>
       b.addEventListener('click', () => pickFor(+b.dataset.pick)));
     box.querySelectorAll('[data-clr]').forEach(b =>
-      b.addEventListener('click', () => { delete docState[+b.dataset.clr]; renderDocs(); }));
+      b.addEventListener('click', () => {
+        const id = +b.dataset.clr;
+        const cat = CATDOCS.find(x => x.id === id);
+        if (esRefBancaria(cat)) soltarRef(id);
+        delete docState[id];
+        renderDocs();
+      }));
   }
   function updateDocsFoot() {
     const foot = q('#ig_docs_foot');
@@ -780,8 +886,9 @@ function openIngresoModal(ctx, id) {
     // v5.77: apenas la cedula es valida, se consulta si es no reempleable.
     const v = DW.validateCedula(this.value);
     if (v.ok) nrLookup(v.ced, () => { if (ov.isConnected) { showCed(); check(); applyNrState(); } });
+    revalidarRef();
   });
-  q('#ig_account').addEventListener('input', function () { this.value = this.value.replace(/[^0-9 \-]/g, ''); showBank(); check(); });
+  q('#ig_account').addEventListener('input', function () { this.value = this.value.replace(/[^0-9 \-]/g, ''); showBank(); check(); revalidarRef(); });
   q('#ig_phone').addEventListener('input', function () { this.value = this.value.replace(/[^0-9 \-]/g, ''); showPhone(); check(); });
   q('#ig_birth').addEventListener('change', () => { showAge(); check(); });
   q('#ig_birth').addEventListener('input', () => { showAge(); check(); });
