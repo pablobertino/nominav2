@@ -644,7 +644,27 @@ function openIngresoModal(ctx, id, modo) {
      Estado local: docState[required_doc_id] = { file_name, file_b64, file_type }.
      Se precarga de g.docs al editar. El archivo se lee a base64 en el momento
      de elegirlo (no se sube a Storage): viaja en el submit hacia osTicket. */
-  const CATDOCS = CAT.docs || [];
+  /* v6.239 — Se ordenan por LO QUE APORTAN, no por el sort_order del
+     catalogo. Le deciamos 'empezá por el RIF' y el RIF estaba segundo, lo
+     cual es una instruccion que la propia pantalla contradice.
+       1. RIF          trae la cedula, y con ella se verifica lo demas
+       2. Referencia   necesita esa cedula para verificarse; completa la cuenta
+       3. Cedula       es una imagen: no se le puede leer texto
+       4. el resto     se adjuntan y ya
+     Es una COPIA: CAT.docs conserva su orden para los tickets de osTicket. */
+  const PRIO = { rif: 1, bank_reference: 2, cedula: 3 };
+  const CATDOCS = [...(CAT.docs || [])].sort((a, b) =>
+    (PRIO[a.doc_kind] || 9) - (PRIO[b.doc_kind] || 9)
+    || (a.sort_order || 0) - (b.sort_order || 0) || a.id - b.id);
+
+  /* Que hace cada uno. Sin esto, que la cedula quede ultima parece un
+     descuido; dicho, se entiende que es porque no aporta datos. */
+  const PISTA = {
+    rif: 'Trae la cédula y la dirección. Empezá por acá.',
+    bank_reference: 'Completa la cuenta y verifica que sea del trabajador.',
+    cedula: 'Se guarda en la ficha. Al ser una imagen no completa campos.',
+  };
+
   const LIM = CAT.docLimits || { max_file_mb: 2, allowed_ext: ['jpg','jpeg','png','pdf','doc','docx'] };
   const docState = {};
   (g.docs || []).forEach(d => {
@@ -964,8 +984,10 @@ function openIngresoModal(ctx, id, modo) {
         ? `<span class="file-pill">📎 ${esc(st.file_name)} <span class="x" data-clr="${d.id}" title="Quitar">✕</span></span>
            <button type="button" class="btn btn-sm" data-pick="${d.id}">Cambiar</button>`
         : `<button type="button" class="btn btn-sm btn-primary" data-pick="${d.id}">📎 Adjuntar</button>`;
+      const pista = PISTA[d.doc_kind];
       return `<div class="docrow">
-        <span class="docrow-name">📄 ${esc(d.name)}</span>
+        <span class="docrow-name">📄 ${esc(d.name)}
+          ${pista ? `<span class="docrow-hint">${esc(pista)}</span>` : ''}</span>
         <span class="docrow-act">${right}</span>
       </div>${brfHtml(d, st)}${rifHtml(d, st)}`;
     }).join('') +
