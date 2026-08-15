@@ -664,7 +664,7 @@ function openIngresoModal(ctx, id) {
      adjuntar, y con el formulario todavia vacio el resultado quedaba
      congelado: mostraba 'Coincide con los datos cargados' sin que hubiera
      nada cargado con que coincidir. */
-  let BRFMOD = null;
+  let BRFMOD = null, RIFMOD = null;
 
   async function validarRef(docId, file) {
     const st = docState[docId];
@@ -768,17 +768,19 @@ function openIngresoModal(ctx, id) {
      cosmetico: sin esto alguien puede validar con la cedula correcta y
      cambiarla despues, y el reporte sale con el tilde verde y otra cedula.
      Se usa readOnly y no disabled para que el valor siga viajando en el envio. */
+  function bloquearCampo(sel, on, motivo) {
+    const el = q(sel);
+    if (!el) return;
+    el.readOnly = !!on;
+    el.classList.toggle('ig-locked', !!on);
+    el.title = on ? `${motivo} Quitá el documento para editarlo.` : '';
+  }
+  /* La cedula la fija el RIF y la cuenta la referencia: son documentos
+     distintos y se quitan por separado, asi que no pueden compartir un solo
+     interruptor. */
   function bloquearCampos(on) {
-    [['#ig_ced', 'cédula'], ['#ig_account', 'cuenta']].forEach(([sel]) => {
-      const el = q(sel);
-      if (!el) return;
-      el.readOnly = !!on;
-      el.classList.toggle('ig-locked', !!on);
-      el.title = on ? 'Verificado con la referencia bancaria. Quitá el PDF para editarlo.' : '';
-    });
-    const line = q('#ig_bankline');
-    if (line && on && !line.dataset.lock) { line.dataset.lock = '1'; }
-    if (line && !on) delete line.dataset.lock;
+    bloquearCampo('#ig_account', on, 'Verificado con la referencia bancaria.');
+    if (!docRif()) bloquearCampo('#ig_ced', on, 'Verificado con la referencia bancaria.');
   }
 
   /* Al quitar el PDF se devuelve el control: ambos campos se reabren y la
@@ -807,6 +809,134 @@ function openIngresoModal(ctx, id) {
     return `<div class="igbrf ${cls}"><b>${ic}</b> ${esc(b.mensaje)}${datos}</div>`;
   }
 
+  /* ================= RIF / planilla del SENIAT en el alta (v6.236) =======
+     El RIF de persona natural CONTIENE la cedula (V-27800995-1) y se lee en
+     585 de 585 documentos. Eso da vuelta el orden del formulario: hasta ahora
+     habia que escribir la cedula antes de adjuntar la referencia bancaria
+     -es el dato contra el que se verifica-; empezando por el RIF ya no.
+
+     QUE SE COMPLETA Y QUE NO. Se llenan solo los campos VACIOS: lo que la
+     persona ya escribio no se pisa nunca. La cedula ademas se bloquea.
+
+     EL NOMBRE ES EL CASO DELICADO. El certificado comun lo trae en una sola
+     linea y el SENIAT a veces pone los apellidos adelante: partirlo por
+     posicion acierta 65% (medido sobre 475 personas). Un nombre mal partido
+     no es un ahorro, es una correccion mas dos campos que revisar, y encima
+     erosiona la confianza en todo lo demas que si esta bien. Asi que del
+     certificado el nombre se MUESTRA para copiar y no se rellena.
+     La planilla es otra historia: trae Apellidos y Nombres etiquetados por
+     separado, sin ambiguedad, y ahi si se completan. */
+  const RIF_KIND = 'rif';
+  const esRif = (d) => d && d.doc_kind === RIF_KIND;
+  const docRif = () => CATDOCS.filter(esRif).map(d => docState[d.id])
+    .find(st => st && st.rif && st.rif.campos) || null;
+
+  const ISO = (dmy) => {
+    const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(String(dmy || ''));
+    return m ? `${m[3]}-${m[2]}-${m[1]}` : '';
+  };
+  const CIVIL = { SOLTERO: 'S', SOLTERA: 'S', CASADO: 'C', CASADA: 'C',
+    DIVORCIADO: 'D', DIVORCIADA: 'D', VIUDO: 'V', VIUDA: 'V' };
+
+  async function validarRif(docId, file) {
+    const st = docState[docId];
+    if (!st) return;
+    st.rif = { estado: 'leyendo' };
+    renderDocs();
+    try {
+      RIFMOD = RIFMOD || await import('../views/rif-ficha.js');
+      const campos = RIFMOD.parseRif(await RIFMOD.extractText(await file.arrayBuffer()));
+      if (!campos || !campos.es_rif) {
+        st.rif = { estado: 'nolegible', mensaje: 'No parece un RIF ni una planilla del SENIAT. Se adjunta igual.' };
+        renderDocs(); return;
+      }
+      const puestos = aplicarRif(campos);
+      st.rif = { estado: campos.provisional ? 'warn' : 'ok', campos, puestos,
+        mensaje: campos.provisional
+          ? 'Es la planilla de actualización, no el RIF definitivo. Sirve para el alta, pero hay 30 días para traer el RIF.'
+          : (puestos.length ? `Completamos ${puestos.length} ${puestos.length === 1 ? 'campo' : 'campos'}.` : 'Leído. Los datos ya estaban cargados.') };
+    } catch (e) {
+      st.rif = { estado: 'nolegible', mensaje: 'No se pudo leer el PDF. Se adjunta igual y queda para revisar.' };
+    }
+    renderDocs();
+    revalidarRef();   // la referencia se re-juzga contra la cedula que trajo el RIF
+  }
+
+  /* Llena SOLO lo vacio y devuelve que lleno, para poder decirlo. */
+  function aplicarRif(c) {
+    const hechos = [];
+    const poner = (sel, val, etiqueta) => {
+      const el = q(sel);
+      if (!el || !val) return;
+      if (String(el.value || '').trim()) return;   // ya habia algo: no se pisa
+      el.value = val; hechos.push(etiqueta);
+    };
+
+    if (c.cedula_rif && !String(q('#ig_ced').value || '').trim()) {
+      q('#ig_ced').value = c.cedula_rif;
+      hechos.push('cédula');
+      showCed(); applyNrState();
+      const v = DW.validateCedula(c.cedula_rif);
+      if (v.ok) nrLookup(v.ced, () => { if (ov.isConnected) { showCed(); check(); applyNrState(); } });
+    }
+    if (c.cedula_rif) bloquearCampo('#ig_ced', true, 'Tomada del RIF.');
+
+    // Solo la planilla trae apellidos y nombres separados.
+    if (c.apellidos_pdf) poner('#ig_last', c.apellidos_pdf, 'apellidos');
+    if (c.nombres_pdf) {
+      const n = String(c.nombres_pdf).split(/\s+/);
+      poner('#ig_first', n[0], 'primer nombre');
+      if (n[1]) poner('#ig_second', n.slice(1).join(' '), 'segundo nombre');
+    }
+    poner('#ig_address', c.domicilio_fiscal, 'dirección');
+    poner('#ig_email', c.correo, 'correo');
+    poner('#ig_phone', c.telefono, 'teléfono');
+    if (c.fecha_nacimiento) poner('#ig_birth', ISO(c.fecha_nacimiento), 'fecha de nacimiento');
+
+    const selPoner = (sel, val, etiqueta) => {
+      const el = q(sel);
+      if (!el || !val || el.value) return;
+      if ([...el.options].some(o => o.value === val)) { el.value = val; hechos.push(etiqueta); }
+    };
+    selPoner('#ig_gender', c.sexo, 'género');
+    selPoner('#ig_marital', CIVIL[String(c.estado_civil || '').toUpperCase()], 'estado civil');
+
+    showPhone(); check();
+    return hechos;
+  }
+
+  /* Al quitar el RIF se libera la cedula. Lo demas se deja: si alguien lo
+     reviso o corrigio, borrarselo seria peor que dejar un dato de mas. */
+  function soltarRif() {
+    bloquearCampo('#ig_ced', false, '');
+    check();
+  }
+
+  function rifHtml(d, st) {
+    if (!esRif(d) || !st || !st.rif) return '';
+    const b = st.rif;
+    if (b.estado === 'leyendo') return `<div class="igbrf">Leyendo el PDF…</div>`;
+    const cls = { ok: 'ok', warn: 'wrn', nolegible: '' }[b.estado] || '';
+    const ic  = { ok: '✓', warn: '⚠', nolegible: 'ℹ' }[b.estado] || 'ℹ';
+    const c = b.campos || {};
+    let extra = '';
+    if (c.cedula_rif) {
+      extra += `<div class="igbrf-x">
+        <span>C.I. <b>${esc(c.cedula_rif)}</b></span>
+        ${c.rif ? `<span>RIF <b>${esc(c.rif)}</b></span>` : ''}
+        ${c.fecha_vencimiento ? `<span>Vence <b>${esc(c.fecha_vencimiento)}</b></span>` : ''}
+      </div>`;
+    }
+    /* Del certificado el nombre se muestra para copiar, no se rellena: ver
+       el comentario de arriba sobre el 65%. */
+    if (c.nombre_pdf && !c.apellidos_pdf) {
+      extra += `<div class="igbrf-nom">El RIF dice <b>${esc(c.nombre_pdf)}</b>.
+        No lo separamos en nombres y apellidos porque el SENIAT a veces los
+        invierte y preferimos que lo hagas vos.</div>`;
+    }
+    return `<div class="igbrf ${cls}"><b>${ic}</b> ${esc(b.mensaje)}${extra}</div>`;
+  }
+
   function renderDocs() {
     const box = q('#ig_docs');
     if (!box) return;
@@ -820,7 +950,7 @@ function openIngresoModal(ctx, id) {
       return `<div class="docrow">
         <span class="docrow-name">📄 ${esc(d.name)}</span>
         <span class="docrow-act">${right}</span>
-      </div>${brfHtml(d, st)}`;
+      </div>${brfHtml(d, st)}${rifHtml(d, st)}`;
     }).join('') +
       `<div class="docrow-foot" id="ig_docs_foot"></div>`;
     updateDocsFoot();
@@ -831,6 +961,7 @@ function openIngresoModal(ctx, id) {
         const id = +b.dataset.clr;
         const cat = CATDOCS.find(x => x.id === id);
         if (esRefBancaria(cat)) soltarRef(id);
+        if (esRif(cat)) soltarRif();
         delete docState[id];
         renderDocs();
       }));
@@ -874,6 +1005,7 @@ function openIngresoModal(ctx, id) {
         // una foto de la carta no tiene texto que leer.
         const cat = CATDOCS.find(x => x.id === docId);
         if (esRefBancaria(cat) && ext === 'pdf') validarRef(docId, f);
+        if (esRif(cat) && ext === 'pdf') validarRif(docId, f);
       };
       reader.readAsDataURL(f);
     });
