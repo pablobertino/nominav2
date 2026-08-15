@@ -103,9 +103,28 @@ function detectBank(text, acctPrefix) {
 }
 
 /* ---------- parser de campos ---------- */
+/* El ejemplo que Mercantil publica en su banca en linea. Cinco trabajadores
+   lo subieron creyendo que era su referencia, y como es un PDF legitimo del
+   banco no habia forma de notarlo mirando por encima: hay que leerlo.
+   Marcas inconfundibles, dos de tres alcanzan:
+     - el titular es OTRO BANCO ('Banco Bicentenario del Pueblo...')
+     - Nro. de Confirmacion: 12345678
+     - el saldo dice 'SIETE (07) MEDIAS', que es texto de relleno
+   Se piden DOS para no descartar por casualidad un documento real. */
+function esEjemploMercantil(text) {
+  const t = String(text || '');
+  let n = 0;
+  if (/Banco\s+Bicentenario\s+del\s+Pueblo/i.test(t)) n++;
+  if (/Confirmaci[oó]n\s*:?\s*12345678\b/i.test(t)) n++;
+  if (/SIETE\s*\(\s*0?7\s*\)\s*MEDIAS/i.test(t)) n++;
+  if (/J\s*-?\s*00034566789/i.test(t)) n++;
+  return n >= 2;
+}
+
 export function parseFields(rawText, bankMap) {
   const text = collapse(rawText);
   const out = { plantilla: 'otro', banco_code: null, banco_nombre: null, cuenta: null, cuenta_last4: null,
+    es_ejemplo: false,
     tipo_cuenta: null, cedula_pdf: null, nombre_pdf: null, nro_operacion: null, fecha_emision: null };
 
   // cedula
@@ -130,13 +149,15 @@ export function parseFields(rawText, bankMap) {
   out.plantilla = detectBank(text, cuentaFull ? cuentaFull.slice(0, 4) : null);
 
   if (out.plantilla === 'mercantil') {
-    /* v6.245 — La extraccion del final de cuenta esta APAGADA a proposito.
-       La expresion /\*{3,}\s*(\d{4})/ devolvia 7634 en las 5 referencias de
-       Mercantil que tenemos, de 5 personas distintas: no estaba leyendo la
-       cuenta sino algo fijo de la plantilla. Un dato equivocado es peor que
-       ninguno -alimenta evaluate() y doc_estado_personal, que juzgan si el
-       documento es de esa persona-, asi que hasta tener un PDF de Mercantil
-       real con que calibrar, no se inventa nada. El banco si se sabe: 0105. */
+    /* v6.246 — La lectura vuelve. En la v6.245 se apago por un diagnostico
+       equivocado mio: las 5 referencias de Mercantil daban todas 7634 y
+       supuse que el parser agarraba algo fijo de la plantilla. El PDF mostro
+       otra cosa: ******7634 es lo que el documento dice de verdad, porque los
+       cinco son el ARCHIVO DE EJEMPLO que publica Mercantil. El parser
+       funcionaba; lo que fallaba era el documento. Ver esEjemploMercantil. */
+    const mk = text.match(/\*{3,}\s*(\d{4})\b/);
+    if (mk) out.cuenta_last4 = mk[1];
+    out.es_ejemplo = esEjemploMercantil(text);
     out.banco_code = '0105';
   } else if (cuentaFull) {
     out.cuenta = cuentaFull; out.banco_code = cuentaFull.slice(0, 4); out.cuenta_last4 = cuentaFull.slice(-4);
@@ -212,7 +233,13 @@ export function evaluate(fields, w, mercAcct, bankMap) {
   const cuentaEsSuya = !!l4Pdf && l4Pdf.length === 4 && l4Pdf === l4Ref;
 
   const warnings = [];
-  if (cuentaEsSuya || cedOk) {
+  /* Va primero y bloquea: no es una sospecha, es un hecho verificable.
+     Sin esto el documento pasa como valido y el trabajador se queda sin
+     referencia sin que nadie se entere. */
+  if (fields.es_ejemplo) {
+    warnings.push({ level: 'err', code: 'ejemplo_banco',
+      text: 'Este es el PDF de EJEMPLO que publica Mercantil, no la referencia del trabajador. Hay que pedirle la suya, emitida a su nombre desde Mercantil en Línea.' });
+  } else if (cuentaEsSuya || cedOk) {
     /* Confirmado. Sin advertencia de titularidad. */
   } else if (!fields.cedula_pdf) {
     warnings.push({ level: 'warn', code: 'ilegible', text: 'No se pudo leer la cédula del PDF y la cuenta no coincide con la cargada. Verifica que el documento sea del trabajador.' });
