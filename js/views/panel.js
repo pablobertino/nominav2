@@ -676,7 +676,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.234</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.235</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5904,6 +5904,66 @@ async function renderPaySyncCard(user) {
    2) re-lee cada PDF con el MISMO lector del RIF y extrae el domicilio;
    3) manda todo junto para completar workers_master.fiscal_address.
    No toca la Dirección Personal. Reutilizable si en el futuro hace falta. */
+/* v6.235 — Re-procesa RIF ya guardados con el parser actual.
+   Los 89 cargados entre el 23 y el 26 de julio quedaron sin nombre ni
+   domicilio porque el parser de entonces no los sacaba; sus PDF se leen
+   perfecto hoy. Se probo uno (VICTORIA DAVALILLO, 28046590) antes de escribir
+   esto: sale completo. No hay que arreglar el parser, hay que volver a mirar
+   los documentos.
+   Reusa el patron de runFiscalBackfill: URLs firmadas del servidor, lectura
+   con el MISMO pdf.js del alta. El servidor mergea, nunca borra. */
+async function runRifReparse(user, btn, statusEl) {
+  const su = rifSessUser(user);
+  const setS = (t) => { if (statusEl) statusEl.textContent = t; };
+  btn.disabled = true;
+  setS('Buscando documentos incompletos…');
+
+  let pend, total = 0;
+  try {
+    const r = await rifDocApi({ action: 'reparse_pending', user: su, doc_type: 'rif' });
+    pend = (r && r.ok) ? (r.items || []) : null;
+    total = (r && r.total) || 0;
+  } catch (_) { pend = null; }
+  if (!pend) { setS('No se pudo obtener la lista. Reintenta en un momento.'); btn.disabled = false; return; }
+  if (!pend.length) { setS('✓ No hay RIF incompletos. Todos tienen nombre y domicilio.'); btn.disabled = false; return; }
+
+  const results = []; let done = 0, sinMejora = 0;
+  for (const it of pend) {
+    setS(`Releyendo ${done + 1} de ${pend.length}…  (${results.length} recuperados)`);
+    try {
+      const resp = await fetch(it.signed_url);
+      const buf = await resp.arrayBuffer();
+      const f = rifParse(await rifExtract(buf.slice(0)));
+      if (f && (f.nombre_pdf || f.domicilio_fiscal)) {
+        results.push({ id: it.id, datos: {
+          rif: f.rif, cedula_rif: f.cedula_rif, nombre_pdf: f.nombre_pdf,
+          nro_comprobante: f.nro_comprobante, fecha_inscripcion: f.fecha_inscripcion,
+          fecha_actualizacion: f.fecha_actualizacion, fecha_vencimiento: f.fecha_vencimiento,
+          domicilio_fiscal: f.domicilio_fiscal,
+          provisional: f.provisional || false,
+          apellidos_pdf: f.apellidos_pdf, nombres_pdf: f.nombres_pdf,
+          fecha_nacimiento: f.fecha_nacimiento, sexo: f.sexo,
+          estado_civil: f.estado_civil, correo: f.correo, telefono: f.telefono,
+        } });
+      } else sinMejora++;
+    } catch (_) { sinMejora++; }
+    done++;
+  }
+
+  setS(`Guardando ${results.length}…`);
+  let saved = 0;
+  for (let i = 0; i < results.length; i += 50) {
+    try {
+      const r = await rifDocApi({ action: 'reparse_save_bulk', user: su, items: results.slice(i, i + 50) });
+      saved += (r && r.ok) ? (r.updated || 0) : 0;
+    } catch (_) { /* sigue con la tanda siguiente */ }
+  }
+  setS(`Listo: ${saved} recuperados · ${sinMejora} siguen sin datos legibles`
+    + (total > pend.length ? ` · quedaron ${total - pend.length} para una próxima pasada` : '')
+    + `. Total revisados: ${pend.length}.`);
+  btn.disabled = false;
+}
+
 async function runFiscalBackfill(user, btn, statusEl) {
   const su = rifSessUser(user);
   const setS = (t) => { if (statusEl) statusEl.textContent = t; };
@@ -6111,6 +6171,15 @@ async function viewSync(user) {
       <button class="btn btn-primary" id="fiscalToolBtn">Rellenar Dirección Fiscal</button>
     </div>
 
+    <!-- v6.235: re-lee RIF viejos con el parser actual. 89 quedaron sin
+         nombre ni domicilio en la primera semana; los PDF estan bien. -->
+    <div class="card" id="rifReparseCard">
+      <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">Herramientas · Re-procesar RIF</h3></div>
+      <p class="cfg-desc" style="margin:0 0 10px">Vuelve a leer los RIF que quedaron <b>sin nombre o sin domicilio</b> porque se subieron antes de que el lector supiera sacarlos. Usa el mismo lector del alta y <b>sólo completa</b>: nunca borra lo que ya estaba.</p>
+      <div id="rifReparseStatus" class="muted" style="font-size:12.5px;margin:0 0 10px">Pulsa para buscar los RIF incompletos y releerlos.</div>
+      <button class="btn btn-primary" id="rifReparseBtn">Re-procesar RIF incompletos</button>
+    </div>
+
     <!-- v5.58 — SE SACAN LAS DOS TABLAS DE HISTORIAL (Pablo).
 
          Aca vivian "Ultimas corridas con movimiento" (personal) y "Ultimas
@@ -6129,6 +6198,7 @@ async function viewSync(user) {
 
   // v6.128: botón "Rellenar Dirección Fiscal".
   { const fb = $('#fiscalToolBtn'), fs = $('#fiscalToolStatus'); if (fb) fb.addEventListener('click', () => runFiscalBackfill(user, fb, fs)); }
+  { const rb = $('#rifReparseBtn'), rs = $('#rifReparseStatus'); if (rb) rb.addEventListener('click', () => runRifReparse(user, rb, rs)); }
 
   /* ---- v4.56: tarjeta "Personal de tiendas · ingresos y egresos" ---- */
   (function initRosterCard() {

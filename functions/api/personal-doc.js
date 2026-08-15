@@ -126,7 +126,8 @@ export async function onRequestPost({ request, env }) {
 
   const action = norm(body.action);
   const known = (action === 'save' || action === 'annul' || action === 'list' || action === 'sign'
-    || action === 'fiscal_pending' || action === 'fiscal_set_bulk');
+    || action === 'fiscal_pending' || action === 'fiscal_set_bulk'
+    || action === 'reparse_pending' || action === 'reparse_save_bulk');
   if (!known) return json({ ok: false, error: 'Accion no valida.' }, 400);
 
   const actor = await resolveActor(env, body.user);
@@ -141,7 +142,8 @@ export async function onRequestPost({ request, env }) {
     codes = WRITE_CODE[dt];
   } else if (action === 'annul') {
     codes = REMOVE_CODE;
-  } else if (action === 'fiscal_pending' || action === 'fiscal_set_bulk') {
+  } else if (action === 'fiscal_pending' || action === 'fiscal_set_bulk'
+          || action === 'reparse_pending' || action === 'reparse_save_bulk') {
     // Relleno masivo de Dirección Fiscal desde los RIF ya cargados (v6.128).
     codes = WRITE_CODE.rif;
   } else {
@@ -156,6 +158,8 @@ export async function onRequestPost({ request, env }) {
     if (action === 'annul') return await annulDoc(env, body);
     if (action === 'fiscal_pending')  return await fiscalPending(env, body);
     if (action === 'fiscal_set_bulk') return await fiscalSetBulk(env, body);
+    if (action === 'reparse_pending')   return await reparsePending(env, body);
+    if (action === 'reparse_save_bulk') return await reparseSaveBulk(env, body);
   } catch (e) {
     return json({ ok: false, error: String((e && e.message) || e) }, 500);
   }
@@ -220,6 +224,70 @@ async function saveDoc(env, actor, body) {
    Para el relleno masivo. Devuelve, por persona con RIF no anulado cuyo
    workers_master.fiscal_address está vacío, el RIF MÁS RECIENTE con una URL
    firmada (1h) para re-leer el PDF en el navegador y extraer el domicilio. */
+/* =====================================================================
+   reparse_pending / reparse_save_bulk  (v6.235)
+
+   Vuelve a leer PDF ya guardados con el parser actual. Existe porque el
+   parser mejora y las filas viejas se quedan con lo que se supo el dia que
+   se subieron: 89 RIF cargados entre el 23 y el 26 de julio quedaron sin
+   nombre y sin domicilio, y sus PDF se leen perfecto hoy. No es un problema
+   de esos documentos: es que nadie los volvio a mirar.
+
+   Mismo patron que fiscal_pending (v6.128): el servidor manda URLs firmadas
+   y el navegador parsea con pdf.js -el mismo lector que uso al subirlos, asi
+   que el resultado es identico al de volver a cargarlos a mano-.
+
+   MERGE, NO REEMPLAZO: se conservan las claves viejas que el parser nuevo no
+   devuelva. Un re-proceso nunca debe borrar informacion que ya estaba.
+   ===================================================================== */
+async function reparsePending(env, body) {
+  const tipo = norm(body.doc_type) || 'rif';
+  const rows = await sb(env,
+    `personal_documents?doc_type=eq.${encodeURIComponent(tipo)}&estado=neq.anulada`
+    + '&select=id,id_number,storage_path,datos,created_at&order=created_at.desc') || [];
+
+  /* Solo los que les FALTA algo. Re-leer los 585 para arreglar 89 seria
+     media hora de descargas para el navegador de alguien. */
+  const faltan = rows.filter(r => {
+    if (!r.storage_path) return false;
+    const d = r.datos || {};
+    const vacio = (k) => !d[k] || !String(d[k]).trim();
+    return vacio('nombre_pdf') || vacio('domicilio_fiscal');
+  });
+
+  const items = [];
+  for (const r of faltan.slice(0, 400)) {
+    const url = await storageSignedUrl(env, r.storage_path);
+    if (url) items.push({ id: r.id, id_number: r.id_number, signed_url: url });
+  }
+  return json({ ok: true, items, total: faltan.length });
+}
+
+async function reparseSaveBulk(env, body) {
+  const items = Array.isArray(body.items) ? body.items : [];
+  if (!items.length) return json({ ok: true, updated: 0 });
+
+  let updated = 0;
+  for (const it of items) {
+    const id = parseInt(it.id, 10);
+    if (!id || !it.datos || typeof it.datos !== 'object') continue;
+    const cur = await sb(env, `personal_documents?id=eq.${id}&select=datos`);
+    const viejo = (Array.isArray(cur) && cur[0] && cur[0].datos) ? cur[0].datos : {};
+
+    // Merge: lo nuevo pisa, pero solo si trae valor. Nunca se borra.
+    const nuevo = { ...viejo };
+    for (const [k, v] of Object.entries(it.datos)) {
+      if (v !== null && v !== undefined && String(v).trim() !== '') nuevo[k] = v;
+    }
+    await sb(env, `personal_documents?id=eq.${id}`, {
+      method: 'PATCH',
+      body: JSON.stringify({ datos: nuevo, updated_at: new Date().toISOString() }),
+    });
+    updated++;
+  }
+  return json({ ok: true, updated });
+}
+
 async function fiscalPending(env, body) {
   const rifs = await sb(env,
     'personal_documents?doc_type=eq.rif&estado=neq.anulada'
