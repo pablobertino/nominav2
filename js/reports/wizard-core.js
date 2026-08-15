@@ -975,18 +975,32 @@ export function launchWizard(user, reportDef, onExit) {
     } else {
       responsible = resp ? resp.full_name : ''; position = resp ? resp.role : '';
     }
-    const res = await reportDef.submit({
-      companyCode,
-      responsible,
-      position,
-      workers: S.workers,
-      source_kind: isAdmin ? 'admin' : 'company',
-      source_admin_id: isAdmin ? (user.id || null) : null,
-    });
-    if (!res.ok) {
+    /* v6.249 — Sin este try, un corte de red dejaba la excepcion sin
+       atrapar: el boton quedaba congelado en 'Enviando…' para siempre y no
+       aparecia ningun mensaje. La persona no sabia si se habia enviado,
+       recargaba y rehacia el reporte. Ese es el origen mas probable de los 18
+       duplicados medidos: ninguno a menos de 22 segundos, o sea rehechos a
+       mano y no doble clic. */
+    let res;
+    try {
+      res = await reportDef.submit({
+        companyCode,
+        responsible,
+        position,
+        workers: S.workers,
+        source_kind: isAdmin ? 'admin' : 'company',
+        source_admin_id: isAdmin ? (user.id || null) : null,
+      });
+    } catch (e) {
       btn.disabled = false; btn.textContent = '✓ Enviar reporte';
-      const det = res.details && res.details.length ? '<ul>' + res.details.map(d => `<li>${d}</li>`).join('') + '</ul>' : '';
-      $('#sumError').innerHTML = `<div class="vrow err">✗ ${res.error || 'No se pudo enviar.'}</div>${det}`;
+      $('#sumError').innerHTML = '<div class="vrow err">✗ Se cortó la conexión al enviar.'
+        + ' <b>Revisá el Historial antes de reintentar:</b> puede haber quedado registrado igual.</div>';
+      return;
+    }
+    if (!res || !res.ok) {
+      btn.disabled = false; btn.textContent = '✓ Enviar reporte';
+      const det = res && res.details && res.details.length ? '<ul>' + res.details.map(d => `<li>${d}</li>`).join('') + '</ul>' : '';
+      $('#sumError').innerHTML = `<div class="vrow err">✗ ${(res && res.error) || 'No se pudo enviar.'}</div>${det}`;
       return;
     }
     S.lastReportId = res.report_id;
@@ -1006,7 +1020,15 @@ export function launchWizard(user, reportDef, onExit) {
     //  c) osTicket no salio (sin pla): el reporte SI quedo en BD, pero no
     //     llego a Capital Humano por osTicket -> avisar para reintentar.
     let banner, detail;
-    if (!ost) {
+    /* v6.249 — El servidor detecto que este mismo reporte ya estaba. Se
+       muestra como exito porque LO ES: su reporte esta enviado. Decir 'error'
+       seria mentir y ademas invitaria a reintentar otra vez. */
+    if (S.lastResult && S.lastResult.duplicado) {
+      banner = '<div class="ok-banner warn">✓ Este reporte ya estaba enviado</div>';
+      const aviso = String(S.lastResult.aviso || '').replace(/[&<>"]/g,
+        c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+      detail = aviso + ' No hace falta hacer nada más: Capital Humano ya lo recibió.';
+    } else if (!ost) {
       // Reporte sin fase osTicket (p.ej. marcaje aun no conectado): cierre clasico.
       banner = '<div class="ok-banner">✓ Reporte enviado correctamente</div>';
       detail = `Tu reporte quedó registrado${rep} y será atendido por Capital Humano.`;

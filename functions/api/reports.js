@@ -274,6 +274,83 @@ function osAttach(filename, base64, mime) {
   return { [filename]: `data:${mime || 'application/octet-stream'};base64,${base64}` };
 }
 
+/* =====================================================================
+   Reportes duplicados  (v6.249)
+
+   Medido el 15/08: 18 reportes identicos entre el 03/08 y el 14/08, en 13
+   empresas. Ninguno a menos de 22 segundos del anterior y varios a 3, 8 y 11
+   minutos. El boton de Enviar ya se deshabilitaba, asi que no era doble clic:
+   la gente REHACE el reporte entero porque no ve confirmacion. Lo confirma la
+   distribucion -13 de los 18 son marcaje, el wizard mas corto, casi todos de
+   un solo trabajador: rehacer eso lleva 40 segundos-.
+
+   Por eso la guarda va en el SERVIDOR y no en el boton: protege aunque el
+   navegador se recargue, aunque cambien de pestaña y aunque rehagan el
+   reporte desde cero, que es lo que estaba pasando.
+
+   Se compara el CONTENIDO, no las cedulas. Dos marcajes distintos de la misma
+   persona el mismo dia son legitimos; filtrar por cedula los rechazaria.
+   ===================================================================== */
+const DUP_MINUTOS = 15;   // el duplicado mas tardio medido fue de 11.5 minutos
+
+/* Huella estable de las lineas: se ordenan para que el orden en que la tienda
+   cargo a la gente no cambie el resultado. */
+async function huellaContenido(topic, cc, lineas) {
+  try {
+    /* Normalizacion PROFUNDA. El intento anterior usaba JSON.stringify con
+       un array de claves como replacer, y eso filtra en TODOS los niveles: los
+       objetos anidados quedaban en {}. Con eso, una modificacion se hasheaba
+       practicamente solo por la cedula -changes desaparecia- y corregir un
+       dato mal cargado dentro de los 15 minutos se habria descartado en
+       silencio. Aca se ordenan las claves nivel por nivel y se conserva todo.
+       Se descartan las claves internas (las que empiezan con _) en cualquier
+       nivel: llevan el base64 de los adjuntos, que son megabytes y no
+       identifican el reporte. */
+    const estable = (v) => {
+      if (Array.isArray(v)) return v.map(estable);
+      if (v && typeof v === 'object') {
+        const o = {};
+        Object.keys(v).filter(k => k[0] !== '_').sort().forEach(k => { o[k] = estable(v[k]); });
+        return o;
+      }
+      return v;
+    };
+    const norm = (Array.isArray(lineas) ? lineas : []).map(l => JSON.stringify(estable(l))).sort().join('|');
+    const data = new TextEncoder().encode(`${topic}::${cc}::${norm}`);
+    const buf = await crypto.subtle.digest('SHA-256', data);
+    return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
+  } catch (_) { return null; }   // sin huella no se bloquea nada
+}
+
+/* Devuelve el reporte gemelo reciente, si lo hay. */
+async function reportePrevio(env, cc, topic, hash) {
+  if (!hash) return null;
+  const desde = new Date(Date.now() - DUP_MINUTOS * 60000).toISOString();
+  const r = await sb(env,
+    `reports_log?company_code=eq.${encodeURIComponent(cc)}&topic=eq.${encodeURIComponent(topic)}`
+    + `&content_hash=eq.${encodeURIComponent(hash)}&sent_at=gte.${encodeURIComponent(desde)}`
+    + '&select=id,sent_at,osticket_id&order=sent_at.desc&limit=1');
+  const prev = (Array.isArray(r) && r.length) ? r[0] : null;
+  /* Si el original NO llego a osTicket, esto no es un duplicado que haya que
+     frenar: es el reintento que el propio wizard le pide a la persona
+     ('no llego a Capital Humano, intenta reenviarlo'). Bloquearlo dejaria el
+     reporte en la base, sin ticket, y encima diciendole que ya lo recibieron. */
+  return (prev && prev.osticket_id) ? prev : null;
+}
+
+/* Respuesta cuando ya existe: se devuelve OK con el reporte original. Decir
+   'error' seria mentir -su reporte SI esta enviado- y ademas invita a
+   reintentar, que es justo lo que queremos cortar. */
+function respuestaDuplicado(prev) {
+  const min = Math.max(1, Math.round((Date.now() - new Date(prev.sent_at).getTime()) / 60000));
+  return json({
+    ok: true, duplicado: true, report_id: prev.id,
+    osticket: prev.osticket_id ? { pla: prev.osticket_id } : null,
+    aviso: `Este reporte ya se había enviado hace ${min} ${min === 1 ? 'minuto' : 'minutos'}`
+      + ` con el N° ${prev.id}. No se creó uno nuevo.`,
+  });
+}
+
 /* base64 -> Uint8Array. Necesario desde la v6.231 para subir la referencia
    bancaria a Storage: base64Bytes solo mide el tamano, no decodifica. */
 function b64ToBytes(b64) {
@@ -510,6 +587,11 @@ async function submitMarcaje(env, body) {
 
   // --- Encabezado en reports_log ---
   const reportDeptId = await commonDepartment(env, cc, clean.map(l => l.worker_id_number));
+  // v6.249 - si este mismo reporte ya entro hace poco, no se crea otro
+  const huella = await huellaContenido('marcaje', cc, clean);
+  const previo = await reportePrevio(env, cc, 'marcaje', huella);
+  if (previo) return respuestaDuplicado(previo);
+
   const header = await sb(env, 'reports_log', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
@@ -517,6 +599,7 @@ async function submitMarcaje(env, body) {
       company_code: cc,
       zone_id, subzone_id,
       topic: 'marcaje',
+      content_hash: huella,
       responsible,
       position: position || null,
       workers_count: clean.length,
@@ -929,6 +1012,11 @@ async function submitAusencia(env, body) {
 
   // --- Encabezado en reports_log ---
   const reportDeptId = await commonDepartment(env, cc, clean.map(l => l.worker_id_number));
+  // v6.249 - si este mismo reporte ya entro hace poco, no se crea otro
+  const huella = await huellaContenido('ausencia', cc, clean);
+  const previo = await reportePrevio(env, cc, 'ausencia', huella);
+  if (previo) return respuestaDuplicado(previo);
+
   const header = await sb(env, 'reports_log', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
@@ -936,6 +1024,7 @@ async function submitAusencia(env, body) {
       company_code: cc,
       zone_id, subzone_id,
       topic: 'ausencia',
+      content_hash: huella,
       responsible,
       position: position || null,
       workers_count: clean.length,
@@ -1439,6 +1528,11 @@ async function submitEgreso(env, body) {
 
   // --- Encabezado en reports_log ---
   const reportDeptId = await commonDepartment(env, cc, clean.map(l => l.worker_id_number));
+  // v6.249 - si este mismo reporte ya entro hace poco, no se crea otro
+  const huella = await huellaContenido('egreso', cc, clean);
+  const previo = await reportePrevio(env, cc, 'egreso', huella);
+  if (previo) return respuestaDuplicado(previo);
+
   const header = await sb(env, 'reports_log', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
@@ -1446,6 +1540,7 @@ async function submitEgreso(env, body) {
       company_code: cc,
       zone_id, subzone_id,
       topic: 'egreso',
+      content_hash: huella,
       responsible,
       position: position || null,
       workers_count: clean.length,
@@ -2068,6 +2163,11 @@ async function submitIngreso(env, body) {
   // --- Encabezado en reports_log ---
   // (Ingreso: personal nuevo aun sin departamento asignado -> normalmente null.)
   const reportDeptId = await commonDepartment(env, cc, clean.map(l => l.worker_id_number));
+  // v6.249 - si este mismo reporte ya entro hace poco, no se crea otro
+  const huella = await huellaContenido('ingreso', cc, clean);
+  const previo = await reportePrevio(env, cc, 'ingreso', huella);
+  if (previo) return respuestaDuplicado(previo);
+
   const header = await sb(env, 'reports_log', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
@@ -2075,6 +2175,7 @@ async function submitIngreso(env, body) {
       company_code: cc,
       zone_id, subzone_id,
       topic: 'ingreso',
+      content_hash: huella,
       responsible,
       position: position || null,
       workers_count: clean.length,
@@ -2842,6 +2943,11 @@ async function submitModificacion(env, body) {
 
   // --- Encabezado en reports_log ---
   const reportDeptId = await commonDepartment(env, cc, clean.map(l => l.worker_id_number));
+  // v6.249 - si este mismo reporte ya entro hace poco, no se crea otro
+  const huella = await huellaContenido('modificacion', cc, clean);
+  const previo = await reportePrevio(env, cc, 'modificacion', huella);
+  if (previo) return respuestaDuplicado(previo);
+
   const header = await sb(env, 'reports_log', {
     method: 'POST',
     headers: { Prefer: 'return=representation' },
@@ -2849,6 +2955,7 @@ async function submitModificacion(env, body) {
       company_code: cc,
       zone_id, subzone_id,
       topic: 'modificacion',
+      content_hash: huella,
       responsible,
       position: position || null,
       workers_count: clean.length,
@@ -3156,10 +3263,16 @@ async function submitTraslado(env, body) {
 
   // --- Encabezado en reports_log (topic 'traslado') ---
   const reportDeptId = await commonDepartment(env, cc, ceds);
+  // v6.249 - si este mismo reporte ya entro hace poco, no se crea otro
+  const huella = await huellaContenido('traslado', cc, clean);
+  const previo = await reportePrevio(env, cc, 'traslado', huella);
+  if (previo) return respuestaDuplicado(previo);
+
   const header = await sb(env, 'reports_log', {
     method: 'POST', headers: { Prefer: 'return=representation' },
     body: JSON.stringify({
       company_code: cc, zone_id, subzone_id, topic: 'traslado',
+      content_hash: huella,
       responsible, position: position || null, workers_count: clean.length,
       attention: 'open', email_sent: false, source_kind: sourceKind, source_admin_id: sourceAdminId,
       department_id: reportDeptId,
