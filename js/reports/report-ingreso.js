@@ -235,6 +235,13 @@ function bloqueoDe(date) {
     + `(cierre de quincena). La primera fecha disponible es el ${DW.fmtDate(DW.addDays(r.hasta, 1))}.`;
 }
 
+/* Como quiere trabajar esta persona: 'papeles' (adjunta primero y el
+   formulario se completa) o 'manual' (el camino de siempre). Vive a nivel de
+   modulo y no por trabajador: un reporte puede tener seis altas y preguntar
+   seis veces lo mismo seria una molestia, no una opcion. Se pregunta una vez
+   y se respeta hasta que recarguen. */
+let MODO_CARGA = null;
+
 /* Valida la cuenta: 20 digitos, prefijo en catalogo de bancos. */
 function validAccount(raw) {
   const c = String(raw || '').replace(/[^0-9]/g, '');
@@ -569,6 +576,8 @@ function openIngresoModal(ctx, id) {
       </div>
       <div class="ig-mbody">
 
+      <div id="ig_fork" style="display:none"></div>
+
       <div class="ig-band" data-nrdim>
         <div class="ig-band-t">📅 Fecha inicial de empleo <span style="color:var(--danger)">*</span></div>
         <input type="date" id="ig_start" min="${limMin(win.minDate)}" max="${limMax(win.maxDate)}" value="${g.startDate || ''}">
@@ -607,9 +616,12 @@ function openIngresoModal(ctx, id) {
       <div data-nrdim style="margin-top:12px"><label class="flabel">Dirección <span class="opt">(opcional)</span></label><input id="ig_address" value="${esc(g.address)}" placeholder="Calle, sector, ciudad"><div class="ferr"></div></div>
 
       ${(CAT.docs && CAT.docs.length) ? `
-      <div class="ig-sec" data-nrdim>Recaudos del trabajador <span class="opt">(opcionales)</span></div>
-      <p class="hint" data-nrdim style="margin:-4px 0 8px">Adjunta lo que tengas; los que falten quedan como <b>pendientes</b> en el ticket. Máx. ${CAT.docLimits.max_file_mb} MB por archivo (${CAT.docLimits.allowed_ext.join(', ')}).</p>
-      <div id="ig_docs" data-nrdim></div>` : ''}
+      <div id="ig_docblock">
+      <div class="ig-sec">Recaudos del trabajador <span class="opt">(opcionales)</span></div>
+      <div id="ig_docnote"></div>
+      <p class="hint" style="margin:-4px 0 8px">Adjunta lo que tengas; los que falten quedan como <b>pendientes</b> en el ticket. Máx. ${CAT.docLimits.max_file_mb} MB por archivo (${CAT.docLimits.allowed_ext.join(', ')}).</p>
+      <div id="ig_docs"></div>
+      </div>` : ''}
 
       <div class="wiz-foot" style="margin-top:18px">
         <button class="btn" id="ig_cancel">Cancelar</button>
@@ -901,7 +913,7 @@ function openIngresoModal(ctx, id) {
     selPoner('#ig_gender', c.sexo, 'género');
     selPoner('#ig_marital', CIVIL[String(c.estado_civil || '').toUpperCase()], 'estado civil');
 
-    showPhone(); check();
+    showPhone(); showAge(); check();
     return hechos;
   }
 
@@ -1011,6 +1023,75 @@ function openIngresoModal(ctx, id) {
     });
     renderDocs();
   }
+
+  /* ---- Bifurcacion (v6.237) --------------------------------------------
+     No se obliga a nadie: el camino de siempre queda entero y en igualdad de
+     condiciones. Lo que cambia es que ahora hay algo concreto que ofrecer a
+     cambio -la cedula, la direccion y la cuenta salen de los PDF- y no una
+     promesa vaga de que conviene.
+
+     Elegir 'papeles' MUEVE el bloque de recaudos arriba en vez de armar un
+     wizard de tres pasos. Es deliberado: mover un nodo conserva los listeners
+     y no toca la validacion, mientras que partir el formulario en pasos
+     obligaria a reescribir check() y por aca pasan siete altas por dia. El
+     beneficio es el mismo -los papeles primero- con una fraccion del riesgo.
+
+     Editando no se pregunta: los datos ya estan y la eleccion no aplica. */
+  function aplicarModo(modo, recordar) {
+    /* Solo se recuerda lo que la persona ELIGIO. Si el modo sale de un
+       fallback -editar, o un catalogo sin recaudos- fijarlo dejaria a toda la
+       sesion sin la pregunta por un default que nadie pidio. */
+    if (recordar) MODO_CARGA = modo;
+    const fork = q('#ig_fork'), bloque = q('#ig_docblock'), nota = q('#ig_docnote');
+    if (fork) fork.style.display = 'none';
+    [...ov.querySelectorAll('.ig-mbody > *')].forEach(el => { if (el !== fork) el.style.display = ''; });
+    if (!bloque) return;
+
+    if (modo === 'papeles') {
+      const banda = ov.querySelector('.ig-mbody > .ig-band');
+      if (banda && banda.nextSibling !== bloque) banda.parentNode.insertBefore(bloque, banda.nextSibling);
+      if (nota) nota.innerHTML = `<div class="ig-forknote">Empezá por el <b>RIF</b>: trae la cédula,
+        y con ella se verifica la referencia bancaria. Lo que se pueda leer se completa abajo.</div>`;
+    } else if (nota) {
+      nota.innerHTML = `<div class="ig-forknote soft">La próxima podés empezar por acá: cargando el
+        <b>RIF</b> y la <b>referencia bancaria</b>, la cédula, la dirección y la cuenta se completan solas.</div>`;
+    }
+  }
+
+  function montarBifurcacion() {
+    // Sin recaudos en el catalogo no hay nada que elegir.
+    if (!CATDOCS.length || id) { aplicarModo(MODO_CARGA || 'manual', false); return; }
+    if (MODO_CARGA) { aplicarModo(MODO_CARGA, false); return; }
+
+    const fork = q('#ig_fork');
+    if (!fork) { aplicarModo('manual', false); return; }
+    [...ov.querySelectorAll('.ig-mbody > *')].forEach(el => { if (el !== fork) el.style.display = 'none'; });
+    fork.style.display = '';
+    fork.innerHTML = `
+      <p class="ig-forkq">¿Cómo querés cargar a esta persona?</p>
+      <button type="button" class="ig-fk" data-modo="papeles">
+        <span class="ig-fk-t">📎 Empezar por los papeles <span class="ig-fk-r">Se escribe menos</span></span>
+        <span class="ig-fk-d">Adjuntás lo que trajo el trabajador y el formulario se completa con lo que dicen.</span>
+        <span class="ig-fk-l">El <b>RIF</b> completa la cédula y la dirección · la <b>referencia bancaria</b>
+          completa la cuenta · se verifica que los papeles sean de esa persona</span>
+      </button>
+      <button type="button" class="ig-fk" data-modo="manual">
+        <span class="ig-fk-t">⌨ Llenar el formulario a mano</span>
+        <span class="ig-fk-d">Como siempre. Escribís los datos y adjuntás los recaudos al final.</span>
+      </button>
+      <div style="text-align:right;margin-top:4px">
+        <button type="button" class="btn" data-forkcancel>Cancelar</button>
+      </div>`;
+    fork.querySelectorAll('[data-modo]').forEach(b =>
+      b.addEventListener('click', () => {
+        aplicarModo(b.dataset.modo, true);
+        const f = q('#ig_start'); if (f) f.focus();   // recien ahora es visible
+      }));
+    const cx = fork.querySelector('[data-forkcancel]');
+    if (cx) cx.addEventListener('click', () => { const c = q('#ig_cancel'); if (c) c.click(); });
+  }
+  montarBifurcacion();
+
 
   q('#ig_ced').addEventListener('input', function () {
     this.value = this.value.replace(/[^0-9]/g, '');
@@ -1181,8 +1262,16 @@ function openIngresoModal(ctx, id) {
     ov, caja: ov.querySelector('.ig-mhead'), cancelar: '#ig_cancel',
     titulo: 'Descartar el ingreso',
     mensaje: 'Ya cargaste datos de esta persona. Si cerrás ahora se pierden.',
-    hayDatos: algunoConValor(ov, ['#ig_start', '#ig_first', '#ig_second', '#ig_last',
-      '#ig_ced', '#ig_birth', '#ig_cargo', '#ig_account', '#ig_phone', '#ig_email', '#ig_address']),
+    /* v6.237 — Los ADJUNTOS tambien son trabajo hecho. Antes solo se miraban
+       los inputs, y no se notaba porque los recaudos estaban al final: para
+       cuando alguien adjuntaba ya tenia medio formulario escrito. Con la
+       bifurcacion el orden se invierte y le pedimos que adjunte PRIMERO, asi
+       que si el PDF no se puede leer los campos quedan vacios y cerrar
+       borraba los archivos sin preguntar nada. */
+    hayDatos: () => algunoConValor(ov, ['#ig_start', '#ig_first', '#ig_second', '#ig_last',
+      '#ig_ced', '#ig_birth', '#ig_cargo', '#ig_account', '#ig_phone', '#ig_email', '#ig_address',
+      '#ig_gender', '#ig_marital'])()
+      || Object.values(docState).some(d => d && d.file_b64),
   });
   saveB.addEventListener('click', () => {
     if (Object.keys(check()).length) return;
@@ -1254,7 +1343,16 @@ function openIngresoModal(ctx, id) {
     const v0 = DW.validateCedula(q('#ig_ced').value);
     if (v0.ok) nrLookup(v0.ced, () => { if (ov.isConnected) { showCed(); check(); applyNrState(); } });
   }
-  setTimeout(() => q('#ig_start').focus(), 40);
+  /* Con la bifurcacion en pantalla, #ig_start esta dentro de un subarbol
+     display:none: el navegador ignora el focus() y el foco queda en el body,
+     asi que el primer Tab cae en la X de cerrar. Se enfoca lo que de verdad
+     esta a la vista; al elegir modo, aplicarModo lleva el foco a la fecha. */
+  setTimeout(() => {
+    const fork = q('#ig_fork');
+    const visible = fork && fork.style.display !== 'none';
+    const el = visible ? fork.querySelector('[data-modo]') : q('#ig_start');
+    if (el) el.focus();
+  }, 40);
 }
 
 function esc(s) { return String(s == null ? '' : s).replace(/"/g, '&quot;'); }
