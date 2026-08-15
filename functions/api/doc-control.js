@@ -136,6 +136,38 @@ export async function onRequestPost({ request, env }) {
       }) || [];
       // total_real viaja en cada fila: asi se puede decir "500 de 4658" con
       // un total que es cierto, y no "500 de 500".
+      /* v6.251 — Foto y existencia en el maestro, igual que en el detalle de
+         reportes y en Buscar personal. UNA sola consulta para todas las filas
+         (in.(...)), no una por trabajador. La URL de la miniatura es publica y
+         fija (bucket worker-thumbs por photo_key): no hay que firmar nada.
+         in_master se distingue de "no tiene foto" a proposito: ofrecer un
+         boton de ficha que abre una pantalla vacia es peor que no ofrecerlo. */
+      const fotos = {};
+      try {
+        const ceds = [...new Set(filas.map(f => f.id_number).filter(Boolean))];
+        if (ceds.length) {
+          const wm = await sb(env,
+            `workers_master?id_number=in.(${ceds.map(c => `"${c}"`).join(',')})`
+            + '&select=id_number,photo_key,ced_kind');
+          (wm || []).forEach(w => { fotos[w.id_number] = w; });
+        }
+      } catch (_) { /* sin foto la pantalla se pinta igual, con iniciales */ }
+
+      /* El modo de la ficha (store / enterprise) se decide ACA y no en el
+         front. NON_STORE_TYPES ya esta duplicado en seis vistas y es deuda
+         anotada; agregar una septima copia para esta pantalla seria empeorarla.
+         Desde el servidor sale una sola vez y viaja resuelto. */
+      const NO_TIENDA = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
+      const modos = {};
+      try {
+        const ccs = [...new Set(filas.map(f => f.company_code).filter(Boolean))];
+        if (ccs.length) {
+          const emp = await sb(env,
+            `companies?company_code=in.(${ccs.map(c => `"${c}"`).join(',')})&select=company_code,company_type`);
+          (emp || []).forEach(e => { modos[e.company_code] = NO_TIENDA.has(e.company_type) ? 'enterprise' : 'store'; });
+        }
+      } catch (_) { /* por defecto tienda, que es el 95% */ }
+
       const total = filas.length ? Number(filas[0].total_real) : 0;
       return json({
         ok: true,
@@ -145,6 +177,12 @@ export async function onRequestPost({ request, env }) {
           company_code: f.company_code, id_number: f.id_number, worker_name: f.worker_name,
           doc_type: f.doc_type, estado: f.estado, detalle: f.detalle, cargado_at: f.cargado_at,
           doc_label: TIPOS[f.doc_type] || f.doc_type,
+          ced_kind: (fotos[f.id_number] || {}).ced_kind || null,
+          in_master: !!fotos[f.id_number],
+          ficha_mode: modos[f.company_code] || 'store',
+          thumb_url: (fotos[f.id_number] && fotos[f.id_number].photo_key)
+            ? `${env.supabase_url}/storage/v1/object/public/worker-thumbs/${fotos[f.id_number].photo_key}.jpg`
+            : null,
         })),
       });
     }

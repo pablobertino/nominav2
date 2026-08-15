@@ -36,6 +36,14 @@
    ===================================================================== */
 
 import { $ } from '../core/dom.js';
+import { initialsOf, avatarColors } from '../core/avatar.js';
+
+/* v6.251 — La foto y el acceso a la ficha, iguales que en Buscar personal y
+   que en el detalle de reportes. Antes esta pantalla decia "revisá el RIF de
+   RAFAEL HERNANDEZ" y para hacerlo habia que ir a Buscar, escribir la cedula
+   y encontrarlo: tres pasos para algo que empieza aca. El icono y el avatar
+   son los mismos a proposito — el mismo objeto se ve igual en todo el portal. */
+const ICO_FICHA = '<svg viewBox="0 0 24 24" width="17" height="17" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="10" r="2"/><path d="M13 9h5M13 13h5M6.5 15.5c.4-1.2 1.4-2 2.5-2s2.1.8 2.5 2"/></svg>';
 
 const esc = (s) => String(s == null ? '' : s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 const fdate = (iso) => { if (!iso) return '—'; const [y, m, d] = String(iso).slice(0, 10).split('-'); return (d && m) ? `${d}/${m}/${y}` : iso; };
@@ -86,8 +94,18 @@ export async function renderDocControl(user) {
 
   function fila(f) {
     const adv = f.estado === 'advertencia';
+    const sinFicha = f.in_master === false;
+    const ava = f.thumb_url
+      ? `<div class="rd-ava haspic" data-avpic="${esc(f.id_number)}" title="Ver foto"><img src="${esc(f.thumb_url)}" alt="" loading="lazy" onerror="this.remove()"></div>`
+      : (() => { const c = avatarColors(f.id_number);
+          return `<div class="rd-ava${sinFicha ? ' rd-ava-nof' : ''}" style="background:${c.bg};color:${c.fg}">${esc(initialsOf(f.worker_name))}</div>`; })();
+    const btnFicha = sinFicha
+      ? '<div class="rd-noficha">sin ficha aún</div>'
+      : `<button type="button" class="icon-btn rd-fichabtn" data-ficha="${esc(f.id_number)}" title="Ver la ficha de ${esc(f.worker_name || '')}">${ICO_FICHA}</button>`;
     return `<tr class="${adv ? 'dc-adv' : ''}">
-      <td><b>${esc(f.worker_name || '')}</b><div class="rc-sub">${esc(f.id_number)}</div></td>
+      <td><div class="rd-wcell">${ava}
+        <div class="rd-wname"><b>${esc(f.worker_name || '')}</b><div class="ced">${esc(f.ced_kind ? `${f.ced_kind}-${f.id_number}` : f.id_number)}</div></div>
+        ${btnFicha}</div></td>
       <td>${esc(f.company_code)}</td>
       <td>${esc(f.doc_label || f.doc_type)}</td>
       <td>${adv
@@ -145,6 +163,32 @@ export async function renderDocControl(user) {
             ? 'No hay recaudos con advertencia. Todo lo que se cargó validó bien.'
             : 'No hay recaudos pendientes con estos filtros.'}</p>`}
       </div>`;
+
+    /* La ficha se abre con el MISMO modulo que Buscar personal, por import
+       dinamico para no cargarlo si nadie toca un nombre, y volviendo a esta
+       pantalla al salir. La miniatura abre el mismo visor grande de alla: una
+       foto de trabajador se mira siempre en el mismo lugar. */
+    const volver = () => renderDocControl(user);
+    host.querySelectorAll('[data-ficha]').forEach(b => {
+      b.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const f = (d.filas || []).find(x => String(x.id_number) === String(b.dataset.ficha));
+        if (!f) return;
+        const m = await import('./worker-photos.js');
+        m.renderWorkerPhotos(user, f.company_code, volver,
+          { mode: f.ficha_mode || 'store', openCed: f.id_number });
+      });
+    });
+    host.querySelectorAll('[data-avpic]').forEach(el => {
+      el.addEventListener('click', async (e) => {
+        e.stopPropagation();
+        const ced = el.dataset.avpic;
+        const f = (d.filas || []).find(x => String(x.id_number) === String(ced));
+        if (!f || !f.thumb_url) return;
+        const m = await import('./worker-photos.js');
+        m.openWorkerLightbox(f.thumb_url, `${f.worker_name} · C.I. ${ced}`, `${ced}.jpg`);
+      });
+    });
 
     $('#dcEstado').addEventListener('change', e => { ST.estado = e.target.value; cargar(); });
     $('#dcTipo').addEventListener('change', e => { ST.tipo = e.target.value; cargar(); });

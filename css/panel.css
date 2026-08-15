@@ -2612,3 +2612,9 @@ input.ig-locked:focus{outline:none;box-shadow:0 0 0 3px rgba(21,128,61,.12)}
 .igsp-h{font-size:10.5px;color:var(--muted)}
 .igsp-ok{font-size:10.5px;color:#15803d;font-weight:600}
 @media (max-width:640px){.igsp-prev{grid-template-columns:1fr}}
+
+/* Control de recaudos: la celda del trabajador usa las mismas clases .rd-*
+   que el detalle de reportes (v6.251). No se duplican estilos; solo se le da
+   aire a la columna, que ahora lleva foto y botón. */
+.dc-table td:first-child { min-width:260px; }
+.dc-table .rd-wcell { margin:-2px 0; }
