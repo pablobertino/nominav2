@@ -1313,6 +1313,16 @@ function openIngresoModal(ctx, id, modo) {
     if (!v.ok) { line.className = 'ig-line warn'; line.textContent = 'Cédula no válida (6 a 8 dígitos).'; return; }
     // v5.77: la persona esta en la lista de no reempleables -> se dice ACA,
     // antes de que llenen la ficha. Sin motivo: solo Capital Humano lo maneja.
+    /* v6.250 — Si ya trabajo en esta tienda y egreso, se avisa. No frena
+       nada: es un reingreso legitimo, pero conviene que la persona vea que el
+       portal lo reconocio y no crea que esta creando un duplicado. */
+    const exRoster = (ctx.roster || []).find(r => r.id_number === v.ced && r.is_active === false);
+    if (exRoster && !nrIsBlocked(v.ced)) {
+      line.className = 'ig-line ok';
+      line.innerHTML = `↩ Reingreso — ya trabajó en esta tienda`
+        + (exRoster.end_date ? ` hasta el <b>${DW.fmtDate(exRoster.end_date)}</b>` : '') + '.';
+      return;
+    }
     if (nrIsBlocked(v.ced)) {
       line.className = 'ig-line warn';
       // v5.78: el mensaje completo vive en el cartel del encabezado; aca
@@ -1381,9 +1391,14 @@ function openIngresoModal(ctx, id, modo) {
       // cedula repetida en el reporte (excluyendo el que edito)
       const dup = ctx.workers.some(w => w.ced === cedV.ced && w.id !== (existing ? existing.id : -1));
       if (dup) e.ced = 'Ya agregaste esa cédula.';
-      // cedula que YA esta en la lista de la tienda: no es un ingreso
-      // (esa persona ya trabaja ahi). Se bloquea para evitar altas duplicadas.
-      else if ((ctx.roster || []).some(r => r.id_number === cedV.ced)) {
+      /* Cedula que ya trabaja en la tienda: no es un ingreso, y se bloquea.
+         v6.250 — Antes se bloqueaba a CUALQUIERA que estuviera en el roster,
+         incluidos los egresados: el roster los conserva a proposito para
+         mostrarlos con su fecha de salida. Resultado: una tienda no podia
+         reingresar a alguien que ya habia trabajado ahi. Son 953 personas en
+         142 tiendas en esa situacion, y el reingreso es normal: hay 51
+         reportados. Ahora solo frena a los ACTIVOS. */
+      else if ((ctx.roster || []).some(r => r.id_number === cedV.ced && r.is_active !== false)) {
         e.ced = 'Esa cédula ya está en la lista de la tienda (no es un ingreso nuevo).';
       }
       // v5.77: no reempleable -> no se puede agregar al reporte. El texto
