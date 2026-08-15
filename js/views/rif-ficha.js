@@ -81,11 +81,122 @@ function isVencido(dmy) { const d = parseDMY(dmy); return !!d && d < todayLocal(
 function looksLikeRif(text) {
   return /REGISTRO\s+[ÚU]NICO\s+DE\s+INFORMACI[ÓO]N\s+FISCAL|seniat\.gob\.ve|N[°º]\s*COMPROBANTE/i.test(text || '');
 }
+/* =====================================================================
+   PLANILLA DE ACTUALIZACION TEMPORAL DEL RUIF  (v6.234)
+
+   Que es. Un formulario del SENIAT, provisional: da 30 dias para formalizar
+   la inscripcion. NO tiene fecha de vencimiento, asi que no se le puede
+   aplicar la regla de "RIF vencido" -no vence: caduca como tramite-.
+
+   Por que vale la pena. Es el documento mas rico que recibimos: trae
+   apellidos y nombres EN CAMPOS SEPARADOS, ademas de fecha de nacimiento,
+   sexo, estado civil, correo y telefono. El certificado de RIF comun trae el
+   nombre en una sola linea y el SENIAT a veces pone los apellidos adelante,
+   asi que partirlo por posicion acierta 65%. Aca no hace falta adivinar.
+
+   Como viene el texto. pdf.js devuelve la planilla "columnar": primero las
+   ETIQUETAS juntas y despues los VALORES juntos.
+       DATOS BASICOS Apellidos Nombres ABOHARP FAGUNDEZ AARON Cedula ...
+   Eso deja sin saber donde terminan los apellidos y donde empiezan los
+   nombres: 'ABOHARP FAGUNDEZ AARON' podria partirse en cualquier lado.
+
+   Como se resuelve. El mismo documento trae la declaracion jurada:
+       'Yo, AARON ABOHARP FAGUNDEZ titular de la cedula...'
+   que esta en orden natural (nombres primero). Los mismos tokens en dos
+   ordenes distintos: el punto donde uno rota respecto del otro ES la
+   frontera. Rotando 'ABOHARP FAGUNDEZ AARON' dos posiciones se obtiene
+   'AARON ABOHARP FAGUNDEZ', luego los apellidos son los dos primeros.
+   Es exacto, no una heuristica.
+   ===================================================================== */
+function esPlanilla(text) {
+  return /PLANILLA\s+DE\s+ACTUALIZACI[ÓO]N\s+TEMPORAL/i.test(text || '');
+}
+
+/* Corte por rotacion. Devuelve cuantos tokens de `bloque` son apellidos,
+   comparando contra el nombre en orden natural. null si no son el mismo
+   conjunto (documento raro): en ese caso no se inventa un corte. */
+function corteApellidos(bloque, natural) {
+  const a = bloque.filter(Boolean), b = natural.filter(Boolean);
+  if (a.length < 2 || a.length !== b.length) return null;
+  for (let k = 1; k < a.length; k++) {
+    const rot = a.slice(k).concat(a.slice(0, k));
+    if (rot.join(' ') === b.join(' ')) return k;
+  }
+  return null;
+}
+
+function parsePlanilla(text, out) {
+  out.es_rif = true;
+  out.provisional = true;          // no vence: caduca como tramite
+  out.fecha_vencimiento = null;
+
+  const mrif = text.match(/\b([VEJPG])\s?-?\s?(\d{9})\b/i);
+  if (mrif) { out.rif = mrif[1].toUpperCase() + mrif[2]; out.cedula_rif = normCed(mrif[2].slice(0, 8)); }
+
+  // La declaracion jurada: nombre en orden natural + cedula, las dos cosas.
+  const myo = text.match(/\bYo,?\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s]{5,80}?)\s+titular\s+de\s+la\s+c[eé]dula[^0-9]{0,40}(\d{6,9})/i);
+  const natural = myo ? collapse(myo[1]).toUpperCase().split(/\s+/) : [];
+  if (myo && !out.cedula_rif) out.cedula_rif = normCed(myo[2]);
+  if (natural.length) out.nombre_pdf = natural.join(' ');
+
+  // Bloque 'Apellidos Nombres <valores>' hasta la etiqueta siguiente.
+  const mbl = text.match(/Apellidos\s+Nombres\s+([A-ZÁÉÍÓÚÑ][A-ZÁÉÍÓÚÑ\s]{5,90}?)\s+(?:C[eé]dula|Tipo\s+de\s+Persona|DATOS)/i);
+  if (mbl) {
+    const bloque = collapse(mbl[1]).toUpperCase().split(/\s+/);
+    const k = corteApellidos(bloque, natural);
+    if (k) {
+      out.apellidos_pdf = bloque.slice(0, k).join(' ');
+      out.nombres_pdf   = bloque.slice(k).join(' ');
+    } else if (!out.nombre_pdf) {
+      // Sin declaracion jurada con que cruzar no se adivina el corte: se
+      // guarda el nombre entero y que lo separe una persona.
+      out.nombre_pdf = bloque.join(' ');
+    }
+  }
+
+  const mnac = text.match(/Fecha\s+de\s+Nacimiento\s+Sexo\s+Estado\s+Civil\s+(\d{2}\/\d{2}\/\d{4})\s+(MASCULINO|FEMENINO)\s+([A-ZÁÉÍÓÚÑ]+)/i);
+  if (mnac) {
+    out.fecha_nacimiento = mnac[1];
+    out.sexo = mnac[2].toUpperCase().startsWith('M') ? 'M' : 'F';
+    out.estado_civil = mnac[3].toUpperCase();
+  }
+
+  const mmail = text.match(/[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/i);
+  if (mmail) out.correo = mmail[0].toLowerCase();
+
+  const mtel = text.match(/\b(0(?:41[24689]|42[46]|2\d\d)[-\s]?\d{7})\b/);
+  if (mtel) out.telefono = mtel[1].replace(/[-\s]/g, '');
+
+  /* Domicilio: la planilla lo desarma en Avenida/Casa/Sector/Estado/Municipio
+     y pdf.js mezcla etiquetas con valores. Se toma el tramo tal cual y se le
+     sacan las etiquetas sueltas; queda imperfecto pero utilizable, y la
+     direccion en el alta es editable. */
+  const mdom = text.match(/DOMICILIO\s+FISCAL\s+(.+?)\s*(?:Estado\s+Municipio|Punto\s+de\s+Referencia|Firma\b|Pagina\s+\d)/i);
+  if (mdom) {
+    const dom = collapse(mdom[1])
+      .replace(/\b(Avenida|Casa|Sector|Edificio|Piso|Local|Calle)\b\s*/gi, '')
+      .replace(/\bNO\s+INDICA\b/gi, '')
+      .replace(/\s{2,}/g, ' ').trim();
+    if (dom.length > 4) out.domicilio_fiscal = dom;
+  }
+  return out;
+}
+
 export function parseRif(rawText) {
   const text = collapse(rawText);
   const out = { es_rif: looksLikeRif(text), rif: null, cedula_rif: null, nombre_pdf: null,
     nro_comprobante: null, fecha_inscripcion: null, fecha_actualizacion: null, fecha_vencimiento: null,
-    domicilio_fiscal: null };
+    domicilio_fiscal: null,
+    /* v6.234 — solo los trae la planilla del SENIAT (ver parsePlanilla) */
+    provisional: false, apellidos_pdf: null, nombres_pdf: null, fecha_nacimiento: null,
+    sexo: null, estado_civil: null, correo: null, telefono: null };
+
+  /* La PLANILLA DE ACTUALIZACION TEMPORAL es otro documento del SENIAT: no es
+     el certificado de RIF, pero lo emite el mismo organismo y trae mas datos.
+     Se desvia antes que nada porque con el parser del certificado salia mal:
+     el nombre terminaba siendo la declaracion jurada del final (72 palabras).
+     Ver parsePlanilla() para el detalle. */
+  if (esPlanilla(text)) return parsePlanilla(text, out);
 
   // RIF (letra + 9 dígitos). Es el primer V/E/J/P/G + 9 dígitos del documento.
   const mrif = text.match(/\b([VEJPG])\s?-?\s?(\d{9})\b/i);
@@ -440,8 +551,19 @@ function openUploadModal(w, STATE, onSaved) {
       ev.cedOk ? sem('ok', 'es la del trabajador') : sem('err', 'no coincide')));
     rows.push(row('RIF', `<span class="mono">${esc(fields.rif || '—')}</span>`,
       !fields.rif ? sem('info', '—') : (ev.digitOk ? sem('ok', 'dígito válido') : sem('warn', 'dígito inválido'))));
-    rows.push(row('Vence', esc(fields.fecha_vencimiento || '—'),
-      !fields.fecha_vencimiento ? sem('info', 'sin fecha') : (ev.vencido ? sem('warn', 'RIF vencido') : sem('ok', 'vigente'))));
+    /* v6.234 — La planilla no tiene vencimiento, y sin decirlo pareceria un
+       RIF que no caduca nunca: quedaria 'al dia' para siempre en el Control
+       de recaudos. Es un tramite con 30 dias para formalizar, asi que se
+       acepta pero se avisa que despues hay que traer el definitivo. */
+    if (fields.provisional) {
+      rows.push(row('Tipo de documento', 'Planilla de actualización (provisional)',
+        sem('warn', 'falta el RIF definitivo')));
+      rows.push(row('Vence', 'No vence — es un trámite',
+        sem('info', '30 días para formalizar')));
+    } else {
+      rows.push(row('Vence', esc(fields.fecha_vencimiento || '—'),
+        !fields.fecha_vencimiento ? sem('info', 'sin fecha') : (ev.vencido ? sem('warn', 'RIF vencido') : sem('ok', 'vigente'))));
+    }
     rows.push(row('Domicilio fiscal', esc(fields.domicilio_fiscal || '—'),
       fields.domicilio_fiscal ? sem('ok', 'se guarda en la ficha') : sem('info', 'no detectado')));
 
@@ -484,6 +606,13 @@ function openUploadModal(w, STATE, onSaved) {
           nro_comprobante: fields.nro_comprobante, fecha_inscripcion: fields.fecha_inscripcion,
           fecha_actualizacion: fields.fecha_actualizacion, fecha_vencimiento: fields.fecha_vencimiento,
           domicilio_fiscal: fields.domicilio_fiscal,
+          // v6.234 — si no se listan aca se pierden en silencio, que es
+          // exactamente como quedo muda la validacion de la v6.231.
+          provisional: fields.provisional || false,
+          apellidos_pdf: fields.apellidos_pdf || null, nombres_pdf: fields.nombres_pdf || null,
+          fecha_nacimiento: fields.fecha_nacimiento || null, sexo: fields.sexo || null,
+          estado_civil: fields.estado_civil || null, correo: fields.correo || null,
+          telefono: fields.telefono || null,
         },
         validaciones: ev.validaciones, pdf_base64: pdfB64,
       };
