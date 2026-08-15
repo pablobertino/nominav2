@@ -2007,6 +2007,7 @@ async function submitIngreso(env, body) {
         _ftype: ftype || 'application/octet-stream',
         _kind: cat.doc_kind || null,
         _brf: (sent && sent.brf && typeof sent.brf === 'object') ? sent.brf : null,
+        _rif: (sent && sent.rif && typeof sent.rif === 'object') ? sent.rif : null,
       });
     });
     if (docErr) return;
@@ -2138,38 +2139,59 @@ async function submitIngreso(env, body) {
     }
   }
 
-  /* --- La referencia bancaria deja de perderse (v6.231) ------------------
-     Hasta aca el PDF solo viajaba a osTicket. Cuando la persona entraba al
-     maestro su ficha nacia sin referencia y habia que volver a pedirsela: de
-     eso salen buena parte de los ~4650 recaudos faltantes que hoy muestra el
-     Control de recaudos.
+  /* --- Los recaudos dejan de perderse (v6.240) ---------------------------
+     Hasta la v6.231 el PDF solo viajaba a osTicket y no quedaba en el portal;
+     desde entonces se guardaba SOLO la referencia bancaria. Medido el
+     14/08: de los documentos que las tiendas entregaron en el alta, 179
+     referencias, 176 cedulas y 171 RIF -unos 526- no estan en ninguna ficha.
+     Y esas mismas personas figuran en Control de recaudos como que les FALTA
+     el papel, reprochandole a la tienda algo que ya hizo.
 
-     bank_references se indexa por CEDULA y no exige que el trabajador exista
-     en workers_master, asi que se puede guardar ahora y la ficha lo encuentra
-     sola el dia que el alta se hace efectiva. Sin migracion ni proceso
-     posterior que alguien tenga que acordarse de correr.
+     Se guardan por CEDULA y las tablas no exigen que el trabajador exista en
+     workers_master, asi que la ficha los encuentra sola el dia que el alta se
+     hace efectiva. Sin migracion ni proceso posterior.
 
-     Se guarda 'pendiente', igual que lo cargado desde la ficha: esta fase
-     hace que el documento no se pierda, no cambia quien lo aprueba.
+     El parseo llega hecho desde el navegador (_brf / _rif): en el Worker no
+     hay pdf.js, y volver a parsear aca seria mantener dos lectores.
 
      Va al final y con su propio try: si Storage falla, el reporte ya quedo
      registrado y los tickets salen igual. Perder la copia es molesto; perder
-     el alta entera por no poder guardar un adjunto seria mucho peor. */
+     el alta entera por no poder guardar un adjunto seria mucho peor.
+     osTicket sigue recibiendo todo igual que siempre. */
   try {
     for (const l of clean) {
-      for (const d of (l._docs || [])) {
-        if (d._kind !== 'bank_reference' || !d._b64) continue;
-        const ced = String(l.worker_id_number || '').replace(/\D/g, '');
-        if (!ced) continue;
-        // Una sola por cedula: si la tienda ya la habia cargado antes, no se
-        // duplica. La ficha muestra la ultima y ver dos iguales confunde.
-        const ya = await sb(env, `bank_references?id_number=eq.${encodeURIComponent(ced)}&select=id&limit=1`);
-        if (Array.isArray(ya) && ya.length) continue;
+      const ced = String(l.worker_id_number || '').replace(/\D/g, '');
+      if (!ced) continue;
 
+      for (const d of (l._docs || [])) {
+        if (!d._b64 || !d._kind) continue;
         const bytes = b64ToBytes(d._b64);
         if (!bytes.length) continue;
-        const path = `${ced}/${Date.now()}.pdf`;
-        const up = await fetch(`${env.supabase_url}/storage/v1/object/bank-refs/${path}`, {
+
+        /* Una sola por cedula y tipo. Si la tienda ya lo habia cargado desde
+           la ficha no se duplica: ver dos veces el mismo papel confunde, y el
+           de la ficha suele estar mas revisado. */
+        /* Se ignoran las ANULADAS: si alguien anulo un documento equivocado,
+           que eso impidiera guardar el correcto seria dejar a la persona sin
+           recaudo justo despues de haber hecho bien las cosas.
+           Ojo: el CHECK de la tabla dice 'anulada', no 'anulado'. */
+        const filtro = d._kind === 'bank_reference'
+          ? `bank_references?id_number=eq.${encodeURIComponent(ced)}`
+            + `&estado=neq.anulada&select=id&limit=1`
+          : `personal_documents?id_number=eq.${encodeURIComponent(ced)}`
+            + `&doc_type=eq.${encodeURIComponent(d._kind)}&estado=neq.anulada&select=id&limit=1`;
+        const ya = await sb(env, filtro);
+        if (Array.isArray(ya) && ya.length) continue;
+
+        // La cedula suele venir como imagen; el resto como PDF.
+        const tipo = String(d._ftype || '').toLowerCase();
+        const ext = tipo.includes('png') ? 'png' : (tipo.includes('jpeg') || tipo.includes('jpg')) ? 'jpg' : 'pdf';
+        const bucket = d._kind === 'bank_reference' ? 'bank-refs' : 'personal-docs';
+        const path = d._kind === 'bank_reference'
+          ? `${ced}/${Date.now()}.pdf`
+          : `${d._kind}/${ced}/${Date.now()}.${ext}`;
+
+        const up = await fetch(`${env.supabase_url}/storage/v1/object/${bucket}/${path}`, {
           method: 'POST',
           headers: {
             apikey: env.supabase_service_role,
@@ -2181,28 +2203,42 @@ async function submitIngreso(env, body) {
         });
         if (!up.ok) continue;
 
-        const c = (d._brf && d._brf.campos) || {};
-        await sb(env, 'bank_references', {
-          method: 'POST',
-          body: JSON.stringify({
+        const quien = `ingreso:${responsible || cc}`;
+        if (d._kind === 'bank_reference') {
+          const c = (d._brf && d._brf.campos) || {};
+          await sb(env, 'bank_references', { method: 'POST', body: JSON.stringify({
             id_number: ced,
             plantilla: c.plantilla || 'otro',
-            banco_code: c.banco_code || null,
-            banco_nombre: c.banco_nombre || null,
+            banco_code: c.banco_code || null, banco_nombre: c.banco_nombre || null,
             cuenta: c.cuenta ? String(c.cuenta).replace(/\D/g, '').slice(0, 20) : null,
-            cuenta_last4: c.cuenta_last4 || null,
-            tipo_cuenta: c.tipo_cuenta || null,
+            cuenta_last4: c.cuenta_last4 || null, tipo_cuenta: c.tipo_cuenta || null,
             cedula_pdf: c.cedula_pdf ? String(c.cedula_pdf).replace(/\D/g, '') : null,
-            nombre_pdf: c.nombre_pdf || null,
-            nro_operacion: c.nro_operacion || null,
-            fecha_emision: c.fecha_emision || null,
-            fecha_apertura: c.fecha_apertura || null,
+            nombre_pdf: c.nombre_pdf || null, nro_operacion: c.nro_operacion || null,
+            fecha_emision: c.fecha_emision || null, fecha_apertura: c.fecha_apertura || null,
             validaciones: (d._brf && d._brf.validaciones) || { origen: 'ingreso', sin_parsear: true },
+            estado: 'pendiente', storage_path: path, uploaded_by: quien,
+          }) });
+        } else {
+          /* La cedula es una imagen: no hay nada que parsear y datos queda
+             vacio. Se guarda igual porque el papel es el papel. */
+          const campos = (d._rif && d._rif.campos) || null;
+          await sb(env, 'personal_documents', { method: 'POST', body: JSON.stringify({
+            id_number: ced,
+            doc_type: d._kind,
             estado: 'pendiente',
-            storage_path: path,
-            uploaded_by: `ingreso:${responsible || cc}`,
-          }),
-        });
+            datos: campos ? {
+              rif: campos.rif, cedula_rif: campos.cedula_rif, nombre_pdf: campos.nombre_pdf,
+              nro_comprobante: campos.nro_comprobante, fecha_inscripcion: campos.fecha_inscripcion,
+              fecha_actualizacion: campos.fecha_actualizacion, fecha_vencimiento: campos.fecha_vencimiento,
+              domicilio_fiscal: campos.domicilio_fiscal, provisional: campos.provisional || false,
+              apellidos_pdf: campos.apellidos_pdf, nombres_pdf: campos.nombres_pdf,
+              fecha_nacimiento: campos.fecha_nacimiento, sexo: campos.sexo,
+              estado_civil: campos.estado_civil, correo: campos.correo, telefono: campos.telefono,
+            } : { origen: 'ingreso' },
+            validaciones: { origen: 'ingreso' },
+            storage_path: path, uploaded_by: quien,
+          }) });
+        }
       }
     }
   } catch (_) { /* el alta ya quedo registrada; la copia se puede recargar desde la ficha */ }

@@ -676,7 +676,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.239</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.240</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5904,7 +5904,7 @@ async function renderPaySyncCard(user) {
    2) re-lee cada PDF con el MISMO lector del RIF y extrae el domicilio;
    3) manda todo junto para completar workers_master.fiscal_address.
    No toca la Dirección Personal. Reutilizable si en el futuro hace falta. */
-/* v6.239 — Re-procesa RIF ya guardados con el parser actual.
+/* v6.240 — Re-procesa RIF ya guardados con el parser actual.
    Los 89 cargados entre el 23 y el 26 de julio quedaron sin nombre ni
    domicilio porque el parser de entonces no los sacaba; sus PDF se leen
    perfecto hoy. Se probo uno (VICTORIA DAVALILLO, 28046590) antes de escribir
@@ -6171,7 +6171,7 @@ async function viewSync(user) {
       <button class="btn btn-primary" id="fiscalToolBtn">Rellenar Dirección Fiscal</button>
     </div>
 
-    <!-- v6.239: re-lee RIF viejos con el parser actual. 89 quedaron sin
+    <!-- v6.240: re-lee RIF viejos con el parser actual. 89 quedaron sin
          nombre ni domicilio en la primera semana; los PDF estan bien. -->
     <div class="card" id="rifReparseCard">
       <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">Herramientas · Re-procesar RIF</h3></div>

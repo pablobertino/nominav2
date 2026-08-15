@@ -1313,9 +1313,10 @@ function openIngresoModal(ctx, id, modo) {
           file_name: docState[d.id].file_name,
           file_b64: docState[d.id].file_b64,
           file_type: docState[d.id].file_type,
-          // Lo que el parser leyo del PDF. El backend lo guarda en
-          // bank_references al aprobar, sin volver a parsear nada.
+          // Lo que el parser leyo del PDF. El backend lo guarda tal cual, sin
+          // volver a parsear: en el Worker no hay pdf.js.
           brf: docState[d.id].brf || null,
+          rif: docState[d.id].rif || null,
         })),
     };
 
