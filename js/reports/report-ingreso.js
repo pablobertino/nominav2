@@ -778,6 +778,7 @@ function openIngresoModal(ctx, id, modo) {
     st.brf.estado = err ? 'err' : (warn ? 'warn' : 'ok');
     st.brf.validaciones = ev2.validaciones;
     st.brf.mensaje = (err || warn) ? (err || warn).text : mensajeOk(ev2, st.brf.autollenado);
+    sugerirDesdeReferencia();   // el nombre del RIF puede quedar resuelto con esto
     renderDocs();
   }
 
@@ -1110,6 +1111,30 @@ function openIngresoModal(ctx, id, modo) {
       sp.usado = true; sp.tocado = true;
       check();
       pintarSplit(cont, docId);
+    });
+  }
+
+  /* v6.242 — La sugerencia se recalcula cuando llega la REFERENCIA, no solo
+     al dibujar el separador por primera vez. El flujo que recomendamos es RIF
+     primero y referencia despues, asi que calcularla una sola vez significaba
+     que casi nunca se disparaba: el separador ya estaba pintado con el corte
+     por defecto cuando aparecia el dato que permitia deducir el bueno.
+     No se pisa si la persona ya movio la barra o ya apreto el boton: su
+     decision manda sobre nuestra deduccion. */
+  function sugerirDesdeReferencia() {
+    const ref = CATDOCS.filter(esRefBancaria).map(x => docState[x.id])
+      .find(x => x && x.brf && x.brf.campos && x.brf.campos.nombre_pdf);
+    if (!ref) return;
+    CATDOCS.filter(esRif).forEach(d => {
+      const st = docState[d.id];
+      if (!st || !st.split || st.split.tocado || st.split.usado) return;
+      const r = rotacionCorte(st.split.toks,
+        String(ref.brf.campos.nombre_pdf).toUpperCase().trim().split(/\s+/),
+        ref.brf.campos.plantilla);
+      if (!r) return;
+      st.split.corte = r.corte;
+      st.split.nomPrimero = r.nomPrimero;
+      st.split.sugerido = true;
     });
   }
 
