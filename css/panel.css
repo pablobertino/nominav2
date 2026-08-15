@@ -2547,21 +2547,20 @@ input.ig-locked:focus{outline:none;box-shadow:0 0 0 3px rgba(21,128,61,.12)}
 .igbrf-nom{margin-top:7px;padding-top:7px;border-top:1px dashed currentColor;
   font-size:11.5px;line-height:1.5;opacity:.9}
 
-/* --- Bifurcacion del alta (v6.237) ---------------------------------------
-   Las dos opciones se ven IGUALES de importantes. La recomendada se distingue
-   por lo que dice y por el chip, no por ser mas grande ni por dejar la otra
-   en gris: quien elige el camino de siempre no tiene por que sentir que
-   eligio mal. */
-.ig-forkq{font-size:13px;color:var(--muted);margin:2px 0 12px}
-.ig-fk{display:block;width:100%;text-align:left;border:1.5px solid var(--border);
-  border-radius:12px;padding:14px 16px;background:#fff;cursor:pointer;margin-bottom:11px;
-  font-family:inherit;transition:border-color .12s,box-shadow .12s}
-.ig-fk:hover{border-color:var(--brand);box-shadow:0 0 0 3px rgba(37,99,235,.08)}
-.ig-fk-t{display:flex;align-items:center;gap:9px;font-size:13.5px;font-weight:700;color:var(--ink)}
-.ig-fk-r{font-size:10px;font-weight:700;background:var(--success-bg);color:#15803d;
-  padding:2px 8px;border-radius:999px;text-transform:uppercase;letter-spacing:.04em}
-.ig-fk-d{display:block;font-size:12px;color:var(--muted);margin-top:5px;line-height:1.55}
-.ig-fk-l{display:block;font-size:11.5px;color:var(--ink-soft,#374151);margin-top:8px;line-height:1.7}
+/* --- Como se agrega un ingreso (v6.238) -----------------------------------
+   Dos botones en vez de una pregunta dentro del modal. La diferencia no es
+   cosmetica: preguntando adentro habia que recordar la respuesta, y quien
+   elegia 'a mano' no volvia a ver la pregunta nunca ni podia cambiar de idea.
+   Aca la eleccion esta siempre a la vista y se decide por persona.
+   El recomendado es primario y el otro secundario, pero el secundario NO va
+   en gris apagado: quien no tiene los papeles a mano no esta eligiendo mal. */
+.ig-add{display:flex;align-items:center;gap:10px;margin:14px 0 4px;flex-wrap:wrap}
+.ig-add-h{font-size:11.5px;color:var(--muted);line-height:1.45;max-width:340px}
+@media (max-width:640px){
+  .ig-add{gap:8px}
+  .ig-add .btn{flex:1 1 100%}
+  .ig-add-h{max-width:none;order:9}
+}
 .ig-forknote{background:#f0f7ff;border:1px solid #bcd8fb;color:#1e40af;border-radius:9px;
   padding:9px 12px;font-size:11.5px;line-height:1.5;margin:0 0 9px}
 .ig-forknote.soft{background:var(--surface,#f8fafc);border-color:var(--border);color:var(--muted)}

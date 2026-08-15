@@ -235,12 +235,6 @@ function bloqueoDe(date) {
     + `(cierre de quincena). La primera fecha disponible es el ${DW.fmtDate(DW.addDays(r.hasta, 1))}.`;
 }
 
-/* Como quiere trabajar esta persona: 'papeles' (adjunta primero y el
-   formulario se completa) o 'manual' (el camino de siempre). Vive a nivel de
-   modulo y no por trabajador: un reporte puede tener seis altas y preguntar
-   seis veces lo mismo seria una molestia, no una opcion. Se pregunta una vez
-   y se respeta hasta que recarguen. */
-let MODO_CARGA = null;
 
 /* Valida la cuenta: 20 digitos, prefijo en catalogo de bancos. */
 function validAccount(raw) {
@@ -441,22 +435,35 @@ function paintStep4(ctx) {
       <div class="progress-bar"><div id="igProgBar" style="width:0%"></div></div>
     </div>
 
-    <div style="display:flex;justify-content:space-between;align-items:center;gap:10px;margin:14px 0 4px;flex-wrap:wrap">
-      <button class="btn btn-primary" id="igAdd">＋ Agregar ingreso</button>
+    <!-- v6.238 — La eleccion vive ACA y no dentro del modal. Antes se
+         preguntaba al abrir y se recordaba toda la sesion: quien elegia "a
+         mano" no volvia a ver la pregunta nunca y no habia forma de cambiar
+         de idea. Siendo dos botones, la decision es parte de la accion: esta
+         siempre a la vista, se elige distinto en cada persona y no hay un
+         paso extra dentro del formulario. -->
+    <div class="ig-add">${(CAT && CAT.docs && CAT.docs.length) ? `
+      <button class="btn btn-primary" id="igAdd">＋ Agregar con documentos</button>
+      <button class="btn" id="igAddManual">＋ Agregar a mano</button>
+      <span class="ig-add-h">Con el RIF y la referencia bancaria se completan la cédula, la dirección y la cuenta.</span>`
+      : `<button class="btn btn-primary" id="igAddManual">＋ Agregar ingreso</button>`}
+      <span style="flex:1"></span>
       <span style="font-size:12px;color:var(--muted)" id="igCount">0 ingresos</span>
     </div>
 
     <table id="igTbl" style="display:none"><thead><tr>
       <th>Trabajador</th><th>Cédula</th><th>Cargo</th><th>Edad</th><th>Fecha ingreso</th><th>Recaudos</th><th>Acción</th><th style="width:120px"></th>
     </tr></thead><tbody id="igBody"></tbody></table>
-    <div class="empty" id="igEmpty">Aún no has agregado ningún ingreso. Usa “＋ Agregar ingreso”.</div>
+    <div class="empty" id="igEmpty">${(CAT && CAT.docs && CAT.docs.length)
+      ? 'Aún no has agregado ningún ingreso. Empezá con “＋ Agregar con documentos” si el trabajador ya trajo sus papeles.'
+      : 'Aún no has agregado ningún ingreso. Usa “＋ Agregar ingreso”.'}</div>
 
     <div class="wiz-foot">
       <button class="btn" id="igBack">← Atrás</button>
       <button class="btn btn-primary" id="igNext" disabled>Revisar y enviar →</button>
     </div>`;
 
-  $('#igAdd').addEventListener('click', () => openIngresoModal(ctx, null));
+  { const b = $('#igAdd'); if (b) b.addEventListener('click', () => openIngresoModal(ctx, null, 'papeles')); }
+  $('#igAddManual').addEventListener('click', () => openIngresoModal(ctx, null, 'manual'));
   $('#igBack').addEventListener('click', () => ctx.setStep(ctx.stepBefore4 || 2));
   $('#igNext').addEventListener('click', () => ctx.setStep(5));
 
@@ -541,7 +548,7 @@ function renderRows(ctx) {
 }
 
 /* ---------- MODAL: alta / edicion de un ingreso ---------- */
-function openIngresoModal(ctx, id) {
+function openIngresoModal(ctx, id, modo) {
   ensureIngresoCss();   // v5.78: encabezado fijo + cartel de no reempleable
   const win = ingresoWindow();
   const existing = id ? ctx.getWorker(id) : null;
@@ -575,8 +582,6 @@ function openIngresoModal(ctx, id) {
         <div id="ig_nrslot"></div>
       </div>
       <div class="ig-mbody">
-
-      <div id="ig_fork" style="display:none"></div>
 
       <div class="ig-band" data-nrdim>
         <div class="ig-band-t">📅 Fecha inicial de empleo <span style="color:var(--danger)">*</span></div>
@@ -1024,73 +1029,28 @@ function openIngresoModal(ctx, id) {
     renderDocs();
   }
 
-  /* ---- Bifurcacion (v6.237) --------------------------------------------
-     No se obliga a nadie: el camino de siempre queda entero y en igualdad de
-     condiciones. Lo que cambia es que ahora hay algo concreto que ofrecer a
-     cambio -la cedula, la direccion y la cuenta salen de los PDF- y no una
-     promesa vaga de que conviene.
-
-     Elegir 'papeles' MUEVE el bloque de recaudos arriba en vez de armar un
-     wizard de tres pasos. Es deliberado: mover un nodo conserva los listeners
-     y no toca la validacion, mientras que partir el formulario en pasos
-     obligaria a reescribir check() y por aca pasan siete altas por dia. El
-     beneficio es el mismo -los papeles primero- con una fraccion del riesgo.
-
-     Editando no se pregunta: los datos ya estan y la eleccion no aplica. */
-  function aplicarModo(modo, recordar) {
-    /* Solo se recuerda lo que la persona ELIGIO. Si el modo sale de un
-       fallback -editar, o un catalogo sin recaudos- fijarlo dejaria a toda la
-       sesion sin la pregunta por un default que nadie pidio. */
-    if (recordar) MODO_CARGA = modo;
-    const fork = q('#ig_fork'), bloque = q('#ig_docblock'), nota = q('#ig_docnote');
-    if (fork) fork.style.display = 'none';
-    [...ov.querySelectorAll('.ig-mbody > *')].forEach(el => { if (el !== fork) el.style.display = ''; });
-    if (!bloque) return;
-
-    if (modo === 'papeles') {
+  /* ---- Orden de carga (v6.238) -----------------------------------------
+     `modo` llega del boton que abrio el modal: no se pregunta acá ni se
+     recuerda nada. En 'papeles' el bloque de recaudos se MUEVE arriba, que
+     es lo unico que hace falta para que los PDF completen el formulario;
+     partirlo en pasos obligaria a reescribir check() y por aca pasan siete
+     altas por dia. Mover un nodo conserva sus listeners.
+     Editando no aplica: los datos ya estan. */
+  function ordenarSegunModo(m) {
+    const bloque = q('#ig_docblock'), nota = q('#ig_docnote');
+    if (!bloque || !nota) return;
+    if (m === 'papeles' && !id) {
       const banda = ov.querySelector('.ig-mbody > .ig-band');
-      if (banda && banda.nextSibling !== bloque) banda.parentNode.insertBefore(bloque, banda.nextSibling);
-      if (nota) nota.innerHTML = `<div class="ig-forknote">Empezá por el <b>RIF</b>: trae la cédula,
-        y con ella se verifica la referencia bancaria. Lo que se pueda leer se completa abajo.</div>`;
-    } else if (nota) {
-      nota.innerHTML = `<div class="ig-forknote soft">La próxima podés empezar por acá: cargando el
-        <b>RIF</b> y la <b>referencia bancaria</b>, la cédula, la dirección y la cuenta se completan solas.</div>`;
+      if (banda) banda.parentNode.insertBefore(bloque, banda.nextSibling);
+      nota.innerHTML = `<div class="ig-forknote">Empezá por el <b>RIF</b>: trae la cédula, y con ella
+        se verifica la referencia bancaria. Lo que se pueda leer se completa abajo.</div>`;
+    } else if (!id) {
+      nota.innerHTML = `<div class="ig-forknote soft">Si el trabajador ya trajo el <b>RIF</b> y la
+        <b>referencia bancaria</b>, adjuntándolos acá se completan la cédula, la dirección y la cuenta.</div>`;
     }
   }
+  ordenarSegunModo(modo);
 
-  function montarBifurcacion() {
-    // Sin recaudos en el catalogo no hay nada que elegir.
-    if (!CATDOCS.length || id) { aplicarModo(MODO_CARGA || 'manual', false); return; }
-    if (MODO_CARGA) { aplicarModo(MODO_CARGA, false); return; }
-
-    const fork = q('#ig_fork');
-    if (!fork) { aplicarModo('manual', false); return; }
-    [...ov.querySelectorAll('.ig-mbody > *')].forEach(el => { if (el !== fork) el.style.display = 'none'; });
-    fork.style.display = '';
-    fork.innerHTML = `
-      <p class="ig-forkq">¿Cómo querés cargar a esta persona?</p>
-      <button type="button" class="ig-fk" data-modo="papeles">
-        <span class="ig-fk-t">📎 Empezar por los papeles <span class="ig-fk-r">Se escribe menos</span></span>
-        <span class="ig-fk-d">Adjuntás lo que trajo el trabajador y el formulario se completa con lo que dicen.</span>
-        <span class="ig-fk-l">El <b>RIF</b> completa la cédula y la dirección · la <b>referencia bancaria</b>
-          completa la cuenta · se verifica que los papeles sean de esa persona</span>
-      </button>
-      <button type="button" class="ig-fk" data-modo="manual">
-        <span class="ig-fk-t">⌨ Llenar el formulario a mano</span>
-        <span class="ig-fk-d">Como siempre. Escribís los datos y adjuntás los recaudos al final.</span>
-      </button>
-      <div style="text-align:right;margin-top:4px">
-        <button type="button" class="btn" data-forkcancel>Cancelar</button>
-      </div>`;
-    fork.querySelectorAll('[data-modo]').forEach(b =>
-      b.addEventListener('click', () => {
-        aplicarModo(b.dataset.modo, true);
-        const f = q('#ig_start'); if (f) f.focus();   // recien ahora es visible
-      }));
-    const cx = fork.querySelector('[data-forkcancel]');
-    if (cx) cx.addEventListener('click', () => { const c = q('#ig_cancel'); if (c) c.click(); });
-  }
-  montarBifurcacion();
 
 
   q('#ig_ced').addEventListener('input', function () {
@@ -1208,6 +1168,19 @@ function openIngresoModal(ctx, id) {
     Object.keys(map).forEach(k => { const el = q('#' + map[k]); if (el) el.textContent = e[k] || ''; });
     // start usa color danger ya en su div
     const startErr = q('#e_start'); if (startErr) startErr.textContent = e.start || '';
+
+    /* v6.238 — La cedula tiene linea propia (showCed), que solo sabe de
+       formato y de no reempleables. Los otros dos motivos -ya la agregaste
+       en este reporte, o ya esta en la lista de la tienda- se calculaban y no
+       se pintaban en ningun lado: el boton quedaba gris y la linea seguia en
+       verde diciendo '✓ Venezolano'. Se pinta solo cuando showCed no tiene
+       nada mejor que decir, para no pisarle su propio mensaje. */
+    const cedLine = q('#e_ced');
+    const cedNow = DW.validateCedula(q('#ig_ced').value);
+    if (cedLine && e.ced && cedNow.ok && !nrIsBlocked(cedNow.ced)) {
+      cedLine.className = 'ig-line warn';
+      cedLine.textContent = e.ced;
+    }
 
     saveB.disabled = Object.keys(e).length > 0;
     return e;
@@ -1343,16 +1316,7 @@ function openIngresoModal(ctx, id) {
     const v0 = DW.validateCedula(q('#ig_ced').value);
     if (v0.ok) nrLookup(v0.ced, () => { if (ov.isConnected) { showCed(); check(); applyNrState(); } });
   }
-  /* Con la bifurcacion en pantalla, #ig_start esta dentro de un subarbol
-     display:none: el navegador ignora el focus() y el foco queda en el body,
-     asi que el primer Tab cae en la X de cerrar. Se enfoca lo que de verdad
-     esta a la vista; al elegir modo, aplicarModo lleva el foco a la fecha. */
-  setTimeout(() => {
-    const fork = q('#ig_fork');
-    const visible = fork && fork.style.display !== 'none';
-    const el = visible ? fork.querySelector('[data-modo]') : q('#ig_start');
-    if (el) el.focus();
-  }, 40);
+  setTimeout(() => { const f = q('#ig_start'); if (f) f.focus(); }, 40);
 }
 
 function esc(s) { return String(s == null ? '' : s).replace(/"/g, '&quot;'); }
