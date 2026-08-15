@@ -306,7 +306,19 @@ function ensureStyles() {
   .brf-sem.ok{color:#16a34a}.brf-sem.warn{color:#d97706}.brf-sem.err{color:#dc2626}.brf-sem.info{color:#64748b}
   .brf-merc{margin-top:8px;padding:12px 13px;border:1px solid #fde68a;background:#fffbeb;border-radius:11px}
   .brf-merc label{font-size:11.5px;font-weight:700;color:#92400e;display:block;margin-bottom:7px}
-  .brf-merc input{width:100%;font-family:ui-monospace,Consolas,monospace;font-size:15px;letter-spacing:.05em;padding:9px 11px;border:1.5px solid #fde68a;border-radius:9px;outline:0}
+  /* v6.248 — La cuenta se muestra partida: el prefijo del banco y el final
+     que dice la referencia van FIJOS y no se pueden tocar; solo se escriben
+     los 12 del medio. Ademas de ahorrar tipeo, vuelve imposible equivocarse
+     en las partes que ya estaban bien. */
+  .brf-acct{display:flex;align-items:stretch;gap:0;border:1.5px solid #fde68a;border-radius:9px;overflow:hidden;background:#fff}
+  .brf-fijo{display:flex;align-items:center;padding:9px 11px;background:#fef3c7;color:#92400e;
+    font-family:ui-monospace,Consolas,monospace;font-size:15px;font-weight:700;letter-spacing:.05em;
+    white-space:nowrap;user-select:none;flex:none}
+  .brf-merc input{flex:1;min-width:0;width:auto;font-family:ui-monospace,Consolas,monospace;font-size:15px;
+    letter-spacing:.08em;text-align:center;padding:9px 8px;border:0;border-left:1px dashed #fde68a;
+    border-right:1px dashed #fde68a;border-radius:0;outline:0;background:#fff}
+  .brf-merc input:focus{background:#fffdf5;box-shadow:inset 0 0 0 2px rgba(217,119,6,.18)}
+  .brf-acct-h{font-size:11px;color:#92400e;margin-top:6px;font-weight:600}
   .brf-verdict{display:flex;gap:9px;align-items:flex-start;margin-top:15px;padding:11px 13px;border-radius:11px;font-size:12.5px;font-weight:600;line-height:1.45}
   .brf-verdict.ok{background:#f0fdf4;border:1px solid #bbf7d0;color:#166534}
   .brf-verdict.warn{background:#fffbeb;border:1px solid #fde68a;color:#92400e}
@@ -505,7 +517,7 @@ function openUploadModal(w, STATE, onSaved) {
     body.innerHTML = `
       <div style="font-size:12px;color:#64748b;margin-bottom:8px">Banco detectado: <b>${esc(fields.banco_nombre || (fields.plantilla === 'otro' ? 'no reconocido' : fields.plantilla.toUpperCase()))}</b></div>
       <div class="brf-rows" id="brfRows">${rowsHtml()}</div>
-      ${isMerc ? `<div class="brf-merc"><label>Mercantil solo muestra ••••${esc(fields.cuenta_last4 || '')}. Escribe la cuenta completa (20 dígitos):</label><input id="brfMerc" inputmode="numeric" maxlength="24" placeholder="0105 0000 00 0000000000"></div>` : ''}
+      ${isMerc ? `<div class="brf-merc"><label>Mercantil tapa el medio de la cuenta. Escribe solo los <b>12 dígitos</b> que faltan:</label><div class="brf-acct"><span class="brf-fijo" title="Prefijo de Mercantil">0105</span><input id="brfMerc" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="000000 000000" aria-label="12 dígitos del medio de la cuenta"><span class="brf-fijo" title="Final que dice la referencia">${esc(fields.cuenta_last4 || '????')}</span></div><div class="brf-acct-h" id="brfMercH"></div></div>` : ''}
       <div class="brf-verdict" id="brfVerdict"></div>`;
     foot.style.display = 'flex';
 
@@ -514,13 +526,30 @@ function openUploadModal(w, STATE, onSaved) {
     const verdict = ov.querySelector('#brfVerdict');
     const mercInput = ov.querySelector('#brfMerc');
 
+    /* v6.248 — El prefijo y el final NO se escriben: los sabemos. El prefijo
+       porque Mercantil es 0105, y el final porque la referencia lo muestra.
+       Quedan 12 digitos, y de paso es imposible equivocarse en las partes que
+       ya estaban bien. Se arma la cuenta completa para evaluate(). */
+    const cuentaMerc = () => {
+      const medio = mercInput ? String(mercInput.value || '').replace(/\D/g, '').slice(0, 12) : '';
+      return '0105' + medio + String(fields.cuenta_last4 || '');
+    };
+
     function refreshVerdict() {
       ov.querySelector('#brfRows').innerHTML = rowsHtml();
-      const ev = evaluate(fields, w, mercInput ? mercInput.value : null, STATE.bankMap || {});
+      const ev = evaluate(fields, w, mercInput ? cuentaMerc() : null, STATE.bankMap || {});
+      if (mercInput) {
+        const n = String(mercInput.value || '').replace(/\D/g, '').length;
+        const h = ov.querySelector('#brfMercH');
+        if (h) h.textContent = n >= 12 ? '✓ 20 dígitos completos'
+          : `faltan ${12 - n} ${12 - n === 1 ? 'dígito' : 'dígitos'} del medio`;
+      }
       // completo? (cuenta legible con prefijo de banco conocido)
       if (!(ev.acctOk && ev.prefKnown)) {
         verdict.className = 'brf-verdict info';
-        verdict.innerHTML = isMerc ? `Completa la cuenta (20 dígitos, prefijo 0105, termina en ${esc(fields.cuenta_last4 || '')}) para guardar.` : 'No se pudo leer bien la cuenta del PDF; revísalo.';
+        verdict.innerHTML = isMerc
+          ? `Escribe los 12 dígitos del medio para guardar. El <b>0105</b> y el <b>${esc(fields.cuenta_last4 || '')}</b> ya están puestos.`
+          : 'No se pudo leer bien la cuenta del PDF; revísalo.';
         saveBtn.disabled = true; note.textContent = ''; return { ev };
       }
       const err = ev.warnings.find(x => x.level === 'err');
@@ -534,7 +563,11 @@ function openUploadModal(w, STATE, onSaved) {
       return { ev };
     }
 
-    if (mercInput) mercInput.addEventListener('input', refreshVerdict);
+    if (mercInput) mercInput.addEventListener('input', function () {
+      const d = String(this.value || '').replace(/\D/g, '').slice(0, 12);
+      this.value = d.length > 6 ? d.slice(0, 6) + ' ' + d.slice(6) : d;
+      refreshVerdict();
+    });
     refreshVerdict();
 
     saveBtn.addEventListener('click', async () => {
