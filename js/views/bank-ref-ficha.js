@@ -103,28 +103,15 @@ function detectBank(text, acctPrefix) {
 }
 
 /* ---------- parser de campos ---------- */
-/* El ejemplo que Mercantil publica en su banca en linea. Cinco trabajadores
-   lo subieron creyendo que era su referencia, y como es un PDF legitimo del
-   banco no habia forma de notarlo mirando por encima: hay que leerlo.
-   Marcas inconfundibles, dos de tres alcanzan:
-     - el titular es OTRO BANCO ('Banco Bicentenario del Pueblo...')
-     - Nro. de Confirmacion: 12345678
-     - el saldo dice 'SIETE (07) MEDIAS', que es texto de relleno
-   Se piden DOS para no descartar por casualidad un documento real. */
-function esEjemploMercantil(text) {
-  const t = String(text || '');
-  let n = 0;
-  if (/Banco\s+Bicentenario\s+del\s+Pueblo/i.test(t)) n++;
-  if (/Confirmaci[oó]n\s*:?\s*12345678\b/i.test(t)) n++;
-  if (/SIETE\s*\(\s*0?7\s*\)\s*MEDIAS/i.test(t)) n++;
-  if (/J\s*-?\s*00034566789/i.test(t)) n++;
-  return n >= 2;
+/* Valor de un campo de formulario, si el PDF traia. */
+function campoF(text, nombre) {
+  const m = String(text || '').match(new RegExp('\\[F:' + nombre + '=([^\\]]*)\\]', 'i'));
+  return m ? collapse(m[1]) : null;
 }
 
 export function parseFields(rawText, bankMap) {
   const text = collapse(rawText);
   const out = { plantilla: 'otro', banco_code: null, banco_nombre: null, cuenta: null, cuenta_last4: null,
-    es_ejemplo: false,
     tipo_cuenta: null, cedula_pdf: null, nombre_pdf: null, nro_operacion: null, fecha_emision: null };
 
   // cedula
@@ -149,15 +136,22 @@ export function parseFields(rawText, bankMap) {
   out.plantilla = detectBank(text, cuentaFull ? cuentaFull.slice(0, 4) : null);
 
   if (out.plantilla === 'mercantil') {
-    /* v6.246 — La lectura vuelve. En la v6.245 se apago por un diagnostico
-       equivocado mio: las 5 referencias de Mercantil daban todas 7634 y
-       supuse que el parser agarraba algo fijo de la plantilla. El PDF mostro
-       otra cosa: ******7634 es lo que el documento dice de verdad, porque los
-       cinco son el ARCHIVO DE EJEMPLO que publica Mercantil. El parser
-       funcionaba; lo que fallaba era el documento. Ver esEjemploMercantil. */
-    const mk = text.match(/\*{3,}\s*(\d{4})\b/);
-    if (mk) out.cuenta_last4 = mk[1];
-    out.es_ejemplo = esEjemploMercantil(text);
+    /* Los campos del formulario mandan sobre el texto de la pagina, que aca
+       es la plantilla de muestra. Si el PDF no los trae -por ejemplo si
+       alguien lo reimprimio- se cae al texto, que es lo que habia antes. */
+    const num = campoF(text, 'productnumber');
+    const dnum = num ? num.replace(/\D/g, '') : '';
+    if (dnum.length >= 4) out.cuenta_last4 = dnum.slice(-4);
+    else { const mk = text.match(/\*{3,}\s*(\d{4})\b/); if (mk) out.cuenta_last4 = mk[1]; }
+    const nom = [campoF(text, 'clientname1'), campoF(text, 'clientname2')]
+      .filter(Boolean).join(' ').replace(/[*]+/g, ' ').trim();
+    if (nom) out.nombre_pdf = collapse(nom);
+    const cedF = campoF(text, 'rif');
+    if (cedF) { const d = cedF.replace(/\D/g, ''); if (d.length >= 6) out.cedula_pdf = normCed(d); }
+    const tipo = campoF(text, 'productdesc');
+    if (tipo) out.tipo_cuenta = tipo;
+    const ref = campoF(text, 'refcode');
+    if (ref) out.nro_operacion = ref.replace(/\D/g, '') || null;
     out.banco_code = '0105';
   } else if (cuentaFull) {
     out.cuenta = cuentaFull; out.banco_code = cuentaFull.slice(0, 4); out.cuenta_last4 = cuentaFull.slice(-4);
@@ -168,11 +162,13 @@ export function parseFields(rawText, bankMap) {
 
   // nro operacion / referencia / confirmacion
   const mOp = text.match(/(?:Operaci[oó]n|Referencia|Confirmaci[oó]n)\s*:?\s*(\d{6,15})/i);
-  if (mOp) out.nro_operacion = mOp[1];
+  /* v6.247 — Solo si no vino del formulario: en Mercantil la plantilla de
+     fondo trae 'Confirmacion: 12345678', que es del ejemplo. */
+  if (mOp && !out.nro_operacion) out.nro_operacion = mOp[1];
 
   // tipo de cuenta
   const mTipo = text.match(/(CUENTAS?\s+CORRIENTES?|CUENTA\s+DE\s+AHORROS?|CUENTA\s+ELEC\.?[^,\n]*|Cuenta\s+Corriente\s+Amiga)/i);
-  if (mTipo) out.tipo_cuenta = collapse(mTipo[1]);
+  if (mTipo && !out.tipo_cuenta) out.tipo_cuenta = collapse(mTipo[1]);
 
   // fecha de emision — numerica o en letras (BDV)
   let f = text.match(/a los\s+(\d{1,2})\s+d[ií]as del mes de\s+([a-záéíóú]+)\s+de[l]?\s+(\d{4})/i);
@@ -233,13 +229,7 @@ export function evaluate(fields, w, mercAcct, bankMap) {
   const cuentaEsSuya = !!l4Pdf && l4Pdf.length === 4 && l4Pdf === l4Ref;
 
   const warnings = [];
-  /* Va primero y bloquea: no es una sospecha, es un hecho verificable.
-     Sin esto el documento pasa como valido y el trabajador se queda sin
-     referencia sin que nadie se entere. */
-  if (fields.es_ejemplo) {
-    warnings.push({ level: 'err', code: 'ejemplo_banco',
-      text: 'Este es el PDF de EJEMPLO que publica Mercantil, no la referencia del trabajador. Hay que pedirle la suya, emitida a su nombre desde Mercantil en Línea.' });
-  } else if (cuentaEsSuya || cedOk) {
+  if (cuentaEsSuya || cedOk) {
     /* Confirmado. Sin advertencia de titularidad. */
   } else if (!fields.cedula_pdf) {
     warnings.push({ level: 'warn', code: 'ilegible', text: 'No se pudo leer la cédula del PDF y la cuenta no coincide con la cargada. Verifica que el documento sea del trabajador.' });
@@ -590,6 +580,13 @@ function sem(kind, txt) {
 }
 
 /* ---------- pdfjs: extraer texto plano ---------- */
+/* v6.247 — Ademas del texto de la pagina se devuelven los CAMPOS DE
+   FORMULARIO. El PDF de Mercantil es un AcroForm: el fondo es una plantilla
+   con datos de muestra iguales en todos los documentos, y lo del trabajador
+   vive en campos que getTextContent() no toca. Leyendo solo la pagina, las 5
+   referencias de Mercantil daban la misma cuenta (7634, la del ejemplo) y el
+   mismo titular (un banco). Se anexan como [F:nombre=valor] al final para no
+   cambiarle la firma a esta funcion, que la usan cuatro lugares. */
 export async function extractText(arrayBuffer) {
   const pdfjs = await ensurePdfjs();
   const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise;
@@ -600,6 +597,17 @@ export async function extractText(arrayBuffer) {
     const tc = await page.getTextContent();
     out += ' ' + tc.items.map(it => it.str).join(' ');
   }
+  try {
+    const campos = await doc.getFieldObjects();
+    if (campos) {
+      for (const [nombre, arr] of Object.entries(campos)) {
+        const v = (Array.isArray(arr) ? arr : [arr])
+          .map(x => (x && x.value != null) ? String(x.value) : '')
+          .find(x => x.trim());
+        if (v) out += ` [F:${nombre}=${v.replace(/[\[\]]/g, ' ')}]`;
+      }
+    }
+  } catch (_) { /* el PDF no tiene formulario: es el caso normal */ }
   try { doc.destroy(); } catch (_) { /* noop */ }
   return out;
 }

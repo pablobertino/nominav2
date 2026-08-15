@@ -850,8 +850,8 @@ function openIngresoModal(ctx, id, modo) {
     /* Mercantil tapa la cuenta en la carta: hay que decir que no es un fallo
        nuestro y dar el unico dato util que trae el documento. */
     const merc = (c.plantilla === 'mercantil' && !c.cuenta)
-      ? `<div class="igbrf-nom">Mercantil oculta la cuenta en la referencia, así que no podemos
-          completarla. Escribe los 20 dígitos: empiezan por <b>0105</b>.</div>`
+      ? `<div class="igbrf-nom">Mercantil solo muestra el final de la cuenta. Escribe los 20 dígitos:
+          empiezan por <b>0105</b>${c.cuenta_last4 ? ` y terminan en <b>${esc(c.cuenta_last4)}</b>` : ''}.</div>`
       : '';
     const datos = (b.estado === 'ok' || b.estado === 'warn' || b.estado === 'pend') ? `<div class="igbrf-x">
       ${c.banco_nombre ? `<span>Banco <b>${esc(c.banco_nombre)}</b></span>` : ''}
