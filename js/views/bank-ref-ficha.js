@@ -130,8 +130,13 @@ export function parseFields(rawText, bankMap) {
   out.plantilla = detectBank(text, cuentaFull ? cuentaFull.slice(0, 4) : null);
 
   if (out.plantilla === 'mercantil') {
-    const mk = text.match(/\*{3,}\s*(\d{4})\b/);
-    if (mk) out.cuenta_last4 = mk[1];
+    /* v6.245 — La extraccion del final de cuenta esta APAGADA a proposito.
+       La expresion /\*{3,}\s*(\d{4})/ devolvia 7634 en las 5 referencias de
+       Mercantil que tenemos, de 5 personas distintas: no estaba leyendo la
+       cuenta sino algo fijo de la plantilla. Un dato equivocado es peor que
+       ninguno -alimenta evaluate() y doc_estado_personal, que juzgan si el
+       documento es de esa persona-, asi que hasta tener un PDF de Mercantil
+       real con que calibrar, no se inventa nada. El banco si se sabe: 0105. */
     out.banco_code = '0105';
   } else if (cuentaFull) {
     out.cuenta = cuentaFull; out.banco_code = cuentaFull.slice(0, 4); out.cuenta_last4 = cuentaFull.slice(-4);
@@ -210,7 +215,7 @@ export function evaluate(fields, w, mercAcct, bankMap) {
   if (cuentaEsSuya || cedOk) {
     /* Confirmado. Sin advertencia de titularidad. */
   } else if (!fields.cedula_pdf) {
-    warnings.push({ level: 'warn', code: 'ilegible', text: 'No se pudo leer la cédula del PDF y la cuenta no coincide con la cargada. Verificá que el documento sea del trabajador.' });
+    warnings.push({ level: 'warn', code: 'ilegible', text: 'No se pudo leer la cédula del PDF y la cuenta no coincide con la cargada. Verifica que el documento sea del trabajador.' });
   } else if (nameOk) {
     warnings.push({ level: 'warn', code: 'cedula_mismatch', text: `La cédula del PDF (${fmtCed(fields.cedula_pdf)}) no coincide con la de la ficha (${fmtCed(fichaCed)}), aunque el nombre sí. Posible dígito mal escrito.` });
   } else {
@@ -379,7 +384,7 @@ async function viewPdf(STATE, path) {
 async function removeRef(STATE, id, done) {
   const n = parseInt(id, 10);
   if (!n) return;
-  if (!confirm('¿Quitar esta referencia de la ficha? Podés volver a cargar otra cuando quieras.')) return;
+  if (!confirm('¿Quitar esta referencia de la ficha? Puedes volver a cargar otra cuando quieras.')) return;
   try {
     const r = await refApi({ action: 'annul', id: n, user: sessUser(STATE.user) });
     if (r && r.ok) { if (done) done(); }

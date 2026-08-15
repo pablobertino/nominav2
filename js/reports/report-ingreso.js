@@ -454,7 +454,7 @@ function paintStep4(ctx) {
       <th>Trabajador</th><th>Cédula</th><th>Cargo</th><th>Edad</th><th>Fecha ingreso</th><th>Recaudos</th><th>Acción</th><th style="width:120px"></th>
     </tr></thead><tbody id="igBody"></tbody></table>
     <div class="empty" id="igEmpty">${(CAT && CAT.docs && CAT.docs.length)
-      ? 'Aún no has agregado ningún ingreso. Empezá con “＋ Agregar con documentos” si el trabajador ya trajo sus papeles.'
+      ? 'Aún no has agregado ningún ingreso. Empieza con “＋ Agregar con documentos” si el trabajador ya trajo sus papeles.'
       : 'Aún no has agregado ningún ingreso. Usa “＋ Agregar ingreso”.'}</div>
 
     <div class="wiz-foot">
@@ -660,7 +660,7 @@ function openIngresoModal(ctx, id, modo) {
   /* Que hace cada uno. Sin esto, que la cedula quede ultima parece un
      descuido; dicho, se entiende que es porque no aporta datos. */
   const PISTA = {
-    rif: 'Trae la cédula y la dirección. Empezá por acá.',
+    rif: 'Trae la cédula y la dirección. Empieza por aquí.',
     bank_reference: 'Completa la cuenta y verifica que sea del trabajador.',
     cedula: 'Se guarda en la ficha. Al ser una imagen no completa campos.',
   };
@@ -736,7 +736,7 @@ function openIngresoModal(ctx, id, modo) {
        a mitad de camino y el campo se bloquearia antes de que terminen. */
     if (!cedV.ok) {
       st.brf.estado = 'pend';
-      st.brf.mensaje = 'Escribí la cédula del trabajador para poder verificar que la referencia sea suya.';
+      st.brf.mensaje = 'Escribe la cédula del trabajador para poder verificar que la referencia sea suya.';
       bloquearCampos(false);
       renderDocs(); return;
     }
@@ -761,12 +761,21 @@ function openIngresoModal(ctx, id, modo) {
     if (ev.cedOk && !st.brf.autollenado) {
       const full = c.cuenta ? String(c.cuenta).replace(/\D/g, '') : '';
       if (full.length === 20) {
-        q('#ig_account').value = full;
+        q('#ig_account').value = agrupaCuenta(full);
         st.brf.autollenado = true;
         showBank(); check();
       }
-      // Mercantil enmascara la cuenta (solo ***1234): no hay 20 digitos que
-      // copiar y el campo queda como estaba, para que lo completen a mano.
+      /* Mercantil enmascara la cuenta (solo ***1234). No hay 20 digitos que
+         copiar, pero SI sabemos dos cosas: que empieza en 0105 y como termina.
+         Se deja el prefijo puesto y se dice el final esperado; escribir 12
+         digitos mirando un dato concreto es bastante mejor que escribir 20 a
+         ciegas. Son pocos casos -5 de 631 referencias- pero cuestan cuatro
+         lineas. La comprobacion de que termine bien ya la hace evaluate(). */
+      else if (c.plantilla === 'mercantil'
+               && !String(q('#ig_account').value || '').replace(/\D/g, '')) {
+        q('#ig_account').value = '0105 ';
+        showBank(); check();
+      }
     }
     bloquearCampos(ev.cedOk);
 
@@ -811,7 +820,7 @@ function openIngresoModal(ctx, id, modo) {
     if (!el) return;
     el.readOnly = !!on;
     el.classList.toggle('ig-locked', !!on);
-    el.title = on ? `${motivo} Quitá el documento para editarlo.` : '';
+    el.title = on ? `${motivo} Quita el documento para editarlo.` : '';
   }
   /* La cedula la fija el RIF y la cuenta la referencia: son documentos
      distintos y se quitan por separado, asi que no pueden compartir un solo
@@ -838,13 +847,19 @@ function openIngresoModal(ctx, id, modo) {
     const cls = { ok: 'ok', warn: 'wrn', err: 'err', nolegible: '', pend: '' }[b.estado] || '';
     const ic  = { ok: '✓', warn: '⚠', err: '✕', nolegible: 'ℹ', pend: 'ℹ' }[b.estado] || 'ℹ';
     const c = b.campos || {};
+    /* Mercantil tapa la cuenta en la carta: hay que decir que no es un fallo
+       nuestro y dar el unico dato util que trae el documento. */
+    const merc = (c.plantilla === 'mercantil' && !c.cuenta)
+      ? `<div class="igbrf-nom">Mercantil oculta la cuenta en la referencia, así que no podemos
+          completarla. Escribe los 20 dígitos: empiezan por <b>0105</b>.</div>`
+      : '';
     const datos = (b.estado === 'ok' || b.estado === 'warn' || b.estado === 'pend') ? `<div class="igbrf-x">
       ${c.banco_nombre ? `<span>Banco <b>${esc(c.banco_nombre)}</b></span>` : ''}
       ${c.cuenta_last4 ? `<span>Cuenta <b>···${esc(c.cuenta_last4)}</b></span>` : ''}
       ${c.nombre_pdf ? `<span>A nombre de <b>${esc(c.nombre_pdf)}</b></span>` : ''}
       ${c.cedula_pdf ? `<span>C.I. <b>${esc(c.cedula_pdf)}</b></span>` : ''}
     </div>` : '';
-    return `<div class="igbrf ${cls}"><b>${ic}</b> ${esc(b.mensaje)}${datos}</div>`;
+    return `<div class="igbrf ${cls}"><b>${ic}</b> ${esc(b.mensaje)}${datos}${merc}</div>`;
   }
 
   /* ================= RIF / planilla del SENIAT en el alta (v6.236) =======
@@ -1042,7 +1057,7 @@ function openIngresoModal(ctx, id, modo) {
       if (i > 0) {
         const on = i === sp.corte;
         fila += `<div class="igsp-cut${on ? ' on' : ''}${on && !sp.tocado ? ' nuevo' : ''}" `
-          + `data-cut="${i}" title="Arrastrame o hacé clic">`
+          + `data-cut="${i}" title="Arrástrame o haz clic">`
           + `${on ? '<span class="igsp-grip">⇠⇢</span>' : ''}</div>`;
       }
       fila += `<div class="igsp-tok">${esc(t)}</div>`;
@@ -1050,7 +1065,7 @@ function openIngresoModal(ctx, id, modo) {
 
     cont.innerHTML = `
       <div class="igsp-t">El RIF dice <b>${esc(sp.toks.join(' '))}</b>. ¿Dónde termina cada parte?
-        <span class="igsp-sub">Arrastrá la barra, o hacé clic en otra separación.</span></div>
+        <span class="igsp-sub">Arrastra la barra, o haz clic en otra separación.</span></div>
       <div class="igsp-lbl">
         <span class="${sp.nomPrimero ? 'lb-nom' : 'lb-ape'}" style="flex:${izq}">${lblI}</span>
         <span style="width:24px;flex:none"></span>
@@ -1235,11 +1250,11 @@ function openIngresoModal(ctx, id, modo) {
     if (m === 'papeles' && !id) {
       const banda = ov.querySelector('.ig-mbody > .ig-band');
       if (banda) banda.parentNode.insertBefore(bloque, banda.nextSibling);
-      nota.innerHTML = `<div class="ig-forknote">Empezá por el <b>RIF</b>: trae la cédula, y con ella
+      nota.innerHTML = `<div class="ig-forknote">Empieza por el <b>RIF</b>: trae la cédula, y con ella
         se verifica la referencia bancaria. Lo que se pueda leer se completa abajo.</div>`;
     } else if (!id) {
       nota.innerHTML = `<div class="ig-forknote soft">Si el trabajador ya trajo el <b>RIF</b> y la
-        <b>referencia bancaria</b>, adjuntándolos acá se completan la cédula, la dirección y la cuenta.</div>`;
+        <b>referencia bancaria</b>, adjuntándolos aquí se completan la cédula, la dirección y la cuenta.</div>`;
     }
   }
   ordenarSegunModo(modo);
@@ -1254,7 +1269,17 @@ function openIngresoModal(ctx, id, modo) {
     if (v.ok) nrLookup(v.ced, () => { if (ov.isConnected) { showCed(); check(); applyNrState(); } });
     revalidarRef();
   });
-  q('#ig_account').addEventListener('input', function () { this.value = this.value.replace(/[^0-9 \-]/g, ''); showBank(); check(); revalidarRef(); });
+  q('#ig_account').addEventListener('input', function () {
+    /* Se cuentan los digitos que hay ANTES del cursor y despues se lo vuelve a
+       poner tras esa misma cantidad de digitos: si no, al reagrupar el cursor
+       salta al final y corregir un numero del medio se vuelve imposible. */
+    const antes = String(this.value.slice(0, this.selectionStart || 0)).replace(/\D/g, '').length;
+    this.value = agrupaCuenta(this.value);
+    let pos = 0, vistos = 0;
+    while (pos < this.value.length && vistos < antes) { if (/\d/.test(this.value[pos])) vistos++; pos++; }
+    try { this.setSelectionRange(pos, pos); } catch (_) { /* navegadores viejos */ }
+    showBank(); check(); revalidarRef();
+  });
   q('#ig_phone').addEventListener('input', function () { this.value = this.value.replace(/[^0-9 \-]/g, ''); showPhone(); check(); });
   q('#ig_birth').addEventListener('change', () => { showAge(); check(); });
   q('#ig_birth').addEventListener('input', () => { showAge(); check(); });
@@ -1297,13 +1322,36 @@ function openIngresoModal(ctx, id, modo) {
     }
     line.className = 'ig-line ok'; line.textContent = `✓ ${v.kind === 'E' ? 'Extranjero' : 'Venezolano'} — ${v.kind}-${v.ced}`;
   }
+  /* v6.244 — La cuenta se agrupa como la escriben los bancos (4-4-2-10) y se
+     dice cuantos digitos faltan. Son 20 numeros seguidos: sin separar es muy
+     facil saltarse uno y muy dificil darse cuenta. El autocompletado desde la
+     referencia cubre la mayoria de los casos, pero no todos -hay 45 documentos
+     donde el parser no pudo sacar la cuenta, y quien carga a mano no adjunta
+     nada-, asi que este campo se sigue escribiendo bastante. */
+  function agrupaCuenta(txt) {
+    const d = String(txt || '').replace(/\D/g, '').slice(0, 20);
+    const p = [d.slice(0, 4), d.slice(4, 8), d.slice(8, 10), d.slice(10, 20)];
+    return p.filter(x => x.length).join(' ');
+  }
+
   function showBank() {
     const el = q('#ig_account'), line = q('#ig_bankline');
     const v = validAccount(el.value);
+    const n = String(el.value || '').replace(/\D/g, '').length;
     if (v.empty) { line.textContent = ''; line.className = 'ig-line'; return; }
-    if (v.ok) { line.className = 'ig-line ok'; line.textContent = `🏦 ${v.bankName} (${v.bankCode})`; }
-    else { line.className = 'ig-line warn'; line.textContent = v.msg || ''; }
+    if (v.ok) { line.className = 'ig-line ok'; line.textContent = `🏦 ${v.bankName} (${v.bankCode})`; return; }
+    /* Mientras la escriben no se les dice que esta mal: se les dice cuanto
+       falta. El error recien tiene sentido cuando terminaron. */
+    if (n < 20) {
+      const banco = n >= 4 ? (CAT.bankMap[String(el.value).replace(/\D/g, '').slice(0, 4)] || null) : null;
+      line.className = 'ig-line';
+      line.textContent = (banco ? `🏦 ${banco} · ` : '')
+        + `faltan ${20 - n} ${20 - n === 1 ? 'dígito' : 'dígitos'}`;
+      return;
+    }
+    line.className = 'ig-line warn'; line.textContent = v.msg || '';
   }
+
   function showPhone() {
     const el = q('#ig_phone'), line = q('#ig_phoneline');
     const v = validPhone(el.value);
@@ -1451,7 +1499,7 @@ function openIngresoModal(ctx, id, modo) {
       .map(d => docState[d.id]).find(st => st && st.brf && st.brf.estado === 'err');
     if (malo) {
       alert(`No se puede guardar con esa referencia bancaria.${NLX}${NLX}${malo.brf.mensaje}${NLX}${NLX}`
-        + 'Adjuntá la referencia del trabajador, o quitá el archivo y cargala después desde su ficha.');
+        + 'Adjunta la referencia del trabajador, o quita el archivo y cárgala después desde su ficha.');
       return;
     }
     const cedV = DW.validateCedula(q('#ig_ced').value);
