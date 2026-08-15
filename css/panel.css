@@ -2569,3 +2569,46 @@ input.ig-locked:focus{outline:none;box-shadow:0 0 0 3px rgba(21,128,61,.12)}
    un tooltip no lo ve quien no sabe que tiene que pasar el mouse. */
 .docrow-name{display:flex;flex-direction:column;gap:2px}
 .docrow-hint{font-size:11px;color:var(--muted);font-weight:400;line-height:1.4}
+
+/* --- Separar el nombre del RIF (v6.241) -----------------------------------
+   Las separaciones posibles se ven SIEMPRE, tenues. Si sólo aparecieran al
+   pasar el mouse nadie descubriría que el corte se puede mover, que es
+   exactamente lo que pasaba en la primera versión del mockup. */
+.igsp{margin-top:8px;padding-top:9px;border-top:1px dashed currentColor}
+.igsp-t{font-size:11.5px;font-weight:600;color:var(--ink);margin-bottom:9px;line-height:1.5}
+.igsp-sub{display:block;font-weight:400;color:var(--muted);font-size:11px}
+.igsp-row{display:flex;align-items:stretch;flex-wrap:wrap;margin-bottom:3px}
+.igsp-tok{padding:6px 10px;background:#fff;border:1px solid var(--border);border-radius:8px;
+  font-size:12.5px;font-weight:600;color:var(--ink);white-space:nowrap}
+.igsp-cut{width:24px;display:flex;align-items:center;justify-content:center;
+  cursor:pointer;position:relative;touch-action:none}
+.igsp-cut::before{content:'';width:2px;height:55%;background:#e2e8f0;border-radius:2px;
+  transition:background .12s,height .12s}
+.igsp-cut:hover::before{background:#94a3b8;height:75%}
+.igsp-cut.on{cursor:grab}
+.igsp-cut.on:active,.igsp-cut.arrastrando{cursor:grabbing}
+.igsp-cut.on::before{background:var(--brand);width:4px;height:100%;
+  box-shadow:0 0 0 4px rgba(37,99,235,.12)}
+/* La agarradera dice 'esto se toma y se mueve' sin tener que explicarlo. */
+.igsp-grip{position:absolute;top:-10px;left:50%;transform:translateX(-50%);
+  background:var(--brand);color:#fff;font-size:10px;line-height:1;padding:3px 6px;
+  border-radius:6px;box-shadow:0 1px 3px rgba(0,0,0,.25);pointer-events:none;letter-spacing:-1px}
+/* Late tres veces y para: llama la atención una vez, no siempre. */
+@keyframes igsp-latido{0%,100%{box-shadow:0 0 0 4px rgba(37,99,235,.12)}
+  50%{box-shadow:0 0 0 9px rgba(37,99,235,.26)}}
+.igsp-cut.on.nuevo::before{animation:igsp-latido 1.5s ease-in-out 3}
+.igsp-lbl{display:flex;margin-bottom:6px;font-size:9.5px;font-weight:700;
+  text-transform:uppercase;letter-spacing:.05em}
+.igsp-lbl span{text-align:center;padding:2px 0;border-radius:5px}
+.igsp-lbl .lb-ape{background:#ede9fe;color:#5b21b6}
+.igsp-lbl .lb-nom{background:#dbeafe;color:#1e40af}
+.igsp-prev{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:10px}
+.igsp-prev div{background:#fff;border:1px solid var(--border);border-radius:8px;padding:7px 9px}
+.igsp-prev b{display:block;font-size:9px;text-transform:uppercase;letter-spacing:.05em;
+  color:var(--muted);margin-bottom:2px}
+.igsp-prev span{font-size:12px;color:var(--ink);font-weight:600}
+.igsp-prev span.v{color:var(--faint);font-weight:400}
+.igsp-act{display:flex;align-items:center;gap:8px;margin-top:10px;flex-wrap:wrap}
+.igsp-h{font-size:10.5px;color:var(--muted)}
+.igsp-ok{font-size:10.5px;color:#15803d;font-weight:600}
+@media (max-width:640px){.igsp-prev{grid-template-columns:1fr}}

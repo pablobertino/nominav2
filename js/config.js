@@ -13,7 +13,7 @@ export const CONFIG = {
   // desde la v6.179 no es critico: _headers ya manda no-cache para /css/*
   // (le faltaba, y eso hizo que un bug de maquetado sobreviviera cuatro
   // versiones porque el CSS nuevo nunca llegaba al navegador).
-  version: '6.240',
+  version: '6.241',
 
   // Salt del hash de contraseña (debe coincidir con el portal anterior
   // para no invalidar las claves migradas). Regla de negocio 1.1.

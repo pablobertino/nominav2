@@ -945,6 +945,7 @@ function openIngresoModal(ctx, id, modo) {
   /* Al quitar el RIF se libera la cedula. Lo demas se deja: si alguien lo
      reviso o corrigio, borrarselo seria peor que dejar un dato de mas. */
   function soltarRif() {
+    CATDOCS.filter(esRif).forEach(d => { if (docState[d.id]) delete docState[d.id].split; });
     bloquearCampo('#ig_ced', false, '');
     check();
   }
@@ -964,14 +965,158 @@ function openIngresoModal(ctx, id, modo) {
         ${c.fecha_vencimiento ? `<span>Vence <b>${esc(c.fecha_vencimiento)}</b></span>` : ''}
       </div>`;
     }
-    /* Del certificado el nombre se muestra para copiar, no se rellena: ver
-       el comentario de arriba sobre el 65%. */
-    if (c.nombre_pdf && !c.apellidos_pdf) {
-      extra += `<div class="igbrf-nom">El RIF dice <b>${esc(c.nombre_pdf)}</b>.
-        No lo separamos en nombres y apellidos porque el SENIAT a veces los
-        invierte y preferimos que lo hagas vos.</div>`;
-    }
+    /* El certificado trae el nombre en una sola linea y no se parte solo (65%
+       de acierto). Se ofrece separarlo: el contenedor lo llena wireSplits. */
+    if (c.nombre_pdf && !c.apellidos_pdf) extra += `<div class="igsp" data-sp="${d.id}"></div>`;
     return `<div class="igbrf ${cls}"><b>${ic}</b> ${esc(b.mensaje)}${extra}</div>`;
+  }
+
+  /* ===== Separar el nombre del RIF (v6.241) ==============================
+     El certificado del SENIAT trae 'JUAN MANUEL VIEIRA GIL' en una sola
+     linea y NO dice donde terminan los nombres. Peor: a veces imprime los
+     apellidos adelante. Partirlo por posicion acierta 65% sobre 475 personas
+     medidas, y un nombre mal puesto cuesta mas que uno vacio: hay que
+     detectarlo, corregirlo, y de paso hace desconfiar de la cedula y la
+     cuenta, que si estan bien.
+
+     Asi que no se adivina: se OFRECE. La persona mueve el corte y ve el
+     resultado antes de aceptarlo. Nada se completa hasta que toca el boton.
+
+     Cuando ademas hay referencia bancaria, el corte viene puesto: los dos
+     documentos traen los mismos nombres en orden distinto y el punto donde
+     uno rota respecto del otro ES la frontera. Aplica al 29% de los pares y
+     ahi acierta 94.9%. Viene PRESELECCIONADO y no aceptado, justamente por
+     ese 5%: lo tiene que poder ver una persona. */
+  const APE_PRIMERO = { banesco: true, bdv: false, bancamiga: false };
+
+  function rotacionCorte(tokRif, tokRef, plantilla) {
+    if (!(plantilla in APE_PRIMERO)) return null;      // sin dato medido, no se sugiere
+    if (!tokRif.length || tokRif.length !== tokRef.length) return null;
+    for (let k = 1; k < tokRef.length; k++) {
+      const rot = tokRef.slice(k).concat(tokRef.slice(0, k));
+      if (rot.join(' ') === tokRif.join(' ')) {
+        return { corte: tokRif.length - k, nomPrimero: APE_PRIMERO[plantilla] };
+      }
+    }
+    return null;
+  }
+
+  function estadoSplit(st) {
+    if (st.split) return st.split;
+    const toks = String(st.rif.campos.nombre_pdf || '').trim().split(/\s+/).filter(Boolean);
+    let corte = Math.max(1, Math.floor(toks.length / 2));
+    let nomPrimero = true, sugerido = false;
+
+    const ref = CATDOCS.filter(esRefBancaria).map(x => docState[x.id])
+      .find(x => x && x.brf && x.brf.campos && x.brf.campos.nombre_pdf);
+    if (ref) {
+      const r = rotacionCorte(toks,
+        String(ref.brf.campos.nombre_pdf).toUpperCase().trim().split(/\s+/),
+        ref.brf.campos.plantilla);
+      if (r) { corte = r.corte; nomPrimero = r.nomPrimero; sugerido = true; }
+    }
+    st.split = { toks, corte, nomPrimero, sugerido, usado: false, tocado: false };
+    return st.split;
+  }
+
+  function partesDe(sp) {
+    const a = sp.toks.slice(0, sp.corte), b = sp.toks.slice(sp.corte);
+    const nom = sp.nomPrimero ? a : b, ape = sp.nomPrimero ? b : a;
+    return { primer: nom[0] || '', segundo: nom.slice(1).join(' '), apellidos: ape.join(' ') };
+  }
+
+  /* Se pinta SOLO dentro de su contenedor y no via renderDocs: si cada clic
+     redibujara toda la lista de recaudos, arrastrar seria imposible. */
+  function pintarSplit(cont, docId) {
+    const st = docState[docId];
+    if (!st || !st.rif || !st.rif.campos) return;
+    const sp = estadoSplit(st);
+    const p = partesDe(sp);
+    const izq = sp.corte, der = sp.toks.length - sp.corte;
+    const lblI = sp.nomPrimero ? 'Nombres' : 'Apellidos';
+    const lblD = sp.nomPrimero ? 'Apellidos' : 'Nombres';
+
+    let fila = '';
+    sp.toks.forEach((t, i) => {
+      if (i > 0) {
+        const on = i === sp.corte;
+        fila += `<div class="igsp-cut${on ? ' on' : ''}${on && !sp.tocado ? ' nuevo' : ''}" `
+          + `data-cut="${i}" title="Arrastrame o hacé clic">`
+          + `${on ? '<span class="igsp-grip">⇠⇢</span>' : ''}</div>`;
+      }
+      fila += `<div class="igsp-tok">${esc(t)}</div>`;
+    });
+
+    cont.innerHTML = `
+      <div class="igsp-t">El RIF dice <b>${esc(sp.toks.join(' '))}</b>. ¿Dónde termina cada parte?
+        <span class="igsp-sub">Arrastrá la barra, o hacé clic en otra separación.</span></div>
+      <div class="igsp-lbl">
+        <span class="${sp.nomPrimero ? 'lb-nom' : 'lb-ape'}" style="flex:${izq}">${lblI}</span>
+        <span style="width:24px;flex:none"></span>
+        <span class="${sp.nomPrimero ? 'lb-ape' : 'lb-nom'}" style="flex:${der}">${lblD}</span>
+      </div>
+      <div class="igsp-row">${fila}</div>
+      <div class="igsp-prev">
+        <div><b>Primer nombre</b><span>${esc(p.primer) || '—'}</span></div>
+        <div><b>Segundo</b><span class="${p.segundo ? '' : 'v'}">${esc(p.segundo) || '—'}</span></div>
+        <div><b>Apellidos</b><span>${esc(p.apellidos) || '—'}</span></div>
+      </div>
+      <div class="igsp-act">
+        <button type="button" class="btn btn-sm" data-swap>⇄ Invertir</button>
+        <button type="button" class="btn btn-sm btn-primary" data-usar>${sp.usado ? '✓ Usado' : 'Usar estos nombres'}</button>
+        ${sp.sugerido && !sp.tocado
+          ? '<span class="igsp-ok">✓ Coincide con la referencia bancaria</span>'
+          : '<span class="igsp-h">No se completa nada hasta que toques el botón.</span>'}
+      </div>`;
+
+    const cuts = [...cont.querySelectorAll('[data-cut]')];
+    const mover = (n) => { if (n === sp.corte) return; sp.corte = n; sp.tocado = true; sp.usado = false; pintarSplit(cont, docId); };
+    cuts.forEach(el => el.addEventListener('click', () => mover(+el.dataset.cut)));
+
+    const barra = cont.querySelector('.igsp-cut.on');
+    if (barra) barra.addEventListener('pointerdown', (ev) => {
+      ev.preventDefault();
+      barra.classList.add('arrastrando');
+      /* Salta a la separacion MAS CERCANA en vez de exigir soltar encima: una
+         barra de 4px no se acierta arrastrando, y menos en un telefono. */
+      const alMover = (e) => {
+        let mejor = sp.corte, dist = Infinity;
+        cuts.forEach(cc => {
+          const r = cc.getBoundingClientRect();
+          const dd = Math.abs((r.left + r.right) / 2 - e.clientX);
+          if (dd < dist) { dist = dd; mejor = +cc.dataset.cut; }
+        });
+        if (mejor !== sp.corte) { limpiar(); mover(mejor); }
+      };
+      const limpiar = () => {
+        barra.classList.remove('arrastrando');
+        document.removeEventListener('pointermove', alMover);
+        document.removeEventListener('pointerup', limpiar);
+      };
+      document.addEventListener('pointermove', alMover);
+      document.addEventListener('pointerup', limpiar);
+    });
+
+    cont.querySelector('[data-swap]').addEventListener('click', () => {
+      sp.nomPrimero = !sp.nomPrimero; sp.tocado = true; sp.usado = false; pintarSplit(cont, docId);
+    });
+    cont.querySelector('[data-usar]').addEventListener('click', () => {
+      const q2 = partesDe(sp);
+      /* Aca SI se pisa lo que hubiera: es una accion explicita de la persona,
+         no un autocompletado silencioso. */
+      q('#ig_first').value = q2.primer;
+      q('#ig_second').value = q2.segundo;
+      q('#ig_last').value = q2.apellidos;
+      sp.usado = true; sp.tocado = true;
+      check();
+      pintarSplit(cont, docId);
+    });
+  }
+
+  function wireSplits() {
+    const box = q('#ig_docs');
+    if (!box) return;
+    box.querySelectorAll('[data-sp]').forEach(cont => pintarSplit(cont, +cont.dataset.sp));
   }
 
   function renderDocs() {
@@ -995,6 +1140,7 @@ function openIngresoModal(ctx, id, modo) {
     updateDocsFoot();
     box.querySelectorAll('[data-pick]').forEach(b =>
       b.addEventListener('click', () => pickFor(+b.dataset.pick)));
+    wireSplits();
     box.querySelectorAll('[data-clr]').forEach(b =>
       b.addEventListener('click', () => {
         const id = +b.dataset.clr;
