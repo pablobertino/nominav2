@@ -42,6 +42,51 @@ const RPT_CODE_BY_ACTION = {
   submit_traslado: 'report.traslado',
 };
 
+/* =====================================================================
+   Alcance al ENVIAR un reporte  (v6.252)
+
+   Hasta aca se validaba solo el PERMISO: quien tuviera report.egreso podia
+   enviar un egreso de cualquier empresa cambiando el company_code del cuerpo.
+   La pantalla si respetaba el alcance -catalog.js solo ofrece las empresas de
+   get_admin_companies- pero un alcance que vive solo en la pantalla no es un
+   alcance: es una sugerencia.
+
+   No importaba demasiado mientras los permisos de reporte los tuvieran roles
+   amplios. Al darselos a los supervisores de tiendas, que tienen entre 4 y 18
+   tiendas asignadas, el alcance pasa a ser justamente lo que hay que hacer
+   cumplir.
+
+   Se valida tambien la TIENDA: hasta ahora una tienda podia reportar por otra
+   mandando otro codigo. Eso no requiere RPC, es comparar dos strings.
+
+   Ante un error se cierra, no se abre: preferimos que un admin no pueda
+   enviar por un fallo transitorio a que pueda enviar por cualquier empresa.
+   Las tiendas no dependen del RPC, asi que un fallo de red no las afecta.
+   ===================================================================== */
+async function fueraDeAlcance(env, su, companyCode) {
+  const cc = String(companyCode || '').trim();
+  if (!cc || !su) return null;              // sin empresa no hay nada que validar
+
+  if (su.kind === 'company') {
+    return String(su.companyCode || '').trim() === cc
+      ? null : 'Solo puedes enviar reportes de tu propia tienda.';
+  }
+  if (su.kind !== 'admin' || !su.id) return null;
+
+  try {
+    const a = await sb(env, `admin_users?id=eq.${encodeURIComponent(su.id)}&is_active=eq.true&select=id,role`);
+    if (!a || !a.length) return 'Sesión no válida.';
+    if (a[0].role === 'superadmin') return null;   // ve todo
+    const rows = await sb(env, 'rpc/get_admin_companies', {
+      method: 'POST', body: JSON.stringify({ p_admin_id: a[0].id }),
+    });
+    const ok = (rows || []).some(r => r.company_code === cc);
+    return ok ? null : `La empresa ${cc} no está en tu alcance.`;
+  } catch (_) {
+    return 'No se pudo verificar tu alcance. Reintenta en un momento.';
+  }
+}
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -393,6 +438,9 @@ export async function onRequestPost({ request, env }) {
       if (!can(actor, RPT_CODE_BY_ACTION[body.action])) {
         return json({ ok: false, error: 'No tienes permiso para enviar este tipo de reporte.' }, 403);
       }
+      // v6.252 — el permiso dice QUE puede reportar; el alcance, POR QUIEN.
+      const motivo = await fueraDeAlcance(env, su, body.company_code);
+      if (motivo) return json({ ok: false, error: motivo }, 403);
     }
     if (body.action === 'submit_marcaje') {
       return await submitMarcaje(env, body);
