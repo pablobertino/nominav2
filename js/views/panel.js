@@ -732,7 +732,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.258</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.259</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -4109,7 +4109,7 @@ async function viewEquipo(user) {
         ${kind === 'agent' ? `<button data-act="osticket-agent" ${dd} data-staff="${a.osticket_staff_id || ''}">🎫 osTicket</button>`
           : kind === 'client' ? `<button data-act="osticket" ${dd}>🎫 osTicket</button>` : ''}
         <button data-act="reset" ${dd}>🔑 Resetear clave</button>
-        ${(puedeVerComo(user) && !self && a.is_active && a.role !== 'superadmin') ? `<button data-act="vercomo" ${dd} data-mail="${(a.email || '').replace(/"/g, '&quot;')}">👁 Ver el portal como él/ella</button>` : ''}
+        ${(puedeVerComo(user) && !self && a.is_active && a.role !== 'superadmin') ? `<button data-act="vercomo" ${dd} data-mail="${(a.email || '').replace(/"/g, '&quot;')}" title="Ver el portal como esta persona (solo lectura)">👁 Ver como</button>` : ''}
         ${self ? '' : `<div class="eq-sep"></div>
         <button class="eq-danger" data-act="toggle" data-id="${a.id}" data-active="${a.is_active}">${a.is_active ? '○ Desactivar' : '● Activar'}</button>`}
       </div></div>`;
