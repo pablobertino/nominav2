@@ -732,7 +732,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.260</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.261</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5997,18 +5997,56 @@ async function runRifReparse(user, btn, statusEl) {
   btn.disabled = true;
   setS('Buscando documentos incompletos…');
 
-  let pend, total = 0;
+  /* v6.261 — POR BLOQUES. Antes esto era una sola pasada gigante y el
+     servidor moria contra el techo de 50 subrequests de Workers Free sin
+     decirlo: entregaba 47 documentos de 249 y el resto no existia para nadie.
+
+     Ahora son tres pasos chicos y contables, encadenados desde acá:
+       1. la lista completa de pendientes  (1 subrequest en el servidor)
+       2. por cada bloque de 40: pedir las URLs firmadas  (~45)
+       3. leer los PDF acá y guardar ese bloque            (~45)
+     Ninguna invocacion se acerca al techo, y el total que se informa es el
+     total de verdad porque el paso 1 no depende de cuantos haya. */
+  let recTot = 0, ilegTot = 0, sinArchTot = 0, revisTot = 0;
+  let noHalTot = 0, falloGuardar = 0, bloquesMal = 0, ultimoError = '';
+  let total = 0;   // fuera del try: el mensaje final lo usa
+
+  try {
+  let pend, bloque = 40;
   try {
     const r = await rifDocApi({ action: 'reparse_pending', user: su, doc_type: 'rif' });
     pend = (r && r.ok) ? (r.items || []) : null;
     total = (r && r.total) || 0;
+    bloque = (r && r.bloque) || 40;
   } catch (_) { pend = null; }
-  if (!pend) { setS('No se pudo obtener la lista. Reintenta en un momento.'); btn.disabled = false; return; }
-  if (!pend.length) { setS('✓ No hay RIF incompletos. Todos tienen nombre y domicilio.'); btn.disabled = false; return; }
+  if (!pend) { setS('No se pudo obtener la lista. Reintenta en un momento.'); return; }
+  if (!pend.length) {
+    setS('✓ No hay RIF incompletos. Todos tienen nombre y domicilio.'); return;
+  }
+
+  for (let b = 0; b < pend.length; b += bloque) {
+  const grupo = pend.slice(b, b + bloque);
+  const nBloque = Math.floor(b / bloque) + 1;
+  const totBloques = Math.ceil(pend.length / bloque);
+
+  setS(`Bloque ${nBloque} de ${totBloques} · pidiendo enlaces…`);
+  let firmados = [];
+  try {
+    const s = await rifDocApi({ action: 'reparse_sign', user: su, doc_type: 'rif', ids: grupo.map(g => g.id) });
+    /* Un bloque que falla se CUENTA. Antes quedaba en `firmados = []` y el
+       bloque entero desaparecia sin excepcion, sin contador y sin mensaje: si
+       fallaban todos, el resultado era "0 recuperados · 0 no se pudieron
+       leer" y nadie se enteraba de que el servidor habia respondido 403. */
+    if (s && s.ok) {
+      firmados = s.items || [];
+      sinArchTot += s.sin_archivo || 0;
+      noHalTot += s.no_hallados || 0;
+    } else { bloquesMal++; ultimoError = (s && s.error) || ultimoError; }
+  } catch (_) { bloquesMal++; }
 
   const results = []; let done = 0, sinMejora = 0;
-  for (const it of pend) {
-    setS(`Releyendo ${done + 1} de ${pend.length}…  (${results.length} recuperados)`);
+  for (const it of firmados) {
+    setS(`Bloque ${nBloque} de ${totBloques} · releyendo ${done + 1} de ${firmados.length}…  (${recTot} recuperados)`);
     try {
       const resp = await fetch(it.signed_url);
       const buf = await resp.arrayBuffer();
@@ -6021,8 +6059,18 @@ async function runRifReparse(user, btn, statusEl) {
           domicilio_fiscal: f.domicilio_fiscal,
           // v6.258 — si un campo no se lista aca se pierde en el re-proceso,
           // que es exactamente como quedo muda la validacion en la v6.231.
-          provisional: f.provisional || false,
-          formato: f.formato || 'v1', firma_cert: f.firma_cert, verify_url: f.verify_url,
+          //
+          // v6.261 — SIN defaults. El servidor solo pisa con valores no
+          // vacios, y "false" y "v1" no son vacios: se escribian siempre.
+          // parseRif arranca en formato:'v1' y sube a 'v2' solo si encuentra
+          // la firma al pie, que vive en la pagina 4 cuando extractText lee
+          // 3. Un RIF v2 mal detectado en el re-proceso quedaba degradado a
+          // v1, y v1 exige fecha de vencimiento: el documento pasaba de
+          // correcto a vencido. Mandar solo 'v2' deja subir el formato pero
+          // nunca bajarlo.
+          provisional: f.provisional === true ? true : undefined,
+          formato: f.formato === 'v2' ? 'v2' : undefined,
+          firma_cert: f.firma_cert, verify_url: f.verify_url,
           apellidos_pdf: f.apellidos_pdf, nombres_pdf: f.nombres_pdf,
           fecha_nacimiento: f.fecha_nacimiento, sexo: f.sexo,
           estado_civil: f.estado_civil, correo: f.correo, telefono: f.telefono,
@@ -6032,18 +6080,27 @@ async function runRifReparse(user, btn, statusEl) {
     done++;
   }
 
-  setS(`Guardando ${results.length}…`);
-  let saved = 0;
-  for (let i = 0; i < results.length; i += 50) {
+  /* El bloque ya viene acotado a 40 por el servidor, asi que esto es una sola
+     llamada: 40 PATCH + 1 lectura + resolveActor, bajo el techo de 50. */
+  if (results.length) {
+    setS(`Bloque ${nBloque} de ${totBloques} · guardando ${results.length}…`);
     try {
-      const r = await rifDocApi({ action: 'reparse_save_bulk', user: su, items: results.slice(i, i + 50) });
-      saved += (r && r.ok) ? (r.updated || 0) : 0;
-    } catch (_) { /* sigue con la tanda siguiente */ }
+      const r = await rifDocApi({ action: 'reparse_save_bulk', user: su, doc_type: 'rif', items: results });
+      if (r && r.ok) { recTot += r.updated || 0; falloGuardar += r.fallidos || 0; }
+      else { bloquesMal++; ultimoError = (r && r.error) || ultimoError; }
+    } catch (_) { bloquesMal++; }
   }
-  setS(`Listo: ${saved} recuperados · ${sinMejora} siguen sin datos legibles`
-    + (total > pend.length ? ` · quedaron ${total - pend.length} para una próxima pasada` : '')
-    + `. Total revisados: ${pend.length}.`);
-  btn.disabled = false;
+  ilegTot += sinMejora;
+  revisTot += firmados.length;
+  }
+  } finally { btn.disabled = false; }
+
+  setS(`Listo: ${recTot} recuperados · ${ilegTot} no se pudieron leer`
+    + (sinArchTot ? ` · ${sinArchTot} sin archivo en el bucket` : '')
+    + (noHalTot ? ` · ${noHalTot} ya no estan (anulados)` : '')
+    + (falloGuardar ? ` · ${falloGuardar} no se pudieron guardar` : '')
+    + `. Revisados: ${revisTot} de ${total} pendientes.`
+    + (bloquesMal ? `  ⚠ ${bloquesMal} bloque${bloquesMal === 1 ? '' : 's'} fallaron en el servidor${ultimoError ? ': ' + ultimoError : ''}.` : ''));
 }
 
 async function runFiscalBackfill(user, btn, statusEl) {
@@ -6051,38 +6108,75 @@ async function runFiscalBackfill(user, btn, statusEl) {
   const setS = (t) => { if (statusEl) statusEl.textContent = t; };
   btn.disabled = true;
   setS('Buscando RIF sin dirección fiscal…');
-  let pend;
+  /* v6.261 — Por bloques, igual que el re-proceso de RIF y por lo mismo:
+     antes esto mandaba las 250 direcciones en UNA sola llamada, o sea 250
+     PATCH contra el techo de 50 subrequests. El servidor escribia ~46 y
+     devolvia ok, asi que se leia "46 completadas de 250" y las 204 restantes
+     no se guardaban nunca. Sin error y con el numero mal. */
+  let saved = 0, fail = 0, sinArch = 0, revisadas = 0, totalF = 0;
+  let noHal = 0, noEnc = 0, bloquesMal = 0, ultimoError = '';
+
+  try {
+  let pend, bloque = 40;
   try {
     const r = await rifDocApi({ action: 'fiscal_pending', user: su });
     pend = (r && r.ok) ? (r.items || []) : null;
+    totalF = (r && r.total) || (pend ? pend.length : 0);
+    bloque = (r && r.bloque) || 40;
   } catch (_) { pend = null; }
-  if (!pend) { setS('No se pudo obtener la lista. Reintenta en un momento.'); btn.disabled = false; return; }
-  if (!pend.length) { setS('✓ Todos los RIF ya tienen Dirección Fiscal. Nada que rellenar.'); btn.disabled = false; return; }
+  if (!pend) { setS('No se pudo obtener la lista. Reintenta en un momento.'); return; }
+  if (!pend.length) { setS('✓ Todos los RIF ya tienen Dirección Fiscal. Nada que rellenar.'); return; }
 
-  const results = []; let done = 0, fail = 0;
-  for (const it of pend) {
-    setS(`Procesando ${done + 1} de ${pend.length}…  (${results.length} leídas · ${fail} sin domicilio)`);
-    try {
-      const resp = await fetch(it.signed_url);
-      const buf = await resp.arrayBuffer();
-      const text = await rifExtract(buf.slice(0));
-      const fields = rifParse(text);
-      if (fields && fields.domicilio_fiscal) results.push({ id_number: it.id_number, fiscal_address: fields.domicilio_fiscal });
-      else fail++;
-    } catch (_) { fail++; }
-    done++;
-  }
+  for (let b = 0; b < pend.length; b += bloque) {
+    const grupo = pend.slice(b, b + bloque);
+    const nB = Math.floor(b / bloque) + 1;
+    const totB = Math.ceil(pend.length / bloque);
 
-  setS(`Guardando ${results.length}…`);
-  let saved = 0;
-  if (results.length) {
+    setS(`Bloque ${nB} de ${totB} · pidiendo enlaces…`);
+    let firmados = [];
     try {
-      const r = await rifDocApi({ action: 'fiscal_set_bulk', user: su, items: results });
-      saved = (r && r.ok) ? (r.updated || 0) : 0;
-    } catch (_) { saved = 0; }
+      const s = await rifDocApi({ action: 'reparse_sign', user: su, doc_type: 'rif', ids: grupo.map(g => g.id) });
+      if (s && s.ok) {
+        firmados = s.items || [];
+        sinArch += s.sin_archivo || 0;
+        noHal += s.no_hallados || 0;
+      } else { bloquesMal++; ultimoError = (s && s.error) || ultimoError; }
+    } catch (_) { bloquesMal++; }
+
+    const results = []; let done = 0;
+    for (const it of firmados) {
+      setS(`Bloque ${nB} de ${totB} · procesando ${done + 1} de ${firmados.length}…  (${saved} completadas · ${fail} sin domicilio)`);
+      try {
+        const resp = await fetch(it.signed_url);
+        const buf = await resp.arrayBuffer();
+        const fields = rifParse(await rifExtract(buf.slice(0)));
+        if (fields && fields.domicilio_fiscal) results.push({ id_number: it.id_number, fiscal_address: fields.domicilio_fiscal });
+        else fail++;
+      } catch (_) { fail++; }
+      done++;
+    }
+    revisadas += firmados.length;
+
+    if (results.length) {
+      setS(`Bloque ${nB} de ${totB} · guardando ${results.length}…`);
+      try {
+        const r = await rifDocApi({ action: 'fiscal_set_bulk', user: su, items: results });
+        if (r && r.ok) { saved += r.updated || 0; noEnc += r.no_encontrados || 0; }
+        else { bloquesMal++; ultimoError = (r && r.error) || ultimoError; }
+      } catch (_) { bloquesMal++; }
+    }
   }
-  setS(`Listo: ${saved} completadas · ${fail} sin domicilio detectable (revisar ese PDF) · de ${pend.length} RIF.`);
-  btn.disabled = false;
+  } finally { btn.disabled = false; }
+
+  setS(`Listo: ${saved} completadas · ${fail} sin domicilio detectable (revisar ese PDF)`
+    + (sinArch ? ` · ${sinArch} sin archivo en el bucket` : '')
+    + (noHal ? ` · ${noHal} ya no estan (anulados)` : '')
+    /* Cedulas con RIF que no tienen ficha en workers_master. Sin este numero
+       quedaba un hueco entre "completadas" y "revisadas" que no cerraba, y
+       esos PDF se volvian a bajar en cada corrida para siempre. */
+    + (noEnc ? ` · ${noEnc} sin ficha en el maestro` : '')
+    + `. Revisadas: ${revisadas} de ${totalF} RIF pendientes.`
+    + (bloquesMal ? `  ⚠ ${bloquesMal} bloque${bloquesMal === 1 ? '' : 's'} fallaron en el servidor${ultimoError ? ': ' + ultimoError : ''}.` : ''));
 }
 
 async function viewSync(user) {

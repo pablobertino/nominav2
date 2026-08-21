@@ -49,7 +49,17 @@ export async function docApi(payload) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  return res.json();
+  /* v6.261 — Si el Worker revienta, Cloudflare devuelve HTML y res.json()
+     tira un error de parseo que no dice nada. Distinguir el estado permite
+     que quien llama sepa que fallo el servidor y no que "el servidor dijo
+     que no habia nada", que es como se leian estos fallos hasta ahora. */
+  if (!res.ok) {
+    let detalle = '';
+    try { detalle = (await res.text()).slice(0, 200); } catch (_) { /* noop */ }
+    return { ok: false, http: res.status, error: `El servidor respondio ${res.status}.`, detalle };
+  }
+  try { return await res.json(); }
+  catch (_) { return { ok: false, error: 'El servidor respondio algo que no es JSON.' }; }
 }
 export function sessUser(u) { return { kind: u.kind, id: u.id || null, companyCode: u.companyCode || null }; }
 

@@ -23,7 +23,13 @@ async function docApi(payload) {
     method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),
   });
-  return res.json();
+  /* v6.261 — Igual que en rif-ficha.js. Si el Worker revienta, Cloudflare
+     devuelve HTML y res.json() tiraba un error de parseo opaco que los
+     try/catch de arriba tragaban: el fallo del servidor se leia igual que un
+     "no hay nada". */
+  if (!res.ok) return { ok: false, http: res.status, error: `El servidor respondio ${res.status}.` };
+  try { return await res.json(); }
+  catch (_) { return { ok: false, error: 'El servidor respondio algo que no es JSON.' }; }
 }
 function sessUser(u) { return { kind: u.kind, id: u.id || null, companyCode: u.companyCode || null }; }
 const esc = s => String(s == null ? '' : s).replace(/[&<>"']/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[m]));
@@ -180,7 +186,7 @@ async function viewImg(STATE, path) {
 async function removeDoc(STATE, id, done) {
   const n = parseInt(id, 10);
   if (!n) return;
-  if (!confirm('¿Quitar esta cédula de la ficha? Podés volver a cargar otra cuando quieras.')) return;
+  if (!confirm('¿Quitar esta cédula de la ficha? Puedes volver a cargar otra cuando quieras.')) return;
   try {
     const r = await docApi({ action: 'annul', id: n, user: sessUser(STATE.user) });
     if (r && r.ok) { if (done) done(); }
