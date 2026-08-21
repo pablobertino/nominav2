@@ -56,6 +56,7 @@ import { renderRoles } from './roles.js';
 import { injectPeriodTimeline } from './period-timeline.js';
 import { renderPayGrid } from './pay-grid.js';
 import { renderDepartments } from './departments.js';
+import { entrarVerComo, salirVerComo, estoyViendoComo, sesionOriginal, instalarBloqueoLectura } from '../core/ver-como.js';
 /* v5.39: se quito el import de roster-ax.js. El boton "Sincronizar personal"
    dejo de usar /api/ax-roster (el motor que pisaba datos y descartaba los
    cambios pendientes) y ahora llama a /api/sync-roster, el mismo motor que la
@@ -562,6 +563,51 @@ function readAuOst() {
 }
 
 /* ---------- shell ---------- */
+/* v6.257 — La barra de "estás viendo como otro". Va arriba de todo, fija y
+   en un color que no se confunde con nada del portal. Lo peor que puede pasar
+   con esta función es que alguien se olvide de que la está usando. */
+/* v6.257 — Solo superadmin por ahora. El permiso existe (admin.vercomo) para
+   poder darselo a otro rol desde la matriz sin tocar codigo. */
+function puedeVerComo(user) {
+  return user && user.kind === 'admin' && user.role === 'superadmin';
+}
+
+/* No se puede mirar como OTRO superadmin. Un superadmin tiene acceso a
+   acciones que gatean por adminId (feriados, quincenas), y aunque el modo sea
+   de solo lectura, prestarse esa identidad convierte cualquier hueco del
+   guardarraíl en una escritura firmada por otra persona. La funcion existe
+   para ver lo que ve una tienda o un gestor; para eso no hace falta. */
+
+/* Arranca la sesion prestada y repinta. El objeto de sesion se arma con la
+   MISMA forma que devuelve /api/login para cada tipo: si difiere, el panel
+   se pintaria distinto de como lo ve esa persona, que es justo lo que esta
+   funcion viene a evitar. */
+function abrirVerComo(objetivo, etiqueta) {
+  if (!confirm(`Vas a ver el portal como ${etiqueta}.\n\n`
+    + 'Es solo lectura: vas a poder mirar todo, pero no enviar reportes ni guardar cambios.\n'
+    + 'Queda registrado quien lo abrio y cuando.')) return;
+  /* Recarga completa en vez de renderPanel(). renderPanel solo limpia el
+     estado en memoria de panel.js; avisos.js, ax-review.js y otras vistas
+     tienen sus propios caches de modulo que sobrevivirian, y se verian filas
+     del alcance del otro con la sesion propia. Es el mismo motivo por el que
+     el logout recarga desde la v6.195. */
+  if (entrarVerComo(objetivo, etiqueta)) window.location.reload();
+}
+
+function barraVerComo() {
+  if (!estoyViendoComo()) return '';
+  const yo = sesionOriginal() || {};
+  const u = getSession() || {};
+  const quien = u.kind === 'company' ? `la tienda ${u.companyCode}`
+    : `${u.name || u.username || 'otro usuario'}${u.role ? ` (${roleLabelOf(u.role)})` : ''}`;
+  return `<div class="vercomo-bar">
+    <span class="vercomo-ico">👁</span>
+    <div class="vercomo-txt"><b>Estás viendo el portal como ${esc(quien)}</b>
+      <span>Solo lectura — no se puede enviar ni guardar nada. Tu sesión es ${esc(yo.name || yo.username || '')}.</span></div>
+    <button class="btn btn-sm" id="vcSalir">Volver a mi sesión</button>
+  </div>`;
+}
+
 function shell(user) {
   const isCompany = user.kind === 'company';
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
@@ -668,7 +714,17 @@ function shell(user) {
     .pnl-bell-item .muted{color:var(--muted,#64748b)}
     .pnl-bell-item:last-child{border-bottom:0}
     .pnl-bell-empty{padding:18px 14px;color:var(--muted);font-size:12.5px;text-align:center}
+    /* v6.257 — Barra de "ver como". Ambar fuerte y fija arriba: es lo unico
+       del portal con este color, para que no se confunda con un aviso normal. */
+    .vercomo-bar{position:sticky;top:0;z-index:80;display:flex;align-items:center;gap:12px;
+      padding:9px 16px;background:#92400e;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.18)}
+    .vercomo-ico{font-size:17px;flex:none}
+    .vercomo-txt{flex:1;min-width:0;line-height:1.35}
+    .vercomo-txt b{display:block;font-size:13px}
+    .vercomo-txt span{font-size:11.5px;opacity:.9}
+    .vercomo-bar .btn{background:#fff;color:#92400e;border-color:#fff;font-weight:700;flex:none}
   </style>
+  ${barraVerComo()}
   <div class="pnl-layout" id="pnlLayout">
     <button class="nav-reopen" id="pnlReopen" title="Mostrar menú" aria-label="Mostrar menú">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
@@ -676,7 +732,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.255</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.257</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2911,6 +2967,9 @@ async function usersLoad(user) {
       subzoneName: (p && p.subzoneName) || null,
       phoneLine: [phone1, phone2].filter(Boolean).join(' / '),
       portal: p,
+      // v6.257 — lo necesita "Ver como": decide si esa empresa se mira
+      // como tienda o como empresa (store_workers vs enterprise_workers).
+      companyType: (p && p.type) || 'Tienda',
       portalState: p && p.user ? (p.user.is_active ? 'Activo' : 'Inactivo') : 'Sin acceso',
       ost: o,
     };
@@ -3144,7 +3203,8 @@ function usersRenderRows(user) {
     let acts = '';
     if (r.portal) {
       acts = u
-        ? `<button class="btn btn-mini" data-p="email" data-code="${r.code}" data-name="${(r.name||'').replace(/"/g,'')}" data-email="${(u.email||'').replace(/"/g,'')}">${I.pencil} Correo</button>
+        ? `${puedeVerComo(user) ? `<button class="btn btn-mini" data-p="vercomo" data-code="${r.code}" data-uid="${u.id}" data-ctype="${(r.companyType||'Tienda').replace(/"/g,'')}" data-email="${(u.email||'').replace(/"/g,'')}" title="Ver el portal como esta tienda (solo lectura)">👁 Ver como</button>` : ''}
+           <button class="btn btn-mini" data-p="email" data-code="${r.code}" data-name="${(r.name||'').replace(/"/g,'')}" data-email="${(u.email||'').replace(/"/g,'')}">${I.pencil} Correo</button>
            <button class="btn btn-mini" data-p="reset" data-code="${r.code}">${I.key} Resetear</button>
            <button class="btn btn-mini" data-p="toggle" data-code="${r.code}" data-active="${u.is_active}">${u.is_active ? 'Desactivar' : 'Activar'}</button>`
         : `<button class="btn btn-mini btn-primary" data-p="create" data-code="${r.code}" data-name="${(r.name||'').replace(/"/g,'')}" data-type="Tienda" data-email="${r.portal.companyEmail||''}">${I.plus} Crear acceso</button>`;
@@ -3520,6 +3580,18 @@ async function ouApi(payload) {
 }
 
 function cuAction(ds, user) {
+  if (ds.act === 'vercomo') {
+    /* Mismos campos que devuelve /api/login para una tienda. companyType va
+       incluido a proposito: decide si Personal y Reportes trabajan sobre
+       store_workers o enterprise_workers. Sin el, al mirar una Importadora o
+       una Administrativa se veria el mundo tienda — datos distintos de los
+       que ve esa persona, que es justo lo que esta funcion viene a evitar. */
+    abrirVerComo({
+      kind: 'company', id: Number(ds.uid) || null, companyCode: ds.code,
+      companyType: ds.ctype || 'Tienda', email: ds.email || null,
+    }, `la tienda ${ds.code}`);
+    return;
+  }
   if (ds.act === 'toggle') {
     cuApi({ action: 'toggle', adminId: user.id, companyCode: ds.code, isActive: !(ds.active === 'true') })
       .then(() => viewUsuarios(user));
@@ -4037,6 +4109,7 @@ async function viewEquipo(user) {
         ${kind === 'agent' ? `<button data-act="osticket-agent" ${dd} data-staff="${a.osticket_staff_id || ''}">🎫 osTicket</button>`
           : kind === 'client' ? `<button data-act="osticket" ${dd}>🎫 osTicket</button>` : ''}
         <button data-act="reset" ${dd}>🔑 Resetear clave</button>
+        ${(puedeVerComo(user) && !self && a.is_active && a.role !== 'superadmin') ? `<button data-act="vercomo" ${dd} data-mail="${(a.email || '').replace(/"/g, '&quot;')}">👁 Ver el portal como él/ella</button>` : ''}
         ${self ? '' : `<div class="eq-sep"></div>
         <button class="eq-danger" data-act="toggle" data-id="${a.id}" data-active="${a.is_active}">${a.is_active ? '○ Desactivar' : '● Activar'}</button>`}
       </div></div>`;
@@ -4286,6 +4359,12 @@ function altaSummaryModal(user, summary, onClose) {
   });
 }
 function auAction(ds, user) {
+  if (ds.act === 'vercomo') {
+    abrirVerComo({ kind: 'admin', id: Number(ds.id) || null, username: ds.u,
+      name: ds.name || ds.u, role: ds.role || '', email: ds.mail || null },
+      `${ds.name || ds.u} (${roleLabelOf(ds.role)})`);
+    return;
+  }
   // v6.43: la fila de Equipo ya no tiene Tiendas/Empresas/⚡ sueltos: un solo
   // boton Alcance abre la pagina unificada del miembro.
   if (ds.act === 'alcance') {
@@ -5904,7 +5983,7 @@ async function renderPaySyncCard(user) {
    2) re-lee cada PDF con el MISMO lector del RIF y extrae el domicilio;
    3) manda todo junto para completar workers_master.fiscal_address.
    No toca la Dirección Personal. Reutilizable si en el futuro hace falta. */
-/* v6.255 — Re-procesa RIF ya guardados con el parser actual.
+/* v6.257 — Re-procesa RIF ya guardados con el parser actual.
    Los 89 cargados entre el 23 y el 26 de julio quedaron sin nombre ni
    domicilio porque el parser de entonces no los sacaba; sus PDF se leen
    perfecto hoy. Se probo uno (VICTORIA DAVALILLO, 28046590) antes de escribir
@@ -5940,7 +6019,7 @@ async function runRifReparse(user, btn, statusEl) {
           nro_comprobante: f.nro_comprobante, fecha_inscripcion: f.fecha_inscripcion,
           fecha_actualizacion: f.fecha_actualizacion, fecha_vencimiento: f.fecha_vencimiento,
           domicilio_fiscal: f.domicilio_fiscal,
-          // v6.255 — si un campo no se lista aca se pierde en el re-proceso,
+          // v6.257 — si un campo no se lista aca se pierde en el re-proceso,
           // que es exactamente como quedo muda la validacion en la v6.231.
           provisional: f.provisional || false,
           formato: f.formato || 'v1', firma_cert: f.firma_cert, verify_url: f.verify_url,
@@ -6174,7 +6253,7 @@ async function viewSync(user) {
       <button class="btn btn-primary" id="fiscalToolBtn">Rellenar Dirección Fiscal</button>
     </div>
 
-    <!-- v6.255: re-lee RIF viejos con el parser actual. 89 quedaron sin
+    <!-- v6.257: re-lee RIF viejos con el parser actual. 89 quedaron sin
          nombre ni domicilio en la primera semana; los PDF estan bien. -->
     <div class="card" id="rifReparseCard">
       <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">Herramientas · Re-procesar RIF</h3></div>
@@ -8727,6 +8806,14 @@ export function renderPanel() {
   // de un usuario anterior "se filtren" si se cambia de sesión sin recargar).
   CATALOG = null; CU_ROWS = null; SCOPE = null; USERS_USER = null; TIENDAS_FILTERS = null; currentView = 'dashboard';
   mount(shell(user));
+  /* v6.257 — El bloqueo de escritura envuelve fetch una sola vez y se activa
+     solo cuando hay una sesion prestada. Se instala siempre para no depender
+     de por donde se entro. */
+  instalarBloqueoLectura((endpoint, accion) => {
+    console.warn('[VER-COMO] bloqueado', endpoint, accion || '(sin accion)');
+  });
+  { const b = document.getElementById('vcSalir');
+    if (b) b.addEventListener('click', () => { if (salirVerComo()) window.location.reload(); }); }
   loadAvatar((user.email || '').trim().toLowerCase());
   /* v5.06: la etiqueta de rol de la topbar sale del catalogo de Roles, pero
      shell() se pinta ANTES de que exista (ensureAdminRoles solo corre al entrar

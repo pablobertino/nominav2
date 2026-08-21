@@ -16,4 +16,9 @@ export function getSession() {
 
 export function clearSession() {
   sessionStorage.removeItem(KEY);
+  /* v6.256 — tambien la marca de "ver como". Sin esto sobrevivia al cierre de
+     sesion: al volver a entrar con tu propia cuenta, el portal seguia creyendo
+     que estabas mirando como otro y te dejaba en solo lectura, sin forma de
+     salir salvo cerrando la pestaña. */
+  sessionStorage.removeItem('nmv2_vercomo_origen');
 }
