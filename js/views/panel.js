@@ -563,10 +563,10 @@ function readAuOst() {
 }
 
 /* ---------- shell ---------- */
-/* v6.257 — La barra de "estás viendo como otro". Va arriba de todo, fija y
+/* v6.258 — La barra de "estás viendo como otro". Va arriba de todo, fija y
    en un color que no se confunde con nada del portal. Lo peor que puede pasar
    con esta función es que alguien se olvide de que la está usando. */
-/* v6.257 — Solo superadmin por ahora. El permiso existe (admin.vercomo) para
+/* v6.258 — Solo superadmin por ahora. El permiso existe (admin.vercomo) para
    poder darselo a otro rol desde la matriz sin tocar codigo. */
 function puedeVerComo(user) {
   return user && user.kind === 'admin' && user.role === 'superadmin';
@@ -714,7 +714,7 @@ function shell(user) {
     .pnl-bell-item .muted{color:var(--muted,#64748b)}
     .pnl-bell-item:last-child{border-bottom:0}
     .pnl-bell-empty{padding:18px 14px;color:var(--muted);font-size:12.5px;text-align:center}
-    /* v6.257 — Barra de "ver como". Ambar fuerte y fija arriba: es lo unico
+    /* v6.258 — Barra de "ver como". Ambar fuerte y fija arriba: es lo unico
        del portal con este color, para que no se confunda con un aviso normal. */
     .vercomo-bar{position:sticky;top:0;z-index:80;display:flex;align-items:center;gap:12px;
       padding:9px 16px;background:#92400e;color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.18)}
@@ -732,7 +732,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.257</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.258</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -2967,7 +2967,7 @@ async function usersLoad(user) {
       subzoneName: (p && p.subzoneName) || null,
       phoneLine: [phone1, phone2].filter(Boolean).join(' / '),
       portal: p,
-      // v6.257 — lo necesita "Ver como": decide si esa empresa se mira
+      // v6.258 — lo necesita "Ver como": decide si esa empresa se mira
       // como tienda o como empresa (store_workers vs enterprise_workers).
       companyType: (p && p.type) || 'Tienda',
       portalState: p && p.user ? (p.user.is_active ? 'Activo' : 'Inactivo') : 'Sin acceso',
@@ -5983,7 +5983,7 @@ async function renderPaySyncCard(user) {
    2) re-lee cada PDF con el MISMO lector del RIF y extrae el domicilio;
    3) manda todo junto para completar workers_master.fiscal_address.
    No toca la Dirección Personal. Reutilizable si en el futuro hace falta. */
-/* v6.257 — Re-procesa RIF ya guardados con el parser actual.
+/* v6.258 — Re-procesa RIF ya guardados con el parser actual.
    Los 89 cargados entre el 23 y el 26 de julio quedaron sin nombre ni
    domicilio porque el parser de entonces no los sacaba; sus PDF se leen
    perfecto hoy. Se probo uno (VICTORIA DAVALILLO, 28046590) antes de escribir
@@ -6019,7 +6019,7 @@ async function runRifReparse(user, btn, statusEl) {
           nro_comprobante: f.nro_comprobante, fecha_inscripcion: f.fecha_inscripcion,
           fecha_actualizacion: f.fecha_actualizacion, fecha_vencimiento: f.fecha_vencimiento,
           domicilio_fiscal: f.domicilio_fiscal,
-          // v6.257 — si un campo no se lista aca se pierde en el re-proceso,
+          // v6.258 — si un campo no se lista aca se pierde en el re-proceso,
           // que es exactamente como quedo muda la validacion en la v6.231.
           provisional: f.provisional || false,
           formato: f.formato || 'v1', firma_cert: f.firma_cert, verify_url: f.verify_url,
@@ -6253,7 +6253,7 @@ async function viewSync(user) {
       <button class="btn btn-primary" id="fiscalToolBtn">Rellenar Dirección Fiscal</button>
     </div>
 
-    <!-- v6.257: re-lee RIF viejos con el parser actual. 89 quedaron sin
+    <!-- v6.258: re-lee RIF viejos con el parser actual. 89 quedaron sin
          nombre ni domicilio en la primera semana; los PDF estan bien. -->
     <div class="card" id="rifReparseCard">
       <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">Herramientas · Re-procesar RIF</h3></div>
@@ -8806,7 +8806,7 @@ export function renderPanel() {
   // de un usuario anterior "se filtren" si se cambia de sesión sin recargar).
   CATALOG = null; CU_ROWS = null; SCOPE = null; USERS_USER = null; TIENDAS_FILTERS = null; currentView = 'dashboard';
   mount(shell(user));
-  /* v6.257 — El bloqueo de escritura envuelve fetch una sola vez y se activa
+  /* v6.258 — El bloqueo de escritura envuelve fetch una sola vez y se activa
      solo cuando hay una sesion prestada. Se instala siempre para no depender
      de por donde se entro. */
   instalarBloqueoLectura((endpoint, accion) => {

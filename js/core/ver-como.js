@@ -154,3 +154,4 @@ export function instalarBloqueoLectura(alBloquear) {
       ver_como_bloqueado: true,
     }), { status: 200, headers: { 'Content-Type': 'application/json' } });
   };
+}
