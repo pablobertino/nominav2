@@ -978,7 +978,8 @@ function openIngresoModal(ctx, id, modo) {
       extra += `<div class="igbrf-x">
         <span>C.I. <b>${esc(c.cedula_rif)}</b></span>
         ${c.rif ? `<span>RIF <b>${esc(c.rif)}</b></span>` : ''}
-        ${c.fecha_vencimiento ? `<span>Vence <b>${esc(c.fecha_vencimiento)}</b></span>` : ''}
+        ${c.fecha_vencimiento ? `<span>Vence <b>${esc(c.fecha_vencimiento)}</b></span>`
+          : (c.formato === 'v2' ? '<span>RIF Digital v2.0 · <b>sin vencimiento</b></span>' : '')}
       </div>`;
     }
     /* El certificado trae el nombre en una sola linea y no se parte solo (65%

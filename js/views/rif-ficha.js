@@ -188,7 +188,7 @@ export function parseRif(rawText) {
     nro_comprobante: null, fecha_inscripcion: null, fecha_actualizacion: null, fecha_vencimiento: null,
     domicilio_fiscal: null,
     /* v6.234 — solo los trae la planilla del SENIAT (ver parsePlanilla) */
-    provisional: false, apellidos_pdf: null, nombres_pdf: null, fecha_nacimiento: null,
+    provisional: false, formato: 'v1', apellidos_pdf: null, nombres_pdf: null, fecha_nacimiento: null,
     sexo: null, estado_civil: null, correo: null, telefono: null };
 
   /* La PLANILLA DE ACTUALIZACION TEMPORAL es otro documento del SENIAT: no es
@@ -196,6 +196,18 @@ export function parseRif(rawText) {
      Se desvia antes que nada porque con el parser del certificado salia mal:
      el nombre terminaba siendo la declaracion jurada del final (72 palabras).
      Ver parsePlanilla() para el detalle. */
+  /* v6.253 — El SENIAT sacó el "RIF Digital v2.0". Cambia el layout y, sobre
+     todo, YA NO TRAE FECHA DE VENCIMIENTO: solo inscripción y última
+     actualización. Eso importa mas alla de lo cosmetico, porque la ficha y
+     doc_estado_personal juzgan por el vencimiento; sin marcar el formato, un
+     documento nuevo y perfecto se veria igual que uno viejo al que no se le
+     pudo leer la fecha. Se detecta por la firma del pie, y como respaldo por
+     la combinacion de secciones propia del formato nuevo. */
+  if (/RIF\s*Digital\s*v?2/i.test(text)
+      || (/DATOS\s+DE\s+REGISTRO\s+Y\s+VIGENCIA/i.test(text) && !/FECHA\s+DE\s+VENCIMIENTO/i.test(text))) {
+    out.formato = 'v2';
+  }
+
   if (esPlanilla(text)) return parsePlanilla(text, out);
 
   // RIF (letra + 9 dígitos). Es el primer V/E/J/P/G + 9 dígitos del documento.
@@ -225,7 +237,11 @@ export function parseRif(rawText) {
   // v6.126: alimenta el campo "Dirección Fiscal" de la ficha (no editable).
   // Se recorta el "(Este contribuyente…)" que a veces queda pegado al final,
   // pero se respetan paréntesis internos legítimos (p.ej. "(LOS ROBLES)").
-  const md = text.match(/DOMICILIO\s+FISCAL\s+(.+?)\s*(?:\(?\s*Este\s+contribuyente|FECHA\s+DE\b|GERENCIA\b|FIRMA\s+AUTORIZADA|N[°º]\s*(?:DE\s+)?COMPROBANTE)/i);
+  /* v6.253 — Los dos puntos son opcionales. El RIF Digital v2.0 escribe
+     'DOMICILIO FISCAL:' y la expresion exigia un espacio, asi que el domicilio
+     no se leia en ninguno de los documentos nuevos. Tambien se corta en
+     'DATOS DE REGISTRO', que es la seccion que sigue en ese formato. */
+  const md = text.match(/DOMICILIO\s+FISCAL\s*:?\s*(.+?)\s*(?:\(?\s*Este\s+contribuyente|DATOS\s+DE\s+REGISTRO|FECHA\s+DE\b|GERENCIA\b|FIRMA\s+AUTORIZADA|N[°º]\s*(?:DE\s+)?COMPROBANTE)/i);
   if (md) {
     const dom = collapse(md[1]).replace(/\s*\(?\s*Este\s+contribuyente.*$/i, '').replace(/\s*\($/, '').trim();
     if (dom) out.domicilio_fiscal = dom;
@@ -461,7 +477,7 @@ async function viewPdf(STATE, path) {
 async function removeRif(STATE, id, done) {
   const n = parseInt(id, 10);
   if (!n) return;
-  if (!confirm('¿Quitar este RIF de la ficha? Podés volver a cargar otro cuando quieras.')) return;
+  if (!confirm('¿Quitar este RIF de la ficha? Puedes volver a cargar otro cuando quieras.')) return;
   try {
     const r = await docApi({ action: 'annul', id: n, user: sessUser(STATE.user) });
     if (r && r.ok) { if (done) done(); }
@@ -560,6 +576,12 @@ function openUploadModal(w, STATE, onSaved) {
         sem('warn', 'falta el RIF definitivo')));
       rows.push(row('Vence', 'No vence — es un trámite',
         sem('info', '30 días para formalizar')));
+    } else if (fields.formato === 'v2') {
+      /* El RIF Digital v2.0 no trae vencimiento. Decir 'sin fecha' seria
+         sugerir que falta un dato: no falta, ese formato no lo tiene. */
+      rows.push(row('Formato', 'RIF Digital v2.0', sem('ok', 'formato nuevo')));
+      rows.push(row('Vigencia', esc(fields.fecha_actualizacion ? `actualizado el ${fields.fecha_actualizacion}` : '—'),
+        sem('info', 'este formato no indica vencimiento')));
     } else {
       rows.push(row('Vence', esc(fields.fecha_vencimiento || '—'),
         !fields.fecha_vencimiento ? sem('info', 'sin fecha') : (ev.vencido ? sem('warn', 'RIF vencido') : sem('ok', 'vigente'))));
@@ -609,6 +631,7 @@ function openUploadModal(w, STATE, onSaved) {
           // v6.234 — si no se listan aca se pierden en silencio, que es
           // exactamente como quedo muda la validacion de la v6.231.
           provisional: fields.provisional || false,
+          formato: fields.formato || 'v1',
           apellidos_pdf: fields.apellidos_pdf || null, nombres_pdf: fields.nombres_pdf || null,
           fecha_nacimiento: fields.fecha_nacimiento || null, sexo: fields.sexo || null,
           estado_civil: fields.estado_civil || null, correo: fields.correo || null,
