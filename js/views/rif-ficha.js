@@ -318,7 +318,14 @@ function evaluate(fields, w) {
   // Digito verificador: solo advierte cuando la cédula SÍ coincide (si no
   // coincide, ya avisa la cédula; el dígito seria ruido).
   if (cedOk && !digitOk) warnings.push({ level: 'warn', code: 'digit_invalid', text: 'El dígito verificador del RIF no calza con la cédula. Revisa que sea el PDF correcto del SENIAT.' });
-  if (vencido) warnings.push({ level: 'warn', code: 'rif_vencido', text: `El RIF está vencido${fields.fecha_vencimiento ? ' (venció el ' + fields.fecha_vencimiento + ')' : ''}. Se guarda igual, pero conviene renovarlo en el SENIAT.` });
+  /* v6.255 — El RIF YA NO VENCE. Gaceta Oficial 43.435 del 12/08/2026: el
+     SENIAT elimino la fecha de vencimiento; el numero es unico y permanente.
+     Lo que sigue vigente es actualizarlo cuando cambian los datos del
+     contribuyente, que no se deduce de una fecha. Por eso el certificado nuevo
+     ni la imprime: no falta el dato, dejo de existir.
+     Se deja de advertir. Mandar a renovar algo que no se renueva gasta el
+     credito de las advertencias que si importan. El campo se sigue leyendo y
+     guardando: es historia del documento, no un problema. */
 
   const validaciones = { cedula_ok: cedOk, digito_ok: digitOk, vencido, nombre_ok: nameOk,
     ficha_cedula: fichaCed, ficha_nombre: w.full_name || '', warnings };
@@ -417,20 +424,20 @@ export async function initRifCard(host, w, STATE, onRender, onFiscal) {
     if (latest) {
       const dat = latest.datos || {};
       const venc = dat.fecha_vencimiento || '';
-      const vencido = isVencido(venc);
       // El documento SÍ está cargado: nunca decir "pendiente". Base "cargado"
-      // (o "validado" si ya se publicó); si está vencido se agrega ese aviso.
+      // (o "validado" si ya se publicó).
+      // v6.255 — se retiro el sello "vencido": el RIF ya no vence
+      // (Gaceta 43.435, 12/08/2026).
       badge = latest.estado === 'publicada'
         ? '<span class="rifd-badge pub">validado</span>'
         : '<span class="rifd-badge load">cargado</span>';
-      if (vencido) badge += '<span class="rifd-badge venc" style="margin-left:5px">vencido</span>';
       const nWarn = (latest.validaciones && latest.validaciones.warnings || []).length;
       const warnTxt = nWarn ? ` · <span style="color:#d97706;font-weight:700">⚠ ${nWarn} advertencia${nWarn === 1 ? '' : 's'}</span>` : '';
-      const vencTxt = venc ? ` · vence ${esc(venc)}` : '';
+      const vencTxt = venc ? ` · emitido con vigencia hasta ${esc(venc)}` : '';
       sub = `RIF <span class="mono">${esc(dat.rif || '')}</span>${vencTxt} · <span class="rifd-lnk" data-rif="view" data-path="${esc(latest.storage_path || '')}">Ver PDF</span>${warnTxt}`;
     } else {
       badge = '<span class="rifd-badge none">sin cargar</span>';
-      sub = 'Aún no hay un RIF cargado. Validamos cédula, dígito verificador y vencimiento.';
+      sub = 'Aún no hay un RIF cargado. Validamos la cédula y el dígito verificador.';
     }
 
     const btn = canUpload
@@ -602,7 +609,8 @@ function openUploadModal(w, STATE, onSaved) {
         sem('info', 'este formato no indica vencimiento')));
     } else {
       rows.push(row('Vence', esc(fields.fecha_vencimiento || '—'),
-        !fields.fecha_vencimiento ? sem('info', 'sin fecha') : (ev.vencido ? sem('warn', 'RIF vencido') : sem('ok', 'vigente'))));
+        !fields.fecha_vencimiento ? sem('info', 'no indica vencimiento')
+          : sem('ok', 'el RIF ya no vence · Gaceta 43.435')));
     }
     if (fields.verify_url) {
       /* El enlace abre el certificado en el SENIAT. No se verifica solo: es un

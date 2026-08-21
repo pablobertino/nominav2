@@ -978,7 +978,7 @@ function openIngresoModal(ctx, id, modo) {
       extra += `<div class="igbrf-x">
         <span>C.I. <b>${esc(c.cedula_rif)}</b></span>
         ${c.rif ? `<span>RIF <b>${esc(c.rif)}</b></span>` : ''}
-        ${c.fecha_vencimiento ? `<span>Vence <b>${esc(c.fecha_vencimiento)}</b></span>`
+        ${c.fecha_vencimiento ? `<span>Vigencia impresa <b>${esc(c.fecha_vencimiento)}</b></span>`
           : (c.formato === 'v2' ? '<span>RIF Digital v2.0 · <b>sin vencimiento</b></span>' : '')}
         ${c.verify_url ? `<span><a href="${esc(c.verify_url)}" target="_blank" rel="noopener noreferrer">Verificar en el SENIAT ↗</a></span>` : ''}
       </div>`;
