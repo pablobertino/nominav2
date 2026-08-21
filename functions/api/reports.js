@@ -2381,6 +2381,7 @@ async function submitIngreso(env, body) {
               fecha_actualizacion: campos.fecha_actualizacion, fecha_vencimiento: campos.fecha_vencimiento,
               domicilio_fiscal: campos.domicilio_fiscal, provisional: campos.provisional || false,
               formato: campos.formato || 'v1',
+              firma_cert: campos.firma_cert || null, verify_url: campos.verify_url || null,
               apellidos_pdf: campos.apellidos_pdf, nombres_pdf: campos.nombres_pdf,
               fecha_nacimiento: campos.fecha_nacimiento, sexo: campos.sexo,
               estado_civil: campos.estado_civil, correo: campos.correo, telefono: campos.telefono,

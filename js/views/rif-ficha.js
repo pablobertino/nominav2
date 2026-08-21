@@ -188,7 +188,7 @@ export function parseRif(rawText) {
     nro_comprobante: null, fecha_inscripcion: null, fecha_actualizacion: null, fecha_vencimiento: null,
     domicilio_fiscal: null,
     /* v6.234 — solo los trae la planilla del SENIAT (ver parsePlanilla) */
-    provisional: false, formato: 'v1', apellidos_pdf: null, nombres_pdf: null, fecha_nacimiento: null,
+    provisional: false, formato: 'v1', firma_cert: null, verify_url: null, apellidos_pdf: null, nombres_pdf: null, fecha_nacimiento: null,
     sexo: null, estado_civil: null, correo: null, telefono: null };
 
   /* La PLANILLA DE ACTUALIZACION TEMPORAL es otro documento del SENIAT: no es
@@ -232,6 +232,24 @@ export function parseRif(rawText) {
   // Nº de comprobante ("N° DE COMPROBANTE:" — el certificado incluye el "DE").
   const mc = text.match(/N[°º]\s*(?:DE\s+)?COMPROBANTE:\s*([A-Z0-9]+)/i);
   if (mc) out.nro_comprobante = mc[1];
+
+  /* v6.254 — VERIFICACION CONTRA EL SENIAT.
+     El RIF Digital v2.0 trae un QR, y adentro no hay datos nuevos: son el
+     numero de comprobante y el codigo de firma, los dos impresos en el mismo
+     papel. Lo que aporta es el CAMINO para verificarlo en la fuente.
+     Como los dos valores estan en el texto, la URL se arma sin leer el QR — y
+     por eso funciona tambien con el formato VIEJO, que trae los mismos dos
+     campos aunque no imprima el codigo. Comprobado sobre los 5 certificados
+     que tenemos, viejos y nuevo: los 5 permiten armarla.
+     El codigo de firma es 1 + los digitos del RIF + tres letras (1303991090-ZYG).
+     Ojo: la URL del SENIAT es http, no https. */
+  const mf = text.match(/\b(\d{9,10}-[A-Z]{3})\b/);
+  if (mf) out.firma_cert = mf[1];
+  if (out.nro_comprobante && out.firma_cert) {
+    out.verify_url = 'http://contribuyente.seniat.gob.ve/rifconsultacertificado/generarCertificadoRif.do'
+      + `?certRif=${encodeURIComponent(out.nro_comprobante)}`
+      + `&firmaAutorizadaCert=${encodeURIComponent(out.firma_cert)}`;
+  }
 
   // Domicilio fiscal: tras "DOMICILIO FISCAL" hasta la siguiente sección.
   // v6.126: alimenta el campo "Dirección Fiscal" de la ficha (no editable).
@@ -586,6 +604,14 @@ function openUploadModal(w, STATE, onSaved) {
       rows.push(row('Vence', esc(fields.fecha_vencimiento || '—'),
         !fields.fecha_vencimiento ? sem('info', 'sin fecha') : (ev.vencido ? sem('warn', 'RIF vencido') : sem('ok', 'vigente'))));
     }
+    if (fields.verify_url) {
+      /* El enlace abre el certificado en el SENIAT. No se verifica solo: es un
+         sitio externo, por http, y del mismo tipo que ya nos bloquea fuera de
+         Venezuela. Se ofrece el camino y lo mira una persona. */
+      rows.push(row('Verificar',
+        `<a href="${esc(fields.verify_url)}" target="_blank" rel="noopener noreferrer">Ver el certificado en el SENIAT ↗</a>`,
+        sem('info', 'se abre en otra pestaña')));
+    }
     rows.push(row('Domicilio fiscal', esc(fields.domicilio_fiscal || '—'),
       fields.domicilio_fiscal ? sem('ok', 'se guarda en la ficha') : sem('info', 'no detectado')));
 
@@ -632,6 +658,8 @@ function openUploadModal(w, STATE, onSaved) {
           // exactamente como quedo muda la validacion de la v6.231.
           provisional: fields.provisional || false,
           formato: fields.formato || 'v1',
+          firma_cert: fields.firma_cert || null,
+          verify_url: fields.verify_url || null,
           apellidos_pdf: fields.apellidos_pdf || null, nombres_pdf: fields.nombres_pdf || null,
           fecha_nacimiento: fields.fecha_nacimiento || null, sexo: fields.sexo || null,
           estado_civil: fields.estado_civil || null, correo: fields.correo || null,

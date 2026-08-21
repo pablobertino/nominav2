@@ -676,7 +676,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.253</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.254</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -5904,7 +5904,7 @@ async function renderPaySyncCard(user) {
    2) re-lee cada PDF con el MISMO lector del RIF y extrae el domicilio;
    3) manda todo junto para completar workers_master.fiscal_address.
    No toca la Dirección Personal. Reutilizable si en el futuro hace falta. */
-/* v6.253 — Re-procesa RIF ya guardados con el parser actual.
+/* v6.254 — Re-procesa RIF ya guardados con el parser actual.
    Los 89 cargados entre el 23 y el 26 de julio quedaron sin nombre ni
    domicilio porque el parser de entonces no los sacaba; sus PDF se leen
    perfecto hoy. Se probo uno (VICTORIA DAVALILLO, 28046590) antes de escribir
@@ -5940,7 +5940,10 @@ async function runRifReparse(user, btn, statusEl) {
           nro_comprobante: f.nro_comprobante, fecha_inscripcion: f.fecha_inscripcion,
           fecha_actualizacion: f.fecha_actualizacion, fecha_vencimiento: f.fecha_vencimiento,
           domicilio_fiscal: f.domicilio_fiscal,
+          // v6.254 — si un campo no se lista aca se pierde en el re-proceso,
+          // que es exactamente como quedo muda la validacion en la v6.231.
           provisional: f.provisional || false,
+          formato: f.formato || 'v1', firma_cert: f.firma_cert, verify_url: f.verify_url,
           apellidos_pdf: f.apellidos_pdf, nombres_pdf: f.nombres_pdf,
           fecha_nacimiento: f.fecha_nacimiento, sexo: f.sexo,
           estado_civil: f.estado_civil, correo: f.correo, telefono: f.telefono,
@@ -6171,7 +6174,7 @@ async function viewSync(user) {
       <button class="btn btn-primary" id="fiscalToolBtn">Rellenar Dirección Fiscal</button>
     </div>
 
-    <!-- v6.253: re-lee RIF viejos con el parser actual. 89 quedaron sin
+    <!-- v6.254: re-lee RIF viejos con el parser actual. 89 quedaron sin
          nombre ni domicilio en la primera semana; los PDF estan bien. -->
     <div class="card" id="rifReparseCard">
       <div class="cfg-card-head"><h3 style="margin:0;font-size:15px">Herramientas · Re-procesar RIF</h3></div>
