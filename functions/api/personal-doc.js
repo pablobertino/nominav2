@@ -67,6 +67,29 @@ async function sb(env, path, opts = {}) {
   return t ? JSON.parse(t) : null;
 }
 
+/* Trae TODAS las filas, no las primeras 1000.                     (v6.260)
+
+   PostgREST corta en 1000 y no avisa: devuelve un array corto y valido. Las
+   dos herramientas de re-proceso de abajo pedian todos los RIF ordenados por
+   fecha DESC y filtraban en memoria, asi que al pasar de 1000 documentos los
+   que se caian de la lista eran los MAS VIEJOS — justo los incompletos, que
+   son viejos porque el parser de entonces sabia menos. La herramienta habria
+   dicho "listo, 0 pendientes" con los pendientes intactos.
+
+   Se pagina hasta que una pagina viene corta. El orden lo pone quien llama y
+   debe incluir un desempate estable (id), o una fila puede repetirse o
+   saltearse entre paginas. */
+async function sbTodo(env, path, pagina = 1000) {
+  const todo = [];
+  for (let offset = 0; ; offset += pagina) {
+    const sep = path.includes('?') ? '&' : '?';
+    const lote = await sb(env, `${path}${sep}limit=${pagina}&offset=${offset}`) || [];
+    todo.push(...lote);
+    if (lote.length < pagina) return todo;
+    if (offset > 50000) return todo;   // freno duro: nunca deberia llegar aca
+  }
+}
+
 async function storageUpload(env, path, bytes, mime) {
   const res = await fetch(`${env.supabase_url}/storage/v1/object/${BUCKET}/${path}`, {
     method: 'POST',
@@ -242,9 +265,9 @@ async function saveDoc(env, actor, body) {
    ===================================================================== */
 async function reparsePending(env, body) {
   const tipo = norm(body.doc_type) || 'rif';
-  const rows = await sb(env,
+  const rows = await sbTodo(env,
     `personal_documents?doc_type=eq.${encodeURIComponent(tipo)}&estado=neq.anulada`
-    + '&select=id,id_number,storage_path,datos,created_at&order=created_at.desc') || [];
+    + '&select=id,id_number,storage_path,datos,created_at&order=created_at.desc,id.desc');
 
   /* Solo los que les FALTA algo. Re-leer los 585 para arreglar 89 seria
      media hora de descargas para el navegador de alguien. */
@@ -289,9 +312,9 @@ async function reparseSaveBulk(env, body) {
 }
 
 async function fiscalPending(env, body) {
-  const rifs = await sb(env,
+  const rifs = await sbTodo(env,
     'personal_documents?doc_type=eq.rif&estado=neq.anulada'
-    + '&select=id_number,storage_path,created_at&order=created_at.desc') || [];
+    + '&select=id,id_number,storage_path,created_at&order=created_at.desc,id.desc');
   const latest = new Map();   // id_number -> RIF más reciente con path
   for (const r of rifs) {
     if (!r.id_number || !r.storage_path) continue;
@@ -301,8 +324,12 @@ async function fiscalPending(env, body) {
   if (!ids.length) return json({ ok: true, items: [], total: 0 });
 
   const inList = ids.map(c => `"${c}"`).join(',');
-  const masters = await sb(env,
-    `workers_master?id_number=in.(${inList})&select=id_number,fiscal_address`) || [];
+  /* Tambien paginado: si esta lista viniera cortada, las personas que SI
+     tienen direccion fiscal caerian del lado de "les falta" y el backfill
+     volveria a escribir encima de una direccion ya corregida a mano. */
+  const masters = await sbTodo(env,
+    `workers_master?id_number=in.(${inList})&select=id_number,fiscal_address`
+    + '&order=id_number.asc');
   const hasFiscal = new Set((masters || [])
     .filter(m => m.fiscal_address && String(m.fiscal_address).trim())
     .map(m => m.id_number));
