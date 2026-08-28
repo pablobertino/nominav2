@@ -796,6 +796,12 @@ async function load() {
   STATE.workers = d.workers || [];
   STATE.company = d.company || { code: STATE.cc };
   STATE.bankMap = d.bank_map || {};
+  /* v6.264 — Las dos las decide el servidor. `aplica` es por tipo de empresa
+     (no-tienda) y `editable` suma el permiso ficha.corpmail. El front no
+     calcula ninguna de las dos: asi no se puede habilitar el campo desde el
+     navegador, y el guardado ademas lo vuelve a verificar. */
+  STATE.corpEmailAplica = !!d.corp_email_aplica;
+  STATE.corpEmailEditable = !!d.corp_email_editable;
   STATE.departments = d.departments || [];
   // v4.76: catalogo de jerarquia de cargos (solo tiendas). Reset del cache
   // de resolucion cargo->rank por si el catalogo cambio entre recargas.
@@ -2066,11 +2072,12 @@ function fichaHtml(w, c) {
           <!-- v6.263: correo corporativo. Solo lectura, como la Direccion
                Fiscal: lo crea Sistemas y se carga por proceso. Se oculta si no
                hay, porque solo el personal de Externas y Administrativa tiene. -->
-          <div class="ff-row" id="ff_corp_row" style="display:none"><span class="ff-lbl">Correo corporativo <span class="src" title="Lo asigna Sistemas · no se edita desde la ficha"><span class="dot" style="background:#0e7490"></span></span></span><span class="ff-val" data-v="corporate_email"></span></div>
+          <div class="ff-row" id="ff_corp_row" style="display:none"><span class="ff-lbl">Correo corporativo <span class="src" title="Correo @grupocanaima.net · lo asigna Sistemas"><span class="dot" style="background:#0e7490"></span></span></span><span class="ff-val"><span data-v="corporate_email"></span><button type="button" id="ff_corp_copy" title="Copiar" style="display:none;margin-left:8px;font:inherit;font-size:11px;font-weight:700;color:#0e7490;background:#ecfeff;border:1px solid #cffafe;border-radius:6px;padding:2px 8px;cursor:pointer">Copiar</button></span></div>
           <div class="ff-field"><label>Teléfono móvil <span class="opt">(04XX-XXXXXXX)</span></label><input id="e_phone" type="text" inputmode="numeric" placeholder="0414-1234567"><div class="ff-hint" id="h_phone"></div></div>
           <div class="ff-field"><label>Correo personal <span class="opt">(opcional)</span></label><input id="e_email" type="text" placeholder="nombre@correo.com"><div class="ff-hint" id="h_email"></div></div>
-          <div class="ff-field" id="e_corp_wrap" style="display:none"><label>Correo corporativo <span class="opt">(lo asigna Sistemas · no editable)</span></label>
-            <div class="ff-locked" id="e_corp" style="padding:9px 11px;border:1px dashed var(--border);border-radius:8px;background:var(--bg-soft,#f8fafc);min-height:20px;color:var(--soft,#334155);font-size:13px"></div></div>
+          <div class="ff-field" id="e_corp_wrap" style="display:none"><label>Correo corporativo <span class="opt" id="e_corp_hint">(@grupocanaima.net)</span></label>
+            <div class="ff-locked" id="e_corp" style="padding:9px 11px;border:1px dashed var(--border);border-radius:8px;background:var(--bg-soft,#f8fafc);min-height:20px;color:var(--soft,#334155);font-size:13px"></div>
+            <input id="e_corp_input" type="text" placeholder="nombre.apellido@grupocanaima.net" style="display:none"><div class="ff-hint" id="h_corp"></div></div>
           <div class="ff-row full"><span class="ff-lbl">Dirección Personal <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="address"></span></div>
           <div class="ff-row full" id="ff_fiscal_row" style="display:none"><span class="ff-lbl">Dirección Fiscal <span class="src" title="Leída del RIF"><span class="dot" style="background:#0e7490"></span></span></span><span class="ff-val" data-v="fiscal_address"></span></div>
           <div class="ff-field full"><label>Dirección Personal <span class="opt">(opcional)</span></label><input id="e_address" type="text" placeholder="Calle, sector, ciudad"></div>
@@ -2120,16 +2127,46 @@ function paintFichaValues(host, w) {
   setVal(host, 'phone', w.phone ? phoneDisplay(w.phone) : '');
   setVal(host, 'email', w.email);
   setVal(host, 'address', w.address);
-  /* v6.263 — Correo corporativo. A diferencia de la Direccion Fiscal, esta
-     fila se OCULTA cuando no hay: el corporativo solo existe para el personal
-     de empresas Externa y Administrativa, asi que en una tienda una fila vacia
-     se leeria como un dato que falta, y no falta. */
+  /* v6.264 — Correo corporativo. La fila se muestra segun el TIPO DE EMPRESA,
+     no segun si hay dato: en una empresa no-tienda el campo vacio SI es un
+     dato que falta y hay que verlo. En una tienda no se muestra nunca, porque
+     ahi el personal no tiene correo corporativo y una fila vacia se leeria
+     como un pendiente que no existe.
+
+     Quien decide es el servidor (corp_email_aplica), no esta pantalla. */
   {
     const cr = host.querySelector('#ff_corp_row');
     const cv = host.querySelector('[data-v="corporate_email"]');
-    const tiene = !!(w.corporate_email && String(w.corporate_email).trim());
-    if (cr) cr.style.display = tiene ? '' : 'none';
-    if (cv && tiene) cv.textContent = w.corporate_email;
+    const cbtn = host.querySelector('#ff_corp_copy');
+    const aplica = !!(STATE.corpEmailAplica);
+    const val = (w.corporate_email || '').trim();
+    if (cr) cr.style.display = aplica ? '' : 'none';
+    if (cv) {
+      cv.textContent = val || 'Sin asignar';
+      /* .empty se estila sobre .ff-val, que aca es el padre: el span interno
+         existe para poder poner el boton de copiar al lado. */
+      if (cv.parentElement) cv.parentElement.classList.toggle('empty', !val);
+    }
+    if (cbtn) {
+      cbtn.style.display = val ? '' : 'none';
+      cbtn.onclick = () => {
+        /* clipboard.writeText necesita contexto seguro; si no esta, se cae al
+           textarea de toda la vida para no dejar al usuario sin copiar. */
+        const ok = () => { cbtn.textContent = '✓ Copiado'; setTimeout(() => { cbtn.textContent = 'Copiar'; }, 1400); };
+        const aLaVieja = () => {
+          const ta = document.createElement('textarea');
+          ta.value = val; ta.style.position = 'fixed'; ta.style.opacity = '0';
+          document.body.appendChild(ta); ta.select();
+          try { document.execCommand('copy'); ok(); } catch (_) { /* noop */ }
+          document.body.removeChild(ta);
+        };
+        /* El catch tambien cae al textarea: clipboard.writeText se RECHAZA si
+           el permiso esta denegado, no solo si la API no existe. */
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(val).then(ok).catch(aLaVieja);
+        } else aLaVieja();
+      };
+    }
   }
   // v6.127: Dirección Fiscal (del RIF) — SIEMPRE visible (no editable). Si aún
   // no hay RIF cargado, se muestra vacía aclarando que se completa al cargarlo.
@@ -2368,12 +2405,22 @@ function wireFicha(host, w) {
       depLocked.classList.toggle('empty', emptyDep);
     }
     q('#e_email').value = w.email || ''; q('#e_address').value = w.address || '';
-    /* v6.263 — El corporativo se muestra en el formulario pero NO se edita:
-       no hay input, es un bloque de solo lectura. Si no lo tiene, ni aparece. */
+    /* v6.264 — El corporativo aparece en el formulario si la empresa es
+       no-tienda, tenga o no valor. Editable SOLO con ficha.corpmail; sin el
+       permiso se ve el bloque gris de lectura y no hay input que enviar. */
     {
-      const cw = q('#e_corp_wrap'), cb = q('#e_corp');
+      const cw = q('#e_corp_wrap'), cb = q('#e_corp'), ci = q('#e_corp_input'), ch = q('#e_corp_hint');
       const corp = w.corporate_email || '';
-      if (cw && cb) { cw.style.display = corp ? '' : 'none'; cb.textContent = corp; }
+      if (cw) cw.style.display = STATE.corpEmailAplica ? '' : 'none';
+      if (STATE.corpEmailEditable) {
+        if (cb) cb.style.display = 'none';
+        if (ci) { ci.style.display = ''; ci.value = corp; }
+        if (ch) ch.textContent = '(@grupocanaima.net · dejalo vacío para quitarlo)';
+      } else {
+        if (ci) ci.style.display = 'none';
+        if (cb) { cb.style.display = ''; cb.textContent = corp || 'Sin asignar'; cb.classList.toggle('empty', !corp); }
+        if (ch) ch.textContent = '(lo asigna Sistemas · no editable)';
+      }
     }
     // v6.126: Dirección Fiscal (no editable) + botón "Copiar" solo si la
     // Personal está vacía y hay fiscal (uno puede vivir en otra dirección).
@@ -2407,6 +2454,11 @@ function wireFicha(host, w) {
 
   let ORIG_PROT = null;   // v4.43: valores al entrar a editar (bloqueo de vaciado)
   ['#e_account', '#e_phone', '#e_birth', '#e_email'].forEach(sel => q(sel).addEventListener('input', runValidations));
+  /* El aviso del corporativo se borra al escribir: si no, quedaba pegado
+     aunque el usuario ya lo hubiera corregido. */
+  if (q('#e_corp_input')) q('#e_corp_input').addEventListener('input', () => {
+    const h = q('#h_corp'); if (h) { h.textContent = ''; h.className = 'ff-hint'; }
+  });
   // Correo SIEMPRE en minusculas (v4.38): se transforma al salir del campo
   // (el usuario lo ve normalizarse) y el save() lo baja de nuevo por si acaso.
   q('#e_email').addEventListener('blur', () => {
@@ -2445,6 +2497,24 @@ function wireFicha(host, w) {
       email: q('#e_email').value.trim().toLowerCase() || null,
       address: q('#e_address').value.trim() || null,
     };
+    /* v6.264 — El corporativo se manda SOLO si esta pantalla lo dejo editar.
+       Si la clave no viaja, el servidor ni menciona la columna en el PATCH:
+       una tienda guardando la ficha no puede tocarlo ni por accidente. El
+       permiso igual se vuelve a verificar del lado del servidor. */
+    if (STATE.corpEmailEditable) {
+      const ci = q('#e_corp_input');
+      const corp = ci ? ci.value.trim().toLowerCase() : '';
+      if (corp && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(corp)) {
+        /* 'warn' y no 'err': .ff-hint.err no existe en el CSS del portal, asi
+           que el aviso salia en gris tenue y parecia que Guardar no hacia
+           nada. Se enfoca el campo para que se vea de donde viene. */
+        const h = q('#h_corp');
+        if (h) { h.textContent = 'El correo corporativo no es válido.'; h.className = 'ff-hint warn'; }
+        if (ci) { ci.focus(); ci.scrollIntoView({ block: 'center', behavior: 'smooth' }); }
+        return;
+      }
+      profile.corporate_email = corp || null;
+    }
     // v4.43: BLOQUEO DE VACIADO. Un campo protegido que tenia valor no puede
     // guardarse vacio (evita perdidas como el Nacimiento borrado detectado en
     // Sincronizar). Mensaje inline (sin alert, regla del portal).

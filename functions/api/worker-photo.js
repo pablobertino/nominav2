@@ -100,6 +100,14 @@ function publicUrl(env, bucket, path) {
 
 const NON_STORE_TYPES = new Set(['Importadora', 'Externa', 'Administrativa', 'Servicio', 'Tienda en línea']);
 
+/* v6.264 — Tipos de empresa cuyo personal TIENE correo corporativo. Es un
+   subconjunto de NON_STORE_TYPES a proposito: Importadora, Servicio y Tienda
+   en linea son no-tienda pero su gente no tiene correo @grupocanaima.net, asi
+   que mostrarles el campo vacio serian ~450 fichas con un pendiente que no
+   existe. Coincide con lo que expone v_directorio_corporativo, para que nadie
+   pueda cargar un correo que despues no aparezca en el directorio. */
+const CORP_MAIL_TYPES = new Set(['Externa', 'Administrativa']);
+
 function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
@@ -304,6 +312,12 @@ async function rosterTable(env, cc) {
   return NON_STORE_TYPES.has(type) ? 'enterprise_workers' : 'store_workers';
 }
 
+/* ¿El personal de esta empresa tiene correo corporativo? Ver CORP_MAIL_TYPES. */
+async function tieneCorreoCorp(env, cc) {
+  const rows = await sb(env, `companies?company_code=eq.${encodeURIComponent(cc)}&select=company_type`);
+  return !!(rows && rows[0] && CORP_MAIL_TYPES.has(rows[0].company_type));
+}
+
 /* ===================== Handler ===================== */
 export async function onRequestPost({ request, env }) {
   let body;
@@ -340,14 +354,20 @@ export async function onRequestPost({ request, env }) {
     if (action === 'directory') {
       // v6.112: el bloque de Antigüedad solo se calcula/envía si el rol tiene
       // view.antiguedad (apagado en tienda y gestor_empresa por defecto).
-      let canAnt = false;
-      try { canAnt = can(await resolveActor(env, user), 'view.antiguedad'); } catch (_) { /* sin perm */ }
-      return await directory(env, cc, table, deptScope, canAnt);
+      let canAnt = false, canCorp = false;
+      try {
+        const actorDir = await resolveActor(env, user);
+        canAnt = can(actorDir, 'view.antiguedad');
+        /* v6.264 — ficha.corpmail va APARTE de ficha.edit a proposito: el rol
+           'tienda' tiene ficha.edit y no debe poder tocar el corporativo. */
+        canCorp = can(actorDir, 'ficha.corpmail');
+      } catch (_) { /* sin perm */ }
+      return await directory(env, cc, table, deptScope, canAnt, canCorp, await tieneCorreoCorp(env, cc));
     }
     if (action === 'group_history') return await groupHistory(env, body);
     if (action === 'sign') return await signPhotos(env, cc, body, table, deptScope);
     if (action === 'save') return await savePhoto(env, cc, body, table, deptScope);
-    if (action === 'save_profile') return await saveProfile(env, cc, body, table, deptScope);
+    if (action === 'save_profile') return await saveProfile(env, cc, body, table, deptScope, user);
     if (action === 'set_department') return await setDepartment(env, cc, body, table, deptScope);
     if (action === 'remove') return await removePhoto(env, cc, body, table, deptScope);
     if (action === 'push_to_ax') return await pushToAx(env, cc, body, table, deptScope, user);
@@ -374,7 +394,7 @@ async function groupHistory(env, body) {
 }
 
 /* ---------- DIRECTORY ---------- */
-async function directory(env, cc, table, deptScope, canAnt) {
+async function directory(env, cc, table, deptScope, canAnt, canCorp, corpAplica) {
   table = table || 'store_workers';
   const isEnterprise = table === 'enterprise_workers';
   // Datos de la empresa (cabecera de la ficha). Zona/subzona/concepto por id.
@@ -700,6 +720,14 @@ async function directory(env, cc, table, deptScope, canAnt) {
   return json({
     ok: true,
     company,
+    /* v6.264 — Correo corporativo. El servidor decide las dos cosas y el front
+       solo obedece: asi la ficha no necesita saber de tipos de empresa ni de
+       permisos, y no hay forma de habilitar el campo desde el navegador.
+         corp_email_aplica  : la empresa NO es tienda (el personal de tienda no
+                              tiene correo corporativo, no es que le falte)
+         corp_email_editable: ademas, quien mira tiene ficha.corpmail */
+    corp_email_aplica: !!corpAplica,
+    corp_email_editable: !!corpAplica && !!canCorp,
     bank_map: bankMap,
     total: items.length,
     with_photo: withPhoto,
@@ -900,7 +928,7 @@ async function upsertChangeSet(env, cc, ced, deltas, changedBy) {
 }
 
 /* ---------- SAVE_PROFILE (datos de la persona) ---------- */
-async function saveProfile(env, cc, body, table, deptScope) {
+async function saveProfile(env, cc, body, table, deptScope, user) {
   table = table || 'store_workers';
   const ced = String(body.id_number || '').replace(/[^0-9]/g, '');
   if (!ced || ced.length < 6 || ced.length > 8) return json({ ok: false, error: 'Cedula invalida.' }, 400);
@@ -979,6 +1007,61 @@ async function saveProfile(env, cc, body, table, deptScope) {
     }
   }
 
+  /* v6.264 — CORREO CORPORATIVO. Se escribe solo si vienen las dos cosas:
+       el campo en el cuerpo Y el permiso ficha.corpmail. No cuelga de
+       ficha.edit porque el rol 'tienda' lo tiene y este dato no es suyo.
+
+       Si no hay permiso NO se rechaza el guardado: se ignora el campo y el
+       resto de la ficha se guarda igual. Rechazar todo por un campo que el
+       front ni siquiera muestra dejaria a la tienda sin poder guardar nada.
+
+       La clave se agrega al patch solo cuando corresponde: si nunca entra, el
+       PATCH no toca la columna y no hay forma de borrarla por accidente. */
+  let corpPatch;            // undefined = no tocar la columna
+  if (Object.prototype.hasOwnProperty.call(p, 'corporate_email')) {
+    let puede = false;
+    try {
+      /* Las DOS condiciones, tambien al guardar: el permiso y que la empresa
+         sea de las que tienen correo corporativo. Con solo el permiso, un
+         admin podria cargarle uno a alguien de una tienda mandando el campo a
+         mano, y esa persona nunca apareceria en el directorio. */
+      puede = can(await resolveActor(env, user), 'ficha.corpmail')
+           && await tieneCorreoCorp(env, cc);
+    } catch (_) { puede = false; }
+    if (puede) {
+      const raw = p.corporate_email == null ? '' : String(p.corporate_email).trim().toLowerCase();
+      if (raw && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(raw)) {
+        return json({ ok: false, error: 'Correo corporativo invalido.' }, 400);
+      }
+
+      /* CHOQUE CON EL INDICE UNICO — se verifica ANTES de guardar nada.
+         corporate_email tiene un indice unico. Si dos personas terminan con el
+         mismo correo, Postgres devuelve 409, sb() lanza, y la ficha ENTERA se
+         cae: el usuario pierde el telefono, la cuenta y todo lo que acababa de
+         escribir por un dato que ni siquiera es suyo. Con apellidos repetidos
+         y correos ambiguos (manuel.gomez@, luis.salazar@) no es un caso raro.
+
+         Una sola consulta trae la fila propia y la que choque, si existe. */
+      const filtro = raw
+        ? `or=(id_number.eq.${encodeURIComponent(ced)},corporate_email.eq.${encodeURIComponent(raw)})`
+        : `id_number=eq.${encodeURIComponent(ced)}`;
+      const filas = await sb(env,
+        `workers_master?${filtro}&select=id_number,full_name,corporate_email`) || [];
+      const choque = raw ? filas.find(f => f.id_number !== ced) : null;
+      if (choque) {
+        return json({ ok: false, error: `Ese correo corporativo ya es de ${choque.full_name || 'otra persona'} (C.I. ${choque.id_number}). Cada correo pertenece a una sola persona.` }, 409);
+      }
+
+      /* Solo se toca la columna si el valor CAMBIA. Sin esto, guardar la ficha
+         por cualquier otro motivo pisaba corporate_email_src -la procedencia,
+         hoy 'zoho-2026-08-28'- y con eso se perdia el rastro de la carga y el
+         SQL para deshacerla. */
+      const actual = (filas.find(f => f.id_number === ced) || {}).corporate_email || null;
+      const nuevo = raw || null;
+      if ((actual || '') !== (nuevo || '')) corpPatch = nuevo;
+    }
+  }
+
   const patch = {
     first_name: p.first_name || null,
     second_name: p.second_name || null,
@@ -1002,6 +1085,13 @@ async function saveProfile(env, cc, body, table, deptScope) {
     profile_updated_by: await actorLabel(env, body.user, cc),
     profile_updated_at: new Date().toISOString(),
   };
+  /* Solo si corresponde. Con corpPatch en undefined la columna NI SE MENCIONA
+     en el PATCH, asi que no hay forma de borrarla sin querer. */
+  if (corpPatch !== undefined) {
+    patch.corporate_email = corpPatch;
+    patch.corporate_email_at = new Date().toISOString();
+    patch.corporate_email_src = await actorLabel(env, body.user, cc);
+  }
   // El CARGO (role) NUNCA se edita desde la ficha: es dato maestro que llega
   // solo por la sincronizacion de personal desde AX (la API). El cargo afecta
   // el salario, por lo que se evita cualquier via de cambio manual en el
