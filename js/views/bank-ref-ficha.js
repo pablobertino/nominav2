@@ -18,7 +18,7 @@ const PDFJS_ESM = '/vendor/pdfjs/pdf.min.mjs';
 const PDFJS_WORKER = '/vendor/pdfjs/pdf.worker.min.mjs';
 
 // prefijo de 4 digitos por plantilla + deteccion por texto
-const BANK_PREFIX = { bdv: '0102', banesco: '0134', mercantil: '0105', bancamiga: '0172' };
+const BANK_PREFIX = { bdv: '0102', banesco: '0134', mercantil: '0105', bancamiga: '0172', bnc: '0191' };
 
 let _pdfjs = null;
 async function ensurePdfjs() {
@@ -98,8 +98,43 @@ function detectBank(text, acctPrefix) {
   if (/Banesco/i.test(t) || /J-?\s*0?7013380/i.test(t) || /Bello Monte/i.test(t)) return 'banesco';
   if (/Bancamiga/i.test(t) || /J-?\s*0?31628759/i.test(t)) return 'bancamiga';
   if (/Banco de Venezuela|REFERENCIA BANCARIA CONSOLIDADA|\bBDV\b|G-?\s*20000110/i.test(t)) return 'bdv';
+  /* v6.262 — BNC. Sus documentos no dicen "referencia bancaria" en ningun
+     lado: la gente imprime la pantalla "Mis Cuentas" de BNCNET, que trae el
+     numero de cuenta y el titular pero NO la cedula. */
+  if (/Banco Nacional de Cr[eé]dito|BNCNET|bncenlinea/i.test(t)) return 'bnc';
   if (acctPrefix && BANK_BY_PREFIX[acctPrefix]) return BANK_BY_PREFIX[acctPrefix];
   return 'otro';
+}
+
+/* Elige el numero de cuenta entre TODOS los candidatos del texto.  (v6.262)
+
+   Antes se tomaba el PRIMER bloque de 20 o mas caracteres de digitos, guiones
+   y espacios, sin mirar si era una cuenta. Dos formas de fallar, las dos
+   vistas en documentos reales:
+
+   1. El banco separa la cuenta con PUNTOS (0191.0151.74.2100199299). El punto
+      no estaba en el conjunto, el bloque quedaba corto y la cuenta se perdia
+      entera: sin cuenta no hay prefijo, sin prefijo no hay banco, y la
+      pantalla decia "banco no reconocido" sobre un PDF perfectamente legible.
+   2. Otro numero largo aparecia antes en el documento y se lo llevaba puesto.
+
+   Ahora se juntan todos los candidatos y gana el que empieza con un codigo de
+   banco DEL CATALOGO -las 26 entidades de la tabla bancos, no las 4 que
+   conocia esta funcion-. Recien si ninguno lo tiene, se usa el primero. */
+function elegirCuenta(text, bankMap) {
+  const cands = [];
+  const re = /\d[\d\-.\s]{18,34}\d/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    const d = m[0].replace(/\D/g, '');
+    if (d.length < 20) continue;
+    /* Ventanas de 20 digitos dentro del bloque: cubre el caso de un digito
+       suelto pegado adelante. Se corta en 6 para no inventar combinaciones. */
+    for (let i = 0; i + 20 <= d.length && i <= 6; i++) cands.push(d.slice(i, i + 20));
+  }
+  if (!cands.length) return null;
+  const conBanco = cands.find(c => bankMap && bankMap[c.slice(0, 4)]);
+  return conBanco || cands[0];
 }
 
 /* ---------- parser de campos ---------- */
@@ -117,8 +152,18 @@ export function parseFields(rawText, bankMap) {
   // cedula
   let mCed = text.match(/C[eé]dula de Identidad\s*(?:Nro)?:?\.?\s*V?\s*[-\s]?\s*([0-9.\s]{6,14})/i)
     || text.match(/C\.?\s*I\.?\s*:?\s*V?\s*[-\s]?\s*([0-9.\s]{6,14})/i)
-    || text.match(/\bV\s*[-\s]?\s*0?([0-9]{6,9})\b/);
-  if (mCed) out.cedula_pdf = normCed(mCed[1]);
+    /* v6.262 — El "V-" suelto tambien con puntos: "V-27.476.899". Antes este
+       patron exigia los digitos pegados, asi que en los documentos que
+       separan la cedula con puntos y no escriben "Cedula de Identidad" ni
+       "C.I." delante, no se leia ninguna. normCed limpia los puntos despues. */
+    || text.match(/\bV\s*[-\s]?\s*0?([0-9][0-9.\s]{5,12}[0-9])\b/);
+  if (mCed) {
+    const c = normCed(mCed[1]);
+    /* Una cedula venezolana tiene entre 6 y 9 digitos. Si el patron agarro de
+       mas -por ejemplo una fecha o un monto pegado- se descarta en vez de
+       guardar un numero cualquiera como si fuera la cedula. */
+    if (c.length >= 6 && c.length <= 9) out.cedula_pdf = c;
+  }
 
   // nombre (best-effort por plantilla; la cedula es la llave real)
   let mNom = text.match(/Sr\(a\):?\s*([A-ZÁÉÍÓÚÑ\s]+?),?\s*portador/i)
@@ -128,9 +173,7 @@ export function parseFields(rawText, bankMap) {
   if (mNom) out.nombre_pdf = collapse(mNom[1]);
 
   // cuenta completa (funciona para todos los bancos no-enmascarados)
-  const mAcc = text.match(/(\d[\d\-\s]{18,30}\d)/);
-  let cuentaFull = null;
-  if (mAcc) { const d = digits(mAcc[1]); if (d.length >= 20) cuentaFull = d.slice(0, 20); }
+  const cuentaFull = elegirCuenta(text, bankMap);
 
   // plantilla: por texto (RIF/nombre/direccion) y, si falla, por el prefijo
   out.plantilla = detectBank(text, cuentaFull ? cuentaFull.slice(0, 4) : null);
