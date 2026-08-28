@@ -91,19 +91,42 @@ function pad2(n) { return String(n).padStart(2, '0'); }
 // El nombre del banco suele venir SOLO en el logo (imagen), no en el texto
 // (ej. Banesco). Por eso se detecta tambien por RIF/direccion del banco y,
 // como ultimo recurso, por el PREFIJO de la cuenta (lo mas confiable).
-const BANK_BY_PREFIX = { '0102': 'bdv', '0134': 'banesco', '0105': 'mercantil', '0172': 'bancamiga' };
+const BANK_BY_PREFIX = { '0102': 'bdv', '0134': 'banesco', '0105': 'mercantil', '0172': 'bancamiga', '0191': 'bnc' };
 function detectBank(text, acctPrefix) {
   const t = text || '';
+  /* v6.262 — El BNC va PRIMERO. BNCNET y bncenlinea son inequivocos, mientras
+     que /Mercantil/ a secas matchea con que la palabra aparezca en cualquier
+     parte -y las pantallas del BNC listan movimientos y beneficiarios-. Con el
+     orden al reves, un documento del BNC entraba en la rama de Mercantil y se
+     le forzaba banco_code 0105. */
+  if (/BNCNET|bncenlinea|Banco Nacional de Cr[eé]dito/i.test(t)) return 'bnc';
   if (/Mercantil/i.test(t) || /REFERENCIA BANCARIA DE CUENTAS/i.test(t)) return 'mercantil';
   if (/Banesco/i.test(t) || /J-?\s*0?7013380/i.test(t) || /Bello Monte/i.test(t)) return 'banesco';
   if (/Bancamiga/i.test(t) || /J-?\s*0?31628759/i.test(t)) return 'bancamiga';
   if (/Banco de Venezuela|REFERENCIA BANCARIA CONSOLIDADA|\bBDV\b|G-?\s*20000110/i.test(t)) return 'bdv';
-  /* v6.262 — BNC. Sus documentos no dicen "referencia bancaria" en ningun
-     lado: la gente imprime la pantalla "Mis Cuentas" de BNCNET, que trae el
-     numero de cuenta y el titular pero NO la cedula. */
-  if (/Banco Nacional de Cr[eé]dito|BNCNET|bncenlinea/i.test(t)) return 'bnc';
   if (acctPrefix && BANK_BY_PREFIX[acctPrefix]) return BANK_BY_PREFIX[acctPrefix];
   return 'otro';
+}
+
+/* Cuenta ENMASCARADA: el banco solo imprime el prefijo y los ultimos 4.
+                                                                    (v6.262)
+     Mercantil  0105-****-**-****1234
+     BNC        0191-****-**-******9299
+
+   No es un PDF ilegible ni un documento malo: es todo lo que el banco pone.
+   Se devuelve {pref, last4} y la persona escribe los 12 del medio; el portal
+   verifica que empiece y termine como dice el documento.
+
+   Gana el candidato cuyo prefijo este en el catalogo de bancos. Sin eso, un
+   monto o un telefono con asteriscos alrededor podria hacerse pasar por
+   cuenta. */
+function detectarMascara(text, bankMap) {
+  const re = /(?<!\d)(\d{4})[\s\-.]*[*xX·•]{2,}[\s\-.*xX·•]*(\d{4})(?!\d)/g;
+  const cands = [];
+  let m;
+  while ((m = re.exec(text)) !== null) cands.push({ pref: m[1], last4: m[2] });
+  if (!cands.length) return null;
+  return cands.find(c => bankMap && bankMap[c.pref]) || cands[0];
 }
 
 /* Elige el numero de cuenta entre TODOS los candidatos del texto.  (v6.262)
@@ -128,9 +151,11 @@ function elegirCuenta(text, bankMap) {
   while ((m = re.exec(text)) !== null) {
     const d = m[0].replace(/\D/g, '');
     if (d.length < 20) continue;
-    /* Ventanas de 20 digitos dentro del bloque: cubre el caso de un digito
-       suelto pegado adelante. Se corta en 6 para no inventar combinaciones. */
-    for (let i = 0; i + 20 <= d.length && i <= 6; i++) cands.push(d.slice(i, i + 20));
+    /* Ventanas de 20 digitos dentro del bloque. pdf.js une los items con
+       espacio, asi que dos numeros contiguos del layout se pegan en un solo
+       bloque: "28.08.2026 0191-0161-49-2100058630" arranca la cuenta recien en
+       el caracter 8. Un tope bajo se comia justamente esos casos. */
+    for (let i = 0; i + 20 <= d.length; i++) cands.push(d.slice(i, i + 20));
   }
   if (!cands.length) return null;
   const conBanco = cands.find(c => bankMap && bankMap[c.slice(0, 4)]);
@@ -155,8 +180,11 @@ export function parseFields(rawText, bankMap) {
     /* v6.262 — El "V-" suelto tambien con puntos: "V-27.476.899". Antes este
        patron exigia los digitos pegados, asi que en los documentos que
        separan la cedula con puntos y no escriben "Cedula de Identidad" ni
-       "C.I." delante, no se leia ninguna. normCed limpia los puntos despues. */
-    || text.match(/\bV\s*[-\s]?\s*0?([0-9][0-9.\s]{5,12}[0-9])\b/);
+       "C.I." delante, no se leia ninguna. normCed limpia los puntos despues.
+       SIN \s en la clase: el patron es codicioso y con un espacio adentro se
+       tragaba el numero siguiente ("V-27.202.296 28/08/2026" daba 10 digitos y
+       se descartaba entero), perdiendo cedulas que antes si se leian. */
+    || text.match(/\bV\s*[-\s]?\s*0?([0-9][0-9.]{5,11}[0-9])\b/i);
   if (mCed) {
     const c = normCed(mCed[1]);
     /* Una cedula venezolana tiene entre 6 y 9 digitos. Si el patron agarro de
@@ -174,11 +202,13 @@ export function parseFields(rawText, bankMap) {
 
   // cuenta completa (funciona para todos los bancos no-enmascarados)
   const cuentaFull = elegirCuenta(text, bankMap);
+  const mask = detectarMascara(text, bankMap);
 
   // plantilla: por texto (RIF/nombre/direccion) y, si falla, por el prefijo
-  out.plantilla = detectBank(text, cuentaFull ? cuentaFull.slice(0, 4) : null);
+  out.plantilla = detectBank(text, (cuentaFull && cuentaFull.slice(0, 4)) || (mask && mask.pref) || null);
 
   if (out.plantilla === 'mercantil') {
+    out.cuenta_mask = true;
     /* Los campos del formulario mandan sobre el texto de la pagina, que aca
        es la plantilla de muestra. Si el PDF no los trae -por ejemplo si
        alguien lo reimprimio- se cae al texto, que es lo que habia antes. */
@@ -196,8 +226,21 @@ export function parseFields(rawText, bankMap) {
     const ref = campoF(text, 'refcode');
     if (ref) out.nro_operacion = ref.replace(/\D/g, '') || null;
     out.banco_code = '0105';
-  } else if (cuentaFull) {
+  } else if (cuentaFull && ((bankMap && bankMap[cuentaFull.slice(0, 4)]) || !mask)) {
+    /* v6.262 — Con mascara presente, una "cuenta" cuyo prefijo no es de ningun
+       banco del catalogo NO le gana a la mascara. Sin esta condicion, cualquier
+       corrida larga de digitos del documento pisaba la mascara del BNC y
+       volviamos a "banco no reconocido". */
     out.cuenta = cuentaFull; out.banco_code = cuentaFull.slice(0, 4); out.cuenta_last4 = cuentaFull.slice(-4);
+  } else if (mask) {
+    /* v6.262 — Cuenta enmascarada de un banco que no es Mercantil. El BNC
+       imprime 0191-****-**-******9299: prefijo y ultimos 4 a la vista, los 12
+       del medio tapados. Antes esto caia en "no hay cuenta" y la pantalla
+       decia "banco no reconocido" sobre una referencia perfectamente valida,
+       porque sin cuenta no habia prefijo y sin prefijo no habia banco. */
+    out.cuenta_mask = true;
+    out.banco_code = mask.pref;
+    out.cuenta_last4 = mask.last4;
   } else if (BANK_PREFIX[out.plantilla]) {
     out.banco_code = BANK_PREFIX[out.plantilla];
   }
@@ -229,17 +272,22 @@ export function parseFields(rawText, bankMap) {
 }
 
 /* ---------- semaforos vs la ficha ---------- */
-export function evaluate(fields, w, mercAcct, bankMap) {
+export function evaluate(fields, w, mercAcct, bankMap, cuentaArmadaAqui) {
   const fichaCed = digits(w.id_number);
   const cedOk = !!fields.cedula_pdf && digits(fields.cedula_pdf) === fichaCed;
   const nameOk = !!fields.nombre_pdf && nameSim(fields.nombre_pdf, w.full_name);
   const known = p => !!p && (!!(bankMap && bankMap[p]) || Object.values(BANK_PREFIX).indexOf(p) >= 0);
 
   let cuenta = fields.cuenta, acctOk, prefKnown, incoherent = false;
-  if (fields.plantilla === 'mercantil') {
+  if (fields.cuenta_mask) {
+    /* v6.262 — Vale para cualquier banco que enmascare, no solo Mercantil.
+       El prefijo sale del propio documento en vez de estar escrito a mano. */
     const raw = digits(mercAcct);
-    acctOk = raw.length === 20 && !!fields.cuenta_last4 && raw.slice(-4) === fields.cuenta_last4 && raw.slice(0, 4) === '0105';
-    prefKnown = true;
+    const pref = fields.banco_code || '';
+    acctOk = raw.length === 20 && !!fields.cuenta_last4
+          && raw.slice(-4) === fields.cuenta_last4
+          && (!pref || raw.slice(0, 4) === pref);
+    prefKnown = known(pref);
     if (acctOk) cuenta = raw;
   } else {
     acctOk = !!cuenta && digits(cuenta).length === 20;
@@ -268,8 +316,21 @@ export function evaluate(fields, w, mercAcct, bankMap) {
      Con esto los 9 quedan en 2, y esos 2 son reales: el mismo PDF de MANUEL
      MENDOZA subido como referencia de dos trabajadores distintos de CB02. --- */
   const l4Pdf = fields.cuenta_last4 || (cuenta ? digits(cuenta).slice(-4) : '');
-  const l4Ref = digits(mercAcct || '').slice(-4);
-  const cuentaEsSuya = !!l4Pdf && l4Pdf.length === 4 && l4Pdf === l4Ref;
+  /* v6.262 — CONTRA QUE se compara. Manda la cuenta que YA tiene la ficha. En
+     el wizard de Ingreso todavia no hay ficha, asi que llega la que se esta
+     registrando y sirve igual: la escribio la persona en el formulario, no
+     salio del PDF.
+
+     Lo que NO sirve como prueba es el numero que arma esta misma pantalla para
+     las cuentas enmascaradas (prefijo + lo tecleado + cuenta_last4): TERMINA en
+     cuenta_last4, asi que compararlo contra el PDF daba "es su cuenta" SIEMPRE,
+     con cualquier PDF. Con Mercantil no se noto porque su formulario trae la
+     cedula y cedOk tapaba el hueco; el BNC no la trae, y una referencia de otra
+     persona salia "Todo validado". Por eso el que llama avisa con
+     cuentaArmadaAqui. */
+  const l4Ficha = digits((w && w.account_number) || '').slice(-4);
+  const l4Ref = l4Ficha || (cuentaArmadaAqui ? '' : digits(mercAcct || '').slice(-4));
+  const cuentaEsSuya = !!l4Pdf && l4Pdf.length === 4 && l4Ref.length === 4 && l4Pdf === l4Ref;
 
   const warnings = [];
   if (cuentaEsSuya || cedOk) {
@@ -538,16 +599,26 @@ function openUploadModal(w, STATE, onSaved) {
   }
 
   function renderConfirm(fields, pdfB64) {
-    const isMerc = fields.plantilla === 'mercantil';
+    /* v6.262 — isMask, no isMerc: Mercantil no es el unico que tapa la cuenta.
+       El BNC hace lo mismo y caia en la rama de "cuenta ilegible". */
+    const isMask = !!fields.cuenta_mask;
+    /* Los 20 digitos que la pantalla arma con lo que escribe el operador. Se
+       declara antes de rowsHtml porque las dos lo usan. */
+    const cuentaArmada = () => {
+      const inp = ov.querySelector('#brfMerc');
+      const medio = inp ? String(inp.value || '').replace(/\D/g, '').slice(0, 12) : '';
+      return String(fields.banco_code || '') + medio + String(fields.cuenta_last4 || '');
+    };
+    const bancoTxt = fields.banco_nombre || (fields.banco_code ? 'banco ' + fields.banco_code : 'el banco');
     const rowsHtml = () => {
-      const ev = evaluate(fields, w, isMerc ? (ov.querySelector('#brfMerc') ? ov.querySelector('#brfMerc').value : '') : null, STATE.bankMap || {});
+      const ev = evaluate(fields, w, isMask ? cuentaArmada() : null, STATE.bankMap || {}, isMask);
       const rows = [];
       const cedSem = ev.cedOk ? sem('ok', 'es la del trabajador') : (ev.nameOk ? sem('warn', 'revisar cédula') : sem('err', 'otra persona'));
       rows.push(row('Persona', esc(fields.nombre_pdf || '—'), ev.cedOk ? sem('ok', ev.nameOk ? 'coincide' : 'validado por cédula') : (ev.nameOk ? sem('warn', 'revisar') : sem('err', 'otra persona'))));
       rows.push(row('Cédula', `<span class="mono">${fields.cedula_pdf ? fmtCed(fields.cedula_pdf) : '—'}</span>`, cedSem));
-      if (isMerc) {
-        rows.push(row('Banco', '<span class="mono">0105</span> · Mercantil', sem('ok', 'coherente')));
-        rows.push(row('Cuenta', `<span class="mono">••••••••••••${esc(fields.cuenta_last4 || '????')}</span>`, sem('info', 'completar abajo')));
+      if (isMask) {
+        rows.push(row('Banco', `<span class="mono">${esc(fields.banco_code || '—')}</span>${fields.banco_nombre ? ' · ' + esc(fields.banco_nombre) : ''}`, ev.bankOk ? sem('ok', 'coherente') : sem('warn', 'revisar')));
+        rows.push(row('Cuenta', `<span class="mono">${esc(fields.banco_code || '????')}-••••-••-••••••${esc(fields.cuenta_last4 || '????')}</span>`, sem('info', 'completar abajo')));
       } else {
         const pref = fields.banco_code || '';
         rows.push(row('Banco', `<span class="mono">${esc(pref || '—')}</span>${fields.banco_nombre ? ' · ' + esc(fields.banco_nombre) : ''}`, ev.bankOk ? sem('ok', 'coherente') : sem('warn', 'revisar')));
@@ -560,7 +631,7 @@ function openUploadModal(w, STATE, onSaved) {
     body.innerHTML = `
       <div style="font-size:12px;color:#64748b;margin-bottom:8px">Banco detectado: <b>${esc(fields.banco_nombre || (fields.plantilla === 'otro' ? 'no reconocido' : fields.plantilla.toUpperCase()))}</b></div>
       <div class="brf-rows" id="brfRows">${rowsHtml()}</div>
-      ${isMerc ? `<div class="brf-merc"><label>Mercantil tapa el medio de la cuenta. Escribe solo los <b>12 dígitos</b> que faltan:</label><div class="brf-acct"><span class="brf-fijo" title="Prefijo de Mercantil">0105</span><input id="brfMerc" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="000000 000000" aria-label="12 dígitos del medio de la cuenta"><span class="brf-fijo" title="Final que dice la referencia">${esc(fields.cuenta_last4 || '????')}</span></div><div class="brf-acct-h" id="brfMercH"></div></div>` : ''}
+      ${isMask ? `<div class="brf-merc"><label>${esc(bancoTxt)} tapa el medio de la cuenta. Escribe solo los <b>12 dígitos</b> que faltan:</label><div class="brf-acct"><span class="brf-fijo" title="Prefijo del banco, lo dice la referencia">${esc(fields.banco_code || '')}</span><input id="brfMerc" inputmode="numeric" autocomplete="off" maxlength="14" placeholder="000000 000000" aria-label="12 dígitos del medio de la cuenta"><span class="brf-fijo" title="Final que dice la referencia">${esc(fields.cuenta_last4 || '????')}</span></div><div class="brf-acct-h" id="brfMercH"></div></div>` : ''}
       <div class="brf-verdict" id="brfVerdict"></div>`;
     foot.style.display = 'flex';
 
@@ -570,17 +641,15 @@ function openUploadModal(w, STATE, onSaved) {
     const mercInput = ov.querySelector('#brfMerc');
 
     /* v6.248 — El prefijo y el final NO se escriben: los sabemos. El prefijo
-       porque Mercantil es 0105, y el final porque la referencia lo muestra.
-       Quedan 12 digitos, y de paso es imposible equivocarse en las partes que
-       ya estaban bien. Se arma la cuenta completa para evaluate(). */
-    const cuentaMerc = () => {
-      const medio = mercInput ? String(mercInput.value || '').replace(/\D/g, '').slice(0, 12) : '';
-      return '0105' + medio + String(fields.cuenta_last4 || '');
-    };
+       porque lo dice la propia referencia, y el final porque el banco lo deja
+       a la vista. Quedan 12 digitos, y de paso es imposible equivocarse en las
+       partes que ya estaban bien. Se arma la cuenta completa para evaluate().
+       v6.262: el prefijo sale de fields.banco_code y no fijo en 0105, porque
+       el BNC enmascara igual que Mercantil. */
 
     function refreshVerdict() {
       ov.querySelector('#brfRows').innerHTML = rowsHtml();
-      const ev = evaluate(fields, w, mercInput ? cuentaMerc() : null, STATE.bankMap || {});
+      const ev = evaluate(fields, w, mercInput ? cuentaArmada() : null, STATE.bankMap || {}, isMask);
       if (mercInput) {
         const n = String(mercInput.value || '').replace(/\D/g, '').length;
         const h = ov.querySelector('#brfMercH');
@@ -590,8 +659,8 @@ function openUploadModal(w, STATE, onSaved) {
       // completo? (cuenta legible con prefijo de banco conocido)
       if (!(ev.acctOk && ev.prefKnown)) {
         verdict.className = 'brf-verdict info';
-        verdict.innerHTML = isMerc
-          ? `Escribe los 12 dígitos del medio para guardar. El <b>0105</b> y el <b>${esc(fields.cuenta_last4 || '')}</b> ya están puestos.`
+        verdict.innerHTML = isMask
+          ? `Escribe los 12 dígitos del medio para guardar. El <b>${esc(fields.banco_code || '')}</b> y el <b>${esc(fields.cuenta_last4 || '')}</b> ya están puestos.`
           : 'No se pudo leer bien la cuenta del PDF; revísalo.';
         saveBtn.disabled = true; note.textContent = ''; return { ev };
       }
@@ -618,7 +687,12 @@ function openUploadModal(w, STATE, onSaved) {
       saveBtn.disabled = true; saveBtn.innerHTML = '<span class="brf-spin"></span> Guardando…';
       const payload = {
         action: 'save', user: sessUser(STATE.user), id_number: w.id_number,
-        plantilla: fields.plantilla, banco_code: (isMerc ? '0105' : fields.banco_code),
+        plantilla: fields.plantilla, banco_code: fields.banco_code,
+        /* v6.262 — Con la cuenta enmascarada, 12 de los 20 digitos los escribio
+           una persona y no estan en el PDF. Sin esta marca, aguas abajo
+           (Publicar / Sincronizar) no hay forma de distinguirlo de una cuenta
+           leida entera del documento. */
+        cuenta_mask: !!fields.cuenta_mask,
         banco_nombre: fields.banco_nombre, cuenta: ev.cuenta || null, cuenta_last4: fields.cuenta_last4,
         tipo_cuenta: fields.tipo_cuenta, cedula_pdf: fields.cedula_pdf, nombre_pdf: fields.nombre_pdf,
         nro_operacion: fields.nro_operacion, fecha_emision: fields.fecha_emision,
