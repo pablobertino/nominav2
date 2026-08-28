@@ -2062,9 +2062,15 @@ function fichaHtml(w, c) {
         <div class="ff-sec">Contacto</div>
         <div class="ff-grid">
           <div class="ff-row"><span class="ff-lbl">Teléfono <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="phone"></span></div>
-          <div class="ff-row"><span class="ff-lbl">Correo <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="email"></span></div>
+          <div class="ff-row"><span class="ff-lbl">Correo personal <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="email"></span></div>
+          <!-- v6.263: correo corporativo. Solo lectura, como la Direccion
+               Fiscal: lo crea Sistemas y se carga por proceso. Se oculta si no
+               hay, porque solo el personal de Externas y Administrativa tiene. -->
+          <div class="ff-row" id="ff_corp_row" style="display:none"><span class="ff-lbl">Correo corporativo <span class="src" title="Lo asigna Sistemas · no se edita desde la ficha"><span class="dot" style="background:#0e7490"></span></span></span><span class="ff-val" data-v="corporate_email"></span></div>
           <div class="ff-field"><label>Teléfono móvil <span class="opt">(04XX-XXXXXXX)</span></label><input id="e_phone" type="text" inputmode="numeric" placeholder="0414-1234567"><div class="ff-hint" id="h_phone"></div></div>
-          <div class="ff-field"><label>Correo <span class="opt">(opcional)</span></label><input id="e_email" type="text" placeholder="nombre@correo.com"><div class="ff-hint" id="h_email"></div></div>
+          <div class="ff-field"><label>Correo personal <span class="opt">(opcional)</span></label><input id="e_email" type="text" placeholder="nombre@correo.com"><div class="ff-hint" id="h_email"></div></div>
+          <div class="ff-field" id="e_corp_wrap" style="display:none"><label>Correo corporativo <span class="opt">(lo asigna Sistemas · no editable)</span></label>
+            <div class="ff-locked" id="e_corp" style="padding:9px 11px;border:1px dashed var(--border);border-radius:8px;background:var(--bg-soft,#f8fafc);min-height:20px;color:var(--soft,#334155);font-size:13px"></div></div>
           <div class="ff-row full"><span class="ff-lbl">Dirección Personal <span class="src manual"><span class="dot"></span></span></span><span class="ff-val" data-v="address"></span></div>
           <div class="ff-row full" id="ff_fiscal_row" style="display:none"><span class="ff-lbl">Dirección Fiscal <span class="src" title="Leída del RIF"><span class="dot" style="background:#0e7490"></span></span></span><span class="ff-val" data-v="fiscal_address"></span></div>
           <div class="ff-field full"><label>Dirección Personal <span class="opt">(opcional)</span></label><input id="e_address" type="text" placeholder="Calle, sector, ciudad"></div>
@@ -2114,6 +2120,17 @@ function paintFichaValues(host, w) {
   setVal(host, 'phone', w.phone ? phoneDisplay(w.phone) : '');
   setVal(host, 'email', w.email);
   setVal(host, 'address', w.address);
+  /* v6.263 — Correo corporativo. A diferencia de la Direccion Fiscal, esta
+     fila se OCULTA cuando no hay: el corporativo solo existe para el personal
+     de empresas Externa y Administrativa, asi que en una tienda una fila vacia
+     se leeria como un dato que falta, y no falta. */
+  {
+    const cr = host.querySelector('#ff_corp_row');
+    const cv = host.querySelector('[data-v="corporate_email"]');
+    const tiene = !!(w.corporate_email && String(w.corporate_email).trim());
+    if (cr) cr.style.display = tiene ? '' : 'none';
+    if (cv && tiene) cv.textContent = w.corporate_email;
+  }
   // v6.127: Dirección Fiscal (del RIF) — SIEMPRE visible (no editable). Si aún
   // no hay RIF cargado, se muestra vacía aclarando que se completa al cargarlo.
   {
@@ -2351,6 +2368,13 @@ function wireFicha(host, w) {
       depLocked.classList.toggle('empty', emptyDep);
     }
     q('#e_email').value = w.email || ''; q('#e_address').value = w.address || '';
+    /* v6.263 — El corporativo se muestra en el formulario pero NO se edita:
+       no hay input, es un bloque de solo lectura. Si no lo tiene, ni aparece. */
+    {
+      const cw = q('#e_corp_wrap'), cb = q('#e_corp');
+      const corp = w.corporate_email || '';
+      if (cw && cb) { cw.style.display = corp ? '' : 'none'; cb.textContent = corp; }
+    }
     // v6.126: Dirección Fiscal (no editable) + botón "Copiar" solo si la
     // Personal está vacía y hay fiscal (uno puede vivir en otra dirección).
     {

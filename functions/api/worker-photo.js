@@ -486,6 +486,7 @@ async function directory(env, cc, table, deptScope, canAnt) {
       `workers_master?id_number=in.(${inList})`
       + `&select=id_number,first_name,second_name,last_names,full_name,role,birth_date,gender,marital_status,`
       + `account_number,bank_code,phone,email,address,fiscal_address,data_id,shirt_size,`
+      + `corporate_email,corporate_email_src,`
       + `ax_pending,ax_pending_fields,ax_synced_at,`
       + `photo_key,photo_thumb_path,photo_full_path,photo_uploaded_by,photo_uploaded_at,updated_at,`
       + `profile_updated_by,profile_updated_at`);
@@ -639,6 +640,11 @@ async function directory(env, cc, table, deptScope, canAnt) {
       email: pick('email'),
       address: pick('address'),
       fiscal_address: m.fiscal_address || null,   // v6.126: domicilio del RIF (no editable)
+      /* v6.263 — Correo CORPORATIVO. Campo distinto del personal y de solo
+         lectura: lo crea Sistemas y se carga por proceso, no desde la ficha.
+         Por eso NO entra en el patch de saveProfile ni en AX_FIELDS. */
+      corporate_email: m.corporate_email || null,
+      corporate_email_src: m.corporate_email_src || null,
       data_id: pick('data_id'),
       department_id: w.department_id || null,
       department_name: w.department_id ? (deptMap[w.department_id] || null) : null,
