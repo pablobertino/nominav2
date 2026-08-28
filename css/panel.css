@@ -1436,9 +1436,24 @@
 
 /* Tarjeta de la ficha */
 .ff-card { background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-lg); overflow:hidden; }
-.ff-top { display:flex; gap:22px; align-items:center; padding:22px 24px; border-bottom:1px solid var(--border-soft); }
+.ff-top { display:flex; gap:22px; align-items:center; padding:22px 24px; border-bottom:1px solid var(--border-soft);
+  /* v6.265 — envuelve SIEMPRE, no solo bajo 600px. Ver .ff-actions. */
+  flex-wrap:wrap; }
+/* v6.265 — La barra de botones de la ficha se cortaba contra el borde de la
+   tarjeta. La causa era `flex-shrink:0`: con eso la barra nunca se achicaba,
+   su primera linea se quedaba en el ancho que necesita TODO junto, y lo que
+   no entraba quedaba tapado por el overflow de la tarjeta. En modo edicion
+   aparecen dos botones mas (Cancelar y Guardar cambios, mas Publicar si hay
+   pendientes), asi que ahi se notaba.
+
+   No es un problema de una resolucion concreta: pasa en cualquier pantalla,
+   solo cambia a partir de que ancho. Dejandola encoger, su propio flex-wrap
+   hace el trabajo y los botones bajan de linea en vez de recortarse.
+   min-width:0 en las dos columnas para que puedan ceder de verdad: sin eso el
+   minimo automatico de un flex item es su contenido y no baja de ahi. */
 .ff-actions { margin-left:auto; align-self:flex-start; display:flex; gap:9px; align-items:center;
-  flex-shrink:0; flex-wrap:wrap; justify-content:flex-end; }
+  min-width:0; flex-wrap:wrap; justify-content:flex-end; }
+.ff-id { min-width:0; }
 .ff-ph { width:104px; height:104px; border-radius:var(--radius-md); flex-shrink:0; overflow:hidden;
   background:var(--bg-soft, #f1f5f9); border:1px solid var(--border); display:flex; align-items:center;
   justify-content:center; position:relative; }
@@ -1550,7 +1565,6 @@
   .ff-row, .ff-row.full { grid-template-columns:130px 1fr; }
   .pm-two { flex-direction:column; }
   .pm-arrow { transform:rotate(90deg); }
-  .ff-top { flex-wrap:wrap; }
   .ff-actions { margin-left:0; width:100%; justify-content:flex-start; }
 }
 

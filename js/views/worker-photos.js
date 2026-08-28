@@ -1917,7 +1917,11 @@ function openFicha(ced) {
     if (sec) sec.style.display = empty ? 'none' : '';
     if (grid) grid.style.display = empty ? 'none' : '';
   };
-  initBankRefCard(host, w, STATE, syncDocsSection);   // v6.66: referencia bancaria (ahora en Documentos)
+  /* v6.265 — El 5o argumento recarga la ficha ENTERA cuando el documento
+     cambia (se carga o se quita), igual que despues de guardar el perfil.
+     Antes solo se repintaba la tarjeta y el resto de la ficha -la cuenta, los
+     avisos, el estado de recaudos- seguia mostrando lo de antes. */
+  initBankRefCard(host, w, STATE, syncDocsSection, () => openFicha(w.id_number));   // v6.66: referencia bancaria (ahora en Documentos)
   /* v6.185 — Cuando el RIF trae domicilio fiscal, la ficha tiene que
      enterarse EN EL ACTO. El backend ya lo guardaba en workers_master, pero
      la pantalla seguia mostrando "Se completa al cargar el RIF" porque su

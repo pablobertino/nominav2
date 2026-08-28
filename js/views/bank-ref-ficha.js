@@ -110,8 +110,14 @@ function detectBank(text, acctPrefix) {
 
 /* Cuenta ENMASCARADA: el banco solo imprime el prefijo y los ultimos 4.
                                                                     (v6.262)
-     Mercantil  0105-****-**-****1234
-     BNC        0191-****-**-******9299
+   La cuenta venezolana son 20 digitos: 4 de banco + 4 de oficina + 2 de
+   control + 10 de cuenta. Mercantil y el BNC tapan los mismos 12 del medio y
+   dejan a la vista el prefijo y los ultimos 4. Ejemplo real del BNC:
+
+     0191-****-**-******9299
+
+   La cantidad de asteriscos y como los agrupa cada banco no importa: el
+   patron busca "4 digitos, relleno, 4 digitos" y de ahi salen prefijo y final.
 
    No es un PDF ilegible ni un documento malo: es todo lo que el banco pone.
    Se devuelve {pref, last4} y la persona escribe los 12 del medio; el portal
@@ -432,6 +438,8 @@ function ensureStyles() {
   .brf-mf .note{font-size:11px;color:#64748b;margin-right:auto;max-width:260px;line-height:1.4}
   .brf-mf .go{border:1px solid #7c3aed;background:#7c3aed;color:#fff;border-radius:9px;padding:9px 15px;font-weight:700;cursor:pointer}
   .brf-mf .go:disabled{background:#cbd5e1;border-color:#cbd5e1;cursor:not-allowed}
+  .brf-mf .go.danger{background:#dc2626;border-color:#dc2626}
+  .brf-mf .cancel{border:1px solid #d7dce3;background:#fff;color:#334155;border-radius:9px;padding:9px 15px;font-weight:600;cursor:pointer}
   .brf-mf .cancel{border:1px solid #e5e7eb;background:#fff;color:#374151;border-radius:9px;padding:9px 14px;font-weight:600;cursor:pointer}
   .brf-spin{display:inline-block;width:16px;height:16px;border:2px solid #ddd6fe;border-top-color:#7c3aed;border-radius:50%;animation:brfspin .7s linear infinite;vertical-align:-3px}
   @keyframes brfspin{to{transform:rotate(360deg)}}
@@ -442,12 +450,20 @@ function ensureStyles() {
 const UP_SVG = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>';
 
 /* ===================== TARJETA EN LA FICHA ===================== */
-export async function initBankRefCard(host, w, STATE, onRender) {
+/* onRender  : se dispara en CADA repintado (lo usa la ficha para mostrar u
+                 ocultar la seccion Documentos si queda vacia).
+   onChanged : solo cuando el documento REALMENTE cambio -se cargo o se
+               quito-. La ficha lo usa para recargarse entera.       v6.265
+
+   Son dos cosas distintas a proposito: si onRender recargara la ficha, cada
+   repintado dispararia una recarga y la pantalla entraria en bucle. */
+export async function initBankRefCard(host, w, STATE, onRender, onChanged) {
   const slot = host.querySelector('#bankRefSlot');
   if (!slot) return;
   ensureStyles();
   const canUpload = !!(STATE.can && STATE.can.bankref);
   const fire = () => { try { if (typeof onRender === 'function') onRender(); } catch (_) { /* noop */ } };
+  const cambio = () => { try { if (typeof onChanged === 'function') onChanged(); } catch (_) { /* noop */ } };
 
   const render = (refs) => {
     const latest = (refs || []).find(r => r.estado !== 'anulada') || null;
@@ -487,11 +503,14 @@ export async function initBankRefCard(host, w, STATE, onRender) {
       </div>`;
 
     const up = slot.querySelector('[data-brf="upload"]');
-    if (up) up.addEventListener('click', () => openUploadModal(w, STATE, () => refresh()));
+    if (up) up.addEventListener('click', () => openUploadModal(w, STATE, () => { refresh(); cambio(); }));
     const vp = slot.querySelector('[data-brf="view"]');
     if (vp) vp.addEventListener('click', () => viewPdf(STATE, vp.dataset.path));
     const del = slot.querySelector('[data-brf="del"]');
-    if (del) del.addEventListener('click', () => removeRef(STATE, del.dataset.id, () => refresh()));
+    /* Al quitar no alcanza con repintar esta tarjeta: la cuenta bancaria, los
+       avisos de datos faltantes y el estado de recaudos de la ficha salen de
+       otra consulta y quedaban mostrando lo de antes. */
+    if (del) del.addEventListener('click', () => removeRef(STATE, del.dataset.id, () => { refresh(); cambio(); }));
     fire();
   };
 
@@ -514,10 +533,52 @@ async function viewPdf(STATE, path) {
     else alert('No se pudo abrir el PDF. Intenta de nuevo.');
   } catch (_) { alert('No se pudo abrir el PDF. Intenta de nuevo.'); }
 }
+/* Confirmacion con el modal del portal, no con el confirm() del navegador.
+   El nativo aparece pegado a la barra de direcciones, sin relacion visual con
+   la tarjeta que se esta tocando, y ademas rompe la estetica del resto.  v6.265 */
+function confirmarModal({ titulo, texto, ok, peligro }) {
+  ensureStyles();
+  return new Promise((resolve) => {
+    const ov = document.createElement('div');
+    ov.className = 'brf-ov';
+    ov.innerHTML = `
+      <div class="brf-modal" style="width:440px">
+        <div class="brf-mh">
+          <div class="ic" style="background:#fef2f2;color:#dc2626">
+            <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M12 9v4"/><path d="M12 17h.01"/><path d="M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z"/></svg>
+          </div>
+          <div><b>${esc(titulo)}</b></div>
+          <button class="x" data-c="no">×</button>
+        </div>
+        <div class="brf-mb" style="line-height:1.6">${esc(texto)}</div>
+        <div class="brf-mf">
+          <span style="margin-right:auto"></span>
+          <button class="cancel" data-c="no">Cancelar</button>
+          <button class="go${peligro ? ' danger' : ''}" data-c="si">${esc(ok || 'Aceptar')}</button>
+        </div>
+      </div>`;
+    const cerrar = (v) => { if (ov.parentNode) ov.remove(); document.removeEventListener('keydown', tecla); resolve(v); };
+    const tecla = (e) => { if (e.key === 'Escape') cerrar(false); };
+    ov.addEventListener('click', (e) => {
+      const b = e.target.closest('[data-c]');
+      if (b) return cerrar(b.dataset.c === 'si');
+      if (e.target === ov) cerrar(false);       // clic fuera = cancelar
+    });
+    document.addEventListener('keydown', tecla);
+    document.body.appendChild(ov);
+    const go = ov.querySelector('[data-c="si"]'); if (go) go.focus();
+  });
+}
+
 async function removeRef(STATE, id, done) {
   const n = parseInt(id, 10);
   if (!n) return;
-  if (!confirm('¿Quitar esta referencia de la ficha? Puedes volver a cargar otra cuando quieras.')) return;
+  const si = await confirmarModal({
+    titulo: 'Quitar la referencia bancaria',
+    texto: 'Se quita de la ficha de esta persona. Puedes volver a cargar otra cuando quieras.',
+    ok: 'Quitar', peligro: true,
+  });
+  if (!si) return;
   try {
     const r = await refApi({ action: 'annul', id: n, user: sessUser(STATE.user) });
     if (r && r.ok) { if (done) done(); }
