@@ -58,10 +58,8 @@ function fmtPeriodo(l) {
   return p + tipo + doc;
 }
 
-/* Es una linea de ausencia si trae periodo. Evita pasarle el tipo del reporte
-   a cada helper: el dato ya viene en la linea. */
-const esAusencia = (l) => !!(l && l.date_from);
-
+/* v6.266: esAusencia se fue. Con cuatro tipos publicables un booleano ya no
+   alcanzaba; lo reemplaza formaDeLinea(), mas abajo. */
 const ESTADO = {
   ok:      { cls: 'att-closed',   txt: 'Publicado' },
   omitida: { cls: 'att-resolved', txt: 'Ya estaba' },
@@ -76,7 +74,34 @@ const ESTADO = {
    El servidor vuelve a validar todo esto; aca es para no ofrecer lo que
    se sabe que va a ser rechazado.
    ===================================================================== */
-const PUBLICABLES = { marcaje: 'Marcaje Manual', ausencia: 'Período de Ausencia' };
+/* v6.266 — Ingreso y Egreso se suman a los publicables. Pesan mas que los
+   otros dos: publicar un ingreso CREA una persona en AX y publicar un egreso
+   le CIERRA la relacion laboral. */
+const PUBLICABLES = {
+  marcaje: 'Marcaje Manual', ausencia: 'Período de Ausencia',
+  ingreso: 'Ingreso — Alta', egreso: 'Egreso — Baja',
+};
+
+/* Que clase de linea es, mirando el dato y no el tipo del reporte: la linea
+   ya sabe lo que es y asi cada helper no necesita que le pasen el contexto. */
+function formaDeLinea(l) {
+  if (!l) return 'marcaje';
+  if (l.date_from) return 'ausencia';
+  if (l.start_date) return 'ingreso';
+  if (l.report_date) return 'egreso';
+  return 'marcaje';
+}
+
+/* Como se nombra cada cosa en los textos del modal. Antes esto era un
+   ternario "ausencia : marcaje" repetido en cinco lugares; con cuatro tipos
+   eso ya no se sostiene. */
+const NOMBRES = {
+  marcaje:  { plural: 'los marcajes',  cosa: 'marcaje'  },
+  ausencia: { plural: 'las ausencias', cosa: 'ausencia' },
+  ingreso:  { plural: 'los ingresos',  cosa: 'ingreso'  },
+  egreso:   { plural: 'los egresos',   cosa: 'egreso'   },
+};
+const nombreDe = (t) => NOMBRES[t] || { plural: 'los registros', cosa: 'registro' };
 
 export function motivoNoPublicable(r) {
   if (!r) return 'Reporte desconocido';
@@ -90,17 +115,25 @@ export function motivoNoPublicable(r) {
 
 function lineasTabla(lineas) {
   if (!lineas || !lineas.length) return '';
-  const aus = esAusencia(lineas[0]);
+  const forma = formaDeLinea(lineas[0]);
+  const cab = { ausencia: 'Período', ingreso: 'Ingreso', egreso: 'Egreso' }[forma] || 'Fecha';
   return `<div class="pax-tablewrap"><table class="dtl-table pax-table"><thead><tr>
-      <th>Trabajador</th><th>${aus ? 'Período' : 'Fecha'}</th>${aus ? '' : '<th>Horas</th>'}<th>Estado</th><th>Detalle</th>
+      <th>Trabajador</th><th>${cab}</th>${forma === 'marcaje' ? '<th>Horas</th>' : ''}<th>Estado</th><th>Detalle</th>
     </tr></thead><tbody>
     ${lineas.map(l => {
       const e = ESTADO[l.status] || ESTADO.error;
-      const detalle = l.error || l.mensaje || '';
+      /* Los avisos del ingreso (un estado civil que AX no conoce, un telefono
+         con mala forma) NO son errores: la ficha entra igual, pero sin ese
+         dato. Se muestran para que no sea una sorpresa tres meses despues. */
+      const detalle = l.error || [l.mensaje, ...(l.avisos || [])].filter(Boolean).join(' · ');
       return `<tr class="pax-${l.status}">
         <td><b>${esc(l.worker_name || '—')}</b><div class="pax-ced">${esc(l.worker_id_number)}</div></td>
-        ${esAusencia(l)
+        ${formaDeLinea(l) === 'ausencia'
           ? `<td>${fmtPeriodo(l)}</td>`
+          : formaDeLinea(l) === 'ingreso'
+          ? `<td><span class="time-badge">${fmtDate(l.start_date)}</span>${l.cargo_code ? ` <span class="pax-ced">${esc(l.cargo_code)}</span>` : ''}</td>`
+          : formaDeLinea(l) === 'egreso'
+          ? `<td><span class="time-badge">${fmtDate(l.report_date)}</span>${l.sin_doc ? ' <span class="pill pill-out" title="Sin la carta de renuncia">sin carta</span>' : ''}</td>`
           : `<td>${fmtDate(l.mark_date)}</td><td>${fmtHoras(l)}</td>`}
         <td><span class="pill ${e.cls}">${e.txt}</span></td>
         <td class="pax-msg">${esc(detalle)}</td>
@@ -155,15 +188,17 @@ export function openPublishAxModal({ user, report, onDone }) {
             <button class="modal-x" data-act="close" aria-label="Cerrar">✕</button>
           </div>
           <div class="pax-body">
-            <p class="confirm-msg">Se van a cargar en <b>AX 2012</b> ${report.type === 'ausencia' ? 'las ausencias' : 'los marcajes'} de
+            <p class="confirm-msg">Se van a cargar en <b>AX 2012</b> ${nombreDe(report.type).plural} de
               <b>${esc(nombre)}</b>${cuantos ? ` (${cuantos} trabajador${cuantos === 1 ? '' : 'es'})` : ''}.</p>
             <div class="pax-warn">
               <b>Esto no se puede deshacer desde el portal.</b>
               Si entran todas las líneas, el reporte queda <b>Cerrado</b>, su ticket
               en osTicket también, y ya no podrá volver a ningún estado anterior.
-              <div class="pax-warn-soft">${report.type === 'ausencia'
-                ? 'Si alguna línea no entra, el reporte sigue abierto y se puede reintentar: las que ya entraron no se reenvían, porque AX rechaza un período repetido.'
-                : 'Si alguna línea no entra, el reporte sigue abierto y se puede reintentar: lo que ya se cargó no se duplica.'}</div>
+              <div class="pax-warn-soft">${{
+                ausencia: 'Si alguna línea no entra, el reporte sigue abierto y se puede reintentar: las que ya entraron no se reenvían, porque AX rechaza un período repetido.',
+                ingreso: 'Si alguna línea no entra, el reporte sigue abierto y se puede reintentar: las que ya entraron no se reenvían, porque volverían a crear la persona.',
+                egreso: 'Si alguna línea no entra, el reporte sigue abierto y se puede reintentar: las que ya entraron no se reenvían, porque volverían a cerrarle la relación laboral.',
+              }[report.type] || 'Si alguna línea no entra, el reporte sigue abierto y se puede reintentar: lo que ya se cargó no se duplica.'}</div>
             </div>
           </div>
           <div class="modal-actions">
@@ -187,7 +222,7 @@ export function openPublishAxModal({ user, report, onDone }) {
           <div class="modal-head"><span>Publicando…</span></div>
           <div class="pax-body pax-working">
             <div class="pax-bar"><span></span></div>
-            <p class="confirm-msg">Enviando los marcajes a AX 2012. Puede tardar unos segundos.</p>
+            <p class="confirm-msg">Enviando ${nombreDe(report.type).plural} a AX 2012. Puede tardar unos segundos.</p>
             <p class="hint">No cierres esta ventana ni recargues la página.</p>
           </div>
         </div>`;
@@ -228,12 +263,12 @@ export function openPublishAxModal({ user, report, onDone }) {
                 </tr></thead><tbody>
                 ${ls.map(l => `<tr>
                   <td><b>${esc(l.worker_name || '—')}</b><div class="pax-ced">${esc(l.worker_id_number)}</div></td>
-                  <td>${fmtPeriodo(l)}</td>
-                  <td class="pax-msg">${esc(l.doc_name || 'Respaldo del tipo de ausencia')}</td>
+                  <td>${l.date_from ? fmtPeriodo(l) : fmtDate(l.report_date)}</td>
+                  <td class="pax-msg">${esc(l.doc_name || (report.type === 'egreso' ? 'Carta de renuncia' : 'Respaldo del tipo de ausencia'))}</td>
                 </tr>`).join('')}
               </tbody></table></div>` : ''}
               ${d.can_force
-                ? `<div class="pax-warn">Si publicás igual, esas ausencias quedan cargadas en la nómina
+                ? `<div class="pax-warn">Si publicás igual, ${report.type === 'egreso' ? 'esos egresos quedan cargados' : 'esas ausencias quedan cargadas'} en la nómina
                      <b>sin respaldo</b>, y va a quedar registrado que vos lo autorizaste.</div>`
                 : `<div class="pax-warn">Adjuntá los documentos en el reporte y volvé a intentarlo.</div>`}
             </div>

@@ -163,7 +163,8 @@ function flashBtn(b, ok) {
    por sesion, cacheada en module scope.
    Ante fallo de red se es PERMISIVO en la pantalla — el endpoint valida el
    permiso igual, asi que nadie hace nada que no pueda por un error pasajero. */
-const HIST_CODES = ['report.attention', 'report.publish.marcaje', 'report.publish.ausencia'];
+const HIST_CODES = ['report.attention', 'report.publish.marcaje', 'report.publish.ausencia',
+  'report.publish.ingreso', 'report.publish.egreso'];
 let HIST_PERMS = null;
 
 async function ensureHistoryPerms(user) {
@@ -200,18 +201,30 @@ export async function renderHistory(user) {
   const canManage = !!perms['report.attention'];
   const canPublishAx = !!perms['report.publish.marcaje'];
   const canPublishAus = !!perms['report.publish.ausencia'];
+  const canPublishIng = !!perms['report.publish.ingreso'];
+  const canPublishEgr = !!perms['report.publish.egreso'];
   /* v6.181 — Un reporte se puede publicar si su tipo tiene endpoint Y el
      usuario tiene el permiso DE ESE TIPO. Publicar marcajes y publicar
      ausencias son decisiones distintas: una ausencia mal cargada mueve la
      nomina, un marcaje no. Por eso son dos permisos y no uno. */
-  const puedePublicar = (r) => (r && r.type === 'ausencia') ? canPublishAus : canPublishAx;
+  /* v6.266 — Cuatro tipos, cuatro permisos. Ingreso y egreso pesan mas que
+     los otros dos: uno CREA una persona en AX y el otro le CIERRA la relacion
+     laboral, y eso no se deshace desde el portal. */
+  const PERM_POR_TIPO = {
+    marcaje: () => canPublishAx, ausencia: () => canPublishAus,
+    ingreso: () => canPublishIng, egreso: () => canPublishEgr,
+  };
+  const puedePublicar = (r) => {
+    const f = r && PERM_POR_TIPO[r.type];
+    return f ? f() : false;
+  };
   /* v6.176 — La columna de seleccion y la barra de acciones son de QUIEN
      TENGA ALGO QUE HACER CON VARIOS REPORTES A LA VEZ, no solo de quien
      cambia estados. Si dependieran de report.attention, un rol con permiso
      para publicar pero sin el de atencion se quedaria sin la cola y sin
      ninguna pista de por que. Dentro de la barra, cada control sigue
      pidiendo SU permiso. */
-  const canSelect = canManage || canPublishAx || canPublishAus;
+  const canSelect = canManage || canPublishAx || canPublishAus || canPublishIng || canPublishEgr;
 
   // estado de la vista
   /* v6.211 — LOS FILTROS SOBREVIVEN AL DETALLE.
@@ -298,7 +311,7 @@ export async function renderHistory(user) {
       <input id="hSelComment" placeholder="Comentario (opcional)" style="flex:0 1 220px">
       <button class="btn btn-sm btn-primary" id="hSelApply">Aplicar</button>
       <button class="btn btn-sm" id="hSelSync" title="Reenviar a osTicket el estado actual de los reportes seleccionados">\u21BB Sincronizar</button>` : ''}
-      ${(canPublishAx || canPublishAus) ? `<button class="btn btn-sm btn-ax" id="hSelPub" title="Publicar en AX los reportes seleccionados, uno detr\u00E1s de otro">${AX_ARROW} Publicar</button>` : ''}
+      ${(canPublishAx || canPublishAus || canPublishIng || canPublishEgr) ? `<button class="btn btn-sm btn-ax" id="hSelPub" title="Publicar en AX los reportes seleccionados, uno detr\u00E1s de otro">${AX_ARROW} Publicar</button>` : ''}
       <button class="btn btn-sm" id="hSelClear">Limpiar</button>
     </div>` : ''}
 
@@ -505,10 +518,10 @@ export async function renderHistory(user) {
       </tr>`;
   }
 
-  /* v6.168 — Boton "Publicar en AX". Solo para Marcaje Manual, solo si el rol
-     tiene report.publish.marcaje, y solo si el reporte NO esta publicado.
-     Los otros tipos de reporte no tienen a donde publicarse todavia: su carga
-     en AX sigue siendo manual con la plantilla de Excel. */
+  /* v6.168 — Boton "Publicar en AX", solo si el reporte NO esta publicado y
+     el rol tiene el permiso DE ESE TIPO.
+     v6.266: ya son cuatro los tipos con endpoint (marcaje, ausencia, ingreso,
+     egreso). Los que faltan siguen cargandose a mano con la plantilla. */
   function publishBtn(r) {
     // Quien decide si se puede publicar es motivoNoPublicable, compartida con
     // la cola: si el boton y la cola opinaran distinto, el usuario veria un
@@ -518,7 +531,8 @@ export async function renderHistory(user) {
     // Sincronizacion. En el portal "Publicar" ya significa una sola cosa
     // -mandarlo a AX-, asi que aclararlo en la etiqueta sobra. El destino se
     // explica en el tooltip y en el aviso del modal, que es donde hace falta.
-    const que = r.type === 'ausencia' ? 'estas ausencias' : 'estos marcajes';
+    const que = { ausencia: 'estas ausencias', ingreso: 'estos ingresos', egreso: 'estos egresos' }[r.type]
+      || 'estos marcajes';
     return `<button class="btn btn-sm btn-ax" data-pubax="${r.id}"
       title="Cargar ${que} en AX 2012. Si entran todas, el reporte queda cerrado para siempre."
       >${AX_ARROW} Publicar</button>`;
