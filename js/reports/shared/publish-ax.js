@@ -254,12 +254,12 @@ export function openPublishAxModal({ user, report, onDone }) {
         const ls = d.lineas_sin_doc || [];
         ov.innerHTML = `
           <div class="modal-box pax-box notice-error" role="dialog" aria-modal="true">
-            <div class="modal-head"><span>Faltan documentos obligatorios</span>
+            <div class="modal-head"><span>${report.type === 'egreso' ? 'Egresos sin carta de renuncia' : 'Faltan documentos obligatorios'}</span>
               <button class="modal-x" data-act="close" aria-label="Cerrar">✕</button></div>
             <div class="pax-body">
               <p class="confirm-msg">${esc(d.error || '')}</p>
               ${ls.length ? `<div class="pax-tablewrap"><table class="dtl-table pax-table"><thead><tr>
-                  <th>Trabajador</th><th>Período</th><th>Documento que falta</th>
+                  <th>Trabajador</th><th>${report.type === 'egreso' ? 'Egreso' : 'Período'}</th><th>${report.type === 'egreso' ? 'Motivo declarado por la tienda' : 'Documento que falta'}</th>
                 </tr></thead><tbody>
                 ${ls.map(l => `<tr>
                   <td><b>${esc(l.worker_name || '—')}</b><div class="pax-ced">${esc(l.worker_id_number)}</div></td>

@@ -2808,19 +2808,33 @@ async function publicarLineasEgreso(env, id, rep, user, body, actor, nowIso) {
 
   if (faltantes.length && !forzar) {
     const puedeForzar = !!(actor && can(actor, 'report.publish.egreso.forzar'));
+    /* La CAUSA declarada es el dato que permite decidir, y por eso viaja
+       legible y no como codigo. Que la carta falte es lo normal, no la
+       excepcion: mucha gente se va y no vuelve a responder. Quien publica no
+       necesita que le digan "falta un papel" — necesita ver que la tienda ya
+       explico por que no lo hay, y decidir con eso a la vista. */
+    const codigos = [...new Set(faltantes.map(l => l.doc_cause).filter(Boolean))];
+    const causaMap = {};
+    if (codigos.length) {
+      const inC = codigos.map(c => `"${c}"`).join(',');
+      const cs = await sbJson(env, `egress_doc_causes?code=in.(${inC})&select=code,label`) || [];
+      cs.forEach(c => { causaMap[c.code] = c.label; });
+    }
     return { rechazo: { status: 409, cuerpo: {
       ok: false,
       needs_docs: true,
       can_force: puedeForzar,
       error: puedeForzar
-        ? `Hay ${faltantes.length} egreso(s) sin la carta de renuncia. Podés publicarlos igual, pero quedará registrado que se hizo sin respaldo.`
-        : `Hay ${faltantes.length} egreso(s) sin la carta de renuncia. No se puede publicar hasta que estén adjuntas.`,
+        ? `Hay ${faltantes.length} egreso(s) sin la carta de renuncia. Mirá el motivo que declaró la tienda y decidí: podés publicarlos igual, y quedará registrado que fuiste vos quien lo autorizó.`
+        : `Hay ${faltantes.length} egreso(s) sin la carta de renuncia. No se puede publicar hasta que estén adjuntas o hasta que alguien con permiso lo autorice.`,
       lineas_sin_doc: faltantes.map(l => ({
         line_id: l.id,
         worker_id_number: l.worker_id_number,
         worker_name: l.worker_name || null,
         report_date: l.report_date,
         doc_cause: l.doc_cause || null,
+        // La columna que ya pinta el modal: se le da el motivo, no un rotulo.
+        doc_name: causaMap[l.doc_cause] || l.doc_cause || 'Sin motivo declarado',
       })),
     } } };
   }
