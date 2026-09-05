@@ -6,7 +6,7 @@
    ===================================================================== */
 import { $, mount } from '../core/dom.js';
 import { getSession, clearSession } from '../core/session.js';
-import { go } from '../core/router.js';
+import { go, subRuta } from '../core/router.js';
 import { registerBackHandler } from '../core/back-nav.js';
 import { launchWizard } from '../reports/wizard-core.js';
 import { marcajeReport } from '../reports/report-marcaje.js';
@@ -732,7 +732,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.267</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.268</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -8506,6 +8506,27 @@ async function navigate(view, user, fromHistory = false) {
     }
   }
   currentView = view;
+
+  /* v6.268 — LA URL ACOMPAÑA A LA VISTA, para que refrescar no te devuelva al
+     Inicio. Es replaceState y NO pushState, y esa eleccion es lo que hace que
+     el cambio sea inofensivo:
+
+       · replaceState NO agrega una entrada al historial. El guardian del
+         boton Atras (installBackGuard) cuenta entradas y mantiene su propio
+         VIEW_STACK; si esto empujara una entrada, le descuadraria la cuenta y
+         el Atras empezaria a fallar de costado. Asi no toca nada de eso.
+       · replaceState NO dispara hashchange, asi que el router no vuelve a
+         resolver ni se re-renderiza la vista que se acaba de pintar.
+
+     Resultado: cada entrada del historial termina con la URL de SU vista, el
+     Atras del navegador restaura esa URL y el guardian hace lo mismo que
+     hacia antes. */
+  try {
+    if (location.hash.startsWith('#/panel')) {
+      history.replaceState(history.state, '', `#/panel/${view}`);
+    }
+  } catch (_) { /* si el navegador se queja, la navegacion sigue igual */ }
+
   document.querySelectorAll('#pnlNav button').forEach(b =>
     b.classList.toggle('active', b.dataset.view === view));
   if (view === 'dashboard') { renderDashboard(user); return; }
@@ -9059,6 +9080,17 @@ export function renderPanel() {
   // vista anterior dentro del portal" y evita salirse de la pagina por error.
   VIEW_STACK = [];
   installBackGuard(user);
-  // Landing unificado: ambos arrancan en el Dashboard (Inicio).
-  navigate('dashboard', user);
+
+  /* v6.268 — Si la URL trae una vista (#/panel/historial), se abre esa; si no,
+     el Inicio de siempre.
+
+     EL PERMISO NO SE VUELVE A CALCULAR: se pregunta si el menu llego a pintar
+     el boton de esa vista. El menu ya esta filtrado por la matriz, asi que
+     preguntarle a el es usar la MISMA fuente de verdad en vez de escribir una
+     segunda comprobacion que despues se desincroniza. Y si la vista no le
+     corresponde, cae en Inicio callado: el portal no revela pantallas que uno
+     no puede ver, ni por el menu ni por la URL. */
+  const pedida = subRuta();
+  const permitida = pedida && document.querySelector(`#pnlNav button[data-view="${pedida}"]`);
+  navigate(permitida ? pedida : 'dashboard', user);
 }
