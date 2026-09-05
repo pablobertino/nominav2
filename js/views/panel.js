@@ -732,7 +732,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.269</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.270</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -8491,7 +8491,7 @@ function installBackGuard(user) {
    URL ahora entran por la MISMA puerta, asi que no pueden divergir. Si fueran
    dos copias, la de restaurar quedaria atras en el primer cambio.
    ===================================================================== */
-function abrirFichasDeEmpresa(user, code) {
+function abrirFichasDeEmpresa(user, code, openCed) {
   const c = CATALOG && CATALOG.companies.find(x => x.code === code);
   if (!c) return false;                       // fuera del alcance o inexistente
   const mode = NON_STORE_TYPES.has(c.type) ? 'enterprise' : 'store';
@@ -8512,7 +8512,15 @@ function abrirFichasDeEmpresa(user, code) {
     currentView = 'tiendas'; CATALOG = null; navigate('tiendas', user);
   };
   removeFotoBack = pushBackInterceptor(() => { backToTiendas(); return true; });
-  renderWorkerPhotos(user, code, backToTiendas, { mode });
+  /* v6.270: openCed ya existia en renderWorkerPhotos (lo usa "Buscar
+     personal" para entrar derecho a una ficha). Se reusa en vez de inventar
+     otro camino: si mañana cambia como se abre una ficha, cambia en un lugar.
+
+     OJO con fichaDirect: renderWorkerPhotos lo prende cuando recibe openCed,
+     y eso hace que el boton Volver de la ficha llame a onExit — que aca es
+     backToTiendas, o sea Empresas. Es lo correcto para una URL pegada: no
+     hay grilla "anterior" a la que volver porque nunca se paso por ella. */
+  renderWorkerPhotos(user, code, backToTiendas, openCed ? { mode, openCed } : { mode });
   return true;
 }
 
@@ -9130,7 +9138,8 @@ export function renderPanel() {
   if (permitida && pedida === 'fotos' && subRutaArg()) {
     (async () => {
       await ensureCatalog(user);
-      if (abrirFichasDeEmpresa(user, subRutaArg())) return;
+      // v6.270: el cuarto segmento, si viene, es la cedula de la ficha.
+      if (abrirFichasDeEmpresa(user, subRutaArg(), subRutaArg(1))) return;
       navigate('fotos', user);
     })();
     return;
