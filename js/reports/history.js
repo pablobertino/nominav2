@@ -8,6 +8,7 @@
 import { $ } from '../core/dom.js';
 import { attachRefresh } from '../core/refresh.js';
 import { showReportDetail } from './report-detail.js';
+import { fijarRuta } from '../core/router.js';
 import { openResendModal } from './shared/resend-modal.js';
 import { openPublishAxModal, openPublishAxQueueModal, motivoNoPublicable, AX_ARROW } from './shared/publish-ax.js';
 import {
@@ -186,7 +187,7 @@ async function ensureHistoryPerms(user) {
   } catch (_) { return todos(true); }
 }
 
-export async function renderHistory(user) {
+export async function renderHistory(user, opts) {
   const isCompany = user.kind === 'company';
   const isSuper = user.kind === 'admin' && user.role === 'superadmin';
   const showStore = !isCompany; // admin y superadmin ven columna/filtro tienda
@@ -836,8 +837,16 @@ export async function renderHistory(user) {
     }));
   }
 
+  /* v6.271 — La URL acompaña al detalle: #/panel/historial/1888. Sirve para
+     refrescar sin perder el reporte y para pasarle a alguien el enlace de uno
+     puntual, que era la parte que faltaba de esta pantalla. */
   function openDetail(id) {
-    showReportDetail({ reportId: id, user, onBack: () => renderHistory(user) });
+    fijarRuta('historial', id);
+    showReportDetail({
+      reportId: id,
+      user,
+      onBack: () => { fijarRuta('historial'); renderHistory(user); },
+    });
   }
 
   // ---- listeners de filtros ----
@@ -967,4 +976,10 @@ export async function renderHistory(user) {
   loadCompanies();
   load();
   attachRefresh('#hRefresh', load, 'historial');
+
+  /* v6.271 — #/panel/historial/1888 abre ese reporte. No se espera a load():
+     showReportDetail pide el reporte por su id al backend, no lo saca de la
+     lista, asi que no depende de que la pagina 1 lo contenga — y de hecho
+     casi nunca lo contendria si el reporte es viejo. */
+  if (opts && opts.openId) openDetail(opts.openId);
 }

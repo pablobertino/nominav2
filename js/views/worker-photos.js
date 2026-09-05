@@ -26,6 +26,7 @@
 
 import { $ } from '../core/dom.js';
 import { pushBackInterceptor } from '../core/back-nav.js';   // v6.88: "Atrás" cierra el visor de foto en vez de salir de la ficha
+import { fijarRuta } from '../core/router.js';               // v6.271: la URL sigue a la ficha
 import { parseReport10, validateParsed, rosterReplace, rosterClear, rosterAddManual, rosterAgeDays, splitFullName } from '../reports/shared/roster.js';
 import { parseReporteAX, validateReporteAX, enterpriseRosterReplace, enterpriseRosterClear, storeRosterReplaceAX, axRosterPull, rosterCooldownMessage } from '../reports/shared/roster-ax.js';
 import { initBankRefCard } from './bank-ref-ficha.js';   // v6.66: referencia bancaria en la ficha
@@ -1860,7 +1861,7 @@ function openFicha(ced) {
   const host = $('#wpFichaHost');
   host.innerHTML = fichaHtml(w, c);
   $('#wpGridView').style.display = 'none';
-  urlDeFicha(w.id_number);       // v6.270: la URL dice a quien estas mirando
+  fijarRuta('fotos', STATE && STATE.cc, w.id_number);   // la URL dice a quien mirás
 
   // Cabecera: foto + clic para ver grande
   const ph = host.querySelector('#ffPh');
@@ -2836,37 +2837,15 @@ function wpOpenExportMenu(btn) {
   }, 0);
 }
 
-/* =====================================================================
-   v6.270 — LA URL SIGUE A LA FICHA.
-     #/panel/fotos/AA01            la grilla de la empresa
-     #/panel/fotos/AA01/28189230   la ficha de esa persona
-
-   SOLO se toca la URL si YA estamos en la rama /panel/fotos. Cuando se llega
-   a una ficha desde "Buscar personal" el hash es #/panel/buscar, y ahi no hay
-   que escribir nada: si lo hicieramos, refrescar devolveria a la grilla de la
-   empresa en vez de a la busqueda, y ademas el boton Volver de esa ficha
-   apunta a la busqueda (fichaDirect + onExit). Una URL que contradiga al
-   boton Volver es peor que no tener URL.
-
-   replaceState y no pushState, por lo mismo que en panel.js: el guardian del
-   boton Atras cuenta entradas del historial y no hay que descuadrarselo. */
-function urlDeFicha(ced) {
-  try {
-    if (!location.hash.startsWith('#/panel/fotos')) return;
-    const cc = STATE && STATE.cc;
-    if (!cc) return;
-    const destino = ced
-      ? `#/panel/fotos/${encodeURIComponent(cc)}/${encodeURIComponent(ced)}`
-      : `#/panel/fotos/${encodeURIComponent(cc)}`;
-    if (location.hash !== destino) history.replaceState(history.state, '', destino);
-  } catch (_) { /* la navegacion sigue igual */ }
-}
-
+/* v6.271 — La URL sigue a la ficha. La regla ("solo escribe si la vista ya
+   coincide") vive en fijarRuta, en el router: es la que hace que entrar a una
+   ficha desde Buscar NO reescriba la URL a /fotos/..., porque alli el boton
+   Volver apunta a la busqueda. */
 function backToGrid() {
   $('#wpFichaHost').innerHTML = '';
   $('#wpGridView').style.display = '';
   CUR = null;
-  urlDeFicha(null);              // v6.270: la URL vuelve a la grilla
+  fijarRuta('fotos', STATE && STATE.cc);        // la URL vuelve a la grilla
   window.scrollTo(0, 0);
 }
 

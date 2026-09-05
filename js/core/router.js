@@ -58,6 +58,39 @@ export function subRutaArg(i = 0) {
   return p.length > 2 + i ? decodeURIComponent(p[2 + i]) : null;
 }
 
+/* =====================================================================
+   fijarRuta(vista, ...args) — deja la URL diciendo donde estas.  (v6.271)
+
+     fijarRuta('historial', 1888)      -> #/panel/historial/1888
+     fijarRuta('fotos', 'AA01', ced)   -> #/panel/fotos/AA01/28189230
+     fijarRuta('historial')            -> #/panel/historial   (vuelve a la lista)
+
+   UNA SOLA REGLA, y es la que evita todos los accidentes: solo escribe si la
+   vista que se pide COINCIDE con la vista que ya esta en la URL. De ahi salen
+   gratis los dos casos que antes habia que cuidar a mano:
+
+     · Estando en #/panel/buscar, una ficha NO reescribe la URL a /fotos/...
+       El boton Volver de esa ficha apunta a la busqueda, y una URL que
+       contradiga al boton Volver es peor que no tener URL.
+     · Una pantalla que termina de cargar tarde no puede pisar la URL de otra
+       a la que el usuario ya se movio.
+
+   replaceState y NO pushState: no agrega entradas al historial, asi que el
+   guardian del boton Atras -que cuenta entradas y lleva su propio stack- no
+   se entera de nada. Y tampoco dispara hashchange, asi que no re-renderiza.
+
+   Nunca lanza: si el navegador se queja, la navegacion sigue igual y lo unico
+   que se pierde es que la URL quede linda. */
+export function fijarRuta(vista, ...args) {
+  try {
+    const p = rutaPartes();
+    if (p[0] !== 'panel' || p[1] !== vista) return;
+    const cola = args.filter(a => a != null && a !== '').map(a => encodeURIComponent(a));
+    const destino = `#/panel/${vista}${cola.length ? '/' + cola.join('/') : ''}`;
+    if (location.hash !== destino) history.replaceState(history.state, '', destino);
+  } catch (_) { /* la navegacion sigue igual */ }
+}
+
 /** Arranca el router */
 export function start(defaultPath = '/') {
   window.addEventListener('hashchange', resolve);

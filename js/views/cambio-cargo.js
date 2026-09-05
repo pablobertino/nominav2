@@ -14,6 +14,7 @@
 
 import { $ } from '../core/dom.js';
 import { renderWorkerPhotos } from './worker-photos.js';
+import { fijarRuta } from '../core/router.js';
 
 let USER = null;
 let CAT = null;                 // catalogo (cargos, egress_reasons, my, assign_min_level)
@@ -156,12 +157,24 @@ export async function renderCambioCargo(user) {
 }
 
 /* Pantalla 2: HISTORIAL (menu Cargos -> Historial). Pantalla aparte. */
-export async function renderCambioCargoHist(user) {
+export async function renderCambioCargoHist(user, opts) {
   USER = user;
   const host = $('#pnlMain');
   if (!host) return;
   host.innerHTML = styleBlock() + `<div class="cc-wrap"><div id="ccBody"><div class="cc-loading">Cargando…</div></div></div>`;
   if (!(await ensureCat())) return;
+
+  /* v6.271 — #/panel/cargohistorial/9 abre esa sugerencia. Se pide ANTES de
+     paintCola porque es ella la que decide entre lista y detalle mirando
+     APRO_SUB/APRO_SEL: dejandolos puestos, el detalle sale directo y no se
+     pinta la lista para taparla un instante despues.
+
+     Si el id no esta en la cola -por el alcance, o porque quedo fuera del
+     rango de fechas- paintCola cae sola en la lista: ya trae ese chequeo
+     ("if APRO_SUB === 'detail' && MOVES.find(...)"). */
+  const pedido = opts && opts.openId ? parseInt(opts.openId, 10) : 0;
+  if (pedido) { APRO_SEL = pedido; APRO_SUB = 'detail'; }
+
   await paintCola();
 }
 
@@ -974,8 +987,11 @@ function renderAList() {
   document.getElementById('aprPrev')?.addEventListener('click', () => { APRO_PAGE--; renderAList(); });
   document.getElementById('aprNext')?.addEventListener('click', () => { APRO_PAGE++; renderAList(); });
 }
-function showDetail(id) { APRO_SEL = id; APRO_SUB = 'detail'; renderDetail(); }
-function backToList() { APRO_SUB = 'list'; renderApro(); }
+/* v6.271 — La URL acompaña al detalle: #/panel/cargohistorial/9. Esta bandeja
+   se comparte ("mirá esta sugerencia") y hasta ahora no habia forma de mandar
+   un enlace a una en particular. */
+function showDetail(id) { APRO_SEL = id; APRO_SUB = 'detail'; fijarRuta('cargohistorial', id); renderDetail(); }
+function backToList() { APRO_SUB = 'list'; fijarRuta('cargohistorial'); renderApro(); }
 
 /* ---------- DETALLE (página aparte con Volver) ----------
    Reproduce el estilo de la ficha del empleado: cabecera con nombre en peso

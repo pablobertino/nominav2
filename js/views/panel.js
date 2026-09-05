@@ -732,7 +732,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.270</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.271</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -8524,6 +8524,12 @@ function abrirFichasDeEmpresa(user, code, openCed) {
   return true;
 }
 
+/* v6.271 — El argumento que traia la URL AL ABRIR el portal (#/panel/historial/1888
+   -> '1888'). Se consume UNA sola vez: si despues el usuario se mueve por el
+   menu no hay que reabrir el detalle de nuevo. Sin esto, volver a Historial
+   desde otra vista reabriria el mismo reporte una y otra vez. */
+let ARRANQUE_ARG = null;
+
 async function navigate(view, user, fromHistory = false) {
   NAV_USER = user;
   // Al cambiar de vista por el menu, se abandonan los interceptores activos
@@ -8563,6 +8569,13 @@ async function navigate(view, user, fromHistory = false) {
 
   document.querySelectorAll('#pnlNav button').forEach(b =>
     b.classList.toggle('active', b.dataset.view === view));
+
+  /* Se lee UNA vez y se apaga en el acto: lo aprovecha solo el arranque. Si
+     quedara prendido, cada vuelta a Historial desde el menu reabriria el
+     mismo reporte, que es exactamente lo que nadie quiere. */
+  const argInicial = ARRANQUE_ARG;
+  ARRANQUE_ARG = null;
+
   if (view === 'dashboard') { renderDashboard(user); return; }
   if (view === 'tiendas' || view === 'catalogos') {
     await ensureCatalog(user);
@@ -8609,7 +8622,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'roles') renderRoles(user);
   else if (view === 'rostersync') viewRosterSync(user);
   else if (view === 'config') viewConfig(user);
-  else if (view === 'historial') renderHistory(user);
+  else if (view === 'historial') renderHistory(user, argInicial ? { openId: argInicial } : null);
   else if (view === 'estadisticas') renderReportStats(user);
   // v6.214 — import dinamico: la vista solo la abre quien tiene el permiso,
   // y no tiene sentido que su codigo viaje en la carga inicial de todos.
@@ -8630,7 +8643,7 @@ async function navigate(view, user, fromHistory = false) {
   else if (view === 'movimientos') renderMovements(user);
   else if (view === 'movquincena') renderMovQuincena(user);
   else if (view === 'cambiocargo') renderCambioCargo(user);
-  else if (view === 'cargohistorial') renderCambioCargoHist(user);
+  else if (view === 'cargohistorial') renderCambioCargoHist(user, argInicial ? { openId: argInicial } : null);
   else if (view === 'novedades') renderNovedades(user);
   else if (view === 'documentos') renderPersonnelDocs(user, null);
   else if (view === 'miempresa') viewMiEmpresa(user);
@@ -9145,5 +9158,6 @@ export function renderPanel() {
     return;
   }
 
+  ARRANQUE_ARG = permitida ? subRutaArg() : null;
   navigate(permitida ? pedida : 'dashboard', user);
 }
