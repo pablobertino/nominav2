@@ -6,7 +6,7 @@
    ===================================================================== */
 import { $, mount } from '../core/dom.js';
 import { getSession, clearSession } from '../core/session.js';
-import { go, subRuta } from '../core/router.js';
+import { go, subRuta, subRutaArg } from '../core/router.js';
 import { registerBackHandler } from '../core/back-nav.js';
 import { launchWizard } from '../reports/wizard-core.js';
 import { marcajeReport } from '../reports/report-marcaje.js';
@@ -732,7 +732,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.268</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.269</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -1704,17 +1704,7 @@ async function viewTiendas(user) {
         // Admin/superadmin entra a las fichas/fotos de la empresa elegida.
         // El "Volver" regresa a la lista de Empresas. Si la empresa NO es
         // tienda, se entra en modo 'enterprise' (carga por Reporte AX).
-        const c = CATALOG.companies.find(x => x.code === b.dataset.photosCode);
-        const mode = c && NON_STORE_TYPES.has(c.type) ? 'enterprise' : 'store';
-        currentView = 'fotos';
-        document.querySelectorAll('#pnlNav button').forEach(x => x.classList.remove('active'));
-        let removeFotoBack = null;
-        const backToTiendas = () => {
-          if (removeFotoBack) { removeFotoBack(); removeFotoBack = null; }
-          currentView = 'tiendas'; CATALOG = null; navigate('tiendas', user);
-        };
-        removeFotoBack = pushBackInterceptor(() => { backToTiendas(); return true; });
-        renderWorkerPhotos(user, b.dataset.photosCode, backToTiendas, { mode });
+        abrirFichasDeEmpresa(user, b.dataset.photosCode);
       }));
     host.querySelectorAll('[data-dep-code]').forEach(b =>
       b.addEventListener('click', () => {
@@ -8490,6 +8480,42 @@ function installBackGuard(user) {
   });
 }
 
+/* =====================================================================
+   abrirFichasDeEmpresa — Empresas → las fichas de UNA empresa.  (v6.269)
+
+   Estaba escrito dentro del listener del boton, y por eso este camino era el
+   unico que NO pasaba por navigate(): seteaba currentView a mano y la URL se
+   quedaba clavada en #/panel/tiendas mientras uno ya estaba mirando fichas.
+
+   Extraerlo sirve para dos cosas a la vez: el clic y la restauracion desde la
+   URL ahora entran por la MISMA puerta, asi que no pueden divergir. Si fueran
+   dos copias, la de restaurar quedaria atras en el primer cambio.
+   ===================================================================== */
+function abrirFichasDeEmpresa(user, code) {
+  const c = CATALOG && CATALOG.companies.find(x => x.code === code);
+  if (!c) return false;                       // fuera del alcance o inexistente
+  const mode = NON_STORE_TYPES.has(c.type) ? 'enterprise' : 'store';
+  currentView = 'fotos';
+  document.querySelectorAll('#pnlNav button').forEach(x => x.classList.remove('active'));
+
+  /* La URL dice donde estas. replaceState por lo mismo que en navigate(): no
+     agrega entradas, asi que el guardian del boton Atras no se entera. */
+  try {
+    if (location.hash.startsWith('#/panel')) {
+      history.replaceState(history.state, '', `#/panel/fotos/${encodeURIComponent(code)}`);
+    }
+  } catch (_) { /* la navegacion sigue igual */ }
+
+  let removeFotoBack = null;
+  const backToTiendas = () => {
+    if (removeFotoBack) { removeFotoBack(); removeFotoBack = null; }
+    currentView = 'tiendas'; CATALOG = null; navigate('tiendas', user);
+  };
+  removeFotoBack = pushBackInterceptor(() => { backToTiendas(); return true; });
+  renderWorkerPhotos(user, code, backToTiendas, { mode });
+  return true;
+}
+
 async function navigate(view, user, fromHistory = false) {
   NAV_USER = user;
   // Al cambiar de vista por el menu, se abandonan los interceptores activos
@@ -9092,5 +9118,23 @@ export function renderPanel() {
      no puede ver, ni por el menu ni por la URL. */
   const pedida = subRuta();
   const permitida = pedida && document.querySelector(`#pnlNav button[data-view="${pedida}"]`);
+
+  /* v6.269 — #/panel/fotos/AA01 vuelve a las fichas DE ESA EMPRESA, no al
+     Personal generico. Hace falta el catalogo antes: es lo que dice si la
+     empresa es tienda o no, y de eso depende el modo con que se abre.
+
+     El alcance no se comprueba aparte: ensureCatalog ya trae solo las
+     empresas que a este usuario le corresponden, asi que un codigo ajeno
+     simplemente no aparece y se cae al Personal generico. Preguntarle al
+     catalogo es usar la misma reja que usa el resto de la pantalla. */
+  if (permitida && pedida === 'fotos' && subRutaArg()) {
+    (async () => {
+      await ensureCatalog(user);
+      if (abrirFichasDeEmpresa(user, subRutaArg())) return;
+      navigate('fotos', user);
+    })();
+    return;
+  }
+
   navigate(permitida ? pedida : 'dashboard', user);
 }
