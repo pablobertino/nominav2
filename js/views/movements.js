@@ -532,9 +532,38 @@ function closeMenus() {
   if (em) em.hidden = true;
 }
 
+/* =====================================================================
+   avisoDeCorte() — por que la pantalla puede estar vacia sin estar rota.
+
+   Rotacion NO lee la nomina en vivo: compara los CORTES quincenales
+   (hcm_snapshot). Si el periodo que pediste es posterior al ultimo corte
+   cargado, el resultado es cero — pero un cero sin explicacion parece un
+   dato, y eso ya costo caro: los cortes se congelaron el 01/07/2026 y
+   durante dos meses la vista mostro "no hay egresos" con toda naturalidad
+   hasta que un gerente reporto que "no le funcionaba su usuario". El dato
+   ya venia en la respuesta (last_cut) pero vivia enterrado al final, en
+   una frase del parrafo de iconografia que nadie lee.
+
+   Devuelve el aviso o '' si el periodo esta cubierto.                   */
+function avisoDeCorte() {
+  if (!LAST_CUT || !C.from || !C.to) return '';
+  const corte = String(LAST_CUT).slice(0, 10);
+  if (C.from > corte) {
+    return `Este período todavía no tiene corte cargado: el último es el ${ddmm(corte)}. `
+         + 'Rotación se calcula desde los cortes quincenales, así que lo posterior a esa fecha '
+         + 'aún no se ve acá. Para el dato en vivo usa Movimientos.';
+  }
+  if (C.to > corte) {
+    return `El período llega hasta el ${ddmm(C.to)}, pero el último corte cargado es el ${ddmm(corte)}: `
+         + 'lo que pasó después todavía no está contado. Para el dato en vivo usa Movimientos.';
+  }
+  return '';
+}
+
 async function run() {
   showMsg('');
   if (!C.from || !C.to) { showMsg('Elige el período: una quincena (desde), un rango de quincenas (desde → hasta) o el año completo.'); return; }
+  showMsg(avisoDeCorte());
   const body = $('#mvBody');
   if (body) body.innerHTML = '<div class="mv-hint">Generando…</div>';
   const filtros = {
