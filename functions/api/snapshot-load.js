@@ -43,6 +43,7 @@
 
 import { resolveActor, can, AuthError } from './_auth.js';
 import { snapRoster } from './_hcmsnap.js';
+import { gaClient } from './_greenapi.js';
 
 /* Cuanto tiempo se le permite a UNA invocacion antes de cortar limpio.
    Cortar a tiempo no pierde nada: lo no procesado sigue pendiente en la
@@ -200,12 +201,82 @@ async function refrescarSiTermino(env) {
   return true;
 }
 
+function ddmm(f) {
+  const s = String(f || '');
+  return /^\d{4}-\d{2}-\d{2}$/.test(s) ? `${s.slice(8, 10)}/${s.slice(5, 7)}` : s;
+}
+
+/* =====================================================================
+   avisar — el vigilante habla.
+
+   ⚠ EL AVISO MIRA EL DATO, NO EL JOB. Durante dos meses el cron de la
+   cache de movimientos corrio todos los dias y todos los dias termino
+   'ok': recalculaba impecablemente sobre cortes congelados el 01/07.
+   Un monitoreo de "¿fallo algun job?" habria estado verde todo ese
+   tiempo. La unica pregunta que sirve es "¿el ultimo corte es el que
+   deberia ser?", y esa la contesta hcm_snapshot_salud().
+
+   Una vez al dia por motivo, y el candado es la PK de
+   hcm_snapshot_alerts, no un if: dos ticks que se pisen no mandan el
+   aviso dos veces (mismo criterio que el saludo de cumpleaños).
+   ===================================================================== */
+async function avisar(env, salud) {
+  if (!salud || salud.ok) return { enviado: false, motivo: 'sano' };
+
+  const gano = await sb(env, 'rpc/hcm_snapshot_alert_claim', {
+    method: 'POST',
+    body: JSON.stringify({ p_motivo: salud.motivo, p_detalle: salud }),
+  });
+  if (gano !== true) return { enviado: false, motivo: 'ya se aviso hoy' };
+
+  const cfg = await sb(env, 'hcm_snapshot_config?id=eq.1&select=alert_group_id');
+  const gid = cfg && cfg[0] && cfg[0].alert_group_id;
+  if (!gid) return { enviado: false, motivo: 'sin grupo de aviso configurado' };
+  const grupo = await sb(env, `wa_groups?id=eq.${gid}&enabled=eq.true&select=chat_id,wa_name`);
+  if (!grupo || !grupo.length) return { enviado: false, motivo: `grupo ${gid} inexistente o apagado` };
+
+  const texto = salud.motivo === 'atrasado'
+    ? `⚠️ *Rotación se está quedando sin datos*\n\n`
+      + `El último corte quincenal completo es el *${ddmm(salud.cargado)}* y ya debería estar el del *${ddmm(salud.esperado)}*`
+      + `${salud.dias_atraso ? ` (${salud.dias_atraso} días de atraso)` : ''}.\n\n`
+      + `La vista Rotación va a mostrar CEROS para todo lo posterior a esa fecha, `
+      + `y un cero sin explicación parece un dato real. Mientras tanto, el dato en vivo está en Movimientos.`
+    : `⚠️ *Carga de cortes con empresas en error*\n\n`
+      + `${salud.aliases_error} empresa(s) agotaron los reintentos y quedaron fuera del corte. `
+      + `El motivo de cada una está en nomina_v2.hcm_snapshot_runs.`;
+
+  try {
+    await gaClient(env).sendMessage(grupo[0].chat_id, texto);
+    return { enviado: true, grupo: grupo[0].wa_name };
+  } catch (e) {
+    /* Si el aviso no sale, se libera el candado del dia: al proximo tick
+       se vuelve a intentar. Un vigilante mudo es peor que no tenerlo. */
+    await sb(env, `hcm_snapshot_alerts?motivo=eq.${encodeURIComponent(salud.motivo)}`
+      + `&alerted_on=eq.${salud.hoy}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } }).catch(() => null);
+    return { enviado: false, motivo: `WhatsApp: ${(e && e.message) || e}` };
+  }
+}
+
 export async function onRequestPost({ request, env }) {
   let body;
   try { body = await request.json(); } catch { return json({ ok: false, error: 'Solicitud invalida.' }, 400); }
   const action = body.action || 'status';
 
   try {
+    /* ---------- alert: el vigilante, disparado por el mismo tick ---------- */
+    if (action === 'alert' && body.source === 'cron') {
+      const adminId = parseInt(body.adminId, 10) || 0;
+      const adm = adminId
+        ? await sb(env, `admin_users?id=eq.${adminId}&role=eq.superadmin&is_active=eq.true&select=id`)
+        : null;
+      if (!adm || !adm.length) return json({ ok: false, error: 'alert: adminId invalido.' }, 403);
+      // La salud se recalcula aca: la que viaja en el body es de hace
+      // segundos y esto decide si suena una alarma.
+      const salud = await sb(env, 'rpc/hcm_snapshot_salud', { method: 'POST', body: '{}' });
+      const r = await avisar(env, salud);
+      return json({ ok: true, salud, aviso: r });
+    }
+
     /* ---------- run_cron: lo dispara tick_hcm_snapshot() ---------- */
     // No hay sesion de navegador: se valida que adminId sea un superadmin
     // ACTIVO (mismo criterio que ax-sync/egresos_cron).
@@ -242,10 +313,11 @@ export async function onRequestPost({ request, env }) {
       if (!can(actor, 'view.movimientos')) {
         return json({ ok: false, error: 'No tienes permiso para ver los movimientos de personal (view.movimientos).' }, 403);
       }
-      const [cola, ultimo, cfg] = await Promise.all([
+      const [cola, ultimo, cfg, salud] = await Promise.all([
         sb(env, 'hcm_snapshot_runs?select=cut_date,status'),
         sb(env, 'hcm_snapshot?select=cut_date&order=cut_date.desc&limit=1'),
-        sb(env, 'hcm_snapshot_config?id=eq.1&select=enabled,batch_size,last_run_at,last_status,last_error,last_result'),
+        sb(env, 'hcm_snapshot_config?id=eq.1&select=enabled,batch_size,auto_from,alert_group_id,last_run_at,last_status,last_error,last_result'),
+        sb(env, 'rpc/hcm_snapshot_salud', { method: 'POST', body: '{}' }),
       ]);
       const porCorte = {};
       for (const r of (cola || [])) {
@@ -258,6 +330,7 @@ export async function onRequestPost({ request, env }) {
         cortes: Object.values(porCorte).sort((a, b) => a.cut < b.cut ? 1 : -1),
         last_cut: (ultimo && ultimo[0] && ultimo[0].cut_date) || null,
         config: (cfg && cfg[0]) || null,
+        salud: salud || null,
       });
     }
 
