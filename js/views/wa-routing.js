@@ -31,6 +31,7 @@ let ROUTES = {};      // zone_id -> group_id | null  (estado editable)
 let TYPES = new Set();
 let ENABLED = false;
 let BDAY = false;      // v6.204: felicitar cumpleanos
+let ALERT_GROUP = null; // v6.277: grupo del vigilante de cortes quincenales
 let RUSER = null;
 let DIRTY = false;
 
@@ -236,7 +237,10 @@ async function save() {
   const routes = ((DATA && DATA.zones) || []).map(z => ({
     zone_id: z.id, wa_group_id: ROUTES[z.id] || null,
   }));
-  const r = await api(RUSER, { action: 'save', routes, enabled: ENABLED, birthday: BDAY, types: [...TYPES] });
+  const r = await api(RUSER, {
+    action: 'save', routes, enabled: ENABLED, birthday: BDAY, types: [...TYPES],
+    alert_group_id: ALERT_GROUP,
+  });
 
   if (btn) btn.textContent = 'Guardar ruteo';
   if (!r || !r.ok) {
@@ -279,6 +283,7 @@ export async function renderWaRouting(user) {
   DATA = r;
   ENABLED = !!r.enabled;
   BDAY = !!r.birthday;
+  ALERT_GROUP = r.alert_group_id || null;
   TYPES = new Set(r.types || []);
   ROUTES = {};
   (r.zones || []).forEach(z => { ROUTES[z.id] = (r.routes && r.routes[z.id]) || null; });
@@ -315,6 +320,24 @@ export async function renderWaRouting(user) {
       <div id="wrRows"></div>
     </div>
 
+    <div class="wr-card">
+      <div class="wr-cardh">Avisos técnicos <span class="mut">no son avisos de Naima: no dependen del interruptor de arriba</span></div>
+      <div class="wr-master">
+        <div class="txt">
+          <b>🛠️ Cortes quincenales atrasados o trancados</b>
+          <div>La vista <b>Rotación</b> se calcula desde los cortes quincenales del sistema. Si dejan de cargarse,
+          la pantalla muestra <b>ceros que parecen datos reales</b> — ya pasó, y estuvo dos meses así sin que nadie
+          se enterara. Este aviso llega cuando el último corte no es el que debería ser, cuando la carga se tranca
+          o cuando la apagan. <b>Sin grupo, no sale por WhatsApp.</b></div>
+        </div>
+        <select id="wrAlertGroup"${ro ? ' disabled' : ''} style="max-width:230px">
+          <option value="">— sin grupo —</option>
+          ${((r.groups) || []).map(g =>
+            `<option value="${esc(g.id)}"${String(ALERT_GROUP || '') === String(g.id) ? ' selected' : ''}>${esc(g.label)}</option>`).join('')}
+        </select>
+      </div>
+    </div>
+
     <div class="wr-note">
       <b>Cómo funciona:</b> el aviso se rutea por la <b>zona de la tienda</b> que reporta. Podés mandar varias zonas al mismo grupo (por ejemplo, todo el oriente a uno solo) o una zona por grupo. Una zona <b>sin grupo</b> simplemente no genera aviso — útil para ir activando de a poco.
     </div>
@@ -337,6 +360,13 @@ export async function renderWaRouting(user) {
   const bs = $('#wrBday');
   if (bs && !ro) {
     bs.addEventListener('click', () => { if (!ENABLED) return; BDAY = !BDAY; paintMaster(); markDirty(); });
+  }
+  const ag = $('#wrAlertGroup');
+  if (ag && !ro) {
+    ag.addEventListener('change', () => {
+      ALERT_GROUP = ag.value ? Number(ag.value) : null;
+      markDirty();
+    });
   }
   const btn = $('#wrSave');
   if (btn && !ro) btn.addEventListener('click', save);

@@ -87,13 +87,18 @@ export async function onRequestPost({ request, env }) {
     }
     /* ---------------- load ---------------- */
     if (action === 'load') {
-      const [zones, groups, routes, settings, comps] = await Promise.all([
+      const [zones, groups, routes, settings, comps, snapCfg] = await Promise.all([
         sb(env, 'zones?select=id,name&order=name.asc'),
         sb(env, 'wa_groups?enabled=eq.true&select=id,chat_id,wa_name,alias&order=wa_name.asc'),
         sb(env, 'wa_zone_group?select=zone_id,wa_group_id,enabled'),
         sb(env, `app_settings?key=in.(${SETTING_ENABLED},${SETTING_TYPES},${SETTING_BIRTHDAY})&select=key,value`),
         // Solo para el conteo "N tiendas" de cada fila; son ~200 filas.
         sb(env, 'companies?select=zone_id&limit=5000'),
+        // v6.277: el grupo del vigilante de cortes. Vive aca y no en una
+        // pantalla propia porque la pregunta es la misma que ya contesta
+        // esta pantalla ("¿a que grupo va esto?"), y porque un ajuste que
+        // solo se puede tocar por SQL termina sin tocarse nunca.
+        sb(env, 'hcm_snapshot_config?id=eq.1&select=alert_group_id'),
       ]);
 
       const count = {};
@@ -124,6 +129,7 @@ export async function onRequestPost({ request, env }) {
         zones: (zones || []).map(z => ({ id: z.id, name: z.name, stores: count[z.id] || 0 })),
         groups: (groups || []).map(g => ({ id: g.id, label: g.alias || g.wa_name || g.chat_id })),
         routes: routeMap,
+        alert_group_id: (snapCfg && snapCfg[0] && snapCfg[0].alert_group_id) || null,
       });
     }
 
@@ -170,6 +176,17 @@ export async function onRequestPost({ request, env }) {
         await setSetting(env, SETTING_TYPES, [...new Set(valid)].join(','), {
           label: 'Avisos de Naima: tipos activos', kind: 'text', grupo: 'WhatsApp',
           description: 'Tipos de aviso que Naima publica en los grupos, separados por comas.',
+        });
+      }
+
+      /* v6.277: grupo del vigilante de cortes quincenales. undefined = la
+         pantalla no lo mando (no se toca); null = "ninguno", que es una
+         eleccion valida y apaga el canal de WhatsApp del vigilante. */
+      if (body.alert_group_id !== undefined) {
+        const gid = body.alert_group_id ? Number(body.alert_group_id) : null;
+        await sb(env, 'hcm_snapshot_config?id=eq.1', {
+          method: 'PATCH', headers: { Prefer: 'return=minimal' },
+          body: JSON.stringify({ alert_group_id: Number.isFinite(gid) ? gid : null }),
         });
       }
 
