@@ -198,6 +198,8 @@ function ensureStyles() {
   .mv-kpi .d .dn{color:#b91c1c;font-weight:700}
   .mv-kpi .t .spk{margin-left:auto;flex:none}
   .mv-kpi .ctx{font-size:11px;color:var(--muted);margin-top:6px;border-top:1px dashed var(--border-soft,#eef1f5);padding-top:6px;line-height:1.5}
+  .mv-recat{display:inline-block;margin-left:5px;padding:1px 5px;border-radius:5px;font-size:9.5px;
+            font-weight:700;letter-spacing:.3px;background:#f3e8ff;color:#7e22ce;border:1px solid #e9d5ff;cursor:help}
   .mv-rk details{margin-top:7px}
   .mv-rk summary{cursor:pointer;font-size:11px;color:var(--brand,#2563eb);font-weight:700;user-select:none}
   .mv-rk .e2{font-size:11px;color:var(--muted);margin-top:5px;line-height:1.5}
@@ -785,6 +787,25 @@ function paintAnalisis(body) {
   const pl = STATS.plantilla || null;
   const neto = (k.neto > 0 ? '+' : k.neto < 0 ? '−' : '') + Math.abs(k.neto);
 
+  /* v6.274 — RECATEGORIZACIONES, aparte de los ascensos.
+     El 16/05/2026 AX cargo en bloque un cambio de tabulador del deposito:
+     174 personas moviendose una letra dentro del mismo escalafon el mismo
+     dia (DEPO-C→DEPO-B ×88 en 5 empresas). Contarlas como 174 ascensos
+     infla mayo y arruina cualquier serie historica. La base ya las marca
+     (personnel_movements_cache.masivo) con una regla que no borra nada.
+
+     El conteo sale de ROWS y no de STATS porque el server ya manda todas
+     las filas del rango; agregar el numero al RPC de stats -200 lineas de
+     SQL vivo- por un rotulo no vale el riesgo. Se compara el total de
+     'cargo' de las dos fuentes y solo se separa si CUADRAN: si la lista
+     vino recortada por el limite, se muestra el numero de siempre antes
+     que uno inventado. */
+  let recat = 0;
+  if (Array.isArray(ROWS)) {
+    const deCargo = ROWS.filter(r => r.tipo === 'cargo');
+    if (deCargo.length === k.cargo) recat = deCargo.filter(r => r.masivo).length;
+  }
+
   /* v6.11: contextos honestos por KPI. Solo se afirma lo que los datos
      permiten: % contra la plantilla del corte; ritmo vs la mediana de 6
      quincenas SOLO cuando el periodo se mide en quincenas (PREV_N>=1);
@@ -837,8 +858,11 @@ function paintAnalisis(body) {
         <div class="n">${k.tras}</div><div class="d">${deltaLine(k.tras, p && p.tras, null)}</div>
         ${ctx(pTras != null ? `= ${fmtPct(pTras)}% de la plantilla del corte` : '')}</div>
       <div class="mv-kpi"><div class="t"><span class="dot" style="background:#7e22ce"></span>CAMBIOS DE CARGO${sparkline(T.cargo, '#7e22ce', tTitle(T.cargo, 'Cambios de cargo'))}</div>
-        <div class="n">${k.cargo}</div><div class="d">${deltaLine(k.cargo, p && p.cargo, null)}</div>
-        ${ctx(pCargo != null ? `= ${fmtPct(pCargo)}% de la plantilla del corte` : '')}</div>
+        <div class="n">${recat ? (k.cargo - recat) : k.cargo}</div><div class="d">${deltaLine(k.cargo, p && p.cargo, null)}</div>
+        ${ctx([
+          recat ? `<b>+${recat} por recategorización de tabulador</b> — un bloque cargado en AX el mismo día, no ascensos individuales` : '',
+          pCargo != null ? `= ${fmtPct(pCargo)}% de la plantilla del corte` : '',
+        ].filter(Boolean).join('<br>'))}</div>
       <div class="mv-kpi"><div class="t"><span class="dot" style="background:#b45309"></span>NETO${sparkline(T.neto, '#b45309', tTitle(T.neto, 'Neto'))}</div>
         <div class="n">${neto}</div><div class="d">${pl ? `plantilla ${pl.n.toLocaleString('es-VE')} al corte (${esc(ddmm(pl.cut))})` : 'sin corte en el período'}</div>
         ${ctx(netoCtx)}</div>
@@ -1629,6 +1653,9 @@ function paintTable() {
       else if (m.job_from || m.job_to) {
         cargo = (m.job_from && m.job_to && m.job_from !== m.job_to)
           ? `${esc(m.job_from)} → ${esc(m.job_to)}${updnChip(m.updown)}`
+            /* Recategorizacion de tabulador, no ascenso: la flecha ↑ sola
+               mentiria. Ver el bloque del 16/05 en paintBody. */
+            + (m.masivo ? ' <span class="mv-recat" title="Recategorización de tabulador cargada en bloque en AX el mismo día — no es un ascenso individual">recat.</span>' : '')
           : esc(m.job_to || m.job_from || '—');
       }
       return `<tr>
