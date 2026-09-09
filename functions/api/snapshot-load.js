@@ -235,15 +235,27 @@ async function avisar(env, salud) {
   const grupo = await sb(env, `wa_groups?id=eq.${gid}&enabled=eq.true&select=chat_id,wa_name`);
   if (!grupo || !grupo.length) return { enviado: false, motivo: `grupo ${gid} inexistente o apagado` };
 
-  const texto = salud.motivo === 'atrasado'
-    ? `⚠️ *Rotación se está quedando sin datos*\n\n`
+  const COLA = `\n\nLa vista Rotación va a mostrar CEROS para todo lo posterior al último corte, `
+             + `y un cero sin explicación parece un dato real. Mientras tanto, el dato en vivo está en Movimientos.`;
+  const TEXTOS = {
+    atrasado: `⚠️ *Rotación se está quedando sin datos*\n\n`
       + `El último corte quincenal completo es el *${ddmm(salud.cargado)}* y ya debería estar el del *${ddmm(salud.esperado)}*`
-      + `${salud.dias_atraso ? ` (${salud.dias_atraso} días de atraso)` : ''}.\n\n`
-      + `La vista Rotación va a mostrar CEROS para todo lo posterior a esa fecha, `
-      + `y un cero sin explicación parece un dato real. Mientras tanto, el dato en vivo está en Movimientos.`
-    : `⚠️ *Carga de cortes con empresas en error*\n\n`
+      + `${salud.dias_atraso ? ` (${salud.dias_atraso} días de atraso)` : ''}.` + COLA,
+    /* El caso que MAS se parece al bug original: ocupado, silencioso y
+       sin avanzar. Sin este aviso, una cola trancada se ve igual que una
+       cola trabajando. */
+    trancado: `⚠️ *La carga de cortes está trancada*\n\n`
+      + `Quedan *${salud.en_cola}* empresas en cola y no se mueve nada desde `
+      + `${salud.sin_avance_desde ? String(salud.sin_avance_desde).slice(0, 16).replace('T', ' ') : 'hace rato'}. `
+      + `Suele ser que /api/snapshot-load no está respondiendo (deploy, URL o Cloudflare).` + COLA,
+    apagado: `⚠️ *La carga de cortes está APAGADA*\n\n`
+      + `nomina_v2.hcm_snapshot_config.enabled está en false, así que no se está cargando ningún corte nuevo.`
+      + COLA,
+    aliases_en_error: `⚠️ *Carga de cortes con empresas en error*\n\n`
       + `${salud.aliases_error} empresa(s) agotaron los reintentos y quedaron fuera del corte. `
-      + `El motivo de cada una está en nomina_v2.hcm_snapshot_runs.`;
+      + `El motivo de cada una está en nomina_v2.hcm_snapshot_runs.`,
+  };
+  const texto = TEXTOS[salud.motivo] || `⚠️ Carga de cortes quincenales: ${salud.motivo}.` + COLA;
 
   try {
     await gaClient(env).sendMessage(grupo[0].chat_id, texto);
