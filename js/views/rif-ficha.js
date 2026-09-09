@@ -17,18 +17,16 @@
    Exporta: initRifCard(host, w, STATE, onRender)
    ===================================================================== */
 
-// pdfjs AUTO-ALOJADO (misma razon que bank-ref-ficha: la CSP bloquea el
-// worker de cdnjs; servido desde /vendor/pdfjs/ todo es 'self').
-const PDFJS_ESM = '/vendor/pdfjs/pdf.min.mjs';
-const PDFJS_WORKER = '/vendor/pdfjs/pdf.worker.min.mjs';
+/* v6.278 — abrir el PDF y diagnosticarlo vive en un solo lugar, compartido
+   con la referencia bancaria. Antes cada uno tenia su copia de "cargar
+   pdfjs y sacar el texto" y las dos tiraban el diagnostico. */
+import { leerPdf, avisoDePdf, PDF_SIN_TEXTO } from './shared/pdf-lectura.js';
 
-let _pdfjs = null;
-async function ensurePdfjs() {
-  if (_pdfjs) return _pdfjs;
-  const lib = await import(/* @vite-ignore */ PDFJS_ESM);
-  try { lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER; } catch (_) { /* noop */ }
-  _pdfjs = lib;
-  return lib;
+/* El aviso, maquetado con las clases del modal que lo muestra. */
+function avisoHtml(a, cls) {
+  if (!a) return '';
+  return `<div class="${cls} info" style="text-align:left">
+    <b>⚠️ ${esc(a.titulo)}</b><br>${a.cuerpo}<br><br><b>${esc(a.accion)}</b></div>`;
 }
 
 /* ---------- digito verificador RIF (algoritmo SENIAT, verificado) ---------- */
@@ -578,22 +576,27 @@ function openUploadModal(w, STATE, onSaved) {
     try { buf = await file.arrayBuffer(); } catch { body.innerHTML = `<div class="rifd-verdict err">No se pudo leer el archivo.</div>`; return; }
     const pdfB64 = await bytesToB64(new Uint8Array(buf));
 
-    let text = '';
-    try { text = await extractText(buf.slice(0)); }
+    let lec;
+    try { lec = await leerPdf(buf.slice(0), { maxPaginas: 3 }); }
     catch (e) {
-      body.innerHTML = `<div class="rifd-verdict err">No se pudo procesar el PDF (¿es un escaneo/foto sin texto?). Sube el <b>PDF original</b> del SENIAT.<br><small>${esc(String(e && e.message || e))}</small></div>`;
+      body.innerHTML = `<div class="rifd-verdict err">No se pudo procesar el PDF (¿está protegido o dañado?).<br><small>${esc(String(e && e.message || e))}</small></div>`;
       return;
     }
-    if (collapse(text).length < 30) {
-      body.innerHTML = `<div class="rifd-verdict info">Este PDF no tiene texto seleccionable (parece foto o escaneo). Sube el <b>PDF original</b> del SENIAT.</div>`;
+    const text = lec.texto;
+    /* v6.278 — el diagnostico viaja junto al texto. Antes, un PDF re-impreso
+       y un PDF de otro documento daban los dos "no reconocido" y la persona
+       salia a buscar el problema al lugar equivocado. */
+    if (!lec.legible || collapse(text).length < 30) {
+      const a = avisoDePdf(lec.legible ? PDF_SIN_TEXTO : lec.motivo, 'rif');
+      body.innerHTML = avisoHtml(a, 'rifd-verdict');
       return;
     }
 
     const fields = parseRif(text);
-    renderConfirm(fields, pdfB64);
+    renderConfirm(fields, pdfB64, lec);
   }
 
-  function renderConfirm(fields, pdfB64) {
+  function renderConfirm(fields, pdfB64, lec) {
     const ev = evaluate(fields, w);
     const rows = [];
     rows.push(row('Persona', esc(fields.nombre_pdf || '—'),
@@ -644,8 +647,14 @@ function openUploadModal(w, STATE, onSaved) {
     const verdict = ov.querySelector('#rifdVerdict');
 
     if (!ev.parsed) {
+      /* v6.278 — llegar aca YA significa que el PDF se leyo bien: si no, se
+         habria cortado antes con el aviso del PDF re-impreso. Asi que esto
+         no es "no se pudo leer" sino "se leyo y no es un RIF", que es un
+         problema distinto y con otra salida. Antes los dos casos decian lo
+         mismo y mandaban a la persona a revisar el archivo correcto. */
       verdict.className = 'rifd-verdict info';
-      verdict.innerHTML = 'No se pudo leer el RIF y la cédula del PDF. Asegúrate de subir el <b>comprobante original</b> del SENIAT (con texto seleccionable).';
+      verdict.innerHTML = 'El PDF se leyó bien, pero <b>no parece un RIF ni una planilla del SENIAT</b>: '
+        + 'no se encontró el número de RIF ni la cédula. Revisa si es el archivo que querías subir.';
       saveBtn.disabled = true; note.textContent = '';
     } else if (!ev.cedOk) {
       // Cedula = llave del titular. Si NO coincide, NO se puede cargar (a
@@ -667,6 +676,10 @@ function openUploadModal(w, STATE, onSaved) {
       saveBtn.disabled = true; saveBtn.innerHTML = '<span class="rifd-spin"></span> Guardando…';
       const payload = {
         action: 'save', user: sessUser(STATE.user), id_number: w.id_number, doc_type: 'rif',
+        // v6.278 — quien escribio el PDF y si su texto servia. Para medir
+        // cuantos llegan re-impresos y si baja al avisarle a la gente.
+        pdf_producer: (lec && lec.producer) || null,
+        pdf_legible: lec ? !!lec.legible : null,
         datos: {
           rif: fields.rif, cedula_rif: fields.cedula_rif, nombre_pdf: fields.nombre_pdf,
           nro_comprobante: fields.nro_comprobante, fecha_inscripcion: fields.fecha_inscripcion,
@@ -716,19 +729,13 @@ function sem(kind, txt) {
   return `<span class="rifd-sem ${kind}">${g} ${esc(txt)}</span>`;
 }
 
-/* ---------- pdfjs: extraer texto plano ---------- */
+/* ---------- pdfjs: extraer texto plano ----------
+   Se conserva la firma (arrayBuffer -> string) porque la usa el asistente
+   de ingreso (report-ingreso.js). Quien necesite el diagnostico llama
+   directamente a leerPdf. */
 export async function extractText(arrayBuffer) {
-  const pdfjs = await ensurePdfjs();
-  const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-  let out = '';
-  const n = Math.min(doc.numPages, 3);
-  for (let i = 1; i <= n; i++) {
-    const page = await doc.getPage(i);
-    const tc = await page.getTextContent();
-    out += ' ' + tc.items.map(it => it.str).join(' ');
-  }
-  try { doc.destroy(); } catch (_) { /* noop */ }
-  return out;
+  const { texto } = await leerPdf(arrayBuffer, { maxPaginas: 3 });
+  return texto;
 }
 
 /* ---------- bytes -> base64 (chunked) ---------- */

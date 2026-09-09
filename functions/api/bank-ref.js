@@ -154,6 +154,13 @@ async function saveRef(env, actor, body) {
     estado: 'pendiente',
     storage_path: storagePath,
     uploaded_by: String(actor.actor || ''),
+    /* v6.278 — QUE clase de PDF llego. producer es el programa que escribio
+       el archivo (dato del propio PDF) y legible dice si su texto servia.
+       Es para MEDIR: cuantos llegan re-impresos por una impresora PDF, de
+       que equipos, y si el numero baja despues de avisarle a la gente.
+       Nunca decide nada; la decision la toma el navegador al leerlo. */
+    pdf_producer: norm(body.pdf_producer) || null,
+    pdf_legible: (typeof body.pdf_legible === 'boolean') ? body.pdf_legible : null,
   };
 
   const ins = await sb(env, 'bank_references', {

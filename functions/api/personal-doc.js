@@ -266,6 +266,15 @@ async function saveDoc(env, actor, body) {
     validaciones: (body.validaciones && typeof body.validaciones === 'object') ? body.validaciones : {},
     storage_path: storagePath,
     uploaded_by: String(actor.actor || ''),
+    /* v6.278 — QUE clase de PDF llego. producer es el programa que escribio
+       el archivo (dato del propio PDF) y legible dice si su texto servia.
+       Es para MEDIR: cuantos llegan re-impresos por una impresora PDF, de
+       que equipos, y si el numero baja despues de avisarle a la gente.
+       Nunca decide nada; la decision la toma el navegador al leerlo.
+       En la cedula quedan en null: es una imagen, no un PDF. */
+    pdf_producer: (typeof body.pdf_producer === 'string' && body.pdf_producer.trim())
+      ? body.pdf_producer.trim().slice(0, 120) : null,
+    pdf_legible: (typeof body.pdf_legible === 'boolean') ? body.pdf_legible : null,
   };
 
   const ins = await sb(env, 'personal_documents', {

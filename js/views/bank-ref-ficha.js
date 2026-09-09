@@ -11,23 +11,24 @@
    Exporta: initBankRefCard(host, w, STATE)
    ===================================================================== */
 
-// pdfjs AUTO-ALOJADO en el propio dominio: la CSP del portal es
-// script-src 'self' cdnjs, pero el Web Worker cae bajo default-src 'self',
-// asi que cdnjs lo bloquearia. Servido desde /vendor/pdfjs/ todo es 'self'.
-const PDFJS_ESM = '/vendor/pdfjs/pdf.min.mjs';
-const PDFJS_WORKER = '/vendor/pdfjs/pdf.worker.min.mjs';
+/* v6.278 — abrir el PDF y diagnosticarlo vive en un solo lugar, compartido
+   con el RIF. Antes cada uno tenia su copia de "cargar pdfjs y sacar el
+   texto" y las dos tiraban el diagnostico al terminar. */
+import { leerPdf, avisoDePdf, PDF_SIN_TEXTO } from './shared/pdf-lectura.js';
+
+/* El aviso. avisoTexto da el contenido para meter en un veredicto que ya
+   existe; avisoHtml le pone su propia caja cuando no hay ninguna. */
+function avisoTexto(a) {
+  if (!a) return '';
+  return `<b>⚠️ ${esc(a.titulo)}</b><br>${a.cuerpo}<br><br><b>${esc(a.accion)}</b>`;
+}
+function avisoHtml(a, cls) {
+  if (!a) return '';
+  return `<div class="${cls} info" style="text-align:left">${avisoTexto(a)}</div>`;
+}
 
 // prefijo de 4 digitos por plantilla + deteccion por texto
 const BANK_PREFIX = { bdv: '0102', banesco: '0134', mercantil: '0105', bancamiga: '0172', bnc: '0191' };
-
-let _pdfjs = null;
-async function ensurePdfjs() {
-  if (_pdfjs) return _pdfjs;
-  const lib = await import(/* @vite-ignore */ PDFJS_ESM);
-  try { lib.GlobalWorkerOptions.workerSrc = PDFJS_WORKER; } catch (_) { /* noop */ }
-  _pdfjs = lib;
-  return lib;
-}
 
 /* ---------- API ---------- */
 async function refApi(payload) {
@@ -644,22 +645,30 @@ function openUploadModal(w, STATE, onSaved) {
     try { buf = await file.arrayBuffer(); } catch { body.innerHTML = `<div class="brf-verdict err">No se pudo leer el archivo.</div>`; return; }
     const pdfB64 = await bytesToB64(new Uint8Array(buf));
 
-    let text = '';
-    try { text = await extractText(buf.slice(0)); }
+    let lec;
+    try { lec = await leerPdf(buf.slice(0), { maxPaginas: 4, campos: true }); }
     catch (e) {
-      body.innerHTML = `<div class="brf-verdict err">No se pudo procesar el PDF (¿es un escaneo/foto sin texto?). Sube el <b>PDF original</b> emitido por el banco.<br><small>${esc(String(e && e.message || e))}</small></div>`;
+      body.innerHTML = `<div class="brf-verdict err">No se pudo procesar el PDF (¿está protegido o dañado?).<br><small>${esc(String(e && e.message || e))}</small></div>`;
       return;
     }
-    if (collapse(text).length < 30) {
-      body.innerHTML = `<div class="brf-verdict info">Este PDF no tiene texto seleccionable (parece foto o escaneo). Sube el <b>PDF original</b> emitido por el banco.</div>`;
+    const text = lec.texto;
+    /* v6.278 — un PDF re-impreso y uno de otro banco daban los dos "no
+       reconocido". Ahora se distinguen y cada uno dice lo suyo.
+       OJO: aca NO se corta cuando es ilegible. Mercantil y el BNC traen la
+       cuenta en campos de formulario, que sobreviven a la re-impresion, y
+       ademas la persona puede escribirla a mano. Si se cortara aca, esos
+       casos dejarian de poder cargarse. El aviso va adentro, junto al
+       veredicto, para que se vea igual cuando el guardado SI se habilita. */
+    if (collapse(text).length < 30 && lec.legible) {
+      body.innerHTML = avisoHtml(avisoDePdf(PDF_SIN_TEXTO, 'banco'), 'brf-verdict');
       return;
     }
 
     const fields = parseFields(text, STATE.bankMap || {});
-    renderConfirm(fields, pdfB64);
+    renderConfirm(fields, pdfB64, lec);
   }
 
-  function renderConfirm(fields, pdfB64) {
+  function renderConfirm(fields, pdfB64, lec) {
     /* v6.262 — isMask, no isMerc: Mercantil no es el unico que tapa la cuenta.
        El BNC hace lo mismo y caia en la rama de "cuenta ilegible". */
     const isMask = !!fields.cuenta_mask;
@@ -717,21 +726,36 @@ function openUploadModal(w, STATE, onSaved) {
         if (h) h.textContent = n >= 12 ? '✓ 20 dígitos completos'
           : `faltan ${12 - n} ${12 - n === 1 ? 'dígito' : 'dígitos'} del medio`;
       }
+      /* v6.278 — el aviso del PDF re-impreso se arma una sola vez y se
+         antepone al veredicto, se pueda guardar o no. Que el documento
+         entre (porque la cuenta vino de un campo de formulario o la
+         escribieron a mano) no quita que el archivo no sea el original:
+         la persona tiene que enterarse igual. */
+      const avPdf = (lec && !lec.legible) ? avisoTexto(avisoDePdf(lec.motivo, 'banco')) : '';
+
       // completo? (cuenta legible con prefijo de banco conocido)
       if (!(ev.acctOk && ev.prefKnown)) {
         verdict.className = 'brf-verdict info';
-        verdict.innerHTML = isMask
-          ? `Escribe los 12 dígitos del medio para guardar. El <b>${esc(fields.banco_code || '')}</b> y el <b>${esc(fields.cuenta_last4 || '')}</b> ya están puestos.`
-          : 'No se pudo leer bien la cuenta del PDF; revísalo.';
+        verdict.innerHTML = avPdf
+          ? avPdf
+          : (isMask
+            ? `Escribe los 12 dígitos del medio para guardar. El <b>${esc(fields.banco_code || '')}</b> y el <b>${esc(fields.cuenta_last4 || '')}</b> ya están puestos.`
+            : 'No se pudo leer bien la cuenta del PDF; revísalo.');
         saveBtn.disabled = true; note.textContent = ''; return { ev };
       }
       const err = ev.warnings.find(x => x.level === 'err');
       const warn = ev.warnings.find(x => x.level === 'warn');
-      if (err) { verdict.className = 'brf-verdict err'; verdict.innerHTML = `<b>Advertencia fuerte:</b> ${esc(err.text)}`; }
-      else if (warn) { verdict.className = 'brf-verdict warn'; verdict.innerHTML = `<b>Advertencia:</b> ${esc(warn.text)} <b>Persiste hasta corregir la cédula o cambiar el PDF.</b>`; }
+      /* El aviso del PDF va PRIMERO y no reemplaza al veredicto: la cuenta
+         se pudo armar (formulario o escrita a mano), asi que el guardado
+         sigue habilitado, pero el archivo no es el original y eso hay que
+         decirlo igual. */
+      const cola = avPdf ? avPdf + '<hr style="border:0;border-top:1px solid var(--border);margin:9px 0">' : '';
+      if (err) { verdict.className = 'brf-verdict err'; verdict.innerHTML = cola + `<b>Advertencia fuerte:</b> ${esc(err.text)}`; }
+      else if (warn) { verdict.className = 'brf-verdict warn'; verdict.innerHTML = cola + `<b>Advertencia:</b> ${esc(warn.text)} <b>Persiste hasta corregir la cédula o cambiar el PDF.</b>`; }
+      else if (cola) { verdict.className = 'brf-verdict warn'; verdict.innerHTML = cola + '<b>La cuenta está completa</b> y se puede guardar igual.'; }
       else { verdict.className = 'brf-verdict ok'; verdict.innerHTML = '<b>Todo validado.</b> Cuenta del titular, banco coherente y formato correcto.'; }
       saveBtn.disabled = false;
-      saveBtn.textContent = (err || warn) ? 'Guardar con advertencia' : 'Guardar referencia';
+      saveBtn.textContent = (err || warn || cola) ? 'Guardar con advertencia' : 'Guardar referencia';
       note.innerHTML = 'El número no se aplica ahora: se adopta al <b>Publicar</b> (Sincronizar).';
       return { ev };
     }
@@ -758,6 +782,10 @@ function openUploadModal(w, STATE, onSaved) {
         tipo_cuenta: fields.tipo_cuenta, cedula_pdf: fields.cedula_pdf, nombre_pdf: fields.nombre_pdf,
         nro_operacion: fields.nro_operacion, fecha_emision: fields.fecha_emision,
         validaciones: ev.validaciones, pdf_base64: pdfB64,
+        // v6.278 — quien escribio el PDF y si su texto servia. Para medir
+        // cuantos llegan re-impresos y si baja al avisarle a la gente.
+        pdf_producer: (lec && lec.producer) || null,
+        pdf_legible: lec ? !!lec.legible : null,
       };
       try {
         const r = await refApi(payload);
@@ -799,28 +827,8 @@ function sem(kind, txt) {
    mismo titular (un banco). Se anexan como [F:nombre=valor] al final para no
    cambiarle la firma a esta funcion, que la usan cuatro lugares. */
 export async function extractText(arrayBuffer) {
-  const pdfjs = await ensurePdfjs();
-  const doc = await pdfjs.getDocument({ data: arrayBuffer }).promise;
-  let out = '';
-  const n = Math.min(doc.numPages, 4);
-  for (let i = 1; i <= n; i++) {
-    const page = await doc.getPage(i);
-    const tc = await page.getTextContent();
-    out += ' ' + tc.items.map(it => it.str).join(' ');
-  }
-  try {
-    const campos = await doc.getFieldObjects();
-    if (campos) {
-      for (const [nombre, arr] of Object.entries(campos)) {
-        const v = (Array.isArray(arr) ? arr : [arr])
-          .map(x => (x && x.value != null) ? String(x.value) : '')
-          .find(x => x.trim());
-        if (v) out += ` [F:${nombre}=${v.replace(/[\[\]]/g, ' ')}]`;
-      }
-    }
-  } catch (_) { /* el PDF no tiene formulario: es el caso normal */ }
-  try { doc.destroy(); } catch (_) { /* noop */ }
-  return out;
+  const { texto } = await leerPdf(arrayBuffer, { maxPaginas: 4, campos: true });
+  return texto;
 }
 
 /* ---------- bytes -> base64 (chunked, sin desbordar el stack) ---------- */
