@@ -17,10 +17,16 @@
 import { leerPdf, avisoDePdf, PDF_SIN_TEXTO } from './shared/pdf-lectura.js';
 
 /* El aviso. avisoTexto da el contenido para meter en un veredicto que ya
-   existe; avisoHtml le pone su propia caja cuando no hay ninguna. */
+   existe; avisoHtml le pone su propia caja cuando no hay ninguna.
+
+   ⚠ EL <div> QUE ENVUELVE NO SOBRA. .brf-verdict es display:flex, asi que
+   cada hijo -incluidos los pedazos de texto suelto- se vuelve una columna y
+   el mensaje sale partido. Envuelto en un solo bloque queda un unico item
+   flex y el texto fluye normal. Los veredictos cortos que ya existian
+   disimulaban el problema; uno de tres frases lo destapa. */
 function avisoTexto(a) {
   if (!a) return '';
-  return `<b>⚠️ ${esc(a.titulo)}</b><br>${a.cuerpo}<br><br><b>${esc(a.accion)}</b>`;
+  return `<div><b>⚠️ ${esc(a.titulo)}</b><br>${a.cuerpo}<br><br><b>${esc(a.accion)}</b></div>`;
 }
 function avisoHtml(a, cls) {
   if (!a) return '';
@@ -683,8 +689,18 @@ function openUploadModal(w, STATE, onSaved) {
     const rowsHtml = () => {
       const ev = evaluate(fields, w, isMask ? cuentaArmada() : null, STATE.bankMap || {}, isMask);
       const rows = [];
-      const cedSem = ev.cedOk ? sem('ok', 'es la del trabajador') : (ev.nameOk ? sem('warn', 'revisar cédula') : sem('err', 'otra persona'));
-      rows.push(row('Persona', esc(fields.nombre_pdf || '—'), ev.cedOk ? sem('ok', ev.nameOk ? 'coincide' : 'validado por cédula') : (ev.nameOk ? sem('warn', 'revisar') : sem('err', 'otra persona'))));
+      /* v6.278 — SIN LECTURA NO HAY ACUSACION. Si del PDF no salio ni el
+         nombre ni la cedula, estas filas decian "✕ otra persona" en rojo:
+         una afirmacion sobre un documento del que no leimos nada. Le decia
+         al operador que el trabajador trajo la referencia de otro, que es
+         grave y era mentira. Los ✕ se pintan solo si hubo que comparar. */
+      const leyoAlgo = !!(fields.nombre_pdf || fields.cedula_pdf);
+      const cedSem = !fields.cedula_pdf ? sem('info', 'no se pudo leer')
+        : (ev.cedOk ? sem('ok', 'es la del trabajador') : (ev.nameOk ? sem('warn', 'revisar cédula') : sem('err', 'otra persona')));
+      rows.push(row('Persona', esc(fields.nombre_pdf || '—'),
+        !leyoAlgo ? sem('info', 'no se pudo leer')
+          : (ev.cedOk ? sem('ok', ev.nameOk ? 'coincide' : 'validado por cédula')
+            : (ev.nameOk ? sem('warn', 'revisar') : sem('err', 'otra persona')))));
       rows.push(row('Cédula', `<span class="mono">${fields.cedula_pdf ? fmtCed(fields.cedula_pdf) : '—'}</span>`, cedSem));
       if (isMask) {
         rows.push(row('Banco', `<span class="mono">${esc(fields.banco_code || '—')}</span>${fields.banco_nombre ? ' · ' + esc(fields.banco_nombre) : ''}`, ev.bankOk ? sem('ok', 'coherente') : sem('warn', 'revisar')));

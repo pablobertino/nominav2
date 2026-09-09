@@ -22,11 +22,20 @@
    pdfjs y sacar el texto" y las dos tiraban el diagnostico. */
 import { leerPdf, avisoDePdf, PDF_SIN_TEXTO } from './shared/pdf-lectura.js';
 
-/* El aviso, maquetado con las clases del modal que lo muestra. */
+/* El aviso. avisoTexto da el contenido; avisoHtml le pone la caja.
+
+   ⚠ EL <div> INTERNO NO SOBRA. .rifd-verdict es display:flex, asi que cada
+   hijo -incluidos los pedazos de texto suelto- se vuelve una columna y el
+   mensaje sale partido en tres. Envolviendo todo en un solo bloque queda un
+   unico item flex y el texto fluye normal. Los veredictos cortos que ya
+   existian disimulaban el problema; uno de tres frases lo destapa. */
+function avisoTexto(a) {
+  if (!a) return '';
+  return `<div><b>⚠️ ${esc(a.titulo)}</b><br>${a.cuerpo}<br><br><b>${esc(a.accion)}</b></div>`;
+}
 function avisoHtml(a, cls) {
   if (!a) return '';
-  return `<div class="${cls} info" style="text-align:left">
-    <b>⚠️ ${esc(a.titulo)}</b><br>${a.cuerpo}<br><br><b>${esc(a.accion)}</b></div>`;
+  return `<div class="${cls} info" style="text-align:left">${avisoTexto(a)}</div>`;
 }
 
 /* ---------- digito verificador RIF (algoritmo SENIAT, verificado) ---------- */
@@ -599,10 +608,20 @@ function openUploadModal(w, STATE, onSaved) {
   function renderConfirm(fields, pdfB64, lec) {
     const ev = evaluate(fields, w);
     const rows = [];
+    /* v6.278 — SIN LECTURA NO HAY ACUSACION. Cuando del PDF no salio ni el
+       nombre ni la cedula, estas dos filas decian "✕ otra persona" y
+       "✕ no coincide" en rojo: dos afirmaciones sobre un documento del que
+       no leimos absolutamente nada. Le decia al operador que el trabajador
+       trajo el RIF de otro, que es grave y era mentira. Ahora esos ✕ se
+       pintan solo cuando SI hubo algo que comparar. */
+    const leyoAlgo = !!(fields.nombre_pdf || fields.cedula_rif);
     rows.push(row('Persona', esc(fields.nombre_pdf || '—'),
-      ev.cedOk ? sem('ok', ev.nameOk ? 'coincide' : 'validado por cédula') : (ev.nameOk ? sem('warn', 'revisar') : sem('err', 'otra persona'))));
+      !leyoAlgo ? sem('info', 'no se pudo leer')
+        : (ev.cedOk ? sem('ok', ev.nameOk ? 'coincide' : 'validado por cédula')
+          : (ev.nameOk ? sem('warn', 'revisar') : sem('err', 'otra persona')))));
     rows.push(row('Cédula', `<span class="mono">${fields.cedula_rif ? fmtCed(fields.cedula_rif) : '—'}</span>`,
-      ev.cedOk ? sem('ok', 'es la del trabajador') : sem('err', 'no coincide')));
+      !fields.cedula_rif ? sem('info', 'no se pudo leer')
+        : (ev.cedOk ? sem('ok', 'es la del trabajador') : sem('err', 'no coincide'))));
     rows.push(row('RIF', `<span class="mono">${esc(fields.rif || '—')}</span>`,
       !fields.rif ? sem('info', '—') : (ev.digitOk ? sem('ok', 'dígito válido') : sem('warn', 'dígito inválido'))));
     /* v6.234 — La planilla no tiene vencimiento, y sin decirlo pareceria un
@@ -653,8 +672,8 @@ function openUploadModal(w, STATE, onSaved) {
          problema distinto y con otra salida. Antes los dos casos decian lo
          mismo y mandaban a la persona a revisar el archivo correcto. */
       verdict.className = 'rifd-verdict info';
-      verdict.innerHTML = 'El PDF se leyó bien, pero <b>no parece un RIF ni una planilla del SENIAT</b>: '
-        + 'no se encontró el número de RIF ni la cédula. Revisa si es el archivo que querías subir.';
+      verdict.innerHTML = '<div>El PDF se leyó bien, pero <b>no parece un RIF ni una planilla del SENIAT</b>: '
+        + 'no se encontró el número de RIF ni la cédula. Revisa si es el archivo que querías subir.</div>';
       saveBtn.disabled = true; note.textContent = '';
     } else if (!ev.cedOk) {
       // Cedula = llave del titular. Si NO coincide, NO se puede cargar (a
