@@ -97,6 +97,11 @@ function isoDate(v) {
   return /^\d{4}-\d{2}-\d{2}$/.test(s) ? s : null;
 }
 
+async function getSetting(env, key, def = '') {
+  const r = await sb(env, `app_settings?key=eq.${encodeURIComponent(key)}&select=value`);
+  return (r && r[0] && r[0].value != null) ? r[0].value : def;
+}
+
 const cfgPatch = (env, b) => sb(env, 'hcm_snapshot_config?id=eq.1', {
   method: 'PATCH', headers: { Prefer: 'return=minimal' }, body: JSON.stringify(b),
 }).catch(() => null);
@@ -110,6 +115,17 @@ const cfgPatch = (env, b) => sb(env, 'hcm_snapshot_config?id=eq.1', {
    ===================================================================== */
 async function procesarLote(env, limite) {
   const t0 = Date.now();
+
+  // Umbrales del anti-vaciado (gobernables desde hcm_snapshot_config).
+  let cfgMinRatio = 0.5, cfgMinPrevio = 8;
+  try {
+    const c = await sb(env, 'hcm_snapshot_config?id=eq.1&select=min_ratio,min_previo');
+    if (c && c[0]) {
+      cfgMinRatio = Number(c[0].min_ratio) || cfgMinRatio;
+      cfgMinPrevio = parseInt(c[0].min_previo, 10) || cfgMinPrevio;
+    }
+  } catch (_) { /* con los valores por defecto alcanza */ }
+
   const pedidos = await sb(env, 'rpc/hcm_snapshot_claim', {
     method: 'POST', body: JSON.stringify({ p_limit: limite }),
   });
@@ -126,10 +142,27 @@ async function procesarLote(env, limite) {
 
   const resumen = { claimed: pedidos.length, ok: 0, empty: 0, error: 0, rows: 0, cortes: [] };
 
+  /* Cuantos habia en el corte anterior, y con cuantos quedo este alias la
+     ultima vez que se intento. Las dos cifras que necesita el anti-vaciado,
+     en dos consultas para todo el lote. */
+  const previoDe = new Map();
+  const intentoAnteriorDe = new Map();
+
   for (const [cut, aliases] of porCorte) {
     const marcas = [];
     const filas = [];
     let cortadoPorTiempo = false;
+
+    try {
+      const [prev, ya] = await Promise.all([
+        sb(env, 'rpc/hcm_snapshot_conteo_previo', {
+          method: 'POST', body: JSON.stringify({ p_cut: cut, p_aliases: aliases }),
+        }),
+        sb(env, `hcm_snapshot_runs?cut_date=eq.${cut}&select=alias,rows_in,attempts`),
+      ]);
+      for (const r of (prev || [])) previoDe.set(r.alias, r.n);
+      for (const r of (ya || [])) intentoAnteriorDe.set(r.alias, r);
+    } catch (_) { /* sin vara: se guarda igual, como antes */ }
 
     for (let i = 0; i < aliases.length; i += EN_PARALELO) {
       if (Date.now() - t0 > PRESUPUESTO_MS) {
@@ -151,17 +184,60 @@ async function procesarLote(env, limite) {
           resumen.error++;
           return;
         }
-        if (!r.rows.length) {
-          /* Sin gente a esa fecha es un dato, no una falla: empresa
-             cerrada o todavia sin personal. No se reintenta. */
+        /* ---------- ANTI-VACIADO ----------
+           La API puede responder 200 con una lista INCOMPLETA (3 fichas de
+           20). Eso no corrompe el corte -los egresos salen de end_date, no
+           de la ausencia- pero deja plantillas subestimadas y movimientos
+           invisibles, que es peor: un dato flojo no se nota.
+
+           La vara es el corte anterior del mismo alias. Y la distincion
+           que importa es entre una RESPUESTA CORTADA y una TIENDA QUE
+           CERRO, porque las dos se ven igual en la primera lectura. Se
+           separan solas en la segunda: una respuesta cortada da un numero
+           distinto cada vez; una tienda cerrada da el mismo. Por eso el
+           primer intento sospechoso NO guarda y reintenta, y el segundo
+           acepta SI la API repitio la misma cifra. Sin esto, cada tienda
+           que cierra de verdad alertaria para siempre. */
+        const previo = previoDe.get(alias) || 0;
+        const ahora = r.rows.length;
+        const sospechoso =
+          (previo >= cfgMinPrevio && ahora < previo * cfgMinRatio) ||
+          (previo >= 5 && ahora === 0);
+
+        if (sospechoso) {
+          const ya = intentoAnteriorDe.get(alias);
+          const confirmado = ya && ya.rows_in === ahora && (ya.attempts || 0) >= 1;
+          if (!confirmado) {
+            marcas.push({
+              alias, status: 'error', rows_in: ahora,
+              error: `posible respuesta parcial: ${ahora} ficha(s) contra ${previo} del corte anterior. `
+                   + 'No se guardo; se reintenta para confirmar con la API.',
+            });
+            resumen.error++;
+            return;
+          }
+          /* La API dijo lo mismo dos veces: es el dato, no un corte de
+             linea. Se guarda y queda anotado por que bajo tanto. */
+          filas.push(...r.rows);
+          marcas.push({
+            alias, status: 'ok', rows_in: ahora,
+            error: `baja confirmada en el segundo intento: ${ahora} contra ${previo} del corte anterior.`,
+          });
+          resumen.ok++; resumen.rows += ahora;
+          return;
+        }
+
+        if (!ahora) {
+          /* Sin gente y sin caida sospechosa: empresa cerrada hace rato o
+             todavia sin personal. Es un dato. No se reintenta. */
           marcas.push({ alias, status: 'empty', rows_in: 0, error: null });
           resumen.empty++;
           return;
         }
         filas.push(...r.rows);
-        marcas.push({ alias, status: 'ok', rows_in: r.rows.length, error: null });
+        marcas.push({ alias, status: 'ok', rows_in: ahora, error: null });
         resumen.ok++;
-        resumen.rows += r.rows.length;
+        resumen.rows += ahora;
       });
     }
 
@@ -229,11 +305,12 @@ async function avisar(env, salud) {
   });
   if (gano !== true) return { enviado: false, motivo: 'ya se aviso hoy' };
 
-  const cfg = await sb(env, 'hcm_snapshot_config?id=eq.1&select=alert_group_id');
+  const cfg = await sb(env, 'hcm_snapshot_config?id=eq.1&select=alert_group_id,alert_topic_id');
   const gid = cfg && cfg[0] && cfg[0].alert_group_id;
-  if (!gid) return { enviado: false, motivo: 'sin grupo de aviso configurado' };
-  const grupo = await sb(env, `wa_groups?id=eq.${gid}&enabled=eq.true&select=chat_id,wa_name`);
-  if (!grupo || !grupo.length) return { enviado: false, motivo: `grupo ${gid} inexistente o apagado` };
+  const topic = cfg && cfg[0] && cfg[0].alert_topic_id;
+  const grupo = gid
+    ? await sb(env, `wa_groups?id=eq.${gid}&enabled=eq.true&select=chat_id,wa_name`)
+    : null;
 
   const COLA = `\n\nLa vista Rotación va a mostrar CEROS para todo lo posterior al último corte, `
              + `y un cero sin explicación parece un dato real. Mientras tanto, el dato en vivo está en Movimientos.`;
@@ -257,16 +334,56 @@ async function avisar(env, salud) {
   };
   const texto = TEXTOS[salud.motivo] || `⚠️ Carga de cortes quincenales: ${salud.motivo}.` + COLA;
 
-  try {
-    await gaClient(env).sendMessage(grupo[0].chat_id, texto);
-    return { enviado: true, grupo: grupo[0].wa_name };
-  } catch (e) {
-    /* Si el aviso no sale, se libera el candado del dia: al proximo tick
-       se vuelve a intentar. Un vigilante mudo es peor que no tenerlo. */
-    await sb(env, `hcm_snapshot_alerts?motivo=eq.${encodeURIComponent(salud.motivo)}`
-      + `&alerted_on=eq.${salud.hoy}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } }).catch(() => null);
-    return { enviado: false, motivo: `WhatsApp: ${(e && e.message) || e}` };
+  /* DOS CANALES INDEPENDIENTES. Con uno solo, una instancia de Green-API
+     desconectada devuelve el sistema al silencio, que es justo el problema
+     que este vigilante existe para evitar. El ticket viaja por otra
+     infraestructura y ademas osTicket manda su propio correo a la cola,
+     asi que da el canal de correo sin montar un proveedor nuevo.
+     Se consideran los dos: alcanza con que UNO llegue. */
+  const canales = [];
+
+  if (grupo && grupo.length) {
+    try {
+      await gaClient(env).sendMessage(grupo[0].chat_id, texto);
+      canales.push({ canal: 'whatsapp', ok: true, destino: grupo[0].wa_name });
+    } catch (e) {
+      canales.push({ canal: 'whatsapp', ok: false, error: String((e && e.message) || e).slice(0, 200) });
+    }
+  } else {
+    canales.push({ canal: 'whatsapp', ok: false, error: gid ? `grupo ${gid} inexistente o apagado` : 'sin grupo configurado' });
   }
+
+  if (topic) {
+    try {
+      const base = String(await getSetting(env, 'osticket_url', '')).replace(/\/+$/, '');
+      if (!base) throw new Error('falta app_settings.osticket_url');
+      const res = await fetch(`${base}/api/tickets.json`, {
+        method: 'POST',
+        headers: { 'X-API-Key': env.osticket_api_key, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: 'Portal de Nómina', email: 'nomina@grupocanaima.com',
+          topicId: topic,
+          subject: `Cortes quincenales: ${salud.motivo}`,
+          // El ticket lleva el estado crudo: quien lo lea manana no depende
+          // de que el texto lindo haya adivinado bien que hacia falta saber.
+          message: texto.replace(/\*/g, '') + '\n\n---\n' + JSON.stringify(salud, null, 2),
+        }),
+      });
+      const cuerpo = (await res.text()).slice(0, 200);
+      if (!res.ok) throw new Error(`HTTP ${res.status} ${cuerpo}`);
+      canales.push({ canal: 'osticket', ok: true, destino: cuerpo });
+    } catch (e) {
+      canales.push({ canal: 'osticket', ok: false, error: String((e && e.message) || e).slice(0, 200) });
+    }
+  }
+
+  if (canales.some(c => c.ok)) return { enviado: true, canales };
+
+  /* Ningun canal llego: se libera el candado del dia para reintentar en
+     el proximo tick. Un vigilante mudo es peor que no tenerlo. */
+  await sb(env, `hcm_snapshot_alerts?motivo=eq.${encodeURIComponent(salud.motivo)}`
+    + `&alerted_on=eq.${salud.hoy}`, { method: 'DELETE', headers: { Prefer: 'return=minimal' } }).catch(() => null);
+  return { enviado: false, canales };
 }
 
 export async function onRequestPost({ request, env }) {
