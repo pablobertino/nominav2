@@ -17,7 +17,8 @@
      5. el state coincide           -> CSRF: alguien pudo empujar esta URL
      6. se canjea el codigo         -> recien aca hablamos con el Pasaporte
      7. el nonce coincide           -> ata la identidad a ESTA ida
-     8. se busca la cuenta          -> por cedula, NUNCA por correo
+     8. se busca la cuenta          -> por sub; si no se conoce, por ancla
+                                       via el cruce. NUNCA por correo.
 
    Solo si los ocho pasan, entra. Cualquier tropiezo termina en la
    pantalla de acceso con un motivo, y la clave de siempre sigue andando:
@@ -32,7 +33,7 @@
 
 import {
   REDIRECT_URI, CANONICO, activo, canonizar, emisor,
-  leerViaje, cookieBorrada, cedulaDe, buscarCuenta, alLogin,
+  leerViaje, cookieBorrada, cruceIdentidades, vincular, porSub, alLogin,
 } from '../api/_pasaporte.js';
 
 export async function onRequestGet({ request, env }) {
@@ -102,17 +103,58 @@ export async function onRequestGet({ request, env }) {
     return conCookieBorrada(alLogin('emisor-caido'));
   }
 
-  // 8 · La cuenta. Por cedula, nunca por correo.
+  /* ===================================================================
+     8 · LA CUENTA.
+
+     El Pasaporte no manda la cedula, solo 'sub'. Por eso hay dos pasos,
+     y el segundo solo corre si el primero no encontro nada:
+
+       a) ¿ya conocemos este sub? -> una consulta y entra. Es el caso
+          normal, el de todos los dias despues de la primera vez.
+
+       b) no lo conocemos -> se le pregunta al servicio de cruce quien
+          es. Devuelve el ancla (cedula con letra, o ALIAS de tienda), y
+          si esa ancla cae en una cuenta que todavia no tiene sub, se
+          ata ahi mismo. Eso es el "vinculo al vuelo".
+
+     Despues de vincular se vuelve a buscar por sub en vez de armar la
+     sesion con lo que devolvio el cruce: asi la sesion sale SIEMPRE de
+     la misma consulta, venga del camino (a) o del (b), y no hay dos
+     maneras de construirla que puedan quedar distintas.
+     =================================================================== */
   const sub = perfil && (perfil.sub || perfil.id) ? String(perfil.sub || perfil.id) : null;
-  const cedula = cedulaDe(perfil);
+  if (!sub) return conCookieBorrada(alLogin('sin-perfil'));
 
-  let r;
-  try { r = await buscarCuenta(env, cedula, sub); }
-  catch (_) { return conCookieBorrada(alLogin('error')); }
+  let user;
+  try {
+    user = await porSub(env, sub);
 
-  if (r.error) return conCookieBorrada(alLogin(r.motivo));
+    if (!user) {
+      const ids = await cruceIdentidades(env, [sub]);
 
-  return conCookieBorrada(entrar(r.user));
+      /* null y [] no son lo mismo, y tratarlos igual esconderia una
+         caida del cruce detras de un "no tienes cuenta". */
+      if (ids === null) return conCookieBorrada(alLogin('cruce-caido'));
+
+      /* Solo la identidad de ESTE sub. El cruce no deberia devolver
+         otras, pero si lo hiciera, vincular ajenas desde un login seria
+         atar cuentas por el paso de un tercero. */
+      const mias = ids.filter(i => i && String(i.sub) === sub);
+      if (mias.length) await vincular(env, mias, 'vuelo');
+
+      user = await porSub(env, sub);
+    }
+  } catch (_) {
+    return conCookieBorrada(alLogin('error'));
+  }
+
+  /* Un solo motivo para los tres casos -sin cuenta, suspendida, o el
+     ancla ya atada a otro sub- a proposito: distinguirlos le confirmaria
+     a un desconocido que esa persona trabaja aca. La bitacora si los
+     distingue, que es donde hace falta. */
+  if (!user) return conCookieBorrada(alLogin('sin-cuenta'));
+
+  return conCookieBorrada(entrar(user));
 }
 
 function conCookieBorrada(res) {
