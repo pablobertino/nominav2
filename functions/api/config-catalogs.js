@@ -205,7 +205,7 @@ export async function onRequestPost({ request, env }) {
 
     /* ---------------- CAUSAS DE MARCAJE ---------------- */
     if (action === 'causa_list') {
-      const causas = await sb(env, 'marcaje_causas?select=code,label,is_other,is_active,sort_order&order=sort_order');
+      const causas = await sb(env, 'marcaje_causas?select=code,label,is_other,is_active,sort_order,tope_quincena&order=sort_order');
       return json({ ok: true, causas: causas || [] });
     }
 
@@ -215,8 +215,14 @@ export async function onRequestPost({ request, env }) {
       const label = (c.label || '').trim();
       if (!code) return json({ ok: false, error: 'Falta el codigo de la causa.' }, 400);
       if (!label) return json({ ok: false, error: 'Falta el nombre de la causa.' }, 400);
+      /* Tope de marcajes de este motivo por persona y por quincena.
+         0 = sin limite. Se normaliza a entero >= 0 porque el input del
+         navegador puede mandar '', '3.7' o un negativo, y un tope negativo
+         bloquearia el motivo entero sin que nadie entienda por que. */
+      const tope = Math.max(0, Math.trunc(Number(c.tope_quincena) || 0));
       const row = {
         code, label, is_other: !!c.is_other, is_active: c.is_active !== false,
+        tope_quincena: tope,
       };
       const existing = await sb(env, `marcaje_causas?code=eq.${encodeURIComponent(code)}&select=code`);
       if (existing && existing.length) {

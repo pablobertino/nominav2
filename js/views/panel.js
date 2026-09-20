@@ -732,7 +732,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.281</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.282</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -7948,15 +7948,22 @@ function cfgRenderCausas(user, body) {
   const rows = CFG_DATA.causas.map((c, i) => {
     const tipo = c.is_other ? '<span class="pill pill-warn2">texto libre</span>' : '';
     const estado = c.is_active ? '<span class="pill pill-open">activa</span>' : '<span class="pill pill-closed">inactiva</span>';
+    /* El tope se muestra SIEMPRE, y "sin límite" se dice con todas las
+       letras: una celda vacía deja la duda de si no hay tope o si el dato
+       no cargó, y es justo el dato que alguien va a venir a consultar
+       cuando a una tienda le rebote un marcaje. */
+    const tope = Number(c.tope_quincena) > 0
+      ? `<span class="pill pill-warn2">${Number(c.tope_quincena)} por quincena</span>`
+      : '<span class="muted" style="font-size:12px">sin límite</span>';
     return `<tr>
       <td data-label="#" style="font-family:monospace;color:var(--muted)">${i + 1}</td>
       <td data-label="Causa"><b>${c.label}</b><br><span class="muted" style="font-size:11px;font-family:monospace">${c.code}</span></td>
-      <td data-label="Tipo">${tipo}</td><td data-label="Estado">${estado}</td>
+      <td data-label="Tipo">${tipo}</td><td data-label="Tope">${tope}</td><td data-label="Estado">${estado}</td>
       <td style="text-align:right;white-space:nowrap">
         <button class="btn btn-mini" data-edit-causa="${c.code}">${I.pencil}</button>
         <button class="btn btn-mini" data-toggle-causa="${c.code}" data-active="${c.is_active}">${c.is_active ? 'Desactivar' : 'Activar'}</button>
       </td></tr>`;
-  }).join('') || '<tr><td colspan="5" class="empty">Sin causas.</td></tr>';
+  }).join('') || '<tr><td colspan="6" class="empty">Sin causas.</td></tr>';
 
   body.innerHTML = `
     <div class="card">
@@ -7964,7 +7971,7 @@ function cfgRenderCausas(user, body) {
         <button class="btn btn-primary btn-mini" id="causaNew">${I.plus} Nueva causa</button></div>
       <p class="cfg-desc" style="margin:0 0 14px">Motivos que la tienda elige al reportar un marcaje manual. "Texto libre" pide una descripción adicional (tipo Otros).</p>
       <table class="cfg-cat-table tbl-cards"><thead><tr>
-        <th>#</th><th>Causa</th><th>Tipo</th><th>Estado</th><th></th>
+        <th>#</th><th>Causa</th><th>Tipo</th><th>Tope</th><th>Estado</th><th></th>
       </tr></thead><tbody>${rows}</tbody></table>
     </div>`;
 
@@ -7987,6 +7994,12 @@ function cfgCausaModal(user, c) {
     <input id="ca_label" value="${c ? c.label.replace(/"/g,'&quot;') : ''}" placeholder="Olvido de marcaje" style="margin-bottom:12px">
     <label class="flabel">Código (interno)</label>
     <input id="ca_code" value="${c ? c.code : ''}" ${c ? 'readonly' : ''} placeholder="olvido" style="font-family:monospace;margin-bottom:12px">
+    <label class="flabel">Tope por persona en la quincena</label>
+    <input id="ca_tope" type="number" min="0" step="1" value="${c ? (Number(c.tope_quincena) || 0) : 0}" style="margin-bottom:4px">
+    <p class="cfg-desc" style="margin:0 0 12px">
+      Cuántos marcajes de este motivo puede tener una misma persona en una quincena.
+      <b>0 = sin límite.</b> La quincena la decide la fecha del marcaje, no la del reporte,
+      y se cuenta lo ya reportado por cualquier tienda.</p>
     <label class="radio-row" style="margin-bottom:8px"><input type="checkbox" id="ca_other" ${c && c.is_other ? 'checked' : ''}>
       <span>Pide texto libre <span class="muted" style="font-size:12px">(como "Otros": la tienda escribe el detalle)</span></span></label>
     <label class="radio-row"><input type="checkbox" id="ca_active" ${!c || c.is_active ? 'checked' : ''}> <span>Activa</span></label>
@@ -7999,7 +8012,8 @@ function cfgCausaModal(user, c) {
   $('#mOk').addEventListener('click', async () => {
     const r = await cfgCatalogs({ action: 'causa_save', adminId: user.id,
       causa: { code: $('#ca_code').value, label: $('#ca_label').value,
-        is_other: $('#ca_other').checked, is_active: $('#ca_active').checked } });
+        is_other: $('#ca_other').checked, is_active: $('#ca_active').checked,
+        tope_quincena: $('#ca_tope').value } });
     if (!r.ok) { alert(r.error); return; }
     closeModal();
     await cfgReloadCatalogs(user); cfgRenderTab(user);

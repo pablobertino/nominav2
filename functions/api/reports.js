@@ -383,6 +383,115 @@ async function reportePrevio(env, cc, topic, hash) {
   return (prev && prev.osticket_id) ? prev : null;
 }
 
+/* =====================================================================
+   TOPE DE MARCAJES MANUALES POR MOTIVO, PERSONA Y QUINCENA      (v6.282)
+
+   Cada motivo de marcaje_causas tiene su tope_quincena. 0 = sin limite, y
+   es el default: prender un tope tiene que ser una decision explicita y no
+   algo que aparece solo al crear un motivo nuevo. Hoy arranca solo el
+   olvido, en 3.
+
+   LA QUINCENA LA DEFINE LA FECHA DEL MARCAJE, no la del reporte: un olvido
+   del 14 cuenta en la primera quincena aunque se reporte el 17. Si contara
+   por fecha de reporte, atrasar el envio correria el tope.
+
+   SE CUENTA EL HISTORIAL, NO SOLO LO QUE LLEGA. Validar unicamente las
+   lineas del reporte dejaria el tope abierto de par en par: tres reportes
+   de una linea cada uno pasarian sin problema. Se cuenta lo ya cargado mas
+   lo que trae este reporte. Es la diferencia entre validar el formulario y
+   validar el hecho.
+
+   ⚠ VA DESPUES DEL CHEQUEO DE DUPLICADO, Y NO ES UN DETALLE DE ORDEN. Si
+   corriera antes, un reenvio del mismo reporte contaria sus propias lineas
+   -que ya estan guardadas- y la tienda recibiria "superaste el tope" por
+   haber apretado Enviar dos veces. El duplicado se responde como duplicado
+   y ni siquiera llega aca.
+   ===================================================================== */
+const MESES_ES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio',
+  'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
+
+function quincenaDe(ymd) {
+  const s = String(ymd || '').slice(0, 10);
+  const dia = parseInt(s.slice(8, 10), 10);
+  return s.slice(0, 7) + (dia <= 15 ? '-Q1' : '-Q2');
+}
+
+function rangoQuincena(clave) {
+  const ym = clave.slice(0, 7);
+  if (clave.endsWith('Q1')) return [`${ym}-01`, `${ym}-15`];
+  const [y, m] = ym.split('-').map(Number);
+  /* Dia 0 del mes siguiente = ultimo dia de este. Sirve para febrero y para
+     los bisiestos sin tabla de meses. */
+  const ultimo = new Date(Date.UTC(y, m, 0)).getUTCDate();
+  return [`${ym}-16`, `${ym}-${String(ultimo).padStart(2, '0')}`];
+}
+
+function quincenaLegible(clave) {
+  const [y, m] = clave.slice(0, 7).split('-').map(Number);
+  const mes = MESES_ES[m - 1] || clave.slice(5, 7);
+  return `${clave.endsWith('Q1') ? '1ra' : '2da'} quincena de ${mes} ${y}`;
+}
+
+/* Devuelve la lista de mensajes de tope superado. Vacia = todo en regla. */
+async function revisarTopes(env, clean, causeMap) {
+  const conTope = new Set(Object.values(causeMap)
+    .filter(c => Number(c.tope_quincena) > 0).map(c => c.code));
+  if (!conTope.size) return [];
+
+  // Lo que trae ESTE reporte, agrupado por persona + motivo + quincena.
+  const grupos = new Map();
+  for (const l of clean) {
+    if (!conTope.has(l.cause_code)) continue;
+    const q = quincenaDe(l.mark_date);
+    const k = `${l.worker_id_number}|${l.cause_code}|${q}`;
+    const g = grupos.get(k)
+      || { ced: l.worker_id_number, name: l.worker_name, causa: l.cause_code, q, nuevos: 0 };
+    g.nuevos++;
+    grupos.set(k, g);
+  }
+  if (!grupos.size) return [];
+
+  const vals = [...grupos.values()];
+  const ceds = [...new Set(vals.map(g => g.ced))];
+  const causas = [...new Set(vals.map(g => g.causa))];
+  const rangos = [...new Set(vals.map(g => g.q))].map(rangoQuincena);
+  const desde = rangos.map(r => r[0]).sort()[0];
+  const hasta = rangos.map(r => r[1]).sort().slice(-1)[0];
+
+  /* Una sola consulta por el rango completo y el reparto por quincena se
+     hace aca: un reporte abarca una o dos quincenas, no vale la pena una
+     consulta por grupo. Se mira TODO el grupo, no solo esta tienda: la
+     misma persona puede ser reportada desde otra (por eso existe el motivo
+     'Apoyo en otra tienda'), y el tope es de la persona. */
+  const previas = await sb(env,
+    `mark_report_lines?worker_id_number=in.(${ceds.map(c => `"${c}"`).join(',')})`
+    + `&cause_code=in.(${causas.map(c => `"${c}"`).join(',')})`
+    + `&mark_date=gte.${desde}&mark_date=lte.${hasta}`
+    + '&select=worker_id_number,cause_code,mark_date') || [];
+
+  const yaHay = new Map();
+  for (const p of previas) {
+    const k = `${p.worker_id_number}|${p.cause_code}|${quincenaDe(p.mark_date)}`;
+    yaHay.set(k, (yaHay.get(k) || 0) + 1);
+  }
+
+  const errores = [];
+  for (const [k, g] of grupos) {
+    const c = causeMap[g.causa] || {};
+    const tope = Number(c.tope_quincena) || 0;
+    const previos = yaHay.get(k) || 0;
+    if (previos + g.nuevos <= tope) continue;
+    const etiqueta = c.label || g.causa;
+    const quedan = Math.max(0, tope - previos);
+    errores.push(
+      `${g.name || g.ced}: "${etiqueta}" admite ${tope} por quincena. `
+      + `En la ${quincenaLegible(g.q)} ya tiene ${previos} y este reporte suma ${g.nuevos}. `
+      + (quedan ? `Solo queda${quedan === 1 ? '' : 'n'} ${quedan}.` : 'Ya no queda ninguno.')
+    );
+  }
+  return errores;
+}
+
 /* Respuesta cuando ya existe: se devuelve OK con el reporte original. Decir
    'error' seria mentir -su reporte SI esta enviado- y ademas invita a
    reintentar, que es justo lo que queremos cortar. */
@@ -541,7 +650,7 @@ async function submitMarcaje(env, body) {
   (roster || []).forEach(w => { endDateByCed[w.id_number] = w.end_date || null; });
 
   // Causas validas
-  const causes = await sb(env, 'marcaje_causas?is_active=eq.true&select=code,label,is_other');
+  const causes = await sb(env, 'marcaje_causas?is_active=eq.true&select=code,label,is_other,tope_quincena');
   const causeMap = {};
   (causes || []).forEach(c => { causeMap[c.code] = c; });
 
@@ -639,6 +748,18 @@ async function submitMarcaje(env, body) {
   const huella = await huellaContenido('marcaje', cc, clean);
   const previo = await reportePrevio(env, cc, 'marcaje', huella);
   if (previo) return respuestaDuplicado(previo);
+
+  /* Tope por motivo. Va aca a proposito: despues del duplicado (para no
+     acusar de exceso a quien apreto Enviar dos veces) y antes de crear el
+     encabezado (para no dejar un reporte a medias). Ver revisarTopes. */
+  const excesos = await revisarTopes(env, clean, causeMap);
+  if (excesos.length) {
+    return json({
+      ok: false,
+      error: 'Se superó el tope de marcajes manuales para este motivo.',
+      details: excesos,
+    }, 422);
+  }
 
   const header = await sb(env, 'reports_log', {
     method: 'POST',
