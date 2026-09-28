@@ -137,7 +137,17 @@ export async function onRequestPost({ request, env }) {
       // Permite buscar por texto (>=2) o solo por filtros.
       if (q.length < 2 && !hasFilter) return json({ ok: true, rows: [], short: true });
       if (admin.codes !== null && !admin.codes.length) return json({ ok: true, rows: [], scope_count: 0 });
-      const rows = await sb(env, 'rpc/personnel_search', {
+      /* v6.283 — UNA FILA POR PERSONA.
+         personnel_search devuelve una fila por RELACION LABORAL: quien
+         egreso de una empresa y entro en otra salia dos veces, y tres si
+         paso por tres. personnel_search_dedup la envuelve y se queda con
+         las relaciones VIGENTES; si no hay ninguna, con el egreso mas
+         reciente. Las reglas de busqueda y alcance no se tocaron: viven
+         donde vivian.
+         ⚠ Deduplica DESPUES del alcance, a proposito: si un admin solo ve
+         la empresa donde la persona egreso, tiene que seguir viendola como
+         egresada y no la relacion vigente de una empresa que no le toca. */
+      const rows = await sb(env, 'rpc/personnel_search_dedup', {
         method: 'POST',
         body: JSON.stringify({
           p_codes: admin.codes, p_q: q,
