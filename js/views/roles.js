@@ -86,7 +86,7 @@ const VIEW_SUBGROUPS = [
 const MENU_CATALOG = [
   { g: '', items: [
     { id: 'dashboard', lbl: 'Inicio', view: 'view.dashboard', acts: [] },
-    { id: 'miempresa', lbl: 'Mi empresa', view: 'view.miempresa', acts: ['report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion', 'report.traslado'] },
+    { id: 'miempresa', lbl: 'Mi empresa', view: 'view.miempresa', acts: ['report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.traslado'] },
     // v6.106: Novedades (rol tienda) — cambios que afectan a la tienda.
     { id: 'novedades', lbl: 'Novedades', view: 'view.novedades', acts: [] },
     { id: 'usuarios', lbl: 'Usuarios', view: 'view.usuarios', acts: ['compuser.create', 'compuser.reset', 'compuser.toggle', 'compuser.email', 'entuser.create', 'entuser.update', 'entuser.reset', 'entuser.toggle', 'entuser.scope'] },
@@ -94,14 +94,14 @@ const MENU_CATALOG = [
     { id: 'calendario', lbl: 'Calendario', view: 'view.calendario', acts: [] },
   ] },
   { g: 'Organizacion', items: [
-    { id: 'tiendas', lbl: 'Empresas', view: 'view.empresas', acts: ['company.contact', 'company.responsables', 'dept.create', 'dept.rename', 'dept.toggle', 'dept.delete', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion', 'report.traslado'] },
+    { id: 'tiendas', lbl: 'Empresas', view: 'view.empresas', acts: ['company.contact', 'company.responsables', 'dept.create', 'dept.rename', 'dept.toggle', 'dept.delete', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.traslado'] },
     { id: 'catalogos', lbl: 'Estructura', view: 'view.estructura', acts: [] },
   ] },
   { g: 'Personal', items: [
     // v5.03: los botones de emitir reportes tambien viven en la vista Personal
     // (ficha del trabajador). Es el MISMO code que en Empresas y Mi empresa: la
     // piel sincroniza por code (un solo estado en ST.work -> una sola fila en BD).
-    { id: 'fotos', lbl: 'Personal', view: 'view.fotos', acts: ['photo.manage', 'ficha.edit', 'dept.assign', 'bankref.upload', 'rif.upload', 'cedula.upload', 'docs.remove', 'view.antiguedad', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion', 'report.traslado'] },
+    { id: 'fotos', lbl: 'Personal', view: 'view.fotos', acts: ['photo.manage', 'ficha.edit', 'dept.assign', 'bankref.upload', 'rif.upload', 'cedula.upload', 'docs.remove', 'view.antiguedad', 'report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.traslado'] },
     { id: 'buscar', lbl: 'Buscar', view: 'view.buscar', acts: [] },
     { id: 'datosincompletos', lbl: 'Datos incompletos', view: 'view.datosincompletos', acts: [] },
     // v6.226 — lee validaciones que ya existian y nadie mostraba; solo lectura.
@@ -135,7 +135,14 @@ const MENU_CATALOG = [
     { id: 'cambiocargo', lbl: 'Cambio de Cargo', view: 'view.cambiocargo', acts: ['mov.sugerir', 'mov.aprobar', 'mov.autoaprobar', 'mov.anular'] },
     /* v6.155: Aprobaciones sale del paraguas de view.cambiocargo y tiene su
        propio permiso: se puede dar el wizard sin dar la cola de aprobacion. */
-    { id: 'cargohistorial', lbl: 'Aprobaciones', view: 'view.cargohistorial', acts: ['mov.aprobar', 'mov.autoaprobar', 'mov.anular'] },
+    /* v6.284 — report.modificacion VIVE ACA AHORA, y no es un capricho de
+       orden: se descontinuo el reporte de Modificacion, pero aprobar un
+       ascenso o un descenso sigue generando uno por dentro (cambio-cargo.js
+       postea a /api/reports con el usuario que aprueba, asi que el permiso
+       se evalua de verdad). Dejarlo entre los 'emitir reporte' invitaba a
+       quitarselo a un coordinador por parecer permiso muerto, y el ascenso
+       fallaria despues, lejos de la causa. */
+    { id: 'cargohistorial', lbl: 'Aprobaciones', view: 'view.cargohistorial', acts: ['mov.aprobar', 'mov.autoaprobar', 'mov.anular', 'report.modificacion'] },
   ] },
   { g: 'Reportes', items: [
     /* v6.217 — LOS TRES PERMISOS DE PUBLICAR FALTABAN DESDE LA v6.167.

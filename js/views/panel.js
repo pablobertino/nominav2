@@ -13,7 +13,13 @@ import { marcajeReport } from '../reports/report-marcaje.js';
 import { ausenciaReport } from '../reports/report-ausencia.js';
 import { egresoReport } from '../reports/report-egreso.js';
 import { ingresoReport } from '../reports/report-ingreso.js';
-import { modificacionReport } from '../reports/report-modificacion.js';
+/* v6.284 — El reporte de Modificación se descontinuó: lo que se hacía con él
+   (cambiarle el cargo a alguien) lo resuelve ahora Cambio de Cargo. El wizard
+   ya no se ofrece, así que no se importa. El archivo report-modificacion.js
+   queda en el repo sin cargarse, por si algún día hay que mirarlo.
+   ⚠ NO confundir con el endpoint: submit_modificacion SIGUE VIVO, porque es
+   el que usa Cambio de Cargo para dejar el reporte y el ticket de un ascenso
+   o un descenso aprobado. Ver functions/api/cambio-cargo.js. */
 import { renderHistory } from '../reports/history.js';
 import { renderWorkerPhotos } from './worker-photos.js';
 import { renderDashboard } from './dashboard.js';
@@ -732,7 +738,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.283</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.284</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -8682,7 +8688,12 @@ async function navigate(view, user, fromHistory = false) {
    vez por sesion de panel y se cachea en module scope.
    Fallo de red / respuesta vacia => permisivo (el server protege igual y
    nadie se queda sin reportar por un error transitorio). */
-const REPORT_CODES = ['report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso', 'report.modificacion'];
+/* v6.284: sin 'report.modificacion'. Estos codigos deciden si se pinta el
+   boton Reportar y cuales tiles se ven; con el tile de Modificacion afuera,
+   dejarlo aca haria que un rol que SOLO tenga ese permiso vea el boton y
+   despues un picker vacio. El permiso en si no desaparece: Cambio de Cargo
+   lo sigue necesitando (ver roles.js, grupo Cargos). */
+const REPORT_CODES = ['report.marcaje', 'report.ausencia', 'report.ingreso', 'report.egreso'];
 let REPORT_PERMS = null;   // { 'report.marcaje': bool, ... } | null (aun no resuelto)
 
 async function ensureReportPerms(user) {
@@ -8728,18 +8739,27 @@ async function ensureCompanyPerms(user) {
 }
 function hasCompanyPerm(code) { return !COMPANY_PERMS || !!COMPANY_PERMS[code]; }
 
-/* Definicion de los 5 tiles: un solo sitio para el picker (Empresas) y para
-   Mi empresa, asi no se duplica el HTML ni el gate. */
+/* Definicion de los tiles: un solo sitio para el picker (Empresas) y para
+   Mi empresa, asi no se duplica el HTML ni el gate.
+
+   v6.284 — ERAN CINCO Y AHORA SON CUATRO. Se descontinuo el reporte de
+   Modificacion: lo que se hacia con el -corregirle el cargo a alguien- lo
+   resuelve Cambio de Cargo, con su circuito de sugerir y aprobar. Sacarlo de
+   esta lista lo apaga en los DOS lados a la vez (el picker de Empresas y Mi
+   empresa), que es la razon por la que esta lista existe.
+
+   Los 166 reportes de Modificacion ya emitidos siguen viendose enteros en el
+   Historial, en Estadisticas y en Analisis: no se toco ninguna etiqueta. Lo
+   que desaparece es la puerta para emitir uno nuevo a mano. */
 const REPORT_TILES = [
   { kind: 'marcaje', ico: '🕐', title: 'Marcaje Manual', desc: 'Registra entradas y salidas que no quedaron en el biométrico.' },
   { kind: 'ausencia', ico: '📅', title: 'Ausencia', desc: 'Reposos, permisos y faltas.' },
   { kind: 'ingreso', ico: '➕', title: 'Ingreso', desc: 'Nuevo trabajador en la tienda.' },
   { kind: 'egreso', ico: '🔴', title: 'Egreso', desc: 'Trabajador que deja la tienda.' },
-  { kind: 'modificacion', ico: '✏️', title: 'Modificación', desc: 'Corrección de datos de un trabajador.' },
 ];
 const REPORT_FN = {
   marcaje: marcajeReport, ausencia: ausenciaReport, ingreso: ingresoReport,
-  egreso: egresoReport, modificacion: modificacionReport,
+  egreso: egresoReport,
 };
 function reportTilesHtml() {
   return REPORT_TILES.filter(t => canReportKind(t.kind)).map(t => `
