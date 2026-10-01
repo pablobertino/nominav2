@@ -80,6 +80,12 @@ function ensureStyles() {
   .rst-prow .meta{font-size:11px;color:var(--faint,#94a3b8);white-space:nowrap}
   .rst-plink{border:0;background:none;font:inherit;font-size:12px;color:var(--brand,#2563eb);cursor:pointer;padding:0}
   .rst-pempty{padding:22px;text-align:center;color:var(--muted);font-size:12.5px}
+  /* v6.286: resumen de la lista pegada. Pegado arriba de la lista y fijo al
+     hacer scroll, porque es donde se lee "me faltó una" — abajo del todo no
+     lo vería nadie en una lista de 36. */
+  .rst-plista{position:sticky;top:0;z-index:1;padding:9px 12px;font-size:12.5px;
+    background:var(--surface-2,#f1f5f9);border-bottom:1px solid var(--border);color:var(--text)}
+  .rst-pfalta{color:var(--danger,#dc2626);font-weight:600}
   .rst-cards{display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:14px}
   @media(max-width:680px){.rst-cards{grid-template-columns:1fr}}
   .rst-card{background:var(--surface);border:1px solid var(--border);border-radius:13px;padding:16px 18px;transition:opacity .15s}
@@ -213,7 +219,7 @@ function paint() {
     <div class="rst-picker" id="rstPicker">
       <div class="ph">
         <b>Empresas a limpiar</b>
-        <input type="text" id="rstQ" placeholder="Buscar por c\u00f3digo o nombre\u2026" value="${esc(FQ)}">
+        <input type="text" id="rstQ" placeholder="Buscar, o pegar una lista: FA01, FA03, FA06\u2026" value="${esc(FQ)}">
         <button class="rst-plink" id="rstAllVis">Todas las visibles</button>
         <button class="rst-plink" id="rstNone">Ninguna</button>
         <span class="rst-pickn" id="rstPickN">0 seleccionadas</span>
@@ -283,9 +289,65 @@ function paint() {
   setMode(MODE);
 }
 
+/* =====================================================================
+   v6.286 — PEGAR UNA LISTA DE CODIGOS.
+
+   Antes esto era solo un buscador de a una: pegar
+   "FA01, FA03, FA06, FB04." devolvia "Ninguna empresa coincide", porque
+   buscaba ese texto entero dentro de un codigo. Y marcar 36 empresas a
+   mano, una por una, es donde se cuela el error que nadie ve: la que
+   faltaba o la que sobraba.
+
+   Si el texto trae separadores (coma, punto y coma, salto de linea o
+   varios espacios) y al menos DOS pedazos tienen forma de codigo, se lee
+   como lista: se filtra por codigo exacto y se marcan solas.
+
+   Se limpia la puntuacion de los bordes a proposito: pegar desde un
+   correo o un Excel arrastra el punto final, comillas o parentesis.
+
+   ⚠ LOS CODIGOS QUE NO EXISTEN SE AVISAN POR NOMBRE, no se descartan
+   callados. Pegar 36 y que entren 35 sin decir cual falto es exactamente
+   la clase de error que no se nota hasta despues de borrar.
+   ===================================================================== */
+const RE_CODIGO = /^[A-Z0-9]{2,10}$/;
+
+/* Devuelve { codigos, encontrados, faltan } si el texto es una lista de
+   codigos de verdad, o null si hay que buscar como siempre.
+
+   ⚠ NO ALCANZA CON QUE TENGA SEPARADORES. Buscar "BB BQTO" por nombre, o
+   "las tiendas de zulia", tambien parte en pedazos con forma de codigo
+   ("DE" mide dos). Si eso contara como lista, buscar por nombre dejaria
+   de funcionar y encima diria "no existen: LAS, TIENDAS, DE, ZULIA".
+   Por eso la condicion final es que al menos DOS pedazos coincidan con
+   empresas reales: una lista es una lista cuando le pega a algo. */
+function listaPegada() {
+  const crudo = String(FQ || '').trim();
+  if (!crudo) return null;
+  if (!/[,;\n\r]|\s{2,}|\S\s+\S/.test(crudo)) return null;
+
+  const codigos = [...new Set(
+    crudo.toUpperCase().split(/[\s,;]+/)
+      /* Se limpia la puntuacion de los bordes: pegar desde un correo o un
+         Excel arrastra el punto final, comillas o parentesis. */
+      .map(x => x.replace(/^[^A-Z0-9]+|[^A-Z0-9]+$/g, ''))
+      .filter(x => RE_CODIGO.test(x)))];
+  if (codigos.length < 2) return null;
+
+  const existe = new Set(STATS.map(s => String(s.company_code || '').toUpperCase()));
+  const encontrados = codigos.filter(c => existe.has(c));
+  if (encontrados.length < 2) return null;          // no era una lista
+
+  return { codigos, encontrados, faltan: codigos.filter(c => !existe.has(c)) };
+}
+
 function visibleStats() {
   const q = FQ.trim().toUpperCase();
   if (!q) return STATS;
+  const lista = listaPegada();
+  if (lista) {
+    const quiero = new Set(lista.encontrados);
+    return STATS.filter(s => quiero.has(String(s.company_code || '').toUpperCase()));
+  }
   return STATS.filter(s =>
     String(s.company_code || '').toUpperCase().includes(q)
     || String(s.business_name || '').toUpperCase().includes(q));
@@ -296,11 +358,25 @@ function paintList() {
   const host = $('#rstPlist');
   if (!host) return;
   const rows = visibleStats();
+  const lista = listaPegada();
+  let aviso = '';
+  if (lista) {
+    lista.encontrados.forEach(c => SEL.add(c));
+    aviso = `<div class="rst-plista">`
+      + `<b>${lista.encontrados.length}</b> de ${lista.codigos.length} c\u00f3digos pegados, `
+      + `marcad${lista.encontrados.length === 1 ? 'o' : 'os'}.`
+      + (lista.faltan.length
+          ? ` <span class="rst-pfalta">No existe${lista.faltan.length === 1 ? '' : 'n'}: `
+            + `${esc(lista.faltan.join(', '))}</span>`
+          : '')
+      + `</div>`;
+    syncUI();
+  }
   if (!rows.length) {
-    host.innerHTML = `<div class="rst-pempty">Ninguna empresa coincide con la b\u00fasqueda.</div>`;
+    host.innerHTML = aviso || `<div class="rst-pempty">Ninguna empresa coincide con la b\u00fasqueda.</div>`;
     return;
   }
-  host.innerHTML = rows.map(s => `
+  host.innerHTML = aviso + rows.map(s => `
     <label class="rst-prow">
       <input type="checkbox" data-cc="${esc(s.company_code)}" ${SEL.has(s.company_code) ? 'checked' : ''}>
       <span class="cc">${esc(s.company_code)}</span>
