@@ -449,6 +449,11 @@ const STEPS_SEL = [
   { key: 'sel_constancias_pdfs', label: 'Constancias (PDFs)\u2026' },
   { key: 'sel_constancias',      label: 'Constancias (tablas)\u2026' },
   { key: 'sel_cambio_cargo',     label: 'Cambios de cargo\u2026' },
+  /* v6.285: los acuses de Naima. Van al final porque son consecuencia del
+     reporte, no insumo: se borran por empresa y no dependen de nada previo.
+     Faltaban desde la v6.154 \u2014 se borraba el reporte y el aviso quedaba
+     colgado en el Historial de WhatsApp. */
+  { key: 'sel_whatsapp',         label: 'Avisos de WhatsApp\u2026' },
 ];
 
 async function runReset() {

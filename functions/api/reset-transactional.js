@@ -45,7 +45,12 @@
    ===================================================================== */
 
 const CAT_TOTAL = new Set(['reportes', 'avisos', 'sincronizaciones', 'constancias', 'constancias_pdfs', 'numeracion']);
-const CAT_SEL = new Set(['sel_tickets', 'sel_reportes', 'sel_constancias', 'sel_constancias_pdfs', 'sel_cambio_cargo']);
+/* v6.285: sel_whatsapp. Desde la v6.154 cada reporte de tienda deja un acuse
+   de Naima en wa_batches + wa_outbox, y el reseteo no lo limpiaba: se borraba
+   el reporte y el aviso quedaba colgado en el Historial de WhatsApp. Va
+   DESPUES de sel_reportes por prolijidad (el aviso es consecuencia del
+   reporte), aunque no depende de el: se borra por company_code. */
+const CAT_SEL = new Set(['sel_tickets', 'sel_reportes', 'sel_constancias', 'sel_constancias_pdfs', 'sel_cambio_cargo', 'sel_whatsapp']);
 const WORD_SEL = 'REINICIAR';
 const WORD_TOTAL = 'REINICIAR TODO';
 const CERT_BUCKET = 'cert-docs';
@@ -224,7 +229,8 @@ export async function onRequestPost({ request, env }) {
           enlaces: Number(pr.gc_report_link || 0),
           excluidos: Number(pr.excluidos_otras_empresas || 0),
         };
-      } else if (category === 'sel_reportes' || category === 'sel_constancias' || category === 'sel_cambio_cargo') {
+      } else if (category === 'sel_reportes' || category === 'sel_constancias'
+                 || category === 'sel_cambio_cargo' || category === 'sel_whatsapp') {
         detail = await sb(env, 'rpc/reset_selective', {
           method: 'POST',
           body: JSON.stringify({ p_category: category.replace('sel_', ''), p_companies: companies }),
