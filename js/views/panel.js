@@ -738,7 +738,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.286</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.287</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -7140,6 +7140,7 @@ const HOL_FIJOS = [
   ['01-06', 'Día de Reyes', false, true],
   ['01-14', 'Día de la Divina Pastora', false, true],
   ['03-19', 'Día de San José', false, true],
+  ['04-19', 'Declaración de la Independencia', true, true],
   ['05-01', 'Día del Trabajador', true, true],
   ['06-24', 'Batalla de Carabobo', true, true],
   ['06-29', 'San Pedro y San Pablo', false, true],
@@ -7150,9 +7151,9 @@ const HOL_FIJOS = [
   ['10-26', 'San José Gregorio Hernández', false, true],
   ['11-18', 'Virgen de Chiquinquirá', false, true],
   ['12-08', 'Inmaculada Concepción', false, true],
-  ['12-24', 'Nochebuena', false, true],
+  ['12-24', 'Nochebuena', true, true],     // LOTTT art. 184: feriado laboral
   ['12-25', 'Navidad', true, true],
-  ['12-31', 'Fin de Año', false, true],
+  ['12-31', 'Fin de Año', true, true],     // LOTTT art. 184: feriado laboral
 ];
 
 // Genera todos los feriados de un anio: fijos + moviles (Computus).
