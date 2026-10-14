@@ -1,7 +1,13 @@
 /* =====================================================================
    functions/api/config-catalogs.js  →  /api/config-catalogs
    CRUD de catalogos editables desde la pantalla de Configuracion.
-   Solo superadmin. Dos catalogos:
+   v6.288: el acceso lo decide la MATRIZ DE ROLES, no el rol superadmin.
+   Cada accion cae en uno de tres permisos (ver permForAction):
+     config.referencias -> bancos y operadoras
+     config.cargos      -> cargos y patrones R10
+     config.incidencias -> ausencias, causas de marcaje, motivos de egreso,
+                           documentos por incidencia y campos de modificacion
+   El superadmin pasa igual, por rol. Dos catalogos:
      - absence_types  (tipos de ausencia) + su documento en required_docs
      - marcaje_causas (causas de marcaje)
 
@@ -31,7 +37,7 @@ function json(b, s = 200) {
   return new Response(JSON.stringify(b), { status: s, headers: { 'Content-Type': 'application/json' } });
 }
 
-import { shadowCan } from './_auth.js';
+import { resolveActor, can } from './_auth.js';
 
 async function sb(env, path, opts = {}) {
   const res = await fetch(`${env.supabase_url}/rest/v1/${path}`, {
@@ -49,11 +55,8 @@ async function sb(env, path, opts = {}) {
   return t ? JSON.parse(t) : null;
 }
 
-async function isSuperadmin(env, adminId) {
-  if (!adminId) return false;
-  const r = await sb(env, `admin_users?id=eq.${encodeURIComponent(adminId)}&role=eq.superadmin&is_active=eq.true&select=id`);
-  return r && r.length > 0;
-}
+/* v6.288: el gate dejo de preguntar "¿sos superadmin?" y pasa a preguntar
+   "¿tenes el permiso?". Ver la nota larga en onRequestPost. */
 
 // Mapa accion -> permiso (para el shadow de Fase 3). Cada seccion de
 // Configuracion cae en uno de tres dominios de permiso:
@@ -82,9 +85,35 @@ export async function onRequestPost({ request, env }) {
   const { action, adminId } = body;
 
   try {
-    const legacyOk = await isSuperadmin(env, adminId);
-    await shadowCan(env, adminId, 'config-catalogs', action, permForAction(action), legacyOk);
-    if (!legacyOk) return json({ ok: false, error: 'Requiere superadmin.' }, 403);
+    /* =================================================================
+       v6.288 — EL GATE PASA DE ROL A PERMISO.
+
+       Hasta aca preguntaba literalmente "¿sos superadmin?" y el permiso
+       solo se registraba en el shadow. Eso dejaba la pantalla en el peor
+       de los dos mundos: view.config SI se respeta, asi que un coordinador
+       con el permiso otorgado veia Configuracion, entraba, editaba y
+       recibia "Requiere superadmin" al guardar. Ver la puerta y que no
+       abra es peor que no verla.
+
+       Ahora manda la matriz de Roles, con el mapa permForAction que ya
+       existia: referencias (bancos, operadoras), cargos, e incidencias
+       (ausencias, causas de marcaje, motivos de egreso, documentos por
+       incidencia y campos de modificacion). Quitar o dar uno de esos tres
+       vuelve a ser cosa de la pantalla de Roles, sin tocar codigo.
+
+       El superadmin no pierde nada: can() le da paso libre por rol.
+
+       Se va el shadowCan: comparaba el gate viejo contra el nuevo, y ya
+       no hay gate viejo contra que comparar. Las tres filas config.* de
+       la tabla permissions quedan enforced = true, que es lo que esa
+       columna significa.
+       ================================================================= */
+    const code = permForAction(action);
+    const actor = await resolveActor(env, { kind: 'admin', id: adminId });
+    if (!actor) return json({ ok: false, error: 'Sesion no valida.' }, 403);
+    if (!can(actor, code)) {
+      return json({ ok: false, error: `No tienes permiso para esta seccion (${code}).` }, 403);
+    }
 
     /* ---------------- TIPOS DE AUSENCIA ---------------- */
     if (action === 'absence_list') {

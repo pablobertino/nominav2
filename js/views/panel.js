@@ -738,7 +738,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.287</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.288</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -7540,29 +7540,39 @@ async function viewConfig(user) {
   if (!st.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${st.error}</div>`; return; }
   CFG_DATA = { settings: st.settings || [], types: (ty.ok && ty.types) || [], causas: (ca.ok && ca.causas) || [], cargos: (cg.ok && cg.cargos) || [], bancos: (bn.ok && bn.bancos) || [], operadoras: (op.ok && op.operadoras) || [], docsIngreso: (di.ok && di.docs) || [], docsEgreso: (de.ok && de.docs) || [], egressReasons: (er.ok && er.reasons) || [] };
 
+  /* v6.288: se resuelven los permisos ANTES de pintar el menu, y la pestana
+     activa se corrige si la que estaba guardada no le corresponde — si no,
+     un coordinador caeria en una pestana que ni siquiera figura en el menu
+     y veria el panel vacio sin entender por que. */
+  await ensureCfgPerms(user);
+  const esSuper = !CFG_PERMS || CFG_PERMS._super;
+  if (!esSuper && !cfgVeTab(CFG_TAB)) {
+    CFG_TAB = Object.keys(CFG_PERM_POR_TAB).find(cfgVeTab) || 'aus';
+  }
+
   $('#pnlMain').innerHTML = `
     <div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros, catálogos e integraciones del portal</p></div></div>
     <div class="cfg-layout">
       <nav class="cfg-side" id="cfgSide">
-        <div class="cfg-side-group">Catálogos de reportes</div>
-        <button class="cfg-side-item" data-tab="aus"><span class="cfg-side-ic">📅</span> Tipos de ausencia</button>
-        <button class="cfg-side-item" data-tab="mar"><span class="cfg-side-ic">🕐</span> Causas de marcaje</button>
-        <button class="cfg-side-item" data-tab="motegreso"><span class="cfg-side-ic">🔴</span> Motivos de egreso</button>
-        <div class="cfg-side-group">Datos de ingreso</div>
-        <button class="cfg-side-item" data-tab="car"><span class="cfg-side-ic">👔</span> Cargos</button>
-        <button class="cfg-side-item" data-tab="ban"><span class="cfg-side-ic">🏦</span> Bancos</button>
-        <button class="cfg-side-item" data-tab="ope"><span class="cfg-side-ic">📱</span> Operadoras</button>
-        <div class="cfg-side-group">Empresas</div>
-        <button class="cfg-side-item" data-tab="depcargos"><span class="cfg-side-ic">🏷️</span> Cargos de departamento</button>
-        <div class="cfg-side-group">Documentos</div>
-        <button class="cfg-side-item" data-tab="dingreso"><span class="cfg-side-ic">➕</span> Ingresos</button>
-        <button class="cfg-side-item" data-tab="degreso"><span class="cfg-side-ic">🔴</span> Egresos</button>
-        <div class="cfg-side-group">Sistema</div>
-        <button class="cfg-side-item" data-tab="constancias"><span class="cfg-side-ic">📄</span> Constancias</button>
-        <button class="cfg-side-item" data-tab="cor"><span class="cfg-side-ic">📆</span> Corte y períodos</button>
-        <button class="cfg-side-item" data-tab="params"><span class="cfg-side-ic">⚙️</span> Parámetros</button>
-        <button class="cfg-side-item" data-tab="int"><span class="cfg-side-ic">🔌</span> Integraciones</button>
-        ${user.role === 'superadmin' ? `<button class="cfg-side-item" data-tab="logs"><span class="cfg-side-ic">🧹</span> Bitácoras</button>` : ''}
+        ${(cfgVeTab("aus")||cfgVeTab("mar")||cfgVeTab("motegreso")) ? `<div class="cfg-side-group">Catálogos de reportes</div>` : ""}
+        ${cfgVeTab("aus") ? `<button class="cfg-side-item" data-tab="aus"><span class="cfg-side-ic">📅</span> Tipos de ausencia</button>` : ""}
+        ${cfgVeTab("mar") ? `<button class="cfg-side-item" data-tab="mar"><span class="cfg-side-ic">🕐</span> Causas de marcaje</button>` : ""}
+        ${cfgVeTab("motegreso") ? `<button class="cfg-side-item" data-tab="motegreso"><span class="cfg-side-ic">🔴</span> Motivos de egreso</button>` : ""}
+        ${(cfgVeTab("car")||cfgVeTab("ban")||cfgVeTab("ope")) ? `<div class="cfg-side-group">Datos de ingreso</div>` : ""}
+        ${cfgVeTab("car") ? `<button class="cfg-side-item" data-tab="car"><span class="cfg-side-ic">👔</span> Cargos</button>` : ""}
+        ${cfgVeTab("ban") ? `<button class="cfg-side-item" data-tab="ban"><span class="cfg-side-ic">🏦</span> Bancos</button>` : ""}
+        ${cfgVeTab("ope") ? `<button class="cfg-side-item" data-tab="ope"><span class="cfg-side-ic">📱</span> Operadoras</button>` : ""}
+        ${esSuper ? `<div class="cfg-side-group">Empresas</div>` : ""}
+        ${esSuper ? `<button class="cfg-side-item" data-tab="depcargos"><span class="cfg-side-ic">🏷️</span> Cargos de departamento</button>` : ""}
+        ${(cfgVeTab("dingreso")||cfgVeTab("degreso")) ? `<div class="cfg-side-group">Documentos</div>` : ""}
+        ${cfgVeTab("dingreso") ? `<button class="cfg-side-item" data-tab="dingreso"><span class="cfg-side-ic">➕</span> Ingresos</button>` : ""}
+        ${cfgVeTab("degreso") ? `<button class="cfg-side-item" data-tab="degreso"><span class="cfg-side-ic">🔴</span> Egresos</button>` : ""}
+        ${esSuper ? `<div class="cfg-side-group">Sistema</div>` : ""}
+        ${esSuper ? `<button class="cfg-side-item" data-tab="constancias"><span class="cfg-side-ic">📄</span> Constancias</button>` : ""}
+        ${esSuper ? `<button class="cfg-side-item" data-tab="cor"><span class="cfg-side-ic">📆</span> Corte y períodos</button>` : ""}
+        ${esSuper ? `<button class="cfg-side-item" data-tab="params"><span class="cfg-side-ic">⚙️</span> Parámetros</button>` : ""}
+        ${esSuper ? `<button class="cfg-side-item" data-tab="int"><span class="cfg-side-ic">🔌</span> Integraciones</button>` : ""}
+        ${esSuper ? `<button class="cfg-side-item" data-tab="logs"><span class="cfg-side-ic">🧹</span> Bitácoras</button>` : ''}
       </nav>
       <div class="cfg-panel-wrap" id="cfgBody"></div>
     </div>`;
@@ -7576,6 +7586,12 @@ function cfgRenderTab(user) {
   $('#pnlMain').querySelectorAll('.cfg-side-item').forEach(b =>
     b.classList.toggle('on', b.dataset.tab === CFG_TAB));
   const body = $('#cfgBody');
+  /* Red de seguridad: aunque el menu ya no la ofrezca, nadie monta una
+     pestana sin permiso (por ejemplo si queda un CFG_TAB viejo en memoria). */
+  if (!cfgVeTab(CFG_TAB)) {
+    body.innerHTML = '<div class="card"><p class="cfg-desc">No tienes permiso para esta sección.</p></div>';
+    return;
+  }
   if (CFG_TAB === 'aus') cfgRenderAusencia(user, body);
   else if (CFG_TAB === 'mar') cfgRenderCausas(user, body);
   else if (CFG_TAB === 'car') cfgRenderCargos(user, body);
@@ -8713,6 +8729,59 @@ async function ensureReportPerms(user) {
     return REPORT_PERMS;
   } catch (_) { return allow(); }
 }
+/* =====================================================================
+   v6.288 — PERMISOS DE CONFIGURACION.
+
+   El menu lateral de Configuracion pintaba las 14 pestanas para cualquiera
+   que tuviera view.config. Como el backend si exige permiso, un coordinador
+   entraba a una pestana que no le toca, editaba y recibia un 403 al
+   guardar. Ver la puerta y que no abra es peor que no verla: la persona
+   cree que es un error del sistema y escribe un ticket.
+
+   El mapa de abajo es el ESPEJO del permForAction del servidor. Si alguno
+   de los dos cambia sin el otro, vuelve el mismo problema — con la
+   diferencia de que ahora el sintoma seria al reves (pestana escondida que
+   si se podia usar), que al menos no rompe nada.
+
+   Las pestanas de Sistema (Constancias, Corte y periodos, Parametros,
+   Integraciones, Bitacoras) siguen siendo SOLO de superadmin: viven en
+   otros endpoints (settings.js, periods.js) que todavia preguntan por el
+   rol. No se listan aca a proposito, para no prometer lo que no abre. */
+const CFG_PERM_POR_TAB = {
+  aus: 'config.incidencias', mar: 'config.incidencias', motegreso: 'config.incidencias',
+  dingreso: 'config.incidencias', degreso: 'config.incidencias',
+  car: 'config.cargos',
+  ban: 'config.referencias', ope: 'config.referencias',
+};
+const CFG_CODES = [...new Set(Object.values(CFG_PERM_POR_TAB))];
+let CFG_PERMS = null;
+
+async function ensureCfgPerms(user) {
+  if (CFG_PERMS) return CFG_PERMS;
+  const todo = () => { CFG_PERMS = { _super: true }; return CFG_PERMS; };
+  if (user.kind === 'admin' && user.role === 'superadmin') return todo();
+  try {
+    const r = await fetch('/api/my-perms', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ user: { kind: user.kind, id: user.id || null, companyCode: user.companyCode || null }, codes: CFG_CODES }),
+    }).then(x => x.json());
+    if (!r || !r.ok) return todo();
+    if (r.super) return todo();
+    CFG_PERMS = { _super: false };
+    CFG_CODES.forEach(c => { CFG_PERMS[c] = !!(r.perms && r.perms[c]); });
+    return CFG_PERMS;
+  } catch (_) {
+    /* Fallo de red: permisivo en la UI, igual que en reportes. El servidor
+       sigue gateando de verdad, asi que nadie guarda lo que no puede. */
+    return todo();
+  }
+}
+function cfgVeTab(tab) {
+  if (!CFG_PERMS || CFG_PERMS._super) return true;
+  const code = CFG_PERM_POR_TAB[tab];
+  return code ? !!CFG_PERMS[code] : false;   // sin mapa = pestana de sistema
+}
+
 function canReportKind(kind) { return !REPORT_PERMS || !!REPORT_PERMS[`report.${kind}`]; }
 function canReportAny() { return !REPORT_PERMS || REPORT_CODES.some(c => REPORT_PERMS[c]); }
 
