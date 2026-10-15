@@ -313,7 +313,13 @@ const NAV_GROUPS = [
   { title: 'Administración', items: [
     ['equipo', I.team, 'Equipo'],
     ['roles', I.shield, 'Roles', 'superonly'],
-    ['config', I.cog, 'Configuración', 'superonly'],
+    /* v6.289 — Configuración deja de ser superonly y pasa a gobernarse por
+       view.config, como el resto del menú. Estaba clavada acá, así que el
+       permiso existía en Roles, se podía otorgar, y no servía para nada: un
+       coordinador con view.config concedido seguía sin ver la entrada.
+       Al salir de superonly entra en la poda de applyMenuPerms (MAP), que la
+       esconde a quien no tenga el permiso. El superadmin la ve siempre. */
+    ['config', I.cog, 'Configuración'],
     ['resetdata', I.trash, 'Reiniciar datos', 'superonly'],
   ] },
 ];
@@ -738,7 +744,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.288</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.289</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -9107,7 +9113,7 @@ export function renderPanel() {
     if (user.kind === 'admin' && user.role === 'superadmin') return;
     if (user.kind !== 'admin' && user.kind !== 'company') return;
     // data-view -> permiso view.* que gobierna el item. Los superonly del
-    // nav (firmantes, sync, permisos, roles, config, resetdata) NO estan
+    // nav (firmantes, sync, permisos, roles, resetdata) NO estan
     // en el MAP: su gate sigue siendo isSuper en shell() (defensa doble).
     const MAP = {
       dashboard: 'view.dashboard', miempresa: 'view.miempresa',
@@ -9154,6 +9160,10 @@ export function renderPanel() {
       wagrupos: 'view.wa.groups',
       waruteo: 'view.wa.routing',
       equipo: 'view.equipo',
+      /* v6.289: Configuración entra a la poda. Antes era superonly y por eso
+         no figuraba acá; ahora la gobierna su permiso, igual que a las demás.
+         Roles y Reiniciar datos siguen fuera: esos sí son superonly de verdad. */
+      config: 'view.config',
     };
     try {
       const r = await fetch('/api/my-perms', {
