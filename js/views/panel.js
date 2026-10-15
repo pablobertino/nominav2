@@ -744,7 +744,7 @@ function shell(user) {
     <aside class="pnl-side">
       <div class="pnl-brand">
         <div class="pnl-logo">${I.logo}</div>
-        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.289</div></div>
+        <div class="pnl-bwrap"><div class="pnl-bname">Portal de Nómina</div><div class="pnl-bver">v6.290</div></div>
         <button class="pnl-collapse" id="pnlRail" title="Colapsar menú" aria-label="Colapsar menú">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>
         </button>
@@ -7532,8 +7532,19 @@ async function cfgCatalogs(payload) {
 
 async function viewConfig(user) {
   $('#pnlMain').innerHTML = `<div class="pnl-head"><div><h1>Configuración</h1><p>Parámetros, catálogos e integraciones</p></div></div><div class="pnl-loading">Cargando…</div>`;
+  /* v6.290: los permisos se resuelven ANTES de pedir nada. /api/settings
+     sigue siendo solo de superadmin, y hasta acá se pedía siempre: a un
+     coordinador le devolvía 403 y la pantalla entera moría con "Requiere
+     superadmin", aunque ninguna de SUS pestañas necesite esos datos (los
+     ajustes alimentan Parámetros, Corte, Integraciones y Constancias, que
+     son las de Sistema y él no ve). Ahora directamente no se pide: pedir
+     algo que sabemos que va a ser rechazado es fabricarse un error. */
+  await ensureCfgPerms(user);
+  const esSuper = !CFG_PERMS || CFG_PERMS._super;
+
   const [st, ty, ca, cg, bn, op, di, de, er] = await Promise.all([
-    cfgSettings({ action: 'list', adminId: user.id }),
+    esSuper ? cfgSettings({ action: 'list', adminId: user.id })
+            : Promise.resolve({ ok: true, settings: [] }),
     cfgCatalogs({ action: 'absence_list', adminId: user.id }),
     cfgCatalogs({ action: 'causa_list', adminId: user.id }),
     cfgCatalogs({ action: 'cargo_list', adminId: user.id }),
@@ -7543,15 +7554,15 @@ async function viewConfig(user) {
     cfgCatalogs({ action: 'incdoc_list', adminId: user.id, incidence_code: 'egreso' }),
     cfgCatalogs({ action: 'egress_reason_list', adminId: user.id }),
   ]);
-  if (!st.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${st.error}</div>`; return; }
+  /* Solo el superadmin depende de los ajustes para pintar su pantalla; si a
+     él le fallan, es un error de verdad y se muestra. */
+  if (esSuper && !st.ok) { $('#pnlMain').innerHTML = `<div class="pnl-loading">Error: ${st.error}</div>`; return; }
   CFG_DATA = { settings: st.settings || [], types: (ty.ok && ty.types) || [], causas: (ca.ok && ca.causas) || [], cargos: (cg.ok && cg.cargos) || [], bancos: (bn.ok && bn.bancos) || [], operadoras: (op.ok && op.operadoras) || [], docsIngreso: (di.ok && di.docs) || [], docsEgreso: (de.ok && de.docs) || [], egressReasons: (er.ok && er.reasons) || [] };
 
   /* v6.288: se resuelven los permisos ANTES de pintar el menu, y la pestana
      activa se corrige si la que estaba guardada no le corresponde — si no,
      un coordinador caeria en una pestana que ni siquiera figura en el menu
      y veria el panel vacio sin entender por que. */
-  await ensureCfgPerms(user);
-  const esSuper = !CFG_PERMS || CFG_PERMS._super;
   if (!esSuper && !cfgVeTab(CFG_TAB)) {
     CFG_TAB = Object.keys(CFG_PERM_POR_TAB).find(cfgVeTab) || 'aus';
   }
