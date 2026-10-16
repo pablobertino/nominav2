@@ -604,6 +604,47 @@ async function getWindow(env, body) {
   });
 }
 
+
+/* =====================================================================
+   egresosDeLaEmpresa(env, cc) -> { cedula: end_date | null }
+
+   LA GENTE DE UNA EMPRESA NO VIVE SIEMPRE EN LA MISMA TABLA. Las tiendas
+   estan en store_workers y las que no lo son (Importadora, Externa,
+   Administrativa, Servicio) en enterprise_workers. Las validaciones de
+   marcaje y ausencia miraban SOLO store_workers, asi que para una empresa
+   no-tienda encontraban lo que haya quedado ahi de antes — y lo que quedo
+   son 212 filas viejas, todas cerradas, de cuando esa tabla era la unica.
+   Resultado: a alguien que trabaja hoy en SUPER D se le rechazaba una
+   ausencia "por ser posterior a su egreso", con una fecha de egreso de un
+   registro que ya no manda.
+
+   LA REGLA: si la persona tiene ALGUNA relacion ABIERTA en esa empresa, no
+   hay egreso que la frene. Solo si todas estan cerradas cuenta la ultima,
+   que es la que dice hasta cuando estuvo.
+
+   Mirar las dos tablas no alcanzaba por si solo: la version que ya lo hacia
+   (submit_egreso) le daba prioridad a store_workers, asi que para los
+   cuatro casos que hoy estan duplicados habria tomado igual la fila vieja.
+   Lo que decide no es de que tabla sale, es si esta abierta.
+   ===================================================================== */
+async function egresosDeLaEmpresa(env, cc) {
+  const campos = '&select=id_number,end_date';
+  const [sw, ew] = await Promise.all([
+    sb(env, `store_workers?company_code=eq.${encodeURIComponent(cc)}${campos}`),
+    sb(env, `enterprise_workers?company_code=eq.${encodeURIComponent(cc)}${campos}`),
+  ]);
+  const out = {};
+  const abierta = {};
+  [...(sw || []), ...(ew || [])].forEach(w => {
+    const ced = w.id_number;
+    if (!w.end_date) { abierta[ced] = true; out[ced] = null; return; }
+    if (abierta[ced]) return;                     // ya hay una vigente: manda esa
+    // Entre varias cerradas, la que termino mas tarde.
+    if (!out[ced] || w.end_date > out[ced]) out[ced] = w.end_date;
+  });
+  return out;
+}
+
 async function submitMarcaje(env, body) {
   const cc = (body.company_code || '').trim();
   const responsible = (body.responsible || '').trim();
@@ -644,10 +685,8 @@ async function submitMarcaje(env, body) {
   const reportMax = today < hito ? today : hito;
 
   // Trabajadores de la tienda (para validar egreso). Mapa cedula -> end_date.
-  const roster = await sb(env,
-    `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,end_date`);
-  const endDateByCed = {};
-  (roster || []).forEach(w => { endDateByCed[w.id_number] = w.end_date || null; });
+  // v6.291: las dos tablas, y manda la relacion ABIERTA. Ver egresosDeLaEmpresa.
+  const endDateByCed = await egresosDeLaEmpresa(env, cc);
 
   // Causas validas
   const causes = await sb(env, 'marcaje_causas?is_active=eq.true&select=code,label,is_other,tope_quincena');
@@ -1076,10 +1115,8 @@ async function submitAusencia(env, body) {
   const enforcement = doc ? (doc.enforcement || 'warn') : null;
 
   // Trabajadores de la tienda (para validar egreso). Mapa cedula -> end_date.
-  const roster = await sb(env,
-    `store_workers?company_code=eq.${encodeURIComponent(cc)}&select=id_number,end_date`);
-  const endDateByCed = {};
-  (roster || []).forEach(w => { endDateByCed[w.id_number] = w.end_date || null; });
+  // v6.291: las dos tablas, y manda la relacion ABIERTA. Ver egresosDeLaEmpresa.
+  const endDateByCed = await egresosDeLaEmpresa(env, cc);
 
   // --- Validacion linea por linea ---
   const clean = [];
@@ -1532,15 +1569,15 @@ async function submitEgreso(env, body) {
     sb(env, `enterprise_workers?company_code=eq.${encodeURIComponent(cc)}`
       + `&select=id_number,end_date,gender,birth_date,role,department_id,start_date`),
   ]);
-  const endDateByCed = {};
+  /* v6.291: el end_date sale de egresosDeLaEmpresa, que decide por relacion
+     ABIERTA y no por tabla. Antes store_workers tenia prioridad, asi que
+     para alguien con una fila vieja cerrada ahi y la vigente en
+     enterprise_workers, se tomaba la cerrada. El PERFIL sigue prefiriendo
+     store_workers, que para una tienda es el bueno. */
+  const endDateByCed = await egresosDeLaEmpresa(env, cc);
   const profByCed = {};
-  (rosterSW || []).forEach(w => {
-    endDateByCed[w.id_number] = w.end_date || null;
-    profByCed[w.id_number] = { ...w, _src: 'store_workers' };
-  });
+  (rosterSW || []).forEach(w => { profByCed[w.id_number] = { ...w, _src: 'store_workers' }; });
   (rosterEW || []).forEach(w => {
-    // Si la cedula no estaba en store_workers, tomar el perfil/end_date de la empresa.
-    if (!(w.id_number in endDateByCed)) endDateByCed[w.id_number] = w.end_date || null;
     if (!(w.id_number in profByCed)) profByCed[w.id_number] = { ...w, _src: 'enterprise_workers' };
   });
 
